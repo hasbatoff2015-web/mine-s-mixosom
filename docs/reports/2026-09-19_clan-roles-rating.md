@@ -53,9 +53,20 @@ npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/
 
 `npm run test:server` **56 files / 548 tests PASS**. `npm run test:sim` **12 files / 66 tests PASS**. `npm run build`, `check:size`, `check:archive` PASS. Production **4.78 MiB / 405 files** (`icon_rating.png` 19.9 KiB).
 
+## Overlay QA pass (same day)
+
+Root causes after the first live pass:
+
+- `clan_action.action invalid` was the sort toggles sending `money`/`kills` as clan actions; the allowlist now requires `set_ranking_sort` / `set_member_sort`.
+- Рейтинг failed to open when `rating` was missing from `MENU_SCREENS` / `isGameMenuScreenKind`; the tile now also sends `open` + `screen: 'rating'` explicitly.
+- Clan-row “closes menu + pointer lock” was a **modal ownership** bug: `isInventoryOpen()` was `modal !== undefined`, so clan/menu overlays were treated as inventory. `closeInventory()` then removed the shared backdrop and unsuppressed controls. Nested `render*` also stacked click listeners on a reused node, and `close*AndResumeLook` always requested pointer lock.
+- Death while the Anarchy world kept ticking (`handleDeath`) also closed the clan overlay; that is now consistent (also closes menu/trade) but is not a click-through.
+
+Fixes: `resetOverlayModal()` uses `replaceWith` (no DOM gap, no stacked listeners); sibling overlays close with `keepModal`; `resumeLookIfNoOverlay()`; canvas click ignored while blocking overlay; `#ui-root` gets `pointer-events: auto` under `controls-suppressed`; `icon_rating.png` re-exported from the provided transparent trophy (128×128 RGBA).
+
 ## Visual QA
 
-Automated HTML contracts cover the 4+4 grid, `icon_rating.png`, rating kinds/pagination/personal highlight, clan sort toggles, muted kills color, member-card back. Live Anarchy browser QA of the menu Rating tab, clan card, nickname invite, transfer, and kill increment was **not** run in this cloud pass (no interactive Anarchy clients).
+Automated HTML contracts cover the 4+4 grid, `icon_rating.png`, rating kinds/pagination/personal highlight, clan sort toggles, muted kills color, member-card back. Live Anarchy browser QA is required after this overlay pass.
 
 ## Performance
 

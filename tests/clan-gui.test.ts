@@ -143,15 +143,31 @@ describe('clan overlay CSS contracts', () => {
     expect(css).toContain('#app.controls-suppressed #hud-corner');
     expect(css).toContain('#app.controls-suppressed #hud-corner button');
     expect(css).toContain('#app.controls-suppressed canvas');
-    expect(gameUi).toContain('ensureOverlayModal');
+    expect(css).toContain('#app.controls-suppressed #ui-root');
+    expect(gameUi).toContain('resetOverlayModal');
+    expect(gameUi).toContain('replaceWith');
+    expect(gameUi).toContain('keepModal');
+    expect(gameUi).toContain('bindOverlayPointerShield');
+    expect(gameUi).toContain('closeSiblingOverlays');
+    expect(gameUi).toContain('return this.inventoryContext !== undefined');
     expect(css).toContain('#e8a8a8');
     expect(gameUi).toContain("action: 'select_clan'");
+    expect(gameUi).toContain("action: 'set_ranking_sort'");
+    expect(gameUi).not.toMatch(/type: 'clan_action',\s*action: 'money'/);
+    expect(gameUi).not.toMatch(/type: 'clan_action',\s*action: 'kills'/);
     expect(gameUi).toContain('.mc-clan-icon-pick[data-clan-icon]');
     expect(gameUi).toContain('isClanActionKind');
     expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
     expect(gameUi).toContain("target.closest('input, textarea, label')");
     expect(gameUi.indexOf("action: 'select_clan'")).toBeLessThan(gameUi.indexOf('.mc-clan-icon-pick[data-clan-icon]'));
-    expect(gameUi).toContain("event.stopPropagation(), true");
+    expect(gameUi).toContain('event.stopPropagation()');
     expect(gameUi).toContain('event.preventDefault();');
+    const { CLAN_ACTIONS, MENU_ACTIONS } = await import('../shared/protocol');
+    for (const action of new Set([...gameUi.matchAll(/type: 'clan_action',\s*action: '([a-z_]+)'/g)].map((match) => match[1]!))) {
+      expect(CLAN_ACTIONS, action).toContain(action);
+    }
+    for (const action of new Set([...gameUi.matchAll(/type: 'menu_action',\s*action: '([a-z_]+)'/g)].map((match) => match[1]!))) {
+      expect(MENU_ACTIONS, action).toContain(action);
+    }
   });
 });

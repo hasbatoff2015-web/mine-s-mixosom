@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
 import { HOME_MAX_DEFAULT } from '../shared/homes';
@@ -84,11 +85,15 @@ describe('main menu HUD and chrome', () => {
     expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
     expect(gameUi).toContain('isGameMenuScreenKind');
     expect(gameUi).toContain("action: 'open', screen: id");
+    expect(gameUi).toContain("id === 'rating'");
+    expect(gameUi).toContain("action: 'open', screen: 'rating'");
     expect(gameUi).toContain("action: 'rating_set'");
     expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
     expect(gameUi).toContain("target.closest('input, textarea, label')");
     expect(css).toContain('#app.controls-suppressed canvas');
-    expect(gameUi).toContain('ensureOverlayModal');
+    expect(css).toContain('#app.controls-suppressed #ui-root');
+    expect(gameUi).toContain('resetOverlayModal');
+    expect(gameUi).toContain('bindOverlayPointerShield');
     expect(gameUi).toContain('event.stopPropagation()');
     expect(css).toContain('.mc-menu-tile-icon');
     expect(cssRule('.mc-menu-tile-icon')).toContain('background: transparent;');
@@ -97,6 +102,13 @@ describe('main menu HUD and chrome', () => {
     expect(icon[25]).toBe(6);
     expect(icon.readUInt32BE(16)).toBeLessThanOrEqual(128);
     expect(icon.readUInt32BE(20)).toBeLessThanOrEqual(128);
+    const alpha = execFileSync('python3', ['-c', [
+      'from PIL import Image',
+      "im = Image.open('public/ui/menu/icon_rating.png').convert('RGBA')",
+      'zeros = sum(1 for px in im.getdata() if px[3] == 0)',
+      "print('transparent' if zeros > 1000 and im.getpixel((0,0))[3] == 0 else 'opaque')",
+    ].join('; ')], { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname.replace(/\/$/, '') });
+    expect(alpha.trim()).toBe('transparent');
   });
 
   it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {
@@ -141,6 +153,10 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('menuBackHtml(state.screen)');
     expect(gameUi).toContain('this.closeButtonHtml()');
     expect(gameSource).toContain('this.closeGameMenuAndResumeLook(true)');
+    expect(gameSource).toContain('resumeLookIfNoOverlay');
+    expect(gameSource).toContain('if (this.ui.isBlockingOverlay()) return;');
+    expect(gameSource).toContain('this.ui.closeGameMenu();');
+    expect(gameSource).toContain('this.ui.closeTrade();');
   });
 
   it('keeps homes, friends, claims and auction pages in inventory chrome', () => {

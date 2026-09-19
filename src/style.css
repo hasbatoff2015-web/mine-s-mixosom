@@ -1185,7 +1185,7 @@ button {
 
 .modal-backdrop {
   position: absolute;
-  z-index: 20;
+  z-index: 30;
   inset: 0;
   display: grid;
   place-items: center;
@@ -3592,6 +3592,10 @@ button {
 #touch-joystick,
 #touch-actions {
   display: none;
+}
+
+#app.controls-suppressed #ui-root {
+  pointer-events: auto;
 }
 
 #app.controls-suppressed #hud-corner,

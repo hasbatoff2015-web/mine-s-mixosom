@@ -230,6 +230,8 @@ describe('game menu plugin', () => {
     const clans = lastOf<ServerMenuMessage>(ada.sink, 'menu');
     expect(clans?.ratingKind).toBe('clans-money');
     expect(clans?.personalText).toBe('Вы не состоите в клане');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'rating_set', ratingKind: 'clans-kills' });
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.ratingKind).toBe('clans-kills');
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('root');
   });
@@ -274,6 +276,9 @@ describe('game menu plugin', () => {
     clan = lastOf<ServerClanMessage>(ada.sink, 'clan');
     expect(clan?.screen).toBe('card');
     expect(clan?.screen).not.toBe('closed');
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).not.toBe('closed');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_clan', clanId });
+    expect(lastOf<ServerClanMessage>(ada.sink, 'clan')?.screen).toBe('card');
     world.handleClanAction(ada.player, { type: 'clan_action', action: 'back' });
     clan = lastOf<ServerClanMessage>(ada.sink, 'clan');
     expect(clan?.screen).toBe('ranking');

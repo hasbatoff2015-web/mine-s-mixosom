@@ -264,6 +264,10 @@ interface ContainerAdapter {
   slots: Array<ItemStack | null>;
 }
 
+interface OverlayCloseOptions {
+  keepModal?: boolean;
+}
+
 export class GameUI {
   private screen?: HTMLElement;
   private hud: HTMLElement;
@@ -1383,7 +1387,8 @@ export class GameUI {
 
   closeInventory(returnStacks = true): void {
     const context = this.inventoryContext;
-    if (context && returnStacks) {
+    if (!context) return;
+    if (returnStacks) {
       for (const stack of [...this.craftSlots, this.cursorStack]) {
         if (!stack) continue;
         const remainder = context.inventory.add(stack);
@@ -1391,10 +1396,6 @@ export class GameUI {
       }
       context.onChanged();
     }
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.inventoryContext = undefined;
     this.craftMenuOpen = false;
     this.craftSearch = '';
@@ -1402,11 +1403,11 @@ export class GameUI {
     this.cursorStack = null;
     this.craftSlots = [];
     this.ghostCraft = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay();
   }
 
   isInventoryOpen(): boolean {
-    return this.modal !== undefined;
+    return this.inventoryContext !== undefined;
   }
 
   playTotemActivation(): void {
@@ -1549,13 +1550,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeClan();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('auction');
     if (alreadyOpen) this.patchAuction(state);
     else {
       this.auctionState = state;
@@ -1572,19 +1567,14 @@ export class GameUI {
     this.openAuction(state, this.auctionActions);
   }
 
-  closeAuction(): void {
+  closeAuction(options?: OverlayCloseOptions): void {
     if (this.auctionSearchTimer !== undefined) {
       window.clearTimeout(this.auctionSearchTimer);
       this.auctionSearchTimer = undefined;
     }
-    if (this.auctionState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.auctionState = undefined;
-      this.setControlsSuppressed(false);
-    }
+    if (!this.auctionState) return;
+    this.auctionState = undefined;
+    this.releaseOverlay(options);
   }
 
   openClan(state: ServerClanMessage, actions: ClanGuiActions): void {
@@ -1594,13 +1584,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isClanOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('clan');
     if (alreadyOpen) this.patchClan(state);
     else {
       this.clanState = state;
@@ -1617,19 +1601,14 @@ export class GameUI {
     this.openClan(state, this.clanActions);
   }
 
-  closeClan(): void {
+  closeClan(options?: OverlayCloseOptions): void {
     if (this.clanSearchTimer !== undefined) {
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = undefined;
     }
-    if (this.clanState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.clanState = undefined;
-      this.setControlsSuppressed(false);
-    }
+    if (!this.clanState) return;
+    this.clanState = undefined;
+    this.releaseOverlay(options);
   }
 
   openBuyer(state: ServerBuyerMessage, actions: BuyerGuiActions): void {
@@ -1639,13 +1618,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isBuyerOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('buyer');
     if (alreadyOpen) this.patchBuyer(state);
     else {
       this.buyerState = state;
@@ -1662,15 +1635,10 @@ export class GameUI {
     this.openBuyer(state, this.buyerActions);
   }
 
-  closeBuyer(): void {
-    if (this.buyerState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.buyerState = undefined;
-      this.setControlsSuppressed(false);
-    }
+  closeBuyer(options?: OverlayCloseOptions): void {
+    if (!this.buyerState) return;
+    this.buyerState = undefined;
+    this.releaseOverlay(options);
   }
 
   openGameMenu(state: ServerMenuMessage, actions: MenuGuiActions): void {
@@ -1680,13 +1648,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isGameMenuOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeBuyer();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('menu');
     this.menuState = state;
     this.renderGameMenu();
     this.setControlsSuppressed(true);
@@ -1700,14 +1662,10 @@ export class GameUI {
     this.openGameMenu(state, this.menuActions);
   }
 
-  closeGameMenu(): void {
+  closeGameMenu(options?: OverlayCloseOptions): void {
     if (!this.menuState) return;
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.menuState = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay(options);
   }
 
   openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
@@ -1717,13 +1675,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isTradeOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('trade');
     this.tradeState = state;
     this.renderTrade();
     this.setControlsSuppressed(true);
@@ -1737,14 +1689,10 @@ export class GameUI {
     this.openTrade(state, this.tradeActions);
   }
 
-  closeTrade(): void {
+  closeTrade(options?: OverlayCloseOptions): void {
     if (!this.tradeState) return;
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.tradeState = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay(options);
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -2081,12 +2029,10 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const stage = containerStageSize('craft', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
           <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
@@ -2101,7 +2047,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
     this.bindCraftSearch();
   }
@@ -2169,15 +2114,13 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const stage = containerStageSize('creative', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     const catalog = obtainableItems();
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
@@ -2196,7 +2139,6 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
   }
 
@@ -2230,11 +2172,9 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.dataset.bookUi = layoutKey;
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.dataset.bookUi = layoutKey;
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
@@ -2245,7 +2185,6 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
     this.bindRecipeBookControls(context);
   }
@@ -2761,16 +2700,48 @@ export class GameUI {
   }
 
   /** Keep the backdrop in the DOM across nested screens so a click cannot fall through to the canvas. */
-  private ensureOverlayModal(): HTMLDivElement {
-    if (this.modal && this.root.contains(this.modal)) {
-      this.modal.className = 'modal-backdrop mc-backdrop';
-      return this.modal;
+  private resetOverlayModal(): HTMLDivElement {
+    const next = document.createElement('div');
+    next.className = 'modal-backdrop mc-backdrop';
+    if (this.modal && this.root.contains(this.modal)) this.modal.replaceWith(next);
+    else {
+      this.modal?.remove();
+      this.root.append(next);
     }
+    this.modal = next;
+    return next;
+  }
+
+  private closeSiblingOverlays(keep: 'auction' | 'clan' | 'buyer' | 'menu' | 'trade'): void {
+    const keepModal = { keepModal: true } as const;
+    if (keep !== 'auction') this.closeAuction(keepModal);
+    if (keep !== 'clan') this.closeClan(keepModal);
+    if (keep !== 'buyer') this.closeBuyer(keepModal);
+    if (keep !== 'menu') this.closeGameMenu(keepModal);
+    if (keep !== 'trade') this.closeTrade(keepModal);
+    this.closeInventory(false);
+  }
+
+  private releaseOverlay(options?: OverlayCloseOptions): void {
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    if (options?.keepModal) return;
     this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.root.append(this.modal);
-    return this.modal;
+    this.modal = undefined;
+    this.setControlsSuppressed(false);
+  }
+
+  private bindOverlayPointerShield(modal: HTMLElement): void {
+    const stop = (event: Event) => event.stopPropagation();
+    modal.addEventListener('pointerdown', stop);
+    modal.addEventListener('pointerup', stop);
+    modal.addEventListener('mousedown', stop);
+    modal.addEventListener('mouseup', stop);
+    modal.addEventListener('click', stop);
+    modal.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
   }
 
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {
@@ -2908,13 +2879,11 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
       ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
       : '';
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         ${back}
         <div class="mc-panel" data-container-kind="chest">
@@ -2923,7 +2892,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindAuctionChrome();
     this.restoreAuctionInputFocus(keep);
   }
@@ -3049,6 +3017,7 @@ export class GameUI {
 
   private bindAuctionChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
     const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3221,7 +3190,7 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    const modal = this.ensureOverlayModal();
+    const modal = this.resetOverlayModal();
     const back = showsClanBack(state.screen, state.source)
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
@@ -3524,6 +3493,7 @@ export class GameUI {
 
   private bindClanChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3554,7 +3524,6 @@ export class GameUI {
         this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
       }, 160);
     });
-    this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
       event.stopPropagation();
       const current = this.clanState;
@@ -3644,7 +3613,7 @@ export class GameUI {
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
         ...(kind === 'invite_by_name' && inviteName !== undefined ? { name: inviteName } : {}),
       });
-    }, true);
+    });
   }
 
   private buyerStack(value: unknown): ItemStack | null {
@@ -3718,10 +3687,8 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${this.buyerBodyHtml(state)}
@@ -3729,7 +3696,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindBuyerChrome();
     this.restoreBuyerInputFocus(keep);
   }
@@ -3756,6 +3722,7 @@ export class GameUI {
 
   private bindBuyerChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
@@ -3851,7 +3818,7 @@ export class GameUI {
     const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    const modal = this.ensureOverlayModal();
+    const modal = this.resetOverlayModal();
     modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
@@ -3894,6 +3861,7 @@ export class GameUI {
   }
 
   private bindGameMenuChrome(): void {
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3919,7 +3887,6 @@ export class GameUI {
         event.preventDefault();
       }, { passive: false });
     }
-    this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
       event.stopPropagation();
       const actions = this.menuActions;
@@ -3940,6 +3907,7 @@ export class GameUI {
         event.preventDefault();
         const id = open.dataset.menuOpen;
         if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
+        else if (id === 'rating') actions.send({ type: 'menu_action', action: 'open', screen: 'rating' });
         else if (isGameMenuScreenKind(id) && id !== 'closed') {
           actions.send({ type: 'menu_action', action: 'open', screen: id });
         }
@@ -4055,7 +4023,7 @@ export class GameUI {
         return;
       }
       actions.send({ type: 'menu_action', action: kind });
-    }, true);
+    });
   }
 
   private renderTrade(): void {
@@ -4066,10 +4034,8 @@ export class GameUI {
     const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${tradeWindowChrome(state, (value) => this.escape(value), {
@@ -4081,7 +4047,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindTradeChrome();
     this.restoreTradeInputFocus(keep);
   }
@@ -4137,6 +4102,7 @@ export class GameUI {
 
   private bindTradeChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
     const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
     money?.addEventListener('pointerdown', (event) => event.stopPropagation());
