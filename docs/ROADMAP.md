@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-09-19: Timed world events + event chest
+
+- [x] Real-time event scheduler (daily HH:MM, server-local or UTC) with warning / spawn / unlock / cleanup offsets.
+- [x] First event type: daily resource chest + rotatable chest-anchored mini-location template.
+- [x] Shared `/wand` + `/wand clear` without breaking AutoMine private selection.
+- [x] Persist active event + snapshot; restore or cleanup after restart.
+- [x] Crimson Relic event-chest texture with source UV/alpha compatibility test.
+- [ ] Owner live Anarchy QA of `/wand`, template save, force spawn/unlock/cleanup, restart, and chest look.
+
 ## 2026-09-18: Third-person axe 180° handle flip
 
 - [x] Axes keep the shared tool position/scale/tilt and add a local 180° roll around sprite handle axis `(1, 1, 0)`.

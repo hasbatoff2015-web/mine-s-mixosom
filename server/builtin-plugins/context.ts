@@ -1,4 +1,4 @@
-import type { AutoMineManager } from '../services/autoMine';
+import type { WorldEventsManager } from '../services/worldEvents';
 import type { AuctionService, AuctionView } from '../services/auction';
 import type { BuyerService } from '../services/buyer';
 import type { ClanService, ClanView, ClanResult } from '../services/clan';
@@ -30,6 +30,7 @@ export interface BuiltinPluginContext {
   readonly rtpSessions: RtpSessionManager;
   readonly selection: PlayerSelectionService;
   readonly autoMine: AutoMineManager;
+  readonly worldEvents: WorldEventsManager;
   readonly economy: EconomyService;
   readonly auction: AuctionService;
   readonly clan: ClanService;

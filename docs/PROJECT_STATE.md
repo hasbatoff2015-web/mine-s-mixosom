@@ -1,6 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Timed world events + event chest — 2026-09-19
+
+- Anarchy builtin `world-events`: daily timed event foundation + first `resource_chest` event (warn 15 мин, spawn locked chest + 5×5 shrine, unlock 5 мин, cleanup 2 ч + snapshot restore). Persist `plugin-data/world-events/state.json`.
+- Shared `/wand` on `PlayerSelectionService` (click1/click2/cycle). AutoMine keeps a private selection and skips while wand mode is on; `/automine wand` turns shared wand off.
+- `BlockId.EventChest = 166`, texture `entity/chest/event` (Crimson Relic, UV/alpha 1:1 with source). OakSign stays 165.
+- Подробности: `docs/reports/2026-09-19_world-events-event-chest.md`.
+
 ## Последний проход: Third-person axe 180° handle flip — 2026-09-18
+
 
 - Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.
 - Кирки, лопаты, мотыги остаются на unflipped tool pose. Мечи — sword pose. First-person / block / generated / bow не менялись.
@@ -477,7 +485,7 @@
 ## Последний проход: AutoMine plugin — 2026-09-09
 
 - Builtin Anarchy plugin `automine` (`/automine`). Кубоидные авто-шахты, weighted random из 12 существующих BlockId, reset через `VoxelWorld.applyBlockBatch` (64 блока/тик), эвакуация через `TeleportService`.
-- Выделение — свой wand (`wooden_axe`), не Claims / не `PlayerSelectionService`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
+- Выделение авто-шахты — свой wand (`wooden_axe`) на `AutoMineManager`, не Claims. Общий `/wand` живёт в `PlayerSelectionService` и **не** перехватывает клики AutoMine, пока не включён `activateWand`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
 - Шансы зашиты в коде (сумма 100%, Obsidian = Coal, Titanium самый редкий). Нет команд изменения composition.
 - TitaniumOre остаётся 161; TNT Powerful/Destructive 162/163 — конфликт ID не возвращался.
 - Handoff: `docs/reports/2026-09-09_automine-plugin.md`.

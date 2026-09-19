@@ -44,5 +44,10 @@ export function isChestWindowKind(kind: ContainerKind | undefined): boolean {
 }
 
 export function isChestLikeBlock(block: BlockId): boolean {
-  return block === BlockId.Chest || block === BlockId.PortalChest;
+  return block === BlockId.Chest || block === BlockId.PortalChest || block === BlockId.EventChest;
+}
+
+/** Shared coord-keyed 27-slot chests. Portal chests are player-owned and excluded. */
+export function isSharedWorldChestBlock(block: BlockId): boolean {
+  return block === BlockId.Chest || block === BlockId.EventChest;
 }

@@ -96,8 +96,9 @@ import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
-import { PlayerSelectionService } from './services/selection';
-import { AutoMineManager } from './services/autoMine';
+import { PlayerSelectionService, volumeContains } from './services/selection';
+import { AutoMineManager, mineVolume } from './services/autoMine';
+import { WorldEventsManager } from './services/worldEvents';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
@@ -125,7 +126,7 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
-import { migrateClaimStore, type Claim } from './services/claims';
+import { migrateClaimStore, claimsAt, type Claim } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
@@ -503,6 +504,7 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly autoMine: AutoMineManager;
+  readonly worldEvents: WorldEventsManager;
   readonly economy: EconomyService;
   readonly auction: AuctionService;
   readonly clan: ClanService;
@@ -746,6 +748,61 @@ export class WorldInstance {
       log: (message) => serverLog(`plugin automine ${message}`),
       onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
     });
+    this.worldEvents = new WorldEventsManager({
+      world: this.world,
+      worldId: () => this.worldId,
+      now: () => Date.now(),
+      random: () => Math.random(),
+      spawn: () => this.spawn,
+      loadStore: () => this.pluginStore.load('world-events/state', {}),
+      saveStore: (store) => this.pluginStore.save('world-events/state', store),
+      claimsAt: (x, y, z) => claimsAt(this.loadClaimStore().claims, this.worldId, x, y, z).length > 0,
+      autoMineAt: (x, y, z) => this.autoMine.list().some((mine) => (
+        mine.worldId === this.worldId && volumeContains(mineVolume(mine), x, y, z)
+      )),
+      specialZoneAt: (x, y, z) => {
+        const store = this.pluginStore.load<{ portals?: Array<{ worldId?: string; volume?: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } }> }>(
+          'rtpportal/portals',
+          { portals: [] },
+        );
+        return (store.portals ?? []).some((portal) => (
+          portal.worldId === this.worldId
+          && portal.volume
+          && volumeContains(portal.volume, x, y, z)
+        ));
+      },
+      homes: () => this.homes.all(),
+      players: () => this.connectedPlayers().map((player) => ({
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+      })),
+      flush: () => this.flushBlockChanges(),
+      markDirty: () => { this.dirty = true; },
+      closeChestWindow: (x, y, z) => {
+        for (const player of this.players.values()) {
+          if (player.window.kind === 'chest' && player.window.x === x && player.window.y === y && player.window.z === z) {
+            player.window = { kind: 'inventory' };
+            player.inventoryDirty = true;
+            this.flushPlayerInventory(player);
+          }
+        }
+      },
+      broadcast: (text) => this.broadcastChat('system', 'server', text),
+      send: (playerId, text) => {
+        const player = this.players.get(playerId);
+        if (!player) return;
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      log: (message) => serverLog(`plugin world-events ${message}`),
+    });
+    this.gameplay.isExplosionProtected = (x, y, z) => this.worldEvents.isProtected(x, y, z);
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
@@ -835,6 +892,7 @@ export class WorldInstance {
         rtpSessions: this.rtpSessions,
         selection: this.selection,
         autoMine: this.autoMine,
+        worldEvents: this.worldEvents,
         economy: this.economy,
         auction: this.auction,
         clan: this.clan,
@@ -2992,6 +3050,7 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
+    this.worldEvents.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {

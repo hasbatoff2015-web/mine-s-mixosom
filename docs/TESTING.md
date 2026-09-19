@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-19 Timed world events + event chest
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/special-preview-contract.test.ts --maxWorkers=2
+```
+
+Contracts: next daily occurrence / warning / unlock / cleanup timestamps; template requires exactly one chest and rotates 90°; wand click cycle pos1→pos2; locked chest then unlock then snapshot restore; restart recover; AutoMine wand still works when shared wand is off; event atlas 128×128 same alpha as source; ordinary/portal chest textures unchanged.
+
 ## 2026-09-18 Third-person axe 180° handle flip
 
 Focused:

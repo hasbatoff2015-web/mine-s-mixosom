@@ -201,6 +201,7 @@ import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
+import { CONTAINER_STRINGS } from '../ui/containerStrings';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { processDeferredLighting } from '../world/LightingAdapter';
@@ -1406,7 +1407,9 @@ export class Game {
     const y = window.y ?? 0;
     const z = window.z ?? 0;
     applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest);
-    const block = kind === 'chest' ? BlockId.Chest
+    const worldBlock = session.world.getBlock(x, y, z);
+    const block = kind === 'chest'
+      ? (worldBlock === BlockId.EventChest ? BlockId.EventChest : BlockId.Chest)
       : kind === 'portal-chest' ? BlockId.PortalChest
         : kind === 'furnace' ? BlockId.Furnace
           : BlockId.CraftingTable;
@@ -4031,6 +4034,7 @@ export class Game {
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'portal-chest' ? { chest: session.portalChest } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
+      ...(hit.block === BlockId.EventChest ? { containerTitle: CONTAINER_STRINGS.eventChest } : {}),
       onClose: () => {
         this.closeInventoryAndResumeLook();
         void this.saveSession();
@@ -4981,7 +4985,7 @@ export class Game {
   private releaseBlockEntityContents(hit: VoxelHit): void {
     const session = this.session!;
     const key = `${hit.x},${hit.y},${hit.z}`;
-    if (hit.block === BlockId.Chest) {
+    if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
       session.world.chests.delete(key);
