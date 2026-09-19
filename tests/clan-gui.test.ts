@@ -151,6 +151,10 @@ describe('clan overlay CSS contracts', () => {
     expect(gameUi).toContain('closeSiblingOverlays');
     expect(gameUi).toContain('return this.inventoryContext !== undefined');
     expect(css).toContain('#e8a8a8');
+    expect(css).toMatch(/\.mc-clan-role \{[^}]*color: #e8e8e8/);
+    expect(css).not.toMatch(/\.mc-clan-role \{[^}]*color: #2f2f2f/);
+    expect(css).toMatch(/\.mc-clan-owner \{[^}]*color: #d8d8d8/);
+    expect(css).not.toMatch(/\.mc-clan-owner \{[^}]*color: #404040/);
     expect(gameUi).toContain("action: 'select_clan'");
     expect(gameUi).toContain("action: 'set_ranking_sort'");
     expect(gameUi).not.toMatch(/type: 'clan_action',\s*action: 'money'/);

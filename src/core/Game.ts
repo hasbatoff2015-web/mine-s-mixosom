@@ -2358,7 +2358,13 @@ export class Game {
 
   private resumeLookIfNoOverlay(): void {
     if (this.ui.isBlockingOverlay() || this.ui.isHologramEditorOpen()) return;
-    this.enterPlaying();
+    this.input.clearHeldKeys();
+    this.ui.hidePointerLockFallback();
+    this.lifecycle.endOnlineRespawnRestore();
+    this.lifecycle.setState(lifecycleAfterWorldSessionEnter(this.lifecycle.state));
+    this.previousTime = performance.now();
+    this.accumulator = 0;
+    this.canvas.focus({ preventScroll: true });
     this.input.tryRequestPointerLock();
   }
 

@@ -8,7 +8,7 @@
 - PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
 - Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
 - Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
-- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay`; transparent `icon_rating.png`. Не мержить без ревью владельца.
+- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay` **не** вызывает `enterPlaying()` (только PLAYING + pointer lock, если нет blocking overlay); роли `.mc-clan-role` `#e8e8e8`, owner/card-meta `#d8d8d8`. Transparent `icon_rating.png`. Не мержить без ревью владельца.
 - Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
 
 ## Последний проход: Third-person axe 180° handle flip — 2026-09-18

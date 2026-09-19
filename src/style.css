@@ -2436,10 +2436,14 @@ button {
 
 .mc-clan-role {
   flex: none;
-  color: #2f2f2f;
+  color: #e8e8e8;
   font-size: calc(5px * var(--mc-ui-scale, 3));
   font-weight: 700;
   white-space: nowrap;
+}
+
+.mc-clan-row.is-owner .mc-clan-role {
+  color: #ffe566;
 }
 
 .mc-clan-kills,
@@ -2717,7 +2721,7 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: calc(6px * var(--mc-ui-scale, 3));
-  color: #404040;
+  color: #d8d8d8;
   font-size: calc(6px * var(--mc-ui-scale, 3));
   white-space: nowrap;
 }

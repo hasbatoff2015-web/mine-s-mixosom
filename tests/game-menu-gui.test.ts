@@ -155,6 +155,12 @@ describe('main menu HUD and chrome', () => {
     expect(gameSource).toContain('this.closeGameMenuAndResumeLook(true)');
     expect(gameSource).toContain('resumeLookIfNoOverlay');
     expect(gameSource).toContain('if (this.ui.isBlockingOverlay()) return;');
+    const resumeLook = gameSource.slice(
+      gameSource.indexOf('private resumeLookIfNoOverlay'),
+      gameSource.indexOf('private closeAuctionAndResumeLook'),
+    );
+    expect(resumeLook).toContain('tryRequestPointerLock');
+    expect(resumeLook).not.toContain('this.enterPlaying()');
     expect(gameSource).toContain('this.ui.closeGameMenu();');
     expect(gameSource).toContain('this.ui.closeTrade();');
   });
