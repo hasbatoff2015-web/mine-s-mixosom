@@ -3546,13 +3546,16 @@ export class GameUI {
     });
     this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
-      event.preventDefault();
       event.stopPropagation();
       const current = this.clanState;
       const actions = this.clanActions;
       if (!current || !actions) return;
       const target = event.target as HTMLElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.closest('input, textarea, label')) {
+        return;
+      }
       if (target.closest('[data-ui="close"]')) {
+        event.preventDefault();
         actions.close();
         return;
       }
@@ -3911,13 +3914,16 @@ export class GameUI {
     }
     this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
-      event.preventDefault();
       event.stopPropagation();
       const actions = this.menuActions;
       const current = this.menuState;
       if (!actions || !current) return;
       const target = event.target as HTMLElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.closest('input, textarea, label')) {
+        return;
+      }
       if (target.closest('[data-ui="close"]')) {
+        event.preventDefault();
         actions.close();
         return;
       }

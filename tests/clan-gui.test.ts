@@ -147,6 +147,7 @@ describe('clan overlay CSS contracts', () => {
     expect(gameUi).toContain('.mc-clan-icon-pick[data-clan-icon]');
     expect(gameUi).toContain('isClanActionKind');
     expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
+    expect(gameUi).toContain("target.closest('input, textarea, label')");
     expect(gameUi.indexOf("action: 'select_clan'")).toBeLessThan(gameUi.indexOf('.mc-clan-icon-pick[data-clan-icon]'));
     expect(gameUi).toContain("event.stopPropagation(), true");
     expect(gameUi).toContain('event.preventDefault();');
