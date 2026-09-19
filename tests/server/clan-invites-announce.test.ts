@@ -13,7 +13,6 @@ import {
   type ServerClanMessage,
 } from '../../shared/protocol';
 import {
-  CLAN_ALREADY_IN_OTHER_CLAN_ERROR,
   CLAN_ANNOUNCEMENT_COOLDOWN_MS,
   CLAN_ANNOUNCE_EMPTY_ERROR,
   CLAN_INVITE_TTL_MS,
@@ -28,9 +27,9 @@ import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
 import {
+  CLAN_ALREADY_OTHER_CLAN_ERROR,
   CLAN_FULL_ERROR,
   CLAN_INVITE_MISSING_ERROR,
-  CLAN_MISSING_ERROR,
   CLAN_NOT_IN_CLAN_ERROR,
   CLAN_OWNER_ONLY_ERROR,
   ClanService,
@@ -127,7 +126,7 @@ describe('clan invitations and announcements', () => {
 
   it('accepts a valid invite and rejects expired, foreign, full, and already-in-clan cases', async () => {
     let now = 1_000;
-    const { clan, economy } = await setup(() => now);
+    const { clan } = await setup(() => now);
     expect(clan.createClan('leader', 'Warriors', 'swords').ok).toBe(true);
     expect(clan.createClan('other', 'Foxes', 'moon').ok).toBe(true);
     expect(clan.invitePlayer('leader', 'out').ok).toBe(true);
@@ -139,7 +138,7 @@ describe('clan invitations and announcements', () => {
 
     expect(clan.invitePlayer('other', 'vet').ok).toBe(true);
     const otherInvite = clan.invitationsFor('vet')[0]!;
-    expect(clan.acceptInvitation('out', otherInvite.invitationId).error).toBe(CLAN_ALREADY_IN_OTHER_CLAN_ERROR);
+    expect(clan.acceptInvitation('out', otherInvite.invitationId).error).toBe(CLAN_ALREADY_OTHER_CLAN_ERROR);
 
     now += CLAN_INVITE_TTL_MS + 1;
     expect(clan.invitePlayer('leader', 'mem').ok).toBe(true);
@@ -180,21 +179,17 @@ describe('clan invitations and announcements', () => {
     expect(clan.buildMessage('out').screen).toBe('accept');
   });
 
-  it('lets a player in a clan open menu invitations without accepting another clan', async () => {
+  it('lets a player in a clan open menu invitations without joining another clan', async () => {
     const { clan } = await setup();
-    clan.createClan('leader', 'Warriors', 'swords');
     clan.createClan('other', 'Foxes', 'moon');
     expect(clan.invitePlayer('other', 'leader').ok).toBe(true);
+    expect(clan.invitationsFor('leader')).toHaveLength(1);
+    expect(clan.createClan('leader', 'Warriors', 'swords').ok).toBe(true);
+    expect(clan.invitationsFor('leader')).toHaveLength(0);
     expect(clan.openAccept('leader').error).toMatch(/уже состоите/i);
     expect(clan.openAccept('leader', { allowInClan: true }).ok).toBe(true);
-    expect(clan.buildMessage('leader').invitations?.[0]?.clanName).toBe('Foxes');
-    clan.handleAction('leader', {
-      type: 'clan_action',
-      action: 'confirm_accept',
-      invitationId: clan.invitationsFor('leader')[0]!.invitationId,
-    });
-    expect(clan.playerClan('leader')?.name).toBe('Warriors');
-    expect(clan.buildMessage('leader').message).toBe(CLAN_ALREADY_IN_OTHER_CLAN_ERROR);
+    expect(clan.buildMessage('leader').screen).toBe('accept');
+    expect(clan.buildMessage('leader').invitations ?? []).toHaveLength(0);
   });
 
   it('allows only the leader to send a turquoise clan announcement with the chat limit and 3h cooldown', async () => {
@@ -304,7 +299,7 @@ describe('clan invitations and announcements', () => {
     expect(clan.invitePlayer('leader', 'out').ok).toBe(true);
     const invite = clan.invitationsFor('out')[0]!;
     expect(clan.deleteClan('leader').ok).toBe(true);
-    expect(clan.acceptInvitation('out', invite.invitationId).error).toBe(CLAN_MISSING_ERROR);
+    expect(clan.acceptInvitation('out', invite.invitationId).error).toBe(CLAN_INVITE_MISSING_ERROR);
   });
 });
 
