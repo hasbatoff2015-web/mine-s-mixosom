@@ -1,6 +1,27 @@
 # Состояние проекта
 
-## Последний проход: Repair potion max-durability + armor bar — 2026-09-18
+## Последний проход: Third-person axe 180° handle flip — 2026-09-18
+
+- Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.
+- Кирки, лопаты, мотыги остаются на unflipped tool pose. Мечи — sword pose. First-person / block / generated / bow не менялись.
+- Не per-item override: все `*_axe` IDs (wooden/stone/iron/diamond/ruby/titanium).
+- Подробности: `docs/reports/2026-09-18_third-person-axe-handle-flip.md`.
+
+## Предыдущий проход: Third-person sword vs tool poses — 2026-09-18
+
+- Remote/third-person held items: **все мечи** делят одну pose (`y 0.225`, `z -0.245`, rot `-0.1232 / 1.4668 / -0.1232`, scale `0.55`), **все `kind: 'tool'` кроме топоров** — другую (`y 0.215`, `z -0.155`, та же rotation/scale). Не per-item override для `diamond_sword` / `iron_pickaxe`.
+- `block` / `generated` / `handheld` (stick, flint) / `bow` и first-person `FIRST_PERSON_SPRITE_POSE` не менялись. Классификация mesh/FP остаётся `handheld`.
+- Позы живут в `thirdPersonHeldItem.ts`; `PlayerVisual.setHeldItem` выбирает по item kind. `/moveitems` RESET читает эти же production defaults.
+- Подробности: `docs/reports/2026-09-18_third-person-sword-tool-poses.md`.
+
+## Предыдущий проход: Third-person held-item calibrator `/moveitems` — 2026-09-18
+
+- DEV-страница `http://localhost:4173/moveitems` — live калибратор предметов в руке **другого игрока**. Не пишет production pose, не меняет first-person `FIRST_PERSON_SPRITE_POSE`, gameplay, protocol и сервер.
+- Сцена: маленький `VoxelWorld` + `WorldRenderer`, канонический `PlayerVisual` (тот же путь, что `RemotePlayerView.setHeldItem`), orbit-камера. Панель: position/rotation/scale, RESET, COPY / COPY ALL, переключение реальных item id.
+- Production third-person defaults вынесены в `thirdPersonHeldItem.ts` без смены чисел. Калибратор применяет live overlay через `PlayerVisual.applyHeldItemCalibration`.
+- Подробности: `docs/reports/2026-09-18_moveitems-third-person-calibrator.md`.
+
+## Предыдущий проход: Repair potion max-durability + armor bar — 2026-09-18
 
 - **Зелье починки** теперь восстанавливает **50% максимальной** remaining durability: `new = min(max, current + round(max * 0.5))`. Не 50% потерянной прочности. Примеры max=100: 100→100, 90→100, 20→70, 10→60, 1→51, 0→50; два глотка `20→70→100` и `10→60→100`. Целые предметы и предметы без durability не меняются. Одна формула: `restoredRemainingDurability` (SP `SurvivalSystem.consumeFood`, Anarchy `ServerGameplay` после consume).
 - Полоса прочности — тот же `slotDurabilityBarHtml` / `GameUI.slotHtml` для hotbar, inventory, offhand и **всех armor slots** (head/chest/legs/feet). Появляется только если `stack.durability` задан (remaining HP; omit = pristine).

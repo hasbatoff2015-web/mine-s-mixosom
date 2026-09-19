@@ -44,9 +44,24 @@ function playerSkinHashPlugin(): Plugin {
   };
 }
 
+function moveItemsDevRoutePlugin(): Plugin {
+  return {
+    name: 'moveitems-dev-route',
+    configureServer(server) {
+      server.middlewares.use((req, _res, next) => {
+        const path = req.url?.split('?')[0] ?? '';
+        if (path === '/moveitems' || path === '/moveitems/') {
+          req.url = req.url?.replace(/^\/moveitems\/?/, '/index.html') ?? '/index.html';
+        }
+        next();
+      });
+    },
+  };
+}
+
 export default defineConfig({
   base: './',
-  plugins: [playerSkinHashPlugin()],
+  plugins: [playerSkinHashPlugin(), moveItemsDevRoutePlugin()],
   build: {
     outDir: 'dist',
     assetsDir: 'assets',

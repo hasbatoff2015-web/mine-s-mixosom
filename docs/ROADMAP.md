@@ -1,5 +1,17 @@
 # Roadmap
 
+## 2026-09-18: Third-person axe 180° handle flip
+
+- [x] Axes keep the shared tool position/scale/tilt and add a local 180° roll around sprite handle axis `(1, 1, 0)`.
+- [x] Pickaxes, shovels, hoes, swords, block/generated/bow, first-person unchanged.
+
+## 2026-09-18: Third-person sword vs tool poses
+
+- [x] Production third-person: all swords share one pose; all other `kind: 'tool'` items share the iron_pickaxe pose.
+- [x] Leave block / generated / bow / first-person unchanged.
+
+## 2026-09-18: Third-person held-item calibrator
+
 ## 2026-09-18: Repair potion max-durability + armor bar
 
 - [x] Зелье починки: 50% **максимальной** durability (`current + round(max * 0.5)`), clamp, без изменения целых предметов.
