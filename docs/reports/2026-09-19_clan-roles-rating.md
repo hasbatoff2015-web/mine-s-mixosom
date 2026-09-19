@@ -51,7 +51,7 @@ npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/
 
 `typecheck`, `typecheck:client`, `typecheck:server`, `typecheck:sim`, `check:boundaries` PASS.
 
-`test:server` / `test:sim` / `build` recorded after the first commit on this branch.
+`npm run test:server` **56 files / 548 tests PASS**. `npm run test:sim` **12 files / 66 tests PASS**. `npm run build`, `check:size`, `check:archive` PASS. Production **4.78 MiB / 405 files** (`icon_rating.png` 19.9 KiB).
 
 ## Visual QA
 

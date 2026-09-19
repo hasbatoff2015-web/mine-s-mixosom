@@ -8,7 +8,7 @@
 - PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
 - Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
 - Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
-- Гейты: focused clan/economy/friends/menu **80/80 PASS**; четыре typecheck + boundaries PASS. Live Anarchy GUI QA не выполнялся. Не мержить без ревью владельца.
+- Гейты: focused clan/economy/friends/menu **80/80 PASS**; `test:server` **56/548**; `test:sim` **12/66**; четыре typecheck + boundaries + build + size/archive PASS (**4.78 MiB / 405 files**). Live Anarchy GUI QA не выполнялся. Не мержить без ревью владельца.
 - Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
 
 ## Последний проход: Third-person axe 180° handle flip — 2026-09-18
