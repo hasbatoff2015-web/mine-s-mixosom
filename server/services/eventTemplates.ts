@@ -68,7 +68,7 @@ export function rotateOffset(dx: number, dy: number, dz: number, yaw: TemplateYa
     x = nextX;
     z = nextZ;
   }
-  return { x, y: dy, z };
+  return { x: x || 0, y: dy, z: z || 0 };
 }
 
 export function rotateFacing(facing: HorizontalFacing, yaw: TemplateYaw): HorizontalFacing {

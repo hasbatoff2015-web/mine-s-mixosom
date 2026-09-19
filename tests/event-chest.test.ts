@@ -3,9 +3,8 @@ import { BlockId, getBlockDefinition } from '../src/blocks';
 import {
   isChestLikeBlock,
   isSharedWorldChestBlock,
-  isUseTargetBlock,
 } from '../src/inventory';
-import { isUseTargetBlock as worldIsUseTarget } from '../src/world/blockInteraction';
+import { isUseTargetBlock } from '../src/world/blockInteraction';
 import { itemHeldMeshKind, itemIconDescriptor } from '../src/items';
 import {
   CHEST_TEXTURE_KEY,
@@ -37,7 +36,7 @@ describe('event chest registration', () => {
     expect(isChestLikeBlock(BlockId.EventChest)).toBe(true);
     expect(isSharedWorldChestBlock(BlockId.EventChest)).toBe(true);
     expect(isSharedWorldChestBlock(BlockId.PortalChest)).toBe(false);
-    expect(worldIsUseTarget(BlockId.EventChest)).toBe(true);
+    expect(isUseTargetBlock(BlockId.EventChest)).toBe(true);
     expect(chestTextureKeyForBlock(BlockId.EventChest)).toBe(EVENT_CHEST_TEXTURE_KEY);
     expect(chestTextureKeyForBlock(BlockId.Chest)).toBe(CHEST_TEXTURE_KEY);
     expect(chestTextureKeyForBlock(BlockId.PortalChest)).toBe(PORTAL_CHEST_TEXTURE_KEY);

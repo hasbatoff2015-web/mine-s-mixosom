@@ -50,6 +50,20 @@ Updated: Plugin wiring (`WorldInstance`, builtin index/context), AutoMine skip +
 npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/special-preview-contract.test.ts --maxWorkers=2
 ```
 
+**11 files / 44 tests PASS** (scheduler 4, templates 3, wand 2, world-events 7, plugin 2, AutoMine 3, event-chest 2, texture 3, chest-model 10, portal texture 4, special-preview 4). Related regression: portal-chest + anarchy-chest-sync + plugin-boundaries **27/27 PASS**.
+
+`npm run typecheck`, `typecheck:server`, `typecheck:client`, `typecheck:sim`, `check:boundaries` — PASS.
+
+## Visual QA
+
+Inspected committed atlases:
+
+- `entity/chest/event.png` — 128×128; same island layout as `normal.png` (latch 12×10, lid 28×28, body strips). Crimson body, gunmetal latch with ruby, gold/ruby diamonds on lid and front. Transparent padding unchanged.
+- `block/event_chest.png` — 16×16 crimson tile with gold band and ruby latch.
+- `entity/chest/normal.png` and `portal.png` unchanged.
+
+In-game pointer-lock Anarchy session was not available in this cloud agent.
+
 ## Manual QA
 
 A. `/wand` → click1 / click2 / `/wand clear`  
