@@ -1,10 +1,18 @@
 # Состояние проекта
 
+## Последний проход: Auction history + menu unread badges — 2026-09-19
+
+- Формат объявления главы: `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - текст` (без кавычек, цвет `#4ecfdc` без изменений).
+- Аукцион: кнопка **История сделок** (вложенный экран меню). Только подтверждённые buy/sell, 24ч TTL, UI 20 записей, persist `plugin-data/auction/history.json`.
+- Unread badges на плитках Друзья/Кланы/Аукцион/Обмен: жёлтый квадрат, чёрная цифра. Сервер `NotificationService` (`plugin-data/notifications/unread.json`). Сброс при `menu_action open` соответствующей вкладки.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_auction-history-menu-notifications.md`.
+
 ## Последний проход: Clan invitations + leader announcement — 2026-09-19
 
 - Рейтинг: суммы монет рисуются через существующий `icon_coin.png` / `.mc-menu-coin`, без Unicode 🪙.
 - Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
-- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "…"` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
+- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - …` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
 - Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
 - Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
 - Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.

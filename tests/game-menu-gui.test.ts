@@ -146,6 +146,7 @@ describe('main menu HUD and chrome', () => {
     expect(showsMenuBack('root')).toBe(false);
     expect(showsMenuBack('homes')).toBe(true);
     expect(showsMenuBack('claim-settings')).toBe(true);
+    expect(showsMenuBack('auction-history')).toBe(true);
     expect(menuBackHtml('root')).toBe('');
     expect(menuBackHtml('friends')).toContain('class="mc-close mc-back"');
     expect(menuBackHtml('friends')).toContain('data-menu-action="back"');
@@ -219,6 +220,8 @@ describe('main menu HUD and chrome', () => {
     expect(auction).toContain('auction_open');
     expect(auction).toContain('auction_list');
     expect(auction).toContain('auction_sell');
+    expect(auction).toContain('auction_history');
+    expect(auction).toContain('История сделок');
 
     const trade = menuBodyHtml(menu({
       screen: 'trade',
@@ -260,5 +263,51 @@ describe('main menu HUD and chrome', () => {
     const clansTab = menuBodyHtml(menu({ screen: 'clans' }), (value) => value);
     expect(clansTab).toContain('clans_invitations');
     expect(clansTab).toContain('Приглашения');
+  });
+
+  it('renders yellow square unread badges on menu tiles without shifting layout', () => {
+    const hidden = menuRootHtml({ balance: 0, balanceLabel: '0' });
+    expect(hidden).not.toContain('mc-menu-badge');
+    const shown = menuRootHtml({
+      notifications: { friends: 3, clans: 1, auction: 2, trade: 1 },
+    });
+    expect(shown).toContain('data-menu-open="friends"');
+    expect(shown.match(/mc-menu-badge/g)?.length).toBe(4);
+    expect(shown).toContain('>3</span>');
+    expect(shown).toContain('>1</span>');
+    expect(shown).toContain('>2</span>');
+    const huge = menuRootHtml({ notifications: { friends: 100, clans: 0, auction: 0, trade: 0 } });
+    expect(huge).toContain('99+');
+    expect(huge.match(/mc-menu-badge/g)?.length).toBe(1);
+    expect(cssRule('.mc-menu-tile')).toContain('position: relative;');
+    expect(cssRule('.mc-menu-badge')).toContain('position: absolute;');
+    expect(cssRule('.mc-menu-badge')).toContain('top: calc(2px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-badge')).toContain('right: calc(2px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-badge')).toContain('background: #f5d000;');
+    expect(cssRule('.mc-menu-badge')).toContain('color: #111;');
+    expect(cssRule('.mc-menu-badge')).toContain('pointer-events: none;');
+    expect(cssRule('.mc-menu-badge')).toContain('z-index: 2;');
+    expect(gameUi).toContain('resetOverlayModal');
+    expect(gameUi).toContain('bindOverlayPointerShield');
+  });
+
+  it('renders auction deal history as a nested menu screen', () => {
+    const empty = menuBodyHtml(menu({ screen: 'auction-history', auctionHistory: [] }), (value) => value);
+    expect(empty).toContain('История сделок');
+    expect(empty).toContain('История сделок пуста');
+    const filled = menuBodyHtml(menu({
+      screen: 'auction-history',
+      auctionHistory: [{
+        id: 'ahist-1',
+        kind: 'sell',
+        title: 'Вы продали 32 Алмаз за 12 000 Мегакоинов',
+        ago: '2 часа назад',
+        timestamp: 1,
+      }],
+    }), (value) => value);
+    expect(filled).toContain('Вы продали 32 Алмаз за 12 000 Мегакоинов');
+    expect(filled).toContain('2 часа назад');
+    expect(filled).not.toContain('История сделок пуста');
+    expect(menuBackHtml('auction-history')).toContain('data-menu-action="back"');
   });
 });

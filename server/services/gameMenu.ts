@@ -59,6 +59,7 @@ export function createMenuSession(): GameMenuSession {
 export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   if (screen === 'home-delete-confirm') return 'homes';
   if (screen === 'friend-delete-confirm') return 'friends';
+  if (screen === 'auction-history') return 'auction';
   if (screen === 'claim-settings' || screen === 'claim-delete-confirm') {
     return screen === 'claim-delete-confirm' ? 'claim-settings' : 'claims';
   }
@@ -131,6 +132,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';
   if (screen === 'trade') return 'Обмен';
   if (screen === 'auction') return 'Аукцион';
+  if (screen === 'auction-history') return 'История сделок';
   if (screen === 'rating') return 'Рейтинг';
   return 'Меню';
 }

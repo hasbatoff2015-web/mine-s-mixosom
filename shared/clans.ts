@@ -96,7 +96,7 @@ export function clanInviteChat(inviterName: string, clanName: string): string {
 }
 
 export function clanAnnouncementChat(text: string): string {
-  return `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "${text}"`;
+  return `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - ${text}`;
 }
 
 export function formatRemainingDuration(ms: number): string {

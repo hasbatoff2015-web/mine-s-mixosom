@@ -214,7 +214,7 @@ describe('clan invitations and announcements', () => {
     mail.length = 0;
     expect(clan.sendAnnouncement('leader', 'Сегодня в 20:00 идём фармить данжи').ok).toBe(true);
     const expected = clanAnnouncementChat('Сегодня в 20:00 идём фармить данжи');
-    expect(expected).toBe('[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "Сегодня в 20:00 идём фармить данжи"');
+    expect(expected).toBe('[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - Сегодня в 20:00 идём фармить данжи');
     expect(mail.map((row) => row.id).sort()).toEqual(['leader', 'mem', 'vet']);
     expect(mail.every((row) => row.text === expected)).toBe(true);
     expect(mail[0]?.extra).toEqual({ channel: 'clan', style: 'announcement' });

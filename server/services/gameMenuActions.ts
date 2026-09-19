@@ -7,6 +7,8 @@ import type { HomeService } from './home';
 import type { FriendsService } from './friends';
 import type { TradeService } from './trade';
 import { CLAN_ALREADY_MEMBER_ERROR, type ClanService } from './clan';
+import type { NotificationService } from './notifications';
+import { notificationCategoryForScreen } from '../../shared/notifications';
 import type { Claim, ClaimStore } from './claims';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
@@ -39,6 +41,7 @@ export interface MenuActionHost {
   friends: FriendsService;
   trade: TradeService;
   clan: ClanService;
+  notifications: NotificationService;
   worldId: string;
   maxHomesFor(player: MenuPlayer): number;
   loadClaims(): ClaimStore;
@@ -62,6 +65,8 @@ export function applyGameMenuAction(
       session.ratingKind = session.ratingKind || 'players-money';
       session.ratingPage = 1;
     }
+    const category = notificationCategoryForScreen(session.screen);
+    if (category) host.notifications.clear(player.id, category);
     return { kind: 'flush' };
   }
   if (action === 'rating_set' && isRankingKind(message.ratingKind ?? message.name)) {
@@ -357,6 +362,10 @@ export function applyGameMenuAction(
   if (action === 'auction_open') return { kind: 'open-auction', view: 'browse' };
   if (action === 'auction_list') return { kind: 'open-auction', view: 'list' };
   if (action === 'auction_sell') return { kind: 'open-auction', view: 'sell' };
+  if (action === 'auction_history') {
+    session.screen = 'auction-history';
+    return { kind: 'flush' };
+  }
   void (message.screen as GameMenuScreenKind | undefined);
   return { kind: 'flush' };
 }

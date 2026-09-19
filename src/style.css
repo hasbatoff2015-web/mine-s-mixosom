@@ -1749,8 +1749,10 @@ button {
 }
 
 .mc-menu-tile {
+  position: relative;
   box-sizing: border-box;
   display: flex;
+  overflow: visible;
   flex-direction: column;
   align-items: center;
   justify-content: center;
@@ -1806,6 +1808,57 @@ button {
   line-height: 1.1;
   text-align: center;
   pointer-events: none;
+}
+
+.mc-menu-badge {
+  position: absolute;
+  top: calc(2px * var(--mc-ui-scale, 3));
+  right: calc(2px * var(--mc-ui-scale, 3));
+  z-index: 2;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: calc(12px * var(--mc-ui-scale, 3));
+  width: auto;
+  max-width: calc(22px * var(--mc-ui-scale, 3));
+  height: calc(12px * var(--mc-ui-scale, 3));
+  padding: 0 calc(1px * var(--mc-ui-scale, 3));
+  overflow: hidden;
+  color: #111;
+  background: #f5d000;
+  border-radius: 0;
+  font-family: var(--font-ui);
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+  line-height: 1;
+  text-align: center;
+  pointer-events: none;
+}
+
+.mc-menu-history-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: calc(2px * var(--mc-ui-scale, 3));
+  width: 100%;
+  padding: calc(4px * var(--mc-ui-scale, 3)) calc(5px * var(--mc-ui-scale, 3));
+  color: #ececec;
+  background: rgba(20, 22, 26, 0.55);
+  box-shadow: inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(220, 224, 230, 0.12);
+}
+
+.mc-menu-history-title {
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mc-menu-history-ago {
+  color: #b4b4b4;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  line-height: 1.2;
 }
 
 .mc-menu-btn {

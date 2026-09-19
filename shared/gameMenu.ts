@@ -26,6 +26,7 @@ export type GameMenuScreen =
   | 'claim-delete-confirm'
   | 'trade'
   | 'auction'
+  | 'auction-history'
   | 'rating'
   | 'closed';
 

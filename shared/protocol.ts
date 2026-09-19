@@ -630,6 +630,7 @@ export type MenuActionKind =
   | 'auction_open'
   | 'auction_list'
   | 'auction_sell'
+  | 'auction_history'
   | 'rating_set'
   | 'rating_page';
 
@@ -645,6 +646,7 @@ export type GameMenuScreenKind =
   | 'claim-delete-confirm'
   | 'trade'
   | 'auction'
+  | 'auction-history'
   | 'rating'
   | 'closed';
 
@@ -1352,6 +1354,23 @@ export interface ServerMenuMessage {
   readonly ratingRows?: readonly NetworkRankingRow[];
   readonly personalRank?: number;
   readonly personalText?: string;
+  readonly notifications?: NetworkMenuNotifications;
+  readonly auctionHistory?: readonly NetworkAuctionHistoryRow[];
+}
+
+export interface NetworkMenuNotifications {
+  readonly friends: number;
+  readonly clans: number;
+  readonly auction: number;
+  readonly trade: number;
+}
+
+export interface NetworkAuctionHistoryRow {
+  readonly id: string;
+  readonly kind: 'buy' | 'sell';
+  readonly title: string;
+  readonly ago: string;
+  readonly timestamp: number;
 }
 
 export interface NetworkRankingRow {
@@ -1541,13 +1560,13 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
   'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
-  'auction_open', 'auction_list', 'auction_sell',
+  'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'rating', 'closed',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {

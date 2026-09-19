@@ -28,6 +28,7 @@ export interface FriendsRuntime {
   displayName(playerId: string): string;
   lookupPlayer(idOrName: string): { id: string; name: string; connected: boolean } | undefined;
   sendMessage(playerId: string, text: string): void;
+  notifyUnread?(playerId: string, category: 'friends'): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,6 +146,7 @@ export class FriendsService {
     this.store.requests.push(request);
     this.persist();
     this.runtime.sendMessage(target.id, `${this.runtime.displayName(fromPlayerId)} хочет добавить вас в друзья.`);
+    this.runtime.notifyUnread?.(target.id, 'friends');
     return { ok: true, request, affected: [fromPlayerId, target.id] };
   }
 

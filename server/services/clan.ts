@@ -161,6 +161,7 @@ export interface ClanRuntime {
   friendRelation?(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none';
   requestFriend?(fromId: string, targetId: string): { ok: boolean; error?: string };
   cancelFriendRequest?(fromId: string, targetId: string): { ok: boolean; error?: string };
+  notifyUnread?(playerId: string, category: 'clans'): void;
 }
 
 export interface ClanSession {
@@ -726,6 +727,7 @@ export class ClanService {
       this.invitations.set(invitation.invitationId, invitation);
       this.persist();
       this.runtime.sendMessage(targetId, clanInviteChat(this.runtime.displayName(ownerId), clan.name));
+      this.runtime.notifyUnread?.(targetId, 'clans');
       const session = this.session(ownerId);
       if (!options.keepScreen) {
         session.screen = 'add';
@@ -908,6 +910,7 @@ export class ClanService {
       clan.roles[targetId] = 'veteran';
       this.syncRoles(clan);
       this.persist();
+      this.runtime.notifyUnread?.(targetId, 'clans');
       const session = this.session(ownerId);
       session.selectedMemberId = targetId;
       session.screen = 'member-card';
@@ -945,6 +948,7 @@ export class ClanService {
       }
       this.detachFromClans(targetId);
       this.persist();
+      this.runtime.notifyUnread?.(targetId, 'clans');
       const kicked = this.session(targetId);
       if (kicked.screen !== 'closed') {
         kicked.screen = 'ranking';

@@ -105,6 +105,7 @@ import { EconomyService, formatMegacoinAmount, formatMegacoins } from './service
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { TradeService } from './services/trade';
+import { NotificationService } from './services/notifications';
 import {
   buildRankingSnapshot,
   buildTradeMessage,
@@ -511,6 +512,7 @@ export class WorldInstance {
   readonly homes: HomeService;
   readonly friends: FriendsService;
   readonly trade: TradeService;
+  readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -588,6 +590,11 @@ export class WorldInstance {
     this.homes = new HomeService(this.pluginStore);
     this.friends = new FriendsService(this.pluginStore);
     this.trade = new TradeService(this.economy);
+    this.notifications = new NotificationService(this.pluginStore);
+    const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
+      this.notifyUnread(playerId, category);
+    };
+    this.auction.setRuntime({ notifyUnread });
     this.clan.setRuntime({
       onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -615,6 +622,7 @@ export class WorldInstance {
       friendRelation: (viewerId, targetId) => this.friends.relation(viewerId, targetId),
       requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
       cancelFriendRequest: (fromId, targetId) => this.friends.cancelOutgoing(fromId, targetId),
+      notifyUnread,
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -633,6 +641,7 @@ export class WorldInstance {
           kind: 'system',
         });
       },
+      notifyUnread,
     });
     this.trade.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -653,6 +662,7 @@ export class WorldInstance {
           kind: 'system',
         });
       },
+      notifyUnread,
     });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
@@ -806,6 +816,7 @@ export class WorldInstance {
       this.clan.load();
       this.homes.load();
       this.friends.load();
+      this.notifications.load();
       this.buyer.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
@@ -820,6 +831,7 @@ export class WorldInstance {
     this.clan.load();
     this.homes.load();
     this.friends.load();
+    this.notifications.load();
     this.buyer.load();
     this.preloadSpawnChunks();
     this.dirty = true;
@@ -966,6 +978,7 @@ export class WorldInstance {
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();
+    this.notifications.persist();
     this.buyer.persist();
     this.dirty = false;
   }
@@ -1653,6 +1666,7 @@ export class WorldInstance {
       friends: this.friends,
       trade: this.trade,
       clan: this.clan,
+      notifications: this.notifications,
       worldId: this.worldId,
       maxHomesFor: (entry) => {
         const live = this.players.get(entry.id);
@@ -1876,6 +1890,7 @@ export class WorldInstance {
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
     const balance = this.economy.getBalance(player.id);
+    const notifications = this.notifications.counts(player.id);
     const base = {
       type: 'menu' as const,
       screen: session.screen as GameMenuScreenKind,
@@ -1883,6 +1898,7 @@ export class WorldInstance {
       balance,
       balanceLabel: formatMegacoinAmount(balance),
       inClan,
+      notifications,
       ...(session.message ? { message: session.message } : {}),
     };
     if (session.screen === 'homes' || session.screen === 'home-delete-confirm') {
@@ -1967,7 +1983,19 @@ export class WorldInstance {
         ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
       };
     }
+    if (session.screen === 'auction-history') {
+      return {
+        ...base,
+        auctionHistory: this.auction.historyRows(player.id),
+      };
+    }
     return base;
+  }
+
+  private notifyUnread(playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade'): void {
+    this.notifications.notify(playerId, category);
+    const player = this.players.get(playerId);
+    if (player?.connected && this.menuSessions.has(playerId)) this.flushMenu(player);
   }
 
   disconnect(playerId: string, persist = true, connectionId?: string): void {

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-19: Auction history + menu unread badges
+
+- [x] Clan announcement format `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - text` (no quotes).
+- [x] Auction deal history (confirmed buy/sell only, 24h, max 20 UI, `plugin-data/auction/history.json`).
+- [x] Server-authoritative unread badges on Friends/Clans/Auction/Trade tiles; persist `plugin-data/notifications/unread.json`.
+- [x] Opening a tab clears that category; one domain event increments once.
+
 ## 2026-09-19: Clan invitations + leader announcement
 
 - [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.

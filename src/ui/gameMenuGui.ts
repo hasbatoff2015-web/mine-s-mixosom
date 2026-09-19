@@ -2,6 +2,12 @@ import { GAME_MENU_BUTTONS, showsMenuBack } from '../../shared/gameMenu';
 import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { formatMegacoinAmount } from '../../shared/megacoins';
+import {
+  formatNotificationBadge,
+  notificationCategoryForButton,
+  type NotificationCounts,
+} from '../../shared/notifications';
+import { AUCTION_HISTORY_EMPTY } from '../../shared/auctionHistory';
 import type { ServerMenuMessage } from '../../shared/protocol';
 
 const MENU_SPRITE_FILES = {
@@ -86,16 +92,27 @@ function menuHeadingHtml(title: string): string {
   return `<div class="mc-menu-heading">${escapeMenu(title)}</div><div class="mc-menu-rule" aria-hidden="true"></div>`;
 }
 
-function menuTileHtml(button: (typeof GAME_MENU_BUTTONS)[number]): string {
+function menuTileHtml(
+  button: (typeof GAME_MENU_BUTTONS)[number],
+  notifications?: Partial<NotificationCounts> | undefined,
+): string {
+  const category = notificationCategoryForButton(button.id);
+  const badge = category ? formatNotificationBadge(notifications?.[category] ?? 0) : undefined;
+  const badgeHtml = badge
+    ? `<span class="mc-menu-badge" aria-hidden="true">${escapeMenu(badge)}</span>`
+    : '';
   return `<button type="button" class="mc-menu-tile" data-menu-open="${button.id}">
+    ${badgeHtml}
     <img class="mc-menu-tile-icon" src="${menuAssetUrl(button.icon)}" alt="" draggable="false" />
     <span class="mc-menu-tile-label">${escapeMenu(button.label)}</span>
   </button>`;
 }
 
-export function menuRootHtml(state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel'>): string {
-  const row1 = GAME_MENU_BUTTONS.slice(0, 4).map(menuTileHtml).join('');
-  const row2 = GAME_MENU_BUTTONS.slice(4).map(menuTileHtml).join('');
+export function menuRootHtml(
+  state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel' | 'notifications'>,
+): string {
+  const row1 = GAME_MENU_BUTTONS.slice(0, 4).map((button) => menuTileHtml(button, state?.notifications)).join('');
+  const row2 = GAME_MENU_BUTTONS.slice(4).map((button) => menuTileHtml(button, state?.notifications)).join('');
   return `<div class="mc-menu-body mc-menu-root" data-menu-screen="root">
     ${menuHeadingHtml('Меню')}
     ${menuBalanceHtml(state)}
@@ -318,7 +335,20 @@ export function menuAuctionHtml(): string {
       <button type="button" class="mc-ah-btn" data-menu-action="auction_open">Открыть аукцион</button>
       <button type="button" class="mc-ah-btn" data-menu-action="auction_list">Мои предметы на аукционе</button>
       <button type="button" class="mc-ah-btn" data-menu-action="auction_sell">Выставить предметы на аукцион</button>
+      <button type="button" class="mc-ah-btn" data-menu-action="auction_history">История сделок</button>
     </div>
+  </div>`;
+}
+
+export function menuAuctionHistoryHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const rows = (state.auctionHistory ?? []).map((row) => `
+    <div class="mc-menu-history-row">
+      <div class="mc-menu-history-title">${escape(row.title)}</div>
+      <div class="mc-menu-history-ago">${escape(row.ago)}</div>
+    </div>`).join('');
+  return `<div class="mc-menu-body" data-menu-screen="auction-history">
+    ${menuHeadingHtml('История сделок')}
+    <div class="mc-menu-list mc-menu-history">${rows || `<p class="mc-menu-empty">${AUCTION_HISTORY_EMPTY}</p>`}</div>
   </div>`;
 }
 
@@ -395,6 +425,7 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   }
   if (state.screen === 'trade') return menuTradeLobbyHtml(state, escape);
   if (state.screen === 'auction') return menuAuctionHtml();
+  if (state.screen === 'auction-history') return menuAuctionHistoryHtml(state, escape);
   if (state.screen === 'rating') return menuRatingHtml(state, escape);
   return menuRootHtml(state);
 }

@@ -8,7 +8,16 @@ import {
   type ItemStack,
 } from '../../src/inventory';
 import { getItemDefinition } from '../../src/items';
-import type { NetworkAuctionListing, ServerAuctionMessage } from '../../shared/protocol';
+import type { NetworkAuctionHistoryRow, NetworkAuctionListing, ServerAuctionMessage } from '../../shared/protocol';
+import {
+  AUCTION_HISTORY_UI_LIMIT,
+  auctionHistoryTitle,
+  formatHoursAgo,
+  isAuctionHistoryFresh,
+  isAuctionHistoryKind,
+  type AuctionHistoryKind,
+} from '../../shared/auctionHistory';
+import type { NotificationCategory } from '../../shared/notifications';
 import { formatMegacoins } from './economy';
 import type { EconomyService } from './economy';
 import type { JsonFileStore } from './jsonStore';
@@ -55,6 +64,20 @@ export interface AuctionListing {
   salePairId?: string;
 }
 
+export interface AuctionHistoryEntry {
+  id: string;
+  playerId: string;
+  type: AuctionHistoryKind;
+  itemId: string;
+  quantity: number;
+  totalPrice: number;
+  timestamp: number;
+}
+
+export interface AuctionRuntime {
+  notifyUnread?(playerId: string, category: NotificationCategory): void;
+}
+
 export interface AuctionResult {
   readonly ok: boolean;
   readonly error?: string;
@@ -92,6 +115,11 @@ export interface AuctionSession {
 interface AuctionFile {
   nextId: number;
   listings: unknown[];
+}
+
+interface AuctionHistoryFile {
+  nextId: number;
+  entries: unknown[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -220,9 +248,12 @@ function parseListing(value: unknown): AuctionListing | undefined {
 export class AuctionService {
   private listings = new Map<string, AuctionListing>();
   private nextId = 1;
+  private history: AuctionHistoryEntry[] = [];
+  private nextHistoryId = 1;
   private readonly sessions = new Map<string, AuctionSession>();
   private readonly listingLocks = new Set<string>();
   private readonly playerLocks = new Set<string>();
+  private runtime: AuctionRuntime = {};
 
   constructor(
     private readonly store: JsonFileStore,
@@ -230,6 +261,10 @@ export class AuctionService {
     private readonly now: () => number = Date.now,
   ) {
     this.load();
+  }
+
+  setRuntime(runtime: AuctionRuntime): void {
+    this.runtime = runtime;
   }
 
   load(): void {
@@ -240,10 +275,16 @@ export class AuctionService {
       const listing = parseListing(entry);
       if (listing) this.listings.set(listing.listingId, listing);
     }
+    this.loadHistory();
     this.expireDue();
   }
 
   persist(): void {
+    this.persistListings();
+    this.persistHistory();
+  }
+
+  private persistListings(): void {
     this.store.save('auction/listings', {
       nextId: this.nextId,
       listings: [...this.listings.values()],
@@ -478,7 +519,9 @@ export class AuctionService {
       listing.soldToPlayerId = buyerId;
       listing.salePairId = listing.listingId;
       this.economy.rememberName(buyerId, buyerName);
-      this.persist();
+      this.persistListings();
+      this.recordCompletedSale(listing, buyerId);
+      this.runtime.notifyUnread?.(listing.sellerPlayerId, 'auction');
       return { ok: true, listing };
     });
   }
@@ -590,6 +633,79 @@ export class AuctionService {
       this.listingLocks.delete(listingId);
       this.playerLocks.delete(playerId);
     }
+  }
+
+  historyRows(playerId: string): NetworkAuctionHistoryRow[] {
+    this.purgeHistory();
+    const now = this.now();
+    return this.history
+      .filter((entry) => entry.playerId === playerId)
+      .sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id))
+      .slice(0, AUCTION_HISTORY_UI_LIMIT)
+      .map((entry) => ({
+        id: entry.id,
+        kind: entry.type,
+        title: auctionHistoryTitle(
+          entry.type,
+          entry.quantity,
+          displayNameFor(entry.itemId, 'ru'),
+          formatMegacoins(entry.totalPrice),
+        ),
+        ago: formatHoursAgo(entry.timestamp, now),
+        timestamp: entry.timestamp,
+      }));
+  }
+
+  historyEntries(playerId?: string): AuctionHistoryEntry[] {
+    this.purgeHistory();
+    const rows = playerId ? this.history.filter((entry) => entry.playerId === playerId) : [...this.history];
+    return rows.sort((a, b) => b.timestamp - a.timestamp || b.id.localeCompare(a.id));
+  }
+
+  private recordCompletedSale(listing: AuctionListing, buyerId: string): void {
+    const timestamp = this.now();
+    const quantity = listing.item.count;
+    const totalPrice = listing.price;
+    const itemId = listing.item.itemId;
+    this.addHistory({ playerId: listing.sellerPlayerId, type: 'sell', itemId, quantity, totalPrice, timestamp });
+    this.addHistory({ playerId: buyerId, type: 'buy', itemId, quantity, totalPrice, timestamp });
+  }
+
+  private addHistory(entry: Omit<AuctionHistoryEntry, 'id'>): void {
+    this.purgeHistory();
+    this.history.push({
+      id: `ahist-${this.nextHistoryId++}`,
+      ...entry,
+    });
+    this.persistHistory();
+  }
+
+  private loadHistory(): void {
+    const file = this.store.load<AuctionHistoryFile>('auction/history', { nextId: 1, entries: [] });
+    this.nextHistoryId = Number.isInteger(file.nextId) && file.nextId > 0 ? file.nextId : 1;
+    this.history = [];
+    for (const raw of Array.isArray(file.entries) ? file.entries : []) {
+      const parsed = parseHistoryEntry(raw);
+      if (parsed) this.history.push(parsed);
+    }
+    const before = this.history.length;
+    this.purgeHistory(false);
+    if (this.history.length !== before) this.persistHistory();
+  }
+
+  private persistHistory(): void {
+    this.store.save('auction/history', {
+      nextId: this.nextHistoryId,
+      entries: this.history,
+    });
+  }
+
+  private purgeHistory(persist = true): void {
+    const now = this.now();
+    const next = this.history.filter((entry) => isAuctionHistoryFresh(entry.timestamp, now));
+    if (next.length === this.history.length) return;
+    this.history = next;
+    if (persist) this.persistHistory();
   }
 
   toNetworkListing(listing: AuctionListing, now = this.now()): NetworkAuctionListing {
@@ -731,6 +847,27 @@ export class AuctionService {
       listings: [],
     });
   }
+}
+
+function parseHistoryEntry(value: unknown): AuctionHistoryEntry | undefined {
+  if (!isRecord(value) || typeof value.id !== 'string' || typeof value.playerId !== 'string') return undefined;
+  if (typeof value.type !== 'string' || !isAuctionHistoryKind(value.type)) return undefined;
+  if (typeof value.itemId !== 'string' || !value.itemId) return undefined;
+  const quantity = Number(value.quantity);
+  const totalPrice = Number(value.totalPrice);
+  const timestamp = Number(value.timestamp);
+  if (!Number.isInteger(quantity) || quantity < 1) return undefined;
+  if (!Number.isInteger(totalPrice) || totalPrice < 0) return undefined;
+  if (!Number.isFinite(timestamp)) return undefined;
+  return {
+    id: value.id,
+    playerId: value.playerId,
+    type: value.type,
+    itemId: value.itemId,
+    quantity,
+    totalPrice,
+    timestamp,
+  };
 }
 
 function paginate(listings: AuctionListing[], requestedPage: number, pageSize: number): AuctionPage {
