@@ -82,6 +82,17 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('icon_rating.png');
     expect(html).toContain('Баланс: 5 645 монет');
     expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
+    expect(gameUi).toContain('isGameMenuScreenKind');
+    expect(gameUi).toContain("action: 'open', screen: id");
+    expect(gameUi).toContain("action: 'rating_set'");
+    expect(gameUi).toContain('event.stopPropagation()');
+    expect(css).toContain('.mc-menu-tile-icon');
+    expect(cssRule('.mc-menu-tile-icon')).toContain('background: transparent;');
+    const icon = readFileSync(new URL('../public/ui/menu/icon_rating.png', import.meta.url));
+    expect(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
+    expect(icon[25]).toBe(6);
+    expect(icon.readUInt32BE(16)).toBeLessThanOrEqual(128);
+    expect(icon.readUInt32BE(20)).toBeLessThanOrEqual(128);
   });
 
   it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {

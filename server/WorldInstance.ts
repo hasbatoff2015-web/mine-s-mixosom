@@ -1410,6 +1410,12 @@ export class WorldInstance {
 
   handleClanAction(player: ServerPlayer, message: ClientClanActionMessage): void {
     if (!this.hasClanPermission(player, message.action)) {
+      const session = this.clan.session(player.id);
+      if (session.screen !== 'closed') {
+        session.message = 'You do not have permission.';
+        this.flushClan(player);
+        return;
+      }
       this.sendTo(player, {
         type: 'clan',
         screen: 'closed',
@@ -1738,7 +1744,7 @@ export class WorldInstance {
       this.menuReturn.set(player.id, 'clans');
       this.menuSessions.delete(player.id);
       this.openClan(player.id, outcome.view);
-      this.clan.markOpenedFromMenu(player.id);
+      this.clan.markOpenedFromMenu(player.id, outcome.view);
       this.flushClan(player);
       return;
     }

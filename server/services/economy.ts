@@ -195,6 +195,7 @@ export class EconomyService {
   private readonly rewardedDeaths = new Set<string>();
   private readonly countedKillDeaths = new Set<string>();
   private readonly pvpDeathBurst = new Map<string, number>();
+  private killSeq = 0;
   private readonly pvpCooldowns = new Map<string, number>();
 
   constructor(
@@ -413,7 +414,10 @@ export class EconomyService {
    */
   recordPvpKill(killerId: string, victimId: string, deathId: string): { ok: boolean; kills: number; error?: string } {
     if (!killerId || killerId === victimId) return { ok: false, kills: this.getKills(killerId), error: 'self' };
-    const key = deathId || `pvp-kill:${killerId}:${victimId}`;
+    const stableId = deathId === victimId || deathId === killerId || !deathId;
+    const key = stableId
+      ? `pvp-kill:${killerId}:${victimId}:${this.now()}:${this.killSeq++}`
+      : deathId;
     if (this.countedKillDeaths.has(key)) {
       return { ok: false, kills: this.getKills(killerId), error: 'duplicate' };
     }

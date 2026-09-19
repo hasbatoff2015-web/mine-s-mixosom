@@ -1494,7 +1494,7 @@ const BUYER_ACTIONS: readonly BuyerActionKind[] = [
   'edit_hologram', 'pick_item', 'save', 'delete', 'sell', 'open_trade', 'back',
 ];
 
-const CLAN_ACTIONS: readonly ClanActionKind[] = [
+export const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'close', 'back', 'search', 'refresh', 'page',
   'select_clan', 'select_icon', 'set_name',
   'create', 'confirm_create', 'cancel_create',
@@ -1513,7 +1513,7 @@ const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'friends_request', 'friends_cancel',
 ];
 
-const MENU_ACTIONS: readonly MenuActionKind[] = [
+export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'open', 'close', 'back', 'spawn',
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
@@ -1526,10 +1526,30 @@ const MENU_ACTIONS: readonly MenuActionKind[] = [
   'rating_set', 'rating_page',
 ];
 
-const MENU_SCREENS: readonly GameMenuScreenKind[] = [
+export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'rating', 'closed',
 ];
+
+export function isClanActionKind(value: string | undefined): value is ClanActionKind {
+  return typeof value === 'string' && (CLAN_ACTIONS as readonly string[]).includes(value);
+}
+
+export function isMenuActionKind(value: string | undefined): value is MenuActionKind {
+  return typeof value === 'string' && (MENU_ACTIONS as readonly string[]).includes(value);
+}
+
+export function isGameMenuScreenKind(value: string | undefined): value is GameMenuScreenKind {
+  return typeof value === 'string' && (MENU_SCREENS as readonly string[]).includes(value);
+}
+
+type SameMembers<A, B> = [A] extends [B] ? [B] extends [A] ? true : never : never;
+const _clanActionsMatch: SameMembers<ClanActionKind, (typeof CLAN_ACTIONS)[number]> = true;
+const _menuActionsMatch: SameMembers<MenuActionKind, (typeof MENU_ACTIONS)[number]> = true;
+const _menuScreensMatch: SameMembers<GameMenuScreenKind, (typeof MENU_SCREENS)[number]> = true;
+void _clanActionsMatch;
+void _menuActionsMatch;
+void _menuScreensMatch;
 
 const TRADE_ACTIONS: readonly TradeActionKind[] = [
   'close', 'cancel', 'put_item', 'return_item', 'set_money', 'ready', 'accept',
@@ -2100,7 +2120,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       };
     }
     case 'clan_action': {
-      if (typeof raw.action !== 'string' || !(CLAN_ACTIONS as readonly string[]).includes(raw.action)) {
+      if (!isClanActionKind(typeof raw.action === 'string' ? raw.action : undefined)) {
         return { error: 'clan_action.action invalid' };
       }
       const clanId = optionalString(raw.clanId, 64);
@@ -2156,10 +2176,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       };
     }
     case 'menu_action': {
-      if (typeof raw.action !== 'string' || !(MENU_ACTIONS as readonly string[]).includes(raw.action)) {
+      if (!isMenuActionKind(typeof raw.action === 'string' ? raw.action : undefined)) {
         return { error: 'menu_action.action invalid' };
       }
-      const screen = typeof raw.screen === 'string' && (MENU_SCREENS as readonly string[]).includes(raw.screen)
+      const screen = isGameMenuScreenKind(typeof raw.screen === 'string' ? raw.screen : undefined)
         ? raw.screen as GameMenuScreenKind
         : undefined;
       const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;

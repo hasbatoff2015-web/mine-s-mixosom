@@ -1,4 +1,5 @@
 import type { ClientMenuActionMessage, GameMenuScreenKind } from '../../shared/protocol';
+import { isGameMenuScreenKind } from '../../shared/protocol';
 import { FRIENDS_EMPTY_NAME_ERROR } from '../../shared/friends';
 import { HOME_MISSING_ERROR, validateHomeName } from '../../shared/homes';
 import { TRADE_EMPTY_NAME_ERROR } from '../../shared/trade';
@@ -53,7 +54,10 @@ export function applyGameMenuAction(
 ): MenuActionOutcome {
   const action = message.action;
   if (action === 'open') {
-    session.screen = message.screen && message.screen !== 'closed' ? message.screen as GameMenuSession['screen'] : 'root';
+    const requested = message.screen && message.screen !== 'closed'
+      ? message.screen
+      : (isGameMenuScreenKind(message.name) && message.name !== 'closed' ? message.name : 'root');
+    session.screen = requested as GameMenuSession['screen'];
     if (session.screen === 'rating') {
       session.ratingKind = session.ratingKind || 'players-money';
       session.ratingPage = 1;

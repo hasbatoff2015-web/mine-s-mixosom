@@ -13,7 +13,7 @@ export function clanIconGlyph(icon: string | undefined): string {
 
 export function clanIconHtml(icon: string | undefined, extraClass = ''): string {
   const id = isClanIconId(icon) ? icon : 'swords';
-  return `<span class="mc-clan-icon ${extraClass}" data-clan-icon="${id}" aria-hidden="true">${clanIconGlyph(id)}</span>`;
+  return `<span class="mc-clan-icon ${extraClass}" aria-hidden="true">${clanIconGlyph(id)}</span>`;
 }
 
 export function clanRankHtml(rank: number): string {
@@ -77,7 +77,7 @@ export function clanIconIds(): readonly ClanIconId[] {
 
 export function clanSortButtonsHtml(current: 'money' | 'kills' | undefined, attr: string): string {
   const moneyOn = current !== 'kills';
-  return `<div class="mc-ah-actions mc-clan-sort">
+  return `<div class="mc-clan-sort" role="group" aria-label="Сортировка">
     <button type="button" class="mc-ah-btn${moneyOn ? ' is-on' : ''}" ${attr}="money">По монетам</button>
     <button type="button" class="mc-ah-btn${!moneyOn ? ' is-on' : ''}" ${attr}="kills">По убийствам</button>
   </div>`;

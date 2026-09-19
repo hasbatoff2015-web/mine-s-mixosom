@@ -335,4 +335,28 @@ describe('clan roles, ranking and kills', () => {
     const ranked = economy.rankPlayers('money');
     expect(ranked.map((row) => row.name)).toEqual(['Alpha', 'Beta']);
   });
+
+  it('does not treat a ranking-row icon click as create, and back from a listed card returns to ranking', async () => {
+    const { clan } = await setup();
+    clan.markOpenedFromMenu('out', 'ranking');
+    clan.openRanking('out');
+    const clanId = clan.playerClan('leader')!.clanId;
+    clan.handleAction('out', { type: 'clan_action', action: 'select_icon', icon: 'crown' });
+    expect(clan.session('out').screen).toBe('ranking');
+    clan.handleAction('out', { type: 'clan_action', action: 'select_clan', clanId });
+    expect(clan.session('out').screen).toBe('card');
+    expect(clan.session('out').screen).not.toBe('closed');
+    clan.handleAction('out', { type: 'clan_action', action: 'back' });
+    expect(clan.session('out').screen).toBe('ranking');
+    clan.handleAction('out', { type: 'clan_action', action: 'back' });
+    expect(clan.session('out').screen).toBe('closed');
+  });
+
+  it('closes only a mine card opened from the menu, not a ranking card', async () => {
+    const { clan } = await setup();
+    clan.markOpenedFromMenu('leader', 'mine');
+    expect(clan.openMyClan('leader').ok).toBe(true);
+    clan.handleAction('leader', { type: 'clan_action', action: 'back' });
+    expect(clan.session('leader').screen).toBe('closed');
+  });
 });

@@ -250,10 +250,14 @@ describe('Economy rewards', () => {
     expect(economy.rewardPlayerKill('killer', 'victim', 'eco-2').error).toBe('cooldown');
     expect(economy.recordPvpKill('killer', 'victim', 'death-c').ok).toBe(true);
     expect(economy.getKills('killer')).toBe(3);
+    expect(economy.recordPvpKill('killer', 'victim', 'victim').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(4);
+    expect(economy.recordPvpKill('killer', 'victim', 'victim').ok).toBe(true);
+    expect(economy.getKills('killer')).toBe(5);
     expect(economy.rewardMobKill('killer', 'zombie', 'mob-1').ok).toBe(true);
-    expect(economy.getKills('killer')).toBe(3);
+    expect(economy.getKills('killer')).toBe(5);
     const again = new EconomyService(new JsonFileStore(dir), () => now);
-    expect(again.getKills('killer')).toBe(3);
+    expect(again.getKills('killer')).toBe(5);
     expect(again.getKills('nobody')).toBe(0);
   });
 });

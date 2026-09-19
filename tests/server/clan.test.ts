@@ -2,7 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseClientMessage } from '../../shared/protocol';
+import {
+  CLAN_ACTIONS,
+  MENU_ACTIONS,
+  MENU_SCREENS,
+  parseClientMessage,
+} from '../../shared/protocol';
 import {
   CLAN_CREATE_COST,
   CLAN_ICON_IDS,
@@ -355,6 +360,28 @@ describe('ClanService', () => {
       type: 'menu_action',
       action: 'rating_set',
       ratingKind: 'players-kills',
+    });
+    for (const action of CLAN_ACTIONS) {
+      expect(parseClientMessage({ type: 'clan_action', action })).toMatchObject({ action });
+    }
+    for (const action of MENU_ACTIONS) {
+      expect(parseClientMessage({ type: 'menu_action', action })).toMatchObject({ action });
+    }
+    expect(parseClientMessage({ type: 'menu_action', action: 'open', screen: 'rating' })).toMatchObject({
+      action: 'open',
+      screen: 'rating',
+    });
+    expect(MENU_SCREENS).toContain('rating');
+    expect(new Set(CLAN_ACTIONS).size).toBe(CLAN_ACTIONS.length);
+    expect(new Set(MENU_ACTIONS).size).toBe(MENU_ACTIONS.length);
+    expect(parseClientMessage({ type: 'clan_action', action: 'money' })).toMatchObject({
+      error: 'clan_action.action invalid',
+    });
+    expect(parseClientMessage({ type: 'clan_action', action: 'kills' })).toMatchObject({
+      error: 'clan_action.action invalid',
+    });
+    expect(parseClientMessage({ type: 'clan_action', action: 'rating_set' })).toMatchObject({
+      error: 'clan_action.action invalid',
     });
   });
 

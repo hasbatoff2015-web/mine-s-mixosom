@@ -94,6 +94,7 @@ import {
 import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import { isClanActionKind, isGameMenuScreenKind, isMenuActionKind } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -3157,12 +3158,36 @@ export class GameUI {
       return;
     }
     if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
-    list.innerHTML = this.clanListHtml(state);
+    if (list) list.innerHTML = this.clanListHtml(state);
     page.textContent = `Страница ${state.page} из ${state.totalPages}`;
     if (prev) prev.disabled = state.page <= 1;
     if (next) next.disabled = state.page >= state.totalPages;
     if (empty) empty.hidden = state.totalCount !== 0;
+    this.patchClanSortButtons(state);
+    this.patchClanInvite(state);
     this.writeClanMessage(state.message);
+  }
+
+  private patchClanSortButtons(state: ServerClanMessage): void {
+    const host = this.modal?.querySelector('.mc-clan-sort');
+    if (!host) return;
+    const ranking = state.screen === 'ranking';
+    const sort = ranking ? (state.rankingSort ?? 'money') : (state.memberSort ?? state.card?.memberSort ?? 'money');
+    const attr = ranking ? 'data-clan-ranking-sort' : 'data-clan-member-sort';
+    for (const button of host.querySelectorAll<HTMLButtonElement>('.mc-ah-btn')) {
+      const value = button.getAttribute(attr);
+      const on = value === 'kills' ? sort === 'kills' : sort !== 'kills';
+      button.classList.toggle('is-on', on);
+    }
+  }
+
+  private patchClanInvite(state: ServerClanMessage): void {
+    const input = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    if (input && !keepClanSearchDraft(document.activeElement, input)) input.value = state.inviteName ?? '';
+    const message = this.modal?.querySelector<HTMLElement>('[data-clan-invite-message]');
+    if (!message) return;
+    message.hidden = !state.inviteMessage;
+    message.textContent = state.inviteMessage ?? '';
   }
 
   private writeClanMessage(message: string | undefined): void {
@@ -3489,7 +3514,11 @@ export class GameUI {
 
   private bindClanChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.clanActions?.close());
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.clanActions?.close();
+    });
     const bindField = (selector: string, action: 'search' | 'set_name') => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3515,18 +3544,22 @@ export class GameUI {
         this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
       }, 160);
     });
+    this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
+      event.stopPropagation();
       const current = this.clanState;
       const actions = this.clanActions;
       if (!current || !actions) return;
       const target = event.target as HTMLElement;
       const back = target.closest<HTMLElement>('[data-clan-action="back"]');
       if (back) {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'back' });
         return;
       }
       const clan = target.closest<HTMLElement>('[data-clan-id]');
       if (clan?.dataset.clanId) {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'select_clan', clanId: clan.dataset.clanId });
         return;
       }
@@ -3552,15 +3585,17 @@ export class GameUI {
       }
       const rankingSort = target.closest<HTMLElement>('[data-clan-ranking-sort]');
       if (rankingSort?.dataset.clanRankingSort === 'money' || rankingSort?.dataset.clanRankingSort === 'kills') {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'set_ranking_sort', sort: rankingSort.dataset.clanRankingSort });
         return;
       }
       const memberSort = target.closest<HTMLElement>('[data-clan-member-sort]');
       if (memberSort?.dataset.clanMemberSort === 'money' || memberSort?.dataset.clanMemberSort === 'kills') {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'set_member_sort', sort: memberSort.dataset.clanMemberSort });
         return;
       }
-      const icon = target.closest<HTMLElement>('[data-clan-icon]');
+      const icon = target.closest<HTMLElement>('.mc-clan-icon-pick[data-clan-icon]');
       if (icon?.dataset.clanIcon) {
         actions.send({ type: 'clan_action', action: 'select_icon', icon: icon.dataset.clanIcon });
         return;
@@ -3576,12 +3611,13 @@ export class GameUI {
       }
       const button = target.closest<HTMLElement>('[data-clan-action]');
       const kind = button?.dataset.clanAction;
-      if (!kind || kind === 'back') return;
+      if (!kind || kind === 'back' || !isClanActionKind(kind)) return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      event.preventDefault();
       const inviteName = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]')?.value;
       actions.send({
         type: 'clan_action',
-        action: kind as ClientClanActionMessage['action'],
+        action: kind,
         ...(current.card?.clanId ? { clanId: current.card.clanId } : {}),
         ...(current.selected?.playerId || current.card?.selectedMemberId || current.playerCard?.playerId
           ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId ?? current.playerCard?.playerId }
@@ -3590,7 +3626,7 @@ export class GameUI {
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
         ...(kind === 'invite_by_name' && inviteName !== undefined ? { name: inviteName } : {}),
       });
-    });
+    }, true);
   }
 
   private buyerStack(value: unknown): ItemStack | null {
@@ -3843,7 +3879,11 @@ export class GameUI {
   }
 
   private bindGameMenuChrome(): void {
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.menuActions?.close());
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.menuActions?.close();
+    });
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3864,7 +3904,9 @@ export class GameUI {
         event.preventDefault();
       }, { passive: false });
     }
+    this.modal!.addEventListener('pointerdown', (event) => event.stopPropagation(), true);
     this.modal!.addEventListener('click', (event) => {
+      event.stopPropagation();
       const actions = this.menuActions;
       const current = this.menuState;
       if (!actions || !current) return;
@@ -3872,9 +3914,12 @@ export class GameUI {
       const open = target.closest<HTMLElement>('[data-menu-open]');
       if (open?.dataset.menuOpen) {
         if (open instanceof HTMLButtonElement && open.disabled) return;
+        event.preventDefault();
         const id = open.dataset.menuOpen;
         if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
-        else actions.send({ type: 'menu_action', action: 'open', screen: id as ServerMenuMessage['screen'] });
+        else if (isGameMenuScreenKind(id) && id !== 'closed') {
+          actions.send({ type: 'menu_action', action: 'open', screen: id });
+        }
         return;
       }
       const home = target.closest<HTMLElement>('[data-menu-home]');
@@ -3958,8 +4003,9 @@ export class GameUI {
       }
       const button = target.closest<HTMLElement>('[data-menu-action]');
       const kind = button?.dataset.menuAction;
-      if (!kind) return;
+      if (!kind || !isMenuActionKind(kind)) return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      event.preventDefault();
       if (kind === 'home_create') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-home-name]')?.value ?? current.homeNameText;
         actions.send({ type: 'menu_action', action: 'home_create', name });
@@ -3985,8 +4031,8 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'trade_request', name });
         return;
       }
-      actions.send({ type: 'menu_action', action: kind as ClientMenuActionMessage['action'] });
-    });
+      actions.send({ type: 'menu_action', action: kind });
+    }, true);
   }
 
   private renderTrade(): void {

@@ -158,6 +158,7 @@ export interface ClanSession {
   page: number;
   selectedClanId?: string;
   openedFromMenu?: boolean;
+  menuEntry?: 'ranking' | 'create' | 'mine';
   selectedIcon: ClanIconId;
   nameText: string;
   inviteName: string;
@@ -373,6 +374,7 @@ export class ClanService {
     session.selectedRequestId = undefined;
     session.selectedMemberId = undefined;
     session.openedFromMenu = undefined;
+    session.menuEntry = undefined;
     session.inviteName = '';
     session.inviteMessage = undefined;
     session.memberSort = 'money';
@@ -515,8 +517,10 @@ export class ClanService {
     return { ok: true, clan };
   }
 
-  markOpenedFromMenu(playerId: string): void {
-    this.session(playerId).openedFromMenu = true;
+  markOpenedFromMenu(playerId: string, view?: 'ranking' | 'create' | 'mine'): void {
+    const session = this.session(playerId);
+    session.openedFromMenu = true;
+    if (view) session.menuEntry = view;
   }
 
   openCreate(playerId: string): ClanResult {
@@ -992,8 +996,8 @@ export class ClanService {
       return;
     }
     if (action === 'select_icon' && isClanIconId(message.icon)) {
+      if (session.screen !== 'create' && session.screen !== 'create-confirm') return;
       session.selectedIcon = message.icon;
-      if (session.screen !== 'create' && session.screen !== 'create-confirm') session.screen = 'create';
       return;
     }
     if (action === 'back') {
@@ -1620,7 +1624,7 @@ export class ClanService {
       case 'leave-confirm':
       case 'makeleader':
         if (session.screen === 'card') {
-          if (session.openedFromMenu) {
+          if (session.menuEntry === 'mine' && session.openedFromMenu) {
             this.closeSession(playerId);
             return;
           }
