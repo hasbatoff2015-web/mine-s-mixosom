@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: World events hardening + bounded streaming — 2026-09-19
+
+- Follow-up после live QA: Europe/Moscow scheduler, virtual full-height event protection, spawn validation без sync disk IO, crash journal, incremental mesh/generation slices, F3 latest/max spike telemetry.
+- EventChest renderer не был root cause FPS. Просадки на дистанции 3000–5000 — unbounded chunk gen/mesh.
+- Подробности: `docs/reports/2026-09-19_world-events-hardening.md`.
+
 ## Последний проход: Timed world events + event chest — 2026-09-19
 
 - Anarchy builtin `world-events`: daily timed event foundation + first `resource_chest` event (warn 15 мин, spawn locked chest + 5×5 shrine, unlock 5 мин, cleanup 2 ч + snapshot restore). Persist `plugin-data/world-events/state.json`.

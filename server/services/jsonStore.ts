@@ -6,6 +6,9 @@ import { dirname, join } from 'node:path';
  * WorldPersistence, but synchronous so command handlers can persist immediately.
  */
 export class JsonFileStore {
+  /** Incremented on every load(), including missing-file fallbacks. Tests use this. */
+  readCount = 0;
+
   constructor(readonly directory: string) {}
 
   pathFor(name: string): string {
@@ -14,6 +17,7 @@ export class JsonFileStore {
   }
 
   load<T>(name: string, fallback: T): T {
+    this.readCount += 1;
     try {
       const raw = readFileSync(this.pathFor(name), 'utf8');
       return JSON.parse(raw) as T;

@@ -1,20 +1,23 @@
 import { BlockId, getBlockDefinition, isKnownBlockId, type BlockRenderState } from '../../src/blocks';
-import { isValidWorldY, MAX_WORLD_Y, MIN_WORLD_Y, blockKey } from '../../src/core/constants';
+import { CHUNK_SIZE, chunkKey, floorDiv, isValidWorldY, MAX_WORLD_Y, MIN_WORLD_Y, blockKey, positiveMod } from '../../src/core/constants';
 import { cloneStack, createItemStack, isSharedWorldChestBlock, type ItemStack } from '../../src/inventory';
-import type { VoxelWorld } from '../../src/world/World';
+import { Chunk } from '../../src/world/Chunk';
+import type { FurnaceState, VoxelWorld } from '../../src/world/World';
+import { sanitizeSignLines, type SignLines } from '../../src/world/sign';
 import { isDangerousBlock } from './rtp';
 import { volumeContains, type BlockPos, type SelectionVolume } from './selection';
 import {
   dayKey,
+  decideDailySpawn,
   eventTimeline,
   formatDailyTime,
   minutesRemaining,
+  MOSCOW_TIME_ZONE,
   nextDailyOccurrence,
+  normalizeTimeZone,
   parseDailyTime,
   secondsRemaining,
-  timezonePolicy,
   type EventTimeline,
-  type TimeZonePolicy,
 } from './eventScheduler';
 import { fillChestSlots, generateEventChestLoot } from './eventLoot';
 import {
@@ -29,6 +32,18 @@ import {
   type EventTemplate,
   type TemplateYaw,
 } from './eventTemplates';
+import {
+  buildEventSystemClaim,
+  eventProtectionVolume,
+  pointInEventProtection,
+  volumeOverlapsEventProtection,
+} from './eventProtection';
+import { type Claim } from './claims';
+import {
+  emptyValidationContext,
+  reservedAt,
+  type SpawnValidationContext,
+} from './spawnValidation';
 
 export type WorldEventPhase =
   | 'scheduled'
@@ -37,10 +52,12 @@ export type WorldEventPhase =
   | 'active_unlocked'
   | 'completed';
 
+export type WorldEventJournalPhase = 'placing' | 'cleaning';
+
 export interface WorldEventsConfig {
   enabled: boolean;
   dailyTime: string;
-  useServerLocalTime: boolean;
+  timeZone: string;
   warningMinutes: number;
   unlockDelayMinutes: number;
   durationMinutes: number;
@@ -58,7 +75,7 @@ export interface WorldEventsConfig {
 export const DEFAULT_WORLD_EVENTS_CONFIG: WorldEventsConfig = {
   enabled: true,
   dailyTime: '20:00',
-  useServerLocalTime: true,
+  timeZone: MOSCOW_TIME_ZONE,
   warningMinutes: 15,
   unlockDelayMinutes: 5,
   durationMinutes: 120,
@@ -73,6 +90,16 @@ export const DEFAULT_WORLD_EVENTS_CONFIG: WorldEventsConfig = {
   attemptsPerTick: 4,
 };
 
+export const SEARCH_RETRY_MS = 30_000;
+
+export interface EventPlacementCell {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly blockId: number;
+  readonly state?: BlockRenderState;
+}
+
 export interface WorldSnapshotCell {
   readonly x: number;
   readonly y: number;
@@ -80,6 +107,8 @@ export interface WorldSnapshotCell {
   readonly blockId: number;
   readonly state?: BlockRenderState;
   readonly chest?: Array<ItemStack | null>;
+  readonly furnace?: FurnaceState;
+  readonly sign?: SignLines;
 }
 
 export interface ActiveWorldEvent {
@@ -91,18 +120,27 @@ export interface ActiveWorldEvent {
   readonly rotation: TemplateYaw;
   chest?: BlockPos;
   volume?: SelectionVolume;
-  readonly spawnAt: number;
-  readonly warningAt: number;
-  readonly unlockAt: number;
-  readonly cleanupAt: number;
+  protectionVolume?: SelectionVolume;
+  placement?: EventPlacementCell[];
+  chestSlots?: Array<ItemStack | null>;
+  spawnAt: number;
+  warningAt: number;
+  unlockAt: number;
+  cleanupAt: number;
   loot?: ItemStack[];
   snapshot?: WorldSnapshotCell[];
   chestLocked: boolean;
 }
 
+interface WorldEventsJournal {
+  phase: WorldEventJournalPhase;
+  event: ActiveWorldEvent;
+}
+
 interface WorldEventsStore {
   lastSpawnDayKey?: string;
   active?: ActiveWorldEvent;
+  journal?: WorldEventsJournal;
   templates: EventTemplate[];
 }
 
@@ -112,6 +150,8 @@ interface SearchJob {
   template: EventTemplate;
   timeline: EventTimeline;
   day: string;
+  countsAsDaily: boolean;
+  context?: SpawnValidationContext;
 }
 
 export interface WorldEventsHost {
@@ -122,18 +162,22 @@ export interface WorldEventsHost {
   spawn(): readonly [number, number, number];
   loadStore(): unknown;
   saveStore(store: unknown): void;
-  claimsAt(x: number, y: number, z: number): boolean;
-  autoMineAt(x: number, y: number, z: number): boolean;
-  specialZoneAt(x: number, y: number, z: number): boolean;
+  createValidationContext(): SpawnValidationContext;
   homes(): readonly { readonly x: number; readonly z: number }[];
   players(): readonly { readonly x: number; readonly y: number; readonly z: number }[];
   flush(): void;
   markDirty(): void;
+  persistWorld?: () => void;
   closeChestWindow(x: number, y: number, z: number): void;
   broadcast(text: string): void;
   send(playerId: string, text: string): void;
   log(message: string): void;
 }
+
+export type ForceSpawnResult =
+  | { ok: true; event: ActiveWorldEvent }
+  | { ok: true; searching: true }
+  | { ok: false; error: string };
 
 const PLAYERISH = new Set<number>([
   BlockId.Chest,
@@ -148,6 +192,21 @@ const PLAYERISH = new Set<number>([
   BlockId.RedWool,
   BlockId.OakDoor,
   BlockId.OakSign,
+  BlockId.WhiteBed,
+  BlockId.RedstoneWire,
+  BlockId.RedstoneTorch,
+  BlockId.Lever,
+  BlockId.StoneButton,
+  BlockId.OakPressurePlate,
+  BlockId.StonePressurePlate,
+  BlockId.Tnt,
+  BlockId.TntPowerful,
+  BlockId.TntDestructive,
+  BlockId.Torch,
+  BlockId.Lantern,
+  BlockId.Rail,
+  BlockId.Glowstone,
+  BlockId.Ladder,
 ]);
 
 function randomYaw(random: () => number): TemplateYaw {
@@ -172,6 +231,18 @@ function parseStack(raw: unknown): ItemStack | null {
   } catch {
     return null;
   }
+}
+
+function parseFurnace(raw: unknown): FurnaceState | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const value = raw as { slots?: unknown; burnTime?: unknown; burnTotal?: unknown; cookTime?: unknown };
+  if (!Array.isArray(value.slots) || value.slots.length !== 3) return undefined;
+  return {
+    slots: [parseStack(value.slots[0]), parseStack(value.slots[1]), parseStack(value.slots[2])],
+    burnTime: typeof value.burnTime === 'number' ? value.burnTime : 0,
+    burnTotal: typeof value.burnTotal === 'number' ? value.burnTotal : 0,
+    cookTime: typeof value.cookTime === 'number' ? value.cookTime : 0,
+  };
 }
 
 function parsePhase(raw: unknown): WorldEventPhase | undefined {
@@ -206,6 +277,39 @@ function parseVolume(raw: unknown): SelectionVolume | undefined {
   };
 }
 
+function cloneEvent(event: ActiveWorldEvent): ActiveWorldEvent {
+  return JSON.parse(JSON.stringify(event)) as ActiveWorldEvent;
+}
+
+function volumeHasModifications(world: VoxelWorld, volume: SelectionVolume): boolean {
+  for (let z = volume.minZ; z <= volume.maxZ; z += 1) {
+    for (let x = volume.minX; x <= volume.maxX; x += 1) {
+      const delta = world.modifications.get(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE)));
+      if (!delta || delta.size === 0) continue;
+      const localX = positiveMod(x, CHUNK_SIZE);
+      const localZ = positiveMod(z, CHUNK_SIZE);
+      for (let y = volume.minY; y <= volume.maxY; y += 1) {
+        if (delta.has(Chunk.index(localX, y, localZ))) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function volumeHasPersistentRecords(world: VoxelWorld, volume: SelectionVolume): boolean {
+  for (let y = volume.minY; y <= volume.maxY; y += 1) {
+    for (let z = volume.minZ; z <= volume.maxZ; z += 1) {
+      for (let x = volume.minX; x <= volume.maxX; x += 1) {
+        const key = blockKey(x, y, z);
+        if (world.chests.has(key) || world.furnaces.has(key) || world.signs.has(key)) return true;
+        const block = world.getBlock(x, y, z);
+        if (PLAYERISH.has(block)) return true;
+      }
+    }
+  }
+  return false;
+}
+
 export function snapshotVolumeDetailed(world: VoxelWorld, volume: SelectionVolume): WorldSnapshotCell[] {
   const cells: WorldSnapshotCell[] = [];
   for (let y = volume.minY; y <= volume.maxY; y += 1) {
@@ -213,11 +317,27 @@ export function snapshotVolumeDetailed(world: VoxelWorld, volume: SelectionVolum
       for (let x = volume.minX; x <= volume.maxX; x += 1) {
         const blockId = world.getBlock(x, y, z);
         const state = world.getBlockState(x, y, z);
-        const stored = world.chests.get(blockKey(x, y, z));
+        const key = blockKey(x, y, z);
+        const stored = world.chests.get(key);
+        const furnace = world.furnaces.get(key);
+        const sign = world.signs.get(key);
         cells.push({
           x, y, z, blockId,
           ...(state ? { state } : {}),
           ...(stored ? { chest: stored.slots.map(serializeStack) } : {}),
+          ...(furnace ? {
+            furnace: {
+              slots: [
+                serializeStack(furnace.slots[0]),
+                serializeStack(furnace.slots[1]),
+                serializeStack(furnace.slots[2]),
+              ],
+              burnTime: furnace.burnTime,
+              burnTotal: furnace.burnTotal,
+              cookTime: furnace.cookTime,
+            },
+          } : {}),
+          ...(sign ? { sign } : {}),
         });
       }
     }
@@ -244,6 +364,26 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
     } else {
       world.chests.delete(key);
     }
+    if (cell.furnace) {
+      world.furnaces.set(key, {
+        slots: [
+          serializeStack(cell.furnace.slots[0]),
+          serializeStack(cell.furnace.slots[1]),
+          serializeStack(cell.furnace.slots[2]),
+        ],
+        burnTime: cell.furnace.burnTime,
+        burnTotal: cell.furnace.burnTotal,
+        cookTime: cell.furnace.cookTime,
+      });
+    } else {
+      world.furnaces.delete(key);
+    }
+    if (cell.sign) {
+      world.signs.set(key, cell.sign);
+      world.signVersion += 1;
+    } else if (world.signs.delete(key)) {
+      world.signVersion += 1;
+    }
   }
 }
 
@@ -251,8 +391,10 @@ export class WorldEventsManager {
   enabled = false;
   config: WorldEventsConfig = { ...DEFAULT_WORLD_EVENTS_CONFIG };
   lastSearchError?: string;
+  lastValidationStoreReads = 0;
   private store: WorldEventsStore = { templates: [] };
   private search: SearchJob | undefined;
+  private searchRetryAt = 0;
 
   constructor(private readonly host: WorldEventsHost) {}
 
@@ -276,7 +418,8 @@ export class WorldEventsManager {
   }
 
   setConfig(config: WorldEventsConfig): void {
-    this.config = { ...config };
+    this.config = { ...config, timeZone: normalizeTimeZone(config.timeZone) };
+    this.rescheduleFuture(this.host.now());
   }
 
   get active(): ActiveWorldEvent | undefined {
@@ -314,11 +457,33 @@ export class WorldEventsManager {
     return { ok: true };
   }
 
+  structureVolume(): SelectionVolume | undefined {
+    return this.protectedEvent()?.volume;
+  }
+
+  protectionVolume(): SelectionVolume | undefined {
+    const event = this.protectedEvent();
+    if (!event) return undefined;
+    return event.protectionVolume ?? (event.volume ? eventProtectionVolume(event.volume) : undefined);
+  }
+
+  systemClaim(): Claim | undefined {
+    const event = this.protectedEvent();
+    const protection = this.protectionVolume();
+    if (!event || !protection) return undefined;
+    return buildEventSystemClaim({
+      eventId: event.id,
+      worldId: event.worldId || this.host.worldId(),
+      protection,
+    });
+  }
+
+  overlapsProtection(volume: SelectionVolume): boolean {
+    return volumeOverlapsEventProtection(volume, this.protectionVolume());
+  }
+
   isProtected(x: number, y: number, z: number): boolean {
-    const active = this.store.active;
-    if (!active?.volume) return false;
-    if (active.phase !== 'spawned_locked' && active.phase !== 'active_unlocked') return false;
-    return volumeContains(active.volume, x, y, z);
+    return pointInEventProtection(this.protectionVolume(), x, y, z);
   }
 
   isLockedChest(x: number, y: number, z: number): boolean {
@@ -349,62 +514,82 @@ export class WorldEventsManager {
       if (active.phase === 'spawned_locked' && now >= active.unlockAt) this.unlock();
       return;
     }
+    if (this.store.journal?.phase === 'cleaning') return;
     this.ensureSchedule(now);
     const scheduled = this.store.active;
     if (!scheduled || (scheduled.phase !== 'scheduled' && scheduled.phase !== 'warning_sent')) return;
     if (scheduled.phase === 'scheduled' && now >= scheduled.warningAt && now < scheduled.spawnAt) {
       this.sendWarning(scheduled);
     }
-    if (now >= scheduled.spawnAt) this.beginSpawn(now);
+    if (now >= scheduled.spawnAt) {
+      if (now < this.searchRetryAt) return;
+      this.beginSpawn(now);
+    }
   }
 
-  forceSpawn(options: { at?: BlockPos; yaw?: TemplateYaw } = {}, now = this.host.now()): { ok: true; event: ActiveWorldEvent } | { ok: false; error: string } {
+  forceSpawn(options: { at?: BlockPos; yaw?: TemplateYaw } = {}, now = this.host.now()): ForceSpawnResult {
+    if (this.store.journal?.phase === 'cleaning') {
+      return { ok: false, error: 'Ивент ещё сохраняется. Подождите.' };
+    }
     if (this.hasPlacedEvent()) return { ok: false, error: 'Уже есть активный ивент. Сначала выполните cleanup.' };
     const template = this.getTemplate(this.config.templateName) ?? this.getTemplate(DEFAULT_EVENT_TEMPLATE_NAME);
     if (!template) return { ok: false, error: 'Шаблон ивента не найден.' };
     const yaw = options.yaw ?? randomYaw(this.host.random);
     const timeline = eventTimeline(now, this.config);
     if (options.at) {
-      const placed = this.placeAt(template, options.at, yaw, timeline, dayKey(now, this.policy()));
+      const placed = this.placeAt(template, options.at, yaw, timeline, dayKey(now, this.timeZone()), false);
       return placed.ok ? { ok: true, event: placed.event } : placed;
     }
-    this.search = { attempts: 0, yaw, template, timeline, day: dayKey(now, this.policy()) };
-    this.store.active = {
-      type: 'resource_chest',
-      id: `chest-${now}`,
-      phase: 'scheduled',
-      worldId: this.host.worldId(),
-      templateName: template.name,
-      rotation: yaw,
-      spawnAt: timeline.spawnAt,
-      warningAt: timeline.warningAt,
-      unlockAt: timeline.unlockAt,
-      cleanupAt: timeline.cleanupAt,
-      chestLocked: true,
+    this.search = {
+      attempts: 0,
+      yaw,
+      template,
+      timeline,
+      day: dayKey(now, this.timeZone()),
+      countsAsDaily: false,
+      context: this.freshValidationContext(),
     };
-    this.persist();
-    this.stepSearch(now, true);
-    if (this.hasPlacedEvent() && this.store.active) return { ok: true, event: this.store.active };
-    return { ok: false, error: this.lastSearchError ?? 'Не удалось найти место для ивента.' };
+    this.lastSearchError = undefined;
+    return { ok: true, searching: true };
   }
 
   forceCleanup(): { ok: true } | { ok: false; error: string } {
-    if (!this.hasPlacedEvent() && !this.store.active) return { ok: false, error: 'Активного ивента нет.' };
+    if (this.search && !this.hasPlacedEvent() && !this.store.journal && !this.store.active) {
+      this.search = undefined;
+      return { ok: true };
+    }
+    if (!this.hasPlacedEvent() && !this.store.active && !this.store.journal) {
+      return { ok: false, error: 'Активного ивента нет.' };
+    }
     this.cleanup('manual');
     return { ok: true };
+  }
+
+  acknowledgeWorldSaved(): void {
+    const journal = this.store.journal;
+    if (!journal) return;
+    if (journal.phase === 'placing' && this.hasPlacedEvent()) {
+      this.store.journal = undefined;
+      this.persist();
+      return;
+    }
+    if (journal.phase === 'cleaning' && !this.store.active) {
+      this.store.journal = undefined;
+      this.persist();
+    }
   }
 
   statusLines(now = this.host.now()): string[] {
     const time = parseDailyTime(this.config.dailyTime);
     const lines = [
       `World events: ${this.config.enabled && this.enabled ? 'включены' : 'выключены'}`,
-      `Ежедневное время: ${time ? formatDailyTime(time) : this.config.dailyTime} (${this.config.useServerLocalTime ? 'локальное время сервера' : 'UTC'})`,
+      `Ежедневное время: ${time ? formatDailyTime(time) : this.config.dailyTime} (${this.timeZone()})`,
       `Шаблон: ${this.config.templateName}`,
     ];
     const active = this.store.active;
     if (!active) {
       if (time) {
-        const next = nextDailyOccurrence(now, time, this.policy());
+        const next = nextDailyOccurrence(now, time, this.timeZone());
         lines.push(`Следующий ивент: ${new Date(next).toISOString()} (через ${minutesRemaining(next, now)} мин)`);
       }
       return lines;
@@ -427,13 +612,44 @@ export class WorldEventsManager {
     return lines;
   }
 
-  private policy(): TimeZonePolicy {
-    return timezonePolicy(this.config.useServerLocalTime);
+  private timeZone(): string {
+    return normalizeTimeZone(this.config.timeZone);
   }
 
   private hasPlacedEvent(): boolean {
     const phase = this.store.active?.phase;
     return phase === 'spawned_locked' || phase === 'active_unlocked';
+  }
+
+  private protectedEvent(): ActiveWorldEvent | undefined {
+    if (this.store.journal?.phase === 'cleaning') return this.store.journal.event;
+    if (this.store.journal?.phase === 'placing') return this.store.journal.event;
+    const active = this.store.active;
+    if (!active) return undefined;
+    if (active.phase !== 'spawned_locked' && active.phase !== 'active_unlocked') return undefined;
+    return active;
+  }
+
+  private freshValidationContext(): SpawnValidationContext {
+    const context = this.host.createValidationContext?.() ?? emptyValidationContext();
+    this.lastValidationStoreReads = context.storeReads;
+    return context;
+  }
+
+  private rescheduleFuture(now: number): void {
+    const active = this.store.active;
+    if (!active) return;
+    if (active.phase !== 'scheduled' && active.phase !== 'warning_sent') return;
+    const time = parseDailyTime(this.config.dailyTime);
+    if (!time) return;
+    const decided = decideDailySpawn(now, time, this.timeZone(), this.config.durationMinutes, this.store.lastSpawnDayKey);
+    const timeline = eventTimeline(decided.spawnAt, this.config);
+    active.spawnAt = timeline.spawnAt;
+    active.warningAt = timeline.warningAt;
+    active.unlockAt = timeline.unlockAt;
+    active.cleanupAt = timeline.cleanupAt;
+    if (now < timeline.warningAt) active.phase = 'scheduled';
+    this.persist();
   }
 
   private ensureSchedule(now: number): void {
@@ -442,17 +658,23 @@ export class WorldEventsManager {
       this.host.log(`invalid dailyTime '${this.config.dailyTime}'`);
       return;
     }
-    const today = dayKey(now, this.policy());
+    const today = dayKey(now, this.timeZone());
     if (this.store.lastSpawnDayKey === today && !this.store.active) return;
     if (this.store.active) return;
-    const spawnAt = nextDailyOccurrence(now, time, this.policy());
-    const spawnDay = dayKey(spawnAt, this.policy());
+    const decided = decideDailySpawn(
+      now,
+      time,
+      this.timeZone(),
+      this.config.durationMinutes,
+      this.store.lastSpawnDayKey,
+    );
+    const spawnDay = dayKey(decided.spawnAt, this.timeZone());
     if (this.store.lastSpawnDayKey === spawnDay) return;
-    const timeline = eventTimeline(spawnAt, this.config);
+    const timeline = eventTimeline(decided.spawnAt, this.config);
     const template = this.getTemplate(this.config.templateName) ?? this.getTemplate(DEFAULT_EVENT_TEMPLATE_NAME);
     this.store.active = {
       type: 'resource_chest',
-      id: `chest-${spawnAt}`,
+      id: `chest-${decided.spawnAt}`,
       phase: 'scheduled',
       worldId: this.host.worldId(),
       templateName: template?.name ?? DEFAULT_EVENT_TEMPLATE_NAME,
@@ -474,7 +696,7 @@ export class WorldEventsManager {
   }
 
   private beginSpawn(now: number): void {
-    const today = dayKey(now, this.policy());
+    const today = dayKey(now, this.timeZone());
     if (this.store.lastSpawnDayKey === today) {
       this.store.active = undefined;
       this.persist();
@@ -485,9 +707,7 @@ export class WorldEventsManager {
     if (!template) {
       this.lastSearchError = 'Шаблон ивента не найден.';
       this.host.log(this.lastSearchError);
-      this.store.lastSpawnDayKey = today;
-      this.store.active = undefined;
-      this.persist();
+      this.searchRetryAt = now + SEARCH_RETRY_MS;
       return;
     }
     const timeline = this.store.active
@@ -504,19 +724,26 @@ export class WorldEventsManager {
       template,
       timeline,
       day: today,
+      countsAsDaily: true,
+      context: this.freshValidationContext(),
     };
     this.stepSearch(now);
   }
 
-  private stepSearch(now: number, drain = false): void {
+  private stepSearch(now: number): void {
     const job = this.search;
     if (!job) return;
-    const budget = drain ? this.config.maxSearchAttempts : Math.max(1, this.config.attemptsPerTick);
+    if (!job.context) job.context = this.freshValidationContext();
+    else {
+      job.context.homes = this.host.homes();
+      job.context.players = this.host.players();
+    }
+    const budget = Math.max(1, this.config.attemptsPerTick);
     for (let i = 0; i < budget; i += 1) {
       job.attempts += 1;
       const candidate = this.randomCandidate();
-      if (candidate && this.validateCandidate(job.template, candidate, job.yaw)) {
-        const placed = this.placeAt(job.template, candidate, job.yaw, job.timeline, job.day);
+      if (candidate && this.validateCandidate(job.template, candidate, job.yaw, job.context)) {
+        const placed = this.placeAt(job.template, candidate, job.yaw, job.timeline, job.day, job.countsAsDaily);
         this.search = undefined;
         if (!placed.ok) {
           this.lastSearchError = placed.error;
@@ -527,10 +754,8 @@ export class WorldEventsManager {
       if (job.attempts >= this.config.maxSearchAttempts) {
         this.lastSearchError = `Не найдено место для ивента после ${job.attempts} попыток (кольцо ${this.config.spawnMinDistance}–${this.config.spawnMaxDistance}).`;
         this.host.log(this.lastSearchError);
-        this.store.lastSpawnDayKey = job.day;
-        this.store.active = undefined;
+        this.searchRetryAt = now + SEARCH_RETRY_MS;
         this.search = undefined;
-        this.persist();
         return;
       }
     }
@@ -555,7 +780,12 @@ export class WorldEventsManager {
     return undefined;
   }
 
-  validateCandidate(template: EventTemplate, chest: BlockPos, yaw: TemplateYaw): boolean {
+  validateCandidate(
+    template: EventTemplate,
+    chest: BlockPos,
+    yaw: TemplateYaw,
+    context: SpawnValidationContext = emptyValidationContext(),
+  ): boolean {
     const volume = placedVolume(template, chest, yaw);
     if (!isValidWorldY(volume.minY) || !isValidWorldY(volume.maxY)) return false;
     if (volume.maxY > MAX_WORLD_Y || volume.minY < MIN_WORLD_Y) return false;
@@ -568,6 +798,8 @@ export class WorldEventsManager {
     if (this.host.world.isLiquid(chest.x, originSurface, chest.z) || this.host.world.isLiquid(chest.x, chest.y, chest.z)) {
       return false;
     }
+    if (volumeHasModifications(this.host.world, volume)) return false;
+    if (volumeHasPersistentRecords(this.host.world, volume)) return false;
     for (let z = volume.minZ; z <= volume.maxZ; z += 1) {
       for (let x = volume.minX; x <= volume.maxX; x += 1) {
         if (Math.abs(x) > this.config.worldBorder || Math.abs(z) > this.config.worldBorder) return false;
@@ -576,18 +808,15 @@ export class WorldEventsManager {
         const top = this.host.world.getBlock(x, surface, z);
         if (this.host.world.isLiquid(x, surface, z) || this.host.world.isLiquid(x, surface + 1, z)) return false;
         if (isDangerousBlock(top) || isDangerousBlock(this.host.world.getBlock(x, surface + 1, z))) return false;
-        if (PLAYERISH.has(top)) return false;
         for (let y = volume.minY; y <= volume.maxY; y += 1) {
-          if (this.host.claimsAt(x, y, z) || this.host.autoMineAt(x, y, z) || this.host.specialZoneAt(x, y, z)) {
-            return false;
-          }
+          if (reservedAt(context, x, y, z)) return false;
         }
       }
     }
-    for (const home of this.host.homes()) {
+    for (const home of context.homes) {
       if (Math.hypot(home.x - chest.x, home.z - chest.z) < this.config.homeAvoidRadius) return false;
     }
-    for (const player of this.host.players()) {
+    for (const player of context.players) {
       if (Math.hypot(player.x - chest.x, player.z - chest.z) < this.config.playerAvoidRadius) return false;
     }
     return true;
@@ -599,28 +828,27 @@ export class WorldEventsManager {
     yaw: TemplateYaw,
     timeline: EventTimeline,
     day: string,
+    countsAsDaily: boolean,
   ): { ok: true; event: ActiveWorldEvent } | { ok: false; error: string } {
     const volume = placedVolume(template, chest, yaw);
     const snapshot = snapshotVolumeDetailed(this.host.world, volume);
     const loot = generateEventChestLoot(this.host.random);
-    const mutations = template.blocks.map((cell) => {
+    const chestSlots = fillChestSlots(loot, this.host.random);
+    const placement: EventPlacementCell[] = template.blocks.map((cell) => {
       const offset = rotateOffset(cell.dx, cell.dy, cell.dz, yaw);
       const isAnchor = cell.dx === 0 && cell.dy === 0 && cell.dz === 0;
       const blockId = isAnchor || isSharedWorldChestBlock(cell.blockId as BlockId)
         ? BlockId.EventChest
         : isKnownBlockId(cell.blockId) ? cell.blockId : BlockId.Air;
-      return { x: chest.x + offset.x, y: chest.y + offset.y, z: chest.z + offset.z, block: blockId, state: rotateBlockState(cell.state, yaw) };
+      const state = rotateBlockState(cell.state, yaw);
+      return {
+        x: chest.x + offset.x,
+        y: chest.y + offset.y,
+        z: chest.z + offset.z,
+        blockId,
+        ...(state ? { state } : {}),
+      };
     });
-    this.host.world.applyBlockBatch(mutations.map(({ x, y, z, block }) => ({ x, y, z, block })), {
-      skipSupport: true,
-      deferLighting: true,
-    });
-    for (const mutation of mutations) {
-      if (mutation.state) this.host.world.replaceBlockState(mutation.x, mutation.y, mutation.z, mutation.state);
-    }
-    const slots = fillChestSlots(loot, this.host.random);
-    const chestState = this.host.world.getChest(chest.x, chest.y, chest.z);
-    chestState.slots = slots;
     const event: ActiveWorldEvent = {
       type: 'resource_chest',
       id: `chest-${timeline.spawnAt}`,
@@ -630,22 +858,49 @@ export class WorldEventsManager {
       rotation: yaw,
       chest,
       volume,
+      protectionVolume: eventProtectionVolume(volume),
+      placement,
       spawnAt: timeline.spawnAt,
       warningAt: timeline.warningAt,
       unlockAt: timeline.unlockAt,
       cleanupAt: timeline.cleanupAt,
       loot,
+      chestSlots,
       snapshot,
       chestLocked: true,
     };
+    this.store.journal = { phase: 'placing', event: cloneEvent(event) };
+    this.persist();
+    this.applyPlacement(event);
     this.store.active = event;
-    this.store.lastSpawnDayKey = day;
+    if (countsAsDaily) this.store.lastSpawnDayKey = day;
     this.persist();
     this.host.markDirty();
     this.host.flush();
+    this.host.persistWorld?.();
     const coords = this.config.announceCoordinates ? ` Координаты: ${chest.x} ${chest.y} ${chest.z}.` : '';
     this.host.broadcast(`Ивентовый сундук появился.${coords} Сундук откроется через ${this.config.unlockDelayMinutes} мин.`);
     return { ok: true, event };
+  }
+
+  private applyPlacement(event: ActiveWorldEvent): void {
+    if (!event.placement || !event.chest) return;
+    this.host.world.applyBlockBatch(
+      event.placement.map((cell) => ({
+        x: cell.x,
+        y: cell.y,
+        z: cell.z,
+        block: isKnownBlockId(cell.blockId) ? cell.blockId : BlockId.Air,
+      })),
+      { skipSupport: true, deferLighting: true },
+    );
+    for (const cell of event.placement) {
+      if (cell.state) this.host.world.replaceBlockState(cell.x, cell.y, cell.z, cell.state);
+    }
+    const loot = event.loot ?? [];
+    const slots = event.chestSlots?.map(serializeStack) ?? fillChestSlots(loot, () => 0);
+    const chestState = this.host.world.getChest(event.chest.x, event.chest.y, event.chest.z);
+    chestState.slots = slots;
   }
 
   private unlock(): void {
@@ -659,7 +914,11 @@ export class WorldEventsManager {
 
   private cleanup(reason: 'expired' | 'manual'): void {
     this.search = undefined;
-    const active = this.store.active;
+    const active = this.store.active ?? this.store.journal?.event;
+    if (active) {
+      this.store.journal = { phase: 'cleaning', event: cloneEvent(active) };
+      this.persist();
+    }
     if (active?.chest) this.host.closeChestWindow(active.chest.x, active.chest.y, active.chest.z);
     if (active?.snapshot) restoreSnapshot(this.host.world, active.snapshot);
     else if (active?.chest) {
@@ -670,10 +929,26 @@ export class WorldEventsManager {
     this.persist();
     this.host.markDirty();
     this.host.flush();
+    this.host.persistWorld?.();
     this.host.broadcast(reason === 'manual' ? 'Ивентовый сундук убран администратором.' : 'Ивентовый сундук исчез, место восстановлено.');
   }
 
   private recover(now: number): void {
+    const journal = this.store.journal;
+    if (journal?.phase === 'cleaning') {
+      this.finishJournalCleanup(journal.event);
+      return;
+    }
+    if (journal?.phase === 'placing') {
+      this.reapplyStored(journal.event);
+      this.store.active = journal.event;
+      if (now >= journal.event.cleanupAt) {
+        this.cleanup('expired');
+        return;
+      }
+      if (journal.event.phase === 'spawned_locked' && now >= journal.event.unlockAt) this.unlock();
+      return;
+    }
     const active = this.store.active;
     if (!active) return;
     if (active.phase === 'completed') {
@@ -682,6 +957,7 @@ export class WorldEventsManager {
       return;
     }
     if (active.phase === 'spawned_locked' || active.phase === 'active_unlocked') {
+      this.ensureWorldMatches(active);
       if (now >= active.cleanupAt) {
         this.cleanup('expired');
         return;
@@ -693,6 +969,93 @@ export class WorldEventsManager {
       this.store.active = undefined;
       this.persist();
     }
+  }
+
+  private finishJournalCleanup(event: ActiveWorldEvent): void {
+    if (event.chest) this.host.closeChestWindow(event.chest.x, event.chest.y, event.chest.z);
+    if (event.snapshot) restoreSnapshot(this.host.world, event.snapshot);
+    this.store.active = undefined;
+    this.persist();
+    this.host.markDirty();
+    this.host.flush();
+    this.host.persistWorld?.();
+  }
+
+  private reapplyStored(event: ActiveWorldEvent): void {
+    if (!event.placement || !event.chest) return;
+    this.applyPlacement(event);
+    this.host.markDirty();
+    this.host.flush();
+    this.host.persistWorld?.();
+  }
+
+  private ensureWorldMatches(event: ActiveWorldEvent): void {
+    if (!event.chest) return;
+    if (this.host.world.getBlock(event.chest.x, event.chest.y, event.chest.z) === BlockId.EventChest) return;
+    this.reapplyStored(event);
+  }
+
+  private parseEvent(raw: Record<string, unknown>): ActiveWorldEvent | undefined {
+    const phase = parsePhase(raw.phase);
+    const spawnAt = typeof raw.spawnAt === 'number' ? raw.spawnAt : undefined;
+    if (!phase || spawnAt === undefined || typeof raw.unlockAt !== 'number' || typeof raw.cleanupAt !== 'number') {
+      return undefined;
+    }
+    const volume = parseVolume(raw.volume);
+    const protection = parseVolume(raw.protectionVolume) ?? (volume ? eventProtectionVolume(volume) : undefined);
+    const placement = Array.isArray(raw.placement)
+      ? raw.placement.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object') return [];
+        const cell = entry as Record<string, unknown>;
+        if (![cell.x, cell.y, cell.z, cell.blockId].every((value) => Number.isInteger(value))) return [];
+        return [{
+          x: cell.x as number,
+          y: cell.y as number,
+          z: cell.z as number,
+          blockId: cell.blockId as number,
+          ...(cell.state && typeof cell.state === 'object' ? { state: cell.state as BlockRenderState } : {}),
+        }];
+      })
+      : undefined;
+    const snapshot = Array.isArray(raw.snapshot)
+      ? raw.snapshot.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object') return [];
+        const cell = entry as Record<string, unknown>;
+        if (![cell.x, cell.y, cell.z, cell.blockId].every((value) => Number.isInteger(value))) return [];
+        const furnace = parseFurnace(cell.furnace);
+        const sign = sanitizeSignLines(cell.sign);
+        return [{
+          x: cell.x as number,
+          y: cell.y as number,
+          z: cell.z as number,
+          blockId: cell.blockId as number,
+          ...(cell.state && typeof cell.state === 'object' ? { state: cell.state as BlockRenderState } : {}),
+          ...(Array.isArray(cell.chest) ? { chest: cell.chest.map(parseStack) } : {}),
+          ...(furnace ? { furnace } : {}),
+          ...(sign ? { sign } : {}),
+        }];
+      })
+      : undefined;
+    return {
+      type: 'resource_chest',
+      id: typeof raw.id === 'string' ? raw.id : `chest-${spawnAt}`,
+      phase,
+      worldId: typeof raw.worldId === 'string' ? raw.worldId : this.host.worldId(),
+      templateName: typeof raw.templateName === 'string' ? raw.templateName : DEFAULT_EVENT_TEMPLATE_NAME,
+      rotation: parseYaw(raw.rotation),
+      chest: parsePos(raw.chest),
+      volume,
+      protectionVolume: protection,
+      placement,
+      spawnAt,
+      warningAt: typeof raw.warningAt === 'number' ? raw.warningAt : spawnAt,
+      unlockAt: raw.unlockAt,
+      cleanupAt: raw.cleanupAt,
+      loot: Array.isArray(raw.loot) ? raw.loot.map(parseStack).filter((stack): stack is ItemStack => Boolean(stack)) : undefined,
+      chestSlots: Array.isArray(raw.chestSlots) ? raw.chestSlots.map(parseStack) : undefined,
+      snapshot,
+      chestLocked: raw.chestLocked !== false && phase === 'spawned_locked',
+    };
   }
 
   private parseStore(raw: unknown): WorldEventsStore {
@@ -712,31 +1075,19 @@ export class WorldEventsManager {
       ...(typeof value.lastSpawnDayKey === 'string' ? { lastSpawnDayKey: value.lastSpawnDayKey } : {}),
     };
     if (value.active && typeof value.active === 'object') {
-      const active = value.active as Record<string, unknown>;
-      const phase = parsePhase(active.phase);
-      const spawnAt = typeof active.spawnAt === 'number' ? active.spawnAt : undefined;
-      if (phase && spawnAt !== undefined && typeof active.unlockAt === 'number' && typeof active.cleanupAt === 'number') {
-        store.active = {
-          type: 'resource_chest',
-          id: typeof active.id === 'string' ? active.id : `chest-${spawnAt}`,
-          phase,
-          worldId: typeof active.worldId === 'string' ? active.worldId : this.host.worldId(),
-          templateName: typeof active.templateName === 'string' ? active.templateName : DEFAULT_EVENT_TEMPLATE_NAME,
-          rotation: parseYaw(active.rotation),
-          chest: parsePos(active.chest),
-          volume: parseVolume(active.volume),
-          spawnAt,
-          warningAt: typeof active.warningAt === 'number' ? active.warningAt : spawnAt,
-          unlockAt: active.unlockAt,
-          cleanupAt: active.cleanupAt,
-          loot: Array.isArray(active.loot) ? active.loot.map(parseStack).filter((stack): stack is ItemStack => Boolean(stack)) : undefined,
-          snapshot: Array.isArray(active.snapshot) ? active.snapshot as WorldSnapshotCell[] : undefined,
-          chestLocked: active.chestLocked !== false && phase === 'spawned_locked',
-        };
-      }
+      const parsed = this.parseEvent(value.active as Record<string, unknown>);
+      if (parsed) store.active = parsed;
+    }
+    if (value.journal && typeof value.journal === 'object') {
+      const journal = value.journal as Record<string, unknown>;
+      const phase = journal.phase === 'placing' || journal.phase === 'cleaning' ? journal.phase : undefined;
+      const event = journal.event && typeof journal.event === 'object'
+        ? this.parseEvent(journal.event as Record<string, unknown>)
+        : undefined;
+      if (phase && event) store.journal = { phase, event };
     }
     return store;
   }
 }
 
-export { secondsRemaining };
+export { secondsRemaining, timezonePolicy } from './eventScheduler';

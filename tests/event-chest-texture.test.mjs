@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import { decodeRgbaPng } from '../scripts/png-rgba.mjs';
-import { alphaMask, loadEventChestSource, paintEventChestAtlas } from '../scripts/paint-event-chest.mjs';
+import { alphaMask, eventLatchBounds, loadEventChestSource, paintEventChestAtlas } from '../scripts/paint-event-chest.mjs';
 
 describe('event chest visual assets', () => {
   it('keeps the source canvas size and alpha mask', async () => {
@@ -46,5 +46,37 @@ describe('event chest visual assets', () => {
     expect(crimsonCount).toBeGreaterThan(800);
     expect(goldCount).toBeGreaterThan(20);
     expect(rubyCount).toBeGreaterThan(10);
+  });
+
+  it('keeps the source latch island opaque and contrasted in the painted atlas', async () => {
+    const source = await loadEventChestSource();
+    const painted = paintEventChestAtlas(source);
+    const bounds = eventLatchBounds(source);
+    expect(bounds.maxX).toBeGreaterThanOrEqual(bounds.minX);
+    expect(bounds.maxY).toBeGreaterThanOrEqual(bounds.minY);
+    expect(bounds.maxX - bounds.minX).toBeGreaterThanOrEqual(2);
+    expect(bounds.maxY - bounds.minY).toBeGreaterThanOrEqual(2);
+
+    let sourceOpaque = 0;
+    let paintedOpaque = 0;
+    let minLuma = 1;
+    let maxLuma = 0;
+    for (let y = bounds.minY; y <= bounds.maxY; y += 1) {
+      for (let x = bounds.minX; x <= bounds.maxX; x += 1) {
+        const si = (y * source.width + x) * 4;
+        const pi = (y * painted.width + x) * 4;
+        const sa = source.data[si + 3];
+        const pa = painted.data[pi + 3];
+        if (sa > 8) sourceOpaque += 1;
+        if (pa > 8) paintedOpaque += 1;
+        if (pa <= 8) continue;
+        const luma = (painted.data[pi] * 0.3 + painted.data[pi + 1] * 0.59 + painted.data[pi + 2] * 0.11) / 255;
+        if (luma < minLuma) minLuma = luma;
+        if (luma > maxLuma) maxLuma = luma;
+      }
+    }
+    expect(paintedOpaque).toBe(sourceOpaque);
+    expect(paintedOpaque).toBeGreaterThan(8);
+    expect(maxLuma - minLuma).toBeGreaterThan(0.12);
   });
 });

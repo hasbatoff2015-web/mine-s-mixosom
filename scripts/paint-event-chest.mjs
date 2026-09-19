@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { decodeRgbaPng, encodeRgbaPng } from './png-rgba.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
+const WINDOWS_SOURCE = 'E:/Games/Minecraft123/assets/minecraft/textures/entity/chest/event_chest.png';
 const sourcePath = join(root, 'scripts/event-chest-source.png');
 const fallbackSource = join(root, 'public/textures/entity/chest/normal.png');
 const outEntity = join(root, 'public/textures/entity/chest/event.png');
@@ -254,13 +255,36 @@ export function alphaMask(img) {
   return mask;
 }
 
-export async function loadEventChestSource() {
-  try {
-    return decodeRgbaPng(await readFile(sourcePath));
-  } catch (error) {
-    if (error && error.code === 'ENOENT') return decodeRgbaPng(await readFile(fallbackSource));
-    throw error;
+export function eventLatchBounds(img) {
+  let minX = img.width;
+  let minY = img.height;
+  let maxX = -1;
+  let maxY = -1;
+  const limit = Math.min(16, img.width, img.height);
+  for (let y = 0; y < limit; y += 1) {
+    for (let x = 0; x < limit; x += 1) {
+      if (img.data[(y * img.width + x) * 4 + 3] <= 8) continue;
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    }
   }
+  return { minX, minY, maxX, maxY };
+}
+
+export async function loadEventChestSource() {
+  const candidates = [WINDOWS_SOURCE, sourcePath, fallbackSource];
+  let lastError;
+  for (const path of candidates) {
+    try {
+      return decodeRgbaPng(await readFile(path));
+    } catch (error) {
+      lastError = error;
+      if (!error || error.code !== 'ENOENT') throw error;
+    }
+  }
+  throw lastError;
 }
 
 export async function writeEventChestTextures() {

@@ -126,7 +126,7 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
-import { migrateClaimStore, claimsAt, type Claim } from './services/claims';
+import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
@@ -530,6 +530,8 @@ export class WorldInstance {
   private createdAt = Date.now();
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
+  private saveGeneration = 0;
+  private saveQueue: Promise<void> = Promise.resolve();
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
   private tickAccumulator = 0;
@@ -756,21 +758,35 @@ export class WorldInstance {
       spawn: () => this.spawn,
       loadStore: () => this.pluginStore.load('world-events/state', {}),
       saveStore: (store) => this.pluginStore.save('world-events/state', store),
-      claimsAt: (x, y, z) => claimsAt(this.loadClaimStore().claims, this.worldId, x, y, z).length > 0,
-      autoMineAt: (x, y, z) => this.autoMine.list().some((mine) => (
-        mine.worldId === this.worldId && volumeContains(mineVolume(mine), x, y, z)
-      )),
-      specialZoneAt: (x, y, z) => {
+      createValidationContext: () => {
+        const before = this.pluginStore.readCount;
+        const claims = this.loadClaimStore().claims
+          .filter((claim) => claim.worldId === this.worldId)
+          .map((claim) => claim.volume);
         const store = this.pluginStore.load<{ portals?: Array<{ worldId?: string; volume?: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } }> }>(
           'rtpportal/portals',
           { portals: [] },
         );
-        return (store.portals ?? []).some((portal) => (
-          portal.worldId === this.worldId
-          && portal.volume
-          && volumeContains(portal.volume, x, y, z)
-        ));
+        const specialVolumes = (store.portals ?? [])
+          .filter((portal) => portal.worldId === this.worldId && portal.volume)
+          .map((portal) => portal.volume!);
+        const autoMineVolumes = this.autoMine.list()
+          .filter((mine) => mine.worldId === this.worldId)
+          .map((mine) => mineVolume(mine));
+        return {
+          storeReads: this.pluginStore.readCount - before,
+          claimVolumes: claims,
+          autoMineVolumes,
+          specialVolumes,
+          homes: this.homes.all(),
+          players: this.connectedPlayers().map((player) => ({
+            x: player.controller.position.x,
+            y: player.controller.position.y,
+            z: player.controller.position.z,
+          })),
+        };
       },
+      persistWorld: () => { void this.save(); },
       homes: () => this.homes.all(),
       players: () => this.connectedPlayers().map((player) => ({
         x: player.controller.position.x,
@@ -978,6 +994,13 @@ export class WorldInstance {
   }
 
   async save(): Promise<void> {
+    const generation = ++this.saveGeneration;
+    const run = this.saveQueue.then(() => this.flushWorldSnapshot(generation));
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async flushWorldSnapshot(generation: number): Promise<void> {
     const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
     for (const player of this.players.values()) {
       players[player.id] = this.toStored(player);
@@ -1014,6 +1037,7 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();

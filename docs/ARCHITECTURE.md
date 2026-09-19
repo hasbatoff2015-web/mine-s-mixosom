@@ -1,8 +1,16 @@
 # Архитектура
 
+## Timed world events + event chest — 2026-09-19 (hardening)
+
+`eventScheduler` uses IANA `timeZone` (`Europe/Moscow` default). Daily 20:00 Moscow is 17:00 UTC. Catch-up spawns inside the duration window; after the window the day is missed. `lastSpawnDayKey` is set only after a successful scheduled placement (`countsAsDaily`). Manual `/events force spawn` does not consume the daily slot. Failed search retries after `SEARCH_RETRY_MS` without marking the day done.
+
+Spawn validation uses an in-memory `SpawnValidationContext` (claims / AutoMine / RTP volumes / homes / players) built once per search cycle. `validateCandidate` does not `readFileSync`. Structure snapshot stays `structureVolume`; build/claim protection is `protectionVolume` (same X/Z, `MIN_WORLD_Y..MAX_WORLD_Y`). The system claim is virtual (`world-event:<id>`, owner `__world_events__`) and is not stored in `claims.json`. User `/claim create` and claim-anchor volumes that overlap it are hard-denied, including `claim.admin`. Crash recovery keeps a `placing` / `cleaning` journal until `acknowledgeWorldSaved` after the world snapshot write.
+
+Client streaming: `VoxelWorld.continueGeneration` and `WorldRenderer` resumable section mesh jobs. `WORLD_JOB_BUDGET_MS` is checked before the next section/slice. `LongTaskMonitor` captures frame spikes from 33 ms (console from 100 ms) and shows latest vs max longtask/spike; hidden-tab/resume samples are `background`.
+
 ## Timed world events + event chest — 2026-09-19
 
-`WorldEventsManager` is the single timed-event owner. `eventScheduler` converts wall-clock `Date.now()` into a daily spawn plus warning/unlock/cleanup instants (`TimeZonePolicy` is `server-local` | `utc`). The builtin `world-events` plugin loads config, registers `/events`, and cancels break/place/interact inside the active volume. State lives in `plugin-data/world-events/state.json` (templates, `lastSpawnDayKey`, active event + world snapshot + generated loot). Tick is `WorldInstance.simulateGameplayTick` next to AutoMine.
+`WorldEventsManager` is the single timed-event owner. The builtin `world-events` plugin loads config, registers `/events`, and cancels break/place/interact inside the active protection volume. State lives in `plugin-data/world-events/state.json` (templates, `lastSpawnDayKey`, active event + world snapshot + generated loot + optional crash journal). Tick is `WorldInstance.simulateGameplayTick` next to AutoMine.
 
 The first `ActiveWorldEvent.type` is `resource_chest`. Placement snapshots the cuboid, writes the rotated template (anchor and any shared chest become `BlockId.EventChest = 166`), fills chest slots once, then unlocks after `unlockDelayMinutes`. Cleanup restores snapshot cells (blocks, render state, chest slots) and closes open chest windows.
 

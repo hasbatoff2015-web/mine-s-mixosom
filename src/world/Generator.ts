@@ -197,6 +197,28 @@ const MIN_SURFACE = 58;
 const BASE_HEIGHT = 66;
 const MAX_SURFACE = MAX_GENERATED_SURFACE;
 
+export const WORLDGEN_HEIGHT_ROWS_PER_SLICE = 6;
+export const WORLDGEN_COLUMNS_PER_SLICE = 16;
+
+export type TerrainGenPhase =
+  | 'heights'
+  | 'columns'
+  | 'lava'
+  | 'ores'
+  | 'deposits'
+  | 'decorate'
+  | 'cane';
+
+export interface TerrainGenJob {
+  readonly chunk: Chunk;
+  phase: TerrainGenPhase;
+  cursor: number;
+  readonly heights: Int16Array;
+  readonly biomes: Uint8Array;
+  readonly halo: number;
+  elapsedMs: number;
+}
+
 export class TerrainGenerator {
   readonly numericSeed: number;
   private readonly caveDepositCache = new Map<string, readonly CaveDepositVoxel[] | null>();
@@ -233,68 +255,140 @@ export class TerrainGenerator {
   }
 
   generate(chunk: Chunk): void {
-    const worldX = chunk.x * CHUNK_SIZE;
-    const worldZ = chunk.z * CHUNK_SIZE;
+    const job = this.beginGenerate(chunk);
+    while (!this.advanceGenerate(job, CHUNK_SIZE * CHUNK_SIZE)) {
+      // finish every remaining phase; tests and the server still need a complete chunk.
+    }
+  }
+
+  beginGenerate(chunk: Chunk): TerrainGenJob {
     const halo = 1;
     const stride = CHUNK_SIZE + halo * 2;
-    const heights = new Int16Array(stride * stride);
-    const biomes = new Uint8Array(stride * stride);
-    for (let hz = 0; hz < stride; hz += 1) {
-      for (let hx = 0; hx < stride; hx += 1) {
-        const column = this.columnAt(worldX + hx - halo, worldZ + hz - halo);
-        const index = hz * stride + hx;
-        heights[index] = column.height;
-        biomes[index] = biomeCode(column.biome);
+    return {
+      chunk,
+      phase: 'heights',
+      cursor: 0,
+      heights: new Int16Array(stride * stride),
+      biomes: new Uint8Array(stride * stride),
+      halo,
+      elapsedMs: 0,
+    };
+  }
+
+  /**
+   * One bounded generation slice. Heights are filled a few halo rows at a time,
+   * terrain columns in batches, then each feature pass is its own slice.
+   * Returns true when the chunk is fully generated (not yet inserted into the world).
+   */
+  advanceGenerate(job: TerrainGenJob, columnBudget = WORLDGEN_COLUMNS_PER_SLICE): boolean {
+    if (job.phase === 'heights') {
+      const stride = CHUNK_SIZE + job.halo * 2;
+      const rows = Math.max(1, Math.min(WORLDGEN_HEIGHT_ROWS_PER_SLICE, stride - job.cursor));
+      for (let i = 0; i < rows; i += 1) this.fillHeightRow(job, job.cursor + i);
+      job.cursor += rows;
+      if (job.cursor >= stride) {
+        job.phase = 'columns';
+        job.cursor = 0;
+      }
+      return false;
+    }
+    if (job.phase === 'columns') {
+      const total = CHUNK_SIZE * CHUNK_SIZE;
+      const limit = Math.max(1, Math.min(columnBudget, total - job.cursor));
+      for (let i = 0; i < limit; i += 1) {
+        const index = job.cursor + i;
+        const localZ = Math.floor(index / CHUNK_SIZE);
+        const localX = index - localZ * CHUNK_SIZE;
+        this.fillTerrainColumn(job, localX, localZ);
+      }
+      job.cursor += limit;
+      if (job.cursor >= total) {
+        job.phase = 'lava';
+        job.cursor = 0;
+      }
+      return false;
+    }
+    if (job.phase === 'lava') {
+      this.placeLavaLakes(job.chunk, job.heights, job.halo);
+      job.phase = 'ores';
+      return false;
+    }
+    if (job.phase === 'ores') {
+      this.generateOres(job.chunk);
+      job.phase = 'deposits';
+      return false;
+    }
+    if (job.phase === 'deposits') {
+      this.generateCaveDeposits(job.chunk);
+      job.phase = 'decorate';
+      return false;
+    }
+    if (job.phase === 'decorate') {
+      this.decorate(job.chunk);
+      job.phase = 'cane';
+      return false;
+    }
+    this.decorateSugarCane(job.chunk);
+    job.chunk.generated = true;
+    job.chunk.dirty = true;
+    return true;
+  }
+
+  private fillHeightRow(job: TerrainGenJob, hz: number): void {
+    const worldX = job.chunk.x * CHUNK_SIZE;
+    const worldZ = job.chunk.z * CHUNK_SIZE;
+    const stride = CHUNK_SIZE + job.halo * 2;
+    for (let hx = 0; hx < stride; hx += 1) {
+      const column = this.columnAt(worldX + hx - job.halo, worldZ + hz - job.halo);
+      const index = hz * stride + hx;
+      job.heights[index] = column.height;
+      job.biomes[index] = biomeCode(column.biome);
+    }
+  }
+
+  private fillTerrainColumn(job: TerrainGenJob, localX: number, localZ: number): void {
+    const chunk = job.chunk;
+    const halo = job.halo;
+    const heights = job.heights;
+    const biomes = job.biomes;
+    const worldX = chunk.x * CHUNK_SIZE;
+    const worldZ = chunk.z * CHUNK_SIZE;
+    const stride = CHUNK_SIZE + halo * 2;
+    const x = worldX + localX;
+    const z = worldZ + localZ;
+    const hx = localX + halo;
+    const hz = localZ + halo;
+    const height = heights[hz * stride + hx]!;
+    const code = biomes[hz * stride + hx]!;
+    const desert = code === BIOME_CODES.desert;
+    const snowy = code === BIOME_CODES.snowy_plains;
+    const columnIndex = localZ * CHUNK_SIZE + localX;
+    chunk.surfaceHeights[columnIndex] = height;
+    chunk.biomeCodes[columnIndex] = code;
+    let roof = height;
+    for (let dz = -1; dz <= 1; dz += 1) {
+      for (let dx = -1; dx <= 1; dx += 1) {
+        roof = Math.min(roof, heights[(hz + dz) * stride + hx + dx]!);
       }
     }
+    roof -= CAVE_ROOF_DEPTH;
+    const floor = this.bedrockHeight(x, z);
+    const cap = stoneCapY(floor);
+    const fillTop = Math.max(height, SEA_LEVEL);
+    for (let y = 0; y <= fillTop; y += 1) {
+      let block = BlockId.Air;
+      if (y <= floor) block = BlockId.Bedrock;
+      else if (y <= cap) block = BlockId.Stone;
+      else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
+      else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
+      else if (y === height) block = desert ? BlockId.Sand : snowy ? BlockId.SnowBlock : BlockId.GrassBlock;
+      else if (y <= SEA_LEVEL) block = snowy && y === SEA_LEVEL ? BlockId.Ice : BlockId.Water;
 
-    for (let localZ = 0; localZ < CHUNK_SIZE; localZ += 1) {
-      for (let localX = 0; localX < CHUNK_SIZE; localX += 1) {
-        const x = worldX + localX;
-        const z = worldZ + localZ;
-        const hx = localX + halo;
-        const hz = localZ + halo;
-        const height = heights[hz * stride + hx]!;
-        const code = biomes[hz * stride + hx]!;
-        const desert = code === BIOME_CODES.desert;
-        const snowy = code === BIOME_CODES.snowy_plains;
-        const columnIndex = localZ * CHUNK_SIZE + localX;
-        chunk.surfaceHeights[columnIndex] = height;
-        chunk.biomeCodes[columnIndex] = code;
-        let roof = height;
-        for (let dz = -1; dz <= 1; dz += 1) {
-          for (let dx = -1; dx <= 1; dx += 1) {
-            roof = Math.min(roof, heights[(hz + dz) * stride + hx + dx]!);
-          }
-        }
-        roof -= CAVE_ROOF_DEPTH;
-        const floor = this.bedrockHeight(x, z);
-        const cap = stoneCapY(floor);
-        const fillTop = Math.max(height, SEA_LEVEL);
-        for (let y = 0; y <= fillTop; y += 1) {
-          let block = BlockId.Air;
-          if (y <= floor) block = BlockId.Bedrock;
-          else if (y <= cap) block = BlockId.Stone;
-          else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
-          else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
-          else if (y === height) block = desert ? BlockId.Sand : snowy ? BlockId.SnowBlock : BlockId.GrassBlock;
-          else if (y <= SEA_LEVEL) block = snowy && y === SEA_LEVEL ? BlockId.Ice : BlockId.Water;
-
-          if (y > cap && y <= roof && this.isCave(x, y, z, height)) {
-            block = BlockId.Air;
-          }
-          chunk.set(localX, y, localZ, block);
-        }
+      if (y > cap && y <= roof && this.isCave(x, y, z, height)) {
+        block = BlockId.Air;
       }
+      chunk.set(localX, y, localZ, block);
     }
-
-    this.placeLavaLakes(chunk, heights, halo);
-    this.generateOres(chunk);
-    this.generateCaveDeposits(chunk);
-    this.decorate(chunk);
-    this.decorateSugarCane(chunk);
-    chunk.generated = true;
-    chunk.dirty = true;
   }
 
   bedrockHeight(x: number, z: number): number {

@@ -3,6 +3,10 @@ import { fail, ok } from '../commands';
 import { cuboidSizeOf, formatCuboidSize } from '../services/selection';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import { DEFAULT_WORLD_EVENTS_CONFIG, type WorldEventsConfig } from '../services/worldEvents';
+import { timezonePolicy } from '../services/eventScheduler';
+import {
+  EVENT_BUILD_PROTECTION_MESSAGE,
+} from '../services/eventProtection';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
@@ -23,10 +27,16 @@ const HELP = {
 };
 
 function toConfig(raw: Record<string, string | number | boolean>): WorldEventsConfig {
+  const explicitZone = typeof raw.timeZone === 'string' ? raw.timeZone.trim() : '';
+  const timeZone = explicitZone && explicitZone !== DEFAULT_WORLD_EVENTS_CONFIG.timeZone
+    ? explicitZone
+    : raw.useServerLocalTime === false
+      ? timezonePolicy(false)
+      : (explicitZone || DEFAULT_WORLD_EVENTS_CONFIG.timeZone);
   return {
     enabled: Boolean(raw.enabled ?? DEFAULT_WORLD_EVENTS_CONFIG.enabled),
     dailyTime: String(raw.dailyTime ?? DEFAULT_WORLD_EVENTS_CONFIG.dailyTime),
-    useServerLocalTime: Boolean(raw.useServerLocalTime ?? DEFAULT_WORLD_EVENTS_CONFIG.useServerLocalTime),
+    timeZone,
     warningMinutes: Number(raw.warningMinutes ?? DEFAULT_WORLD_EVENTS_CONFIG.warningMinutes),
     unlockDelayMinutes: Number(raw.unlockDelayMinutes ?? DEFAULT_WORLD_EVENTS_CONFIG.unlockDelayMinutes),
     durationMinutes: Number(raw.durationMinutes ?? DEFAULT_WORLD_EVENTS_CONFIG.durationMinutes),
@@ -58,11 +68,24 @@ export function createWorldEventsPlugin(ctx: BuiltinPluginContext): Plugin {
         api.hasPermission(playerId, 'events.manage') || api.isOperator(name)
       );
 
+      const lastDenyAt = new Map<string, number>();
+      const DENY_COOLDOWN_MS = 2500;
+      const denyProtected = (playerId: string, event: { cancel(): void }) => {
+        event.cancel();
+        const now = Date.now();
+        if ((lastDenyAt.get(playerId) ?? 0) + DENY_COOLDOWN_MS > now) return;
+        lastDenyAt.set(playerId, now);
+        const player = api.getPlayer(playerId);
+        player?.sendMessage(EVENT_BUILD_PROTECTION_MESSAGE);
+        const claim = manager.systemClaim();
+        if (claim) ctx.claimBoundaries.show(playerId, claim);
+      };
+
       api.registerEvent('blockBreak', (event) => {
-        if (manager.isProtected(event.x, event.y, event.z)) event.cancel();
+        if (manager.isProtected(event.x, event.y, event.z)) denyProtected(event.playerId, event);
       });
       api.registerEvent('blockPlace', (event) => {
-        if (manager.isProtected(event.x, event.y, event.z)) event.cancel();
+        if (manager.isProtected(event.x, event.y, event.z)) denyProtected(event.playerId, event);
       });
       api.registerEvent('explosion', (event) => {
         if (manager.isProtected(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z))) event.cancel();
@@ -98,6 +121,7 @@ export function createWorldEventsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (action === 'spawn') {
               const result = manager.forceSpawn();
               if (!result.ok) return fail(result.error);
+              if ('searching' in result) return ok('Поиск места для ивента запущен.');
               const chest = result.event.chest;
               return ok(chest
                 ? `Ивент заспавнен: ${chest.x} ${chest.y} ${chest.z}`

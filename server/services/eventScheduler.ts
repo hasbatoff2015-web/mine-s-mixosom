@@ -1,4 +1,4 @@
-export type TimeZonePolicy = 'server-local' | 'utc';
+export const MOSCOW_TIME_ZONE = 'Europe/Moscow';
 
 export interface DailyClockParts {
   readonly year: number;
@@ -27,7 +27,34 @@ export interface EventTimeline {
   readonly cleanupAt: number;
 }
 
+export type DailySpawnDecision =
+  | { readonly kind: 'future'; readonly spawnAt: number }
+  | { readonly kind: 'catchup'; readonly spawnAt: number }
+  | { readonly kind: 'miss'; readonly spawnAt: number };
+
 const MINUTES = 60_000;
+
+const PARTS_FORMAT: Intl.DateTimeFormatOptions = {
+  timeZone: MOSCOW_TIME_ZONE,
+  calendar: 'gregory',
+  hourCycle: 'h23',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+};
+
+const ZONE_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
+
+function formatterFor(timeZone: string): Intl.DateTimeFormat {
+  const existing = ZONE_FORMATTERS.get(timeZone);
+  if (existing) return existing;
+  const formatter = new Intl.DateTimeFormat('en-US', { ...PARTS_FORMAT, timeZone });
+  ZONE_FORMATTERS.set(timeZone, formatter);
+  return formatter;
+}
 
 export function parseDailyTime(raw: string | undefined): ParsedDailyTime | undefined {
   if (!raw) return undefined;
@@ -44,9 +71,22 @@ export function formatDailyTime(time: ParsedDailyTime): string {
   return `${String(time.hour).padStart(2, '0')}:${String(time.minute).padStart(2, '0')}`;
 }
 
-export function clockParts(atMs: number, policy: TimeZonePolicy): DailyClockParts {
-  const date = new Date(atMs);
-  if (policy === 'utc') {
+export function normalizeTimeZone(raw: string | undefined): string {
+  const value = (raw ?? MOSCOW_TIME_ZONE).trim();
+  if (!value) return MOSCOW_TIME_ZONE;
+  if (value === 'utc' || value === 'UTC') return 'UTC';
+  try {
+    formatterFor(value);
+    return value;
+  } catch {
+    return MOSCOW_TIME_ZONE;
+  }
+}
+
+export function clockParts(atMs: number, timeZone: string): DailyClockParts {
+  const zone = normalizeTimeZone(timeZone);
+  if (zone === 'UTC') {
+    const date = new Date(atMs);
     return {
       year: date.getUTCFullYear(),
       month: date.getUTCMonth(),
@@ -56,46 +96,61 @@ export function clockParts(atMs: number, policy: TimeZonePolicy): DailyClockPart
       second: date.getUTCSeconds(),
     };
   }
+  const formatter = formatterFor(zone);
+  const named: Partial<Record<Intl.DateTimeFormatPartTypes, string>> = {};
+  for (const part of formatter.formatToParts(new Date(atMs))) {
+    named[part.type] = part.value;
+  }
   return {
-    year: date.getFullYear(),
-    month: date.getMonth(),
-    day: date.getDate(),
-    hour: date.getHours(),
-    minute: date.getMinutes(),
-    second: date.getSeconds(),
+    year: Number(named.year),
+    month: Number(named.month) - 1,
+    day: Number(named.day),
+    hour: Number(named.hour),
+    minute: Number(named.minute),
+    second: Number(named.second),
   };
 }
 
-export function dayKey(atMs: number, policy: TimeZonePolicy): string {
-  const parts = clockParts(atMs, policy);
+export function dayKey(atMs: number, timeZone: string): string {
+  const parts = clockParts(atMs, timeZone);
   const month = String(parts.month + 1).padStart(2, '0');
   const day = String(parts.day).padStart(2, '0');
   return `${parts.year}-${month}-${day}`;
 }
 
+function offsetMsAt(atMs: number, timeZone: string): number {
+  const parts = clockParts(atMs, timeZone);
+  const asUtc = Date.UTC(parts.year, parts.month, parts.day, parts.hour, parts.minute, parts.second, 0);
+  return asUtc - atMs;
+}
+
 export function zonedDateMs(
   parts: Pick<DailyClockParts, 'year' | 'month' | 'day' | 'hour' | 'minute'>,
-  policy: TimeZonePolicy,
+  timeZone: string,
 ): number {
-  if (policy === 'utc') {
-    return Date.UTC(parts.year, parts.month, parts.day, parts.hour, parts.minute, 0, 0);
+  const zone = normalizeTimeZone(timeZone);
+  const utcGuess = Date.UTC(parts.year, parts.month, parts.day, parts.hour, parts.minute, 0, 0);
+  if (zone === 'UTC') return utcGuess;
+  let instant = utcGuess;
+  for (let i = 0; i < 4; i += 1) {
+    instant = utcGuess - offsetMsAt(instant, zone);
   }
-  return new Date(parts.year, parts.month, parts.day, parts.hour, parts.minute, 0, 0).getTime();
+  return instant;
 }
 
 export function nextDailyOccurrence(
   nowMs: number,
   time: ParsedDailyTime,
-  policy: TimeZonePolicy,
+  timeZone: string,
 ): number {
-  const parts = clockParts(nowMs, policy);
+  const parts = clockParts(nowMs, timeZone);
   const today = zonedDateMs({
     year: parts.year,
     month: parts.month,
     day: parts.day,
     hour: time.hour,
     minute: time.minute,
-  }, policy);
+  }, timeZone);
   if (today > nowMs) return today;
   const tomorrowBase = zonedDateMs({
     year: parts.year,
@@ -103,15 +158,40 @@ export function nextDailyOccurrence(
     day: parts.day,
     hour: 12,
     minute: 0,
-  }, policy) + 24 * 60 * MINUTES;
-  const tomorrowParts = clockParts(tomorrowBase, policy);
+  }, timeZone) + 24 * 60 * MINUTES;
+  const tomorrowParts = clockParts(tomorrowBase, timeZone);
   return zonedDateMs({
     year: tomorrowParts.year,
     month: tomorrowParts.month,
     day: tomorrowParts.day,
     hour: time.hour,
     minute: time.minute,
-  }, policy);
+  }, timeZone);
+}
+
+export function decideDailySpawn(
+  nowMs: number,
+  time: ParsedDailyTime,
+  timeZone: string,
+  durationMinutes: number,
+  lastSpawnDayKey?: string,
+): DailySpawnDecision {
+  const todayKey = dayKey(nowMs, timeZone);
+  const parts = clockParts(nowMs, timeZone);
+  const todaySpawn = zonedDateMs({
+    year: parts.year,
+    month: parts.month,
+    day: parts.day,
+    hour: time.hour,
+    minute: time.minute,
+  }, timeZone);
+  if (lastSpawnDayKey === todayKey) {
+    return { kind: 'miss', spawnAt: nextDailyOccurrence(nowMs, time, timeZone) };
+  }
+  if (todaySpawn > nowMs) return { kind: 'future', spawnAt: todaySpawn };
+  const windowEnd = todaySpawn + Math.max(0, durationMinutes) * MINUTES;
+  if (nowMs < windowEnd) return { kind: 'catchup', spawnAt: todaySpawn };
+  return { kind: 'miss', spawnAt: nextDailyOccurrence(nowMs, time, timeZone) };
 }
 
 export function eventTimeline(spawnAt: number, offsets: EventScheduleOffsets): EventTimeline {
@@ -131,9 +211,10 @@ export function minutesRemaining(untilMs: number, nowMs: number): number {
 }
 
 export function secondsRemaining(untilMs: number, nowMs: number): number {
-  return Math.max(0, Math.ceil((untilMs - nowMs) / 1000));
+  return Math.max(0, nowMs >= untilMs ? 0 : Math.ceil((untilMs - nowMs) / 1000));
 }
 
-export function timezonePolicy(useServerLocalTime: boolean): TimeZonePolicy {
-  return useServerLocalTime ? 'server-local' : 'utc';
+/** Old boolean configs: local meant Moscow wall time, not the OS zone. */
+export function timezonePolicy(useServerLocalTime: boolean): string {
+  return useServerLocalTime ? MOSCOW_TIME_ZONE : 'UTC';
 }

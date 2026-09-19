@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-19: World events hardening + bounded streaming
+
+- [x] Europe/Moscow IANA schedule, catch-up, failed-search retry, manual force does not eat the daily event.
+- [x] Virtual full-height event protection; user/anchor claims cannot overlap the active event column.
+- [x] In-memory spawn validation; crash journal `placing`/`cleaning`; persistent-block reject.
+- [x] Resumable section meshing + staged generation slices; latest/max longtask and 33 ms frameSpike HUD.
+- [ ] Owner live Anarchy QA of FPS at event distance with the new F3 latest/max lines.
+
 ## 2026-09-19: Timed world events + event chest
 
 - [x] Real-time event scheduler (daily HH:MM, server-local or UTC) with warning / spawn / unlock / cleanup offsets.
