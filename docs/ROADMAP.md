@@ -5,6 +5,7 @@
 - [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
 - [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
 - [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+- [x] Agent live Anarchy QA of invites inbox, announce cooldown after restart, transfer button visibility, and ranking coin icons.
 
 ## 2026-09-19: Clan roles + Rating menu
 

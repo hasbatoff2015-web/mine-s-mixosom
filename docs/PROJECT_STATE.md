@@ -6,6 +6,7 @@
 - Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
 - **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "…"` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
 - Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
+- Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
 - Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.
 
 ## Последний проход: Clan roles + Rating menu — 2026-09-19

@@ -56,7 +56,12 @@ Ranking money rows reuse `public/ui/menu/icon_coin.png` (same asset as the menu 
 
 ## Tests
 
-See the closing report section after gates.
+- `npm run typecheck` / `typecheck:client` / `typecheck:server` / `typecheck:sim` PASS
+- `npm run check:boundaries` PASS
+- Focused vitest 8 files / **90/90** PASS: `clan-invites-announce`, `clan-roles-ranking`, `clan`, `economy`, `game-menu`, `friends`, `clan-gui`, `game-menu-gui`
+- `npm run build` PASS (`dist/assets/index-CNt0E0yE.css` 98.73 kB)
+
+New/updated coverage includes: invite inbox, accept/reject, expired/full/other-clan, new invite chat text, Leader-only announcement, `MAX_CHAT_LENGTH` 128, 3h per-clan cooldown surviving reload, transfer permission change, GUI invitations + announce button visibility, ranking `icon_coin.png` (no 🪙).
 
 ## Architecture decisions
 
@@ -69,10 +74,27 @@ See the closing report section after gates.
 - Offline members do not receive announcements (no chat history).
 - Second announcement during cooldown is rejected even after leadership transfer (cooldown is per clan).
 
-## Deferred
+## Live QA (Anarchy `ws://127.0.0.1:2567`, Vite 4173)
 
-- Owner live Anarchy QA of rating/invites/announcement (this pass).
+First pass used a **stale** `vite-node` process started before this commit, so invite chat still said «Используйте /clan accept…» and **Приглашения** did not list the invite. After restarting `npm run dev:server` on current HEAD:
+
+**A — invitations.** Leader bot `Player-1ef8` created clan LiveQA and invited browser **Invitee**. Chat (recipient only): `Игрок Player-1ef8 пригласил вас в клан LiveQA. Примите приглашение в меню`. Кланы hub **Приглашения** listed LiveQA / Player-1ef8 / TTL `23 ч 56 мин` with **Принять** / **Отклонить**. Accept joined as Участник. **Объявление соклановцам** hidden. Overlay stayed; E/X close worked. No `/clan accept` workaround.
+
+**B — announcement.** Leader `send_announcement` delivered `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "Сегодня в 20:00 идём фармить данжи"` with `channel: clan`, `style: announcement` to online members. GUI: Invitee as Member — no button. After transfer, Invitee as Глава sees **Объявление соклановцам**. Screen: «Напишите объявление клану», input, **Отправить**.
+
+**C — cooldown.** Immediate second send disabled. Label `Повторная отправка через 2 ч 43 мин` after a full server restart. `announcementCooldownUntil` present on `clan-3` in `clans.json`. Reopening the menu did not reset it. Veteran protocol send → `Это действие доступно только владельцу клана.`
+
+**D — transfer.** Promote Invitee → veteran, `confirm_transfer_leader`. New Leader sees the button; old Leader (`Player-1ef8`) `canAnnounce=false`.
+
+**E — ranking.** All four live modes. Money rows use `icon_coin.png` (gold coin image), amounts like `15 100` / `15 100` with spaces, no □. Clan list money uses existing `.mc-clan-coin` gold disc (not Unicode). Overlay stayed; X closed cleanly. Yellow highlight on own row.
+
+**Regressions found:** none after server restart. Spawn PvP/environment death loop on a fresh survival Invitee made HUD-only clicks necessary (creative + Y=140 for the cooldown/rating pass). Chat has no offline history, so the announcement line is gone after reconnect (by design).
+
+## Visual QA
+
+- Invite chat + invitations list + accept: `/opt/cursor/artifacts/clan_invite_chat_and_accept.mp4`
+- Leader button / cooldown / live rating coins: screenshots `leader_announce_button_visible.webp`, `announce_cooldown_send_disabled.webp`, `live_rating_players_money.webp`, `live_rating_clans_money.webp`
 
 ## Git
 
-Branch `cursor/clan-roles-rating-d1a5`. Do not merge PR #96.
+Branch `cursor/clan-roles-rating-d1a5`. Draft PR #96. Do not merge.
