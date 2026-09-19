@@ -1,5 +1,25 @@
 # Состояние проекта
 
+## Последний проход: Clan invitations + leader announcement — 2026-09-19
+
+- Рейтинг: суммы монет рисуются через существующий `icon_coin.png` / `.mc-menu-coin`, без Unicode 🪙.
+- Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
+- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] "…"` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
+- Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
+- Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
+- Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.
+
+## Последний проход: Clan roles + Rating menu — 2026-09-19
+
+- Существующий `ClanService` расширен ролями **Глава / Ветеран / Участник**. `ownerId` по-прежнему лидер. Ветеран: invite + kick только `member`. Глава: все права. Передача главы только ветерану; старый глава становится ветераном.
+- Приглашение по нику на вкладке Запросы, inline-ошибки, TTL 24ч. `/clan add` по-прежнему только online.
+- Карточка участника: ник, онлайн-снимок (без polling), роль, монеты, убийства, друзья (добавить / уже / исходящая+отмена), «Это вы», kick/promote/demote/transfer по правам.
+- PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
+- Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
+- Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
+- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay` **не** вызывает `enterPlaying()` (только PLAYING + pointer lock, если нет blocking overlay); роли `.mc-clan-role` `#e8e8e8`, owner/card-meta `#d8d8d8`. Transparent `icon_rating.png`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
+
 ## Последний проход: Third-person axe 180° handle flip — 2026-09-18
 
 - Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.

@@ -165,6 +165,23 @@ export class FriendsService {
     return { ok: true, request, affected: [playerId, request.fromPlayerId] };
   }
 
+  cancelOutgoing(playerId: string, targetPlayerId: string): FriendsResult {
+    const before = this.store.requests.length;
+    this.store.requests = this.store.requests.filter(
+      (entry) => !(entry.fromPlayerId === playerId && entry.toPlayerId === targetPlayerId),
+    );
+    if (this.store.requests.length === before) return { ok: false, error: FRIENDS_REQUEST_MISSING_ERROR };
+    this.persist();
+    return { ok: true, affected: [playerId, targetPlayerId] };
+  }
+
+  relation(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none' {
+    if (viewerId === targetId) return 'self';
+    if (this.isFriend(viewerId, targetId)) return 'friend';
+    if (this.outgoingRequests(viewerId).some((request) => request.toPlayerId === targetId)) return 'outgoing';
+    return 'none';
+  }
+
   reject(playerId: string, requestId: string): FriendsResult {
     const before = this.store.requests.length;
     this.store.requests = this.store.requests.filter((entry) => !(entry.requestId === requestId && entry.toPlayerId === playerId));

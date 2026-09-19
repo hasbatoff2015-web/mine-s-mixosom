@@ -9,10 +9,21 @@ import {
 import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import type { TradeService } from './trade';
+import type { ClanService } from './clan';
+import type { EconomyService } from './economy';
+import {
+  RANKING_NO_CLAN_MESSAGE,
+  formatKillsLabel,
+  personalRankText,
+  sliceRankingPage,
+  type RankingKind,
+} from '../../shared/ranking';
+import { formatMegacoinAmount } from '../../shared/megacoins';
 import type {
   ServerMenuMessage,
   ServerTradeMessage,
   GameMenuScreenKind,
+  NetworkRankingRow,
 } from '../../shared/protocol';
 
 export interface GameMenuSession {
@@ -27,6 +38,8 @@ export interface GameMenuSession {
   claimMemberText: string;
   pendingClaimName?: string;
   tradeNameText: string;
+  ratingKind: RankingKind;
+  ratingPage: number;
   message?: string;
 }
 
@@ -38,6 +51,8 @@ export function createMenuSession(): GameMenuSession {
     claimNameText: '',
     claimMemberText: '',
     tradeNameText: '',
+    ratingKind: 'players-money',
+    ratingPage: 1,
   };
 }
 
@@ -116,7 +131,62 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';
   if (screen === 'trade') return 'Обмен';
   if (screen === 'auction') return 'Аукцион';
+  if (screen === 'rating') return 'Рейтинг';
   return 'Меню';
+}
+
+export function buildRankingSnapshot(
+  clan: ClanService,
+  economy: EconomyService,
+  playerId: string,
+  kind: RankingKind,
+  page: number,
+): Pick<ServerMenuMessage, 'ratingKind' | 'ratingPage' | 'ratingTotalPages' | 'ratingRows' | 'personalRank' | 'personalText'> {
+  const viewerClan = clan.playerClan(playerId);
+  if (kind === 'players-money' || kind === 'players-kills') {
+    const metric = kind === 'players-kills' ? 'kills' : 'money';
+    const ranked = economy.rankPlayers(metric);
+    const self = ranked.find((row) => row.playerId === playerId);
+    const paged = sliceRankingPage(ranked, page);
+    const rows: NetworkRankingRow[] = paged.items.map((row) => ({
+      rank: row.rank,
+      id: row.playerId,
+      name: row.name,
+      value: metric === 'kills' ? row.kills : row.balance,
+      valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : formatMegacoinAmount(row.balance),
+      metric,
+      highlight: row.playerId === playerId,
+    }));
+    return {
+      ratingKind: kind,
+      ratingPage: paged.page,
+      ratingTotalPages: paged.totalPages,
+      ratingRows: rows,
+      ...(self ? { personalRank: self.rank, personalText: personalRankText(self.rank) } : {}),
+    };
+  }
+  const metric = kind === 'clans-kills' ? 'kills' : 'money';
+  const ranked = clan.ranked('', metric);
+  const self = viewerClan ? ranked.find((row) => row.clan.clanId === viewerClan.clanId) : undefined;
+  const paged = sliceRankingPage(ranked, page);
+  const rows: NetworkRankingRow[] = paged.items.map((row) => ({
+    rank: row.rank,
+    id: row.clan.clanId,
+    name: row.clan.name,
+    value: metric === 'kills' ? row.kills : row.total,
+    valueLabel: metric === 'kills' ? formatKillsLabel(row.kills) : formatMegacoinAmount(row.total),
+    metric,
+    highlight: viewerClan?.clanId === row.clan.clanId,
+  }));
+  return {
+    ratingKind: kind,
+    ratingPage: paged.page,
+    ratingTotalPages: paged.totalPages,
+    ratingRows: rows,
+    ...(viewerClan
+      ? (self ? { personalRank: self.rank, personalText: personalRankText(self.rank) } : {})
+      : { personalText: RANKING_NO_CLAN_MESSAGE }),
+  };
 }
 
 export { CLAIM_MAX_OWNED, GAME_MENU_MAX_CLAIMS, FRIENDS_MAX, HOME_MAX_DEFAULT };

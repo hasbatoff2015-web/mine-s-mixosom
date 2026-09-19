@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
 import { HOME_MAX_DEFAULT } from '../shared/homes';
@@ -60,10 +61,10 @@ describe('main menu HUD and chrome', () => {
 
   it('lists the required menu buttons and omits Top', () => {
     expect(GAME_MENU_BUTTONS.map((button) => button.id)).toEqual([
-      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction',
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating',
     ]);
     expect(GAME_MENU_BUTTONS.map((button) => button.label)).toEqual([
-      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион',
+      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион', 'Рейтинг',
     ]);
     const html = menuRootHtml({ balance: 5645, balanceLabel: formatMegacoinAmount(5645) });
     expect(html).toContain('Спавн');
@@ -73,14 +74,41 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('Приваты');
     expect(html).toContain('Обмен');
     expect(html).toContain('Аукцион');
+    expect(html).toContain('Рейтинг');
     expect(html).not.toContain('Топ');
     expect(html).toContain('mc-menu-grid-row-4');
-    expect(html).toContain('mc-menu-grid-row-3');
+    expect(html).not.toContain('mc-menu-grid-row-3');
     expect(html).toContain('icon_spawn.png');
     expect(html).toContain('icon_auction.png');
+    expect(html).toContain('icon_rating.png');
     expect(html).toContain('Баланс: 5 645 монет');
-    expect(html.indexOf('mc-menu-grid-row-4')).toBeLessThan(html.indexOf('mc-menu-grid-row-3'));
     expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
+    expect(gameUi).toContain('isGameMenuScreenKind');
+    expect(gameUi).toContain("action: 'open', screen: id");
+    expect(gameUi).toContain("id === 'rating'");
+    expect(gameUi).toContain("action: 'open', screen: 'rating'");
+    expect(gameUi).toContain("action: 'rating_set'");
+    expect(gameUi).toContain("target.closest('[data-ui=\"close\"]')");
+    expect(gameUi).toContain("target.closest('input, textarea, label')");
+    expect(css).toContain('#app.controls-suppressed canvas');
+    expect(css).toContain('#app.controls-suppressed #ui-root');
+    expect(gameUi).toContain('resetOverlayModal');
+    expect(gameUi).toContain('bindOverlayPointerShield');
+    expect(gameUi).toContain('event.stopPropagation()');
+    expect(css).toContain('.mc-menu-tile-icon');
+    expect(cssRule('.mc-menu-tile-icon')).toContain('background: transparent;');
+    const icon = readFileSync(new URL('../public/ui/menu/icon_rating.png', import.meta.url));
+    expect(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
+    expect(icon[25]).toBe(6);
+    expect(icon.readUInt32BE(16)).toBeLessThanOrEqual(128);
+    expect(icon.readUInt32BE(20)).toBeLessThanOrEqual(128);
+    const alpha = execFileSync('python3', ['-c', [
+      'from PIL import Image',
+      "im = Image.open('public/ui/menu/icon_rating.png').convert('RGBA')",
+      'zeros = sum(1 for px in im.getdata() if px[3] == 0)',
+      "print('transparent' if zeros > 1000 and im.getpixel((0,0))[3] == 0 else 'opaque')",
+    ].join('; ')], { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname.replace(/\/$/, '') });
+    expect(alpha.trim()).toBe('transparent');
   });
 
   it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {
@@ -107,7 +135,7 @@ describe('main menu HUD and chrome', () => {
     expect(cssRule('.mc-menu-balance')).toContain('overflow: visible;');
     for (const file of [
       'icon_spawn.png', 'icon_homes.png', 'icon_friends.png', 'icon_clans.png',
-      'icon_claims.png', 'icon_trade.png', 'icon_auction.png', 'icon_coin.png',
+      'icon_claims.png', 'icon_trade.png', 'icon_auction.png', 'icon_rating.png', 'icon_coin.png',
       'close.png', 'close_hover.png', 'pause.png', 'chat.png', 'menu.png', 'back.png',
     ]) {
       expect(existsSync(new URL(`../public/ui/menu/${file}`, import.meta.url))).toBe(true);
@@ -125,6 +153,16 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('menuBackHtml(state.screen)');
     expect(gameUi).toContain('this.closeButtonHtml()');
     expect(gameSource).toContain('this.closeGameMenuAndResumeLook(true)');
+    expect(gameSource).toContain('resumeLookIfNoOverlay');
+    expect(gameSource).toContain('if (this.ui.isBlockingOverlay()) return;');
+    const resumeLook = gameSource.slice(
+      gameSource.indexOf('private resumeLookIfNoOverlay'),
+      gameSource.indexOf('private closeAuctionAndResumeLook'),
+    );
+    expect(resumeLook).toContain('tryRequestPointerLock');
+    expect(resumeLook).not.toContain('this.enterPlaying()');
+    expect(gameSource).toContain('this.ui.closeGameMenu();');
+    expect(gameSource).toContain('this.ui.closeTrade();');
   });
 
   it('keeps homes, friends, claims and auction pages in inventory chrome', () => {
@@ -194,5 +232,33 @@ describe('main menu HUD and chrome', () => {
 
     const tradeEmpty = menuBodyHtml(menu({ screen: 'trade' }), (value) => value);
     expect(tradeEmpty).toContain('Обмениваться можно только с игроками, которые находятся рядом с вами (до 20 блоков).');
+
+    const rating = menuBodyHtml(menu({
+      screen: 'rating',
+      ratingKind: 'players-money',
+      ratingPage: 2,
+      ratingTotalPages: 5,
+      ratingRows: [
+        { rank: 11, id: 'a', name: 'Ada', value: 100, valueLabel: '100', metric: 'money', highlight: true },
+        { rank: 12, id: 'b', name: 'Bob', value: 90, valueLabel: '90', metric: 'money', highlight: false },
+      ],
+      personalRank: 11,
+      personalText: 'Ваше место: #11',
+    }), (value) => value);
+    expect(rating).toContain('Игроки');
+    expect(rating).toContain('Кланы');
+    expect(rating).toContain('По монетам');
+    expect(rating).toContain('По убийствам');
+    expect(rating).toContain('Страница 2 / 5');
+    expect(rating).toContain('mc-rank-you');
+    expect(rating).toContain('Ваше место: #11');
+    expect(rating).toContain('data-menu-rating="players-kills"');
+    expect(rating).toContain('data-menu-rating="clans-kills"');
+    expect(rating).toContain('mc-menu-coin');
+    expect(rating).toContain('icon_coin.png');
+    expect(rating).not.toContain('🪙');
+    const clansTab = menuBodyHtml(menu({ screen: 'clans' }), (value) => value);
+    expect(clansTab).toContain('clans_invitations');
+    expect(clansTab).toContain('Приглашения');
   });
 });

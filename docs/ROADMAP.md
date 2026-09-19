@@ -1,5 +1,22 @@
 # Roadmap
 
+## 2026-09-19: Clan invitations + leader announcement
+
+- [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
+- [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
+- [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+- [x] Agent live Anarchy QA of invites inbox, announce cooldown after restart, transfer button visibility, and ranking coin icons.
+
+## 2026-09-19: Clan roles + Rating menu
+
+- [x] Roles Глава / Ветеран / Участник on existing `ClanService` (no parallel clan system).
+- [x] Veteran invite + kick members; leader-only promote/demote/transfer; transfer only to veteran.
+- [x] Nickname invite on Requests with inline errors; 24h TTL; `/clan add` stays online-only.
+- [x] Member list: role, online snapshot, leader first, money/kills sort; player card with friends + rights.
+- [x] Persistent PvP kills on `EconomyService`; clan kills = live sum of current members.
+- [x] Main-menu Рейтинг (4 rankings, top 50 / 10 per page); 4+4 grid; `icon_rating.png`.
+- [ ] Owner live Anarchy QA of rating, invites, transfer, and kill increment.
+
 ## 2026-09-18: Third-person axe 180° handle flip
 
 - [x] Axes keep the shared tool position/scale/tilt and add a local 180° roll around sprite handle axis `(1, 1, 0)`.

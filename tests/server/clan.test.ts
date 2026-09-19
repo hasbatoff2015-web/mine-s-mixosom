@@ -2,12 +2,18 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { parseClientMessage } from '../../shared/protocol';
+import {
+  CLAN_ACTIONS,
+  MENU_ACTIONS,
+  MENU_SCREENS,
+  parseClientMessage,
+} from '../../shared/protocol';
 import {
   CLAN_CREATE_COST,
   CLAN_ICON_IDS,
   CLAN_INVITE_TTL_MS,
   CLAN_MAX_MEMBERS,
+  CLAN_ALREADY_IN_THIS_CLAN_ERROR,
   CLAN_NAME_CHARS_ERROR,
   CLAN_NAME_LENGTH_ERROR,
   CLAN_REQUEST_TTL_MS,
@@ -24,13 +30,13 @@ import {
   CLAN_ICON_ERROR,
   CLAN_INVITE_MISSING_ERROR,
   CLAN_INVITE_SELF_ERROR,
+  CLAN_INVITE_EXISTS_ERROR,
   CLAN_KICK_SELF_ERROR,
   CLAN_NAME_TAKEN_ERROR,
   CLAN_OFFLINE_INVITE_ERROR,
   CLAN_OWNER_LEAVE_ERROR,
   CLAN_OWNER_ONLY_ERROR,
   CLAN_PAGE_SIZE,
-  CLAN_TARGET_IN_CLAN_ERROR,
   clanInviteChat,
   ClanService,
   type ClanRuntime,
@@ -51,6 +57,11 @@ function runtime(
     isOnline: (id) => connected.has(id),
     displayName: (id) => names.get(id) ?? id.slice(0, 8),
     sendMessage: (id, text) => { mail.push({ id, text }); },
+    lookupPlayer: (raw) => {
+      const lower = raw.trim().toLowerCase();
+      const hit = online.find((player) => player.id === raw.trim() || player.name.toLowerCase() === lower);
+      return hit ? { id: hit.id, name: hit.name, connected: connected.has(hit.id) } : undefined;
+    },
   };
 }
 
@@ -193,7 +204,7 @@ describe('ClanService', () => {
     expect(clan.acceptInvitation('bob', fresh.invitationId).ok).toBe(true);
     expect(clan.playerClan('bob')?.name).toBe('Warriors');
     expect(clan.invitationsFor('bob')).toHaveLength(0);
-    expect(clan.invitePlayer('owner', 'bob').error).toBe(CLAN_TARGET_IN_CLAN_ERROR);
+    expect(clan.invitePlayer('owner', 'bob').error).toBe(CLAN_ALREADY_IN_THIS_CLAN_ERROR);
   });
 
   it('drops leftover invitations after joining any clan', async () => {
@@ -249,6 +260,8 @@ describe('ClanService', () => {
     clan.acceptInvitation('bob', clan.invitationsFor('bob')[0]!.invitationId);
     expect(clan.leaveClan('owner').error).toBe(CLAN_OWNER_LEAVE_ERROR);
     expect(clan.kickMember('owner', 'owner').error).toBe(CLAN_KICK_SELF_ERROR);
+    expect(clan.makeLeader('owner', 'bob').error).toMatch(/ветерану/i);
+    expect(clan.promoteVeteran('owner', 'bob').ok).toBe(true);
     expect(clan.makeLeader('owner', 'bob').ok).toBe(true);
     expect(clan.playerClan('owner')?.ownerId).toBe('bob');
     expect(clan.leaveClan('owner').ok).toBe(true);
@@ -334,8 +347,42 @@ describe('ClanService', () => {
       action: 'join',
       clanId: 'clan-1',
     });
-    expect(parseClientMessage({ type: 'clan_action', action: 'explode' }))
-      .toEqual({ error: 'clan_action.action invalid' });
+    expect(parseClientMessage({ type: 'clan_action', action: 'invite_by_name', name: 'Bob' })).toMatchObject({
+      type: 'clan_action',
+      action: 'invite_by_name',
+      name: 'Bob',
+    });
+    expect(parseClientMessage({ type: 'clan_action', action: 'set_member_sort', sort: 'kills' })).toMatchObject({
+      action: 'set_member_sort',
+      sort: 'kills',
+    });
+    expect(parseClientMessage({ type: 'menu_action', action: 'rating_set', ratingKind: 'players-kills' })).toMatchObject({
+      type: 'menu_action',
+      action: 'rating_set',
+      ratingKind: 'players-kills',
+    });
+    for (const action of CLAN_ACTIONS) {
+      expect(parseClientMessage({ type: 'clan_action', action })).toMatchObject({ action });
+    }
+    for (const action of MENU_ACTIONS) {
+      expect(parseClientMessage({ type: 'menu_action', action })).toMatchObject({ action });
+    }
+    expect(parseClientMessage({ type: 'menu_action', action: 'open', screen: 'rating' })).toMatchObject({
+      action: 'open',
+      screen: 'rating',
+    });
+    expect(MENU_SCREENS).toContain('rating');
+    expect(new Set(CLAN_ACTIONS).size).toBe(CLAN_ACTIONS.length);
+    expect(new Set(MENU_ACTIONS).size).toBe(MENU_ACTIONS.length);
+    expect(parseClientMessage({ type: 'clan_action', action: 'money' })).toMatchObject({
+      error: 'clan_action.action invalid',
+    });
+    expect(parseClientMessage({ type: 'clan_action', action: 'kills' })).toMatchObject({
+      error: 'clan_action.action invalid',
+    });
+    expect(parseClientMessage({ type: 'clan_action', action: 'rating_set' })).toMatchObject({
+      error: 'clan_action.action invalid',
+    });
   });
 
   it('lets a former owner create a new clan after makeleader and leave', async () => {
@@ -343,6 +390,7 @@ describe('ClanService', () => {
     expect(clan.createClan('owner', 'Warriors', 'swords').ok).toBe(true);
     expect(clan.invitePlayer('owner', 'bob').ok).toBe(true);
     expect(clan.acceptInvitation('bob', clan.invitationsFor('bob')[0]!.invitationId).ok).toBe(true);
+    expect(clan.promoteVeteran('owner', 'bob').ok).toBe(true);
     expect(clan.makeLeader('owner', 'bob').ok).toBe(true);
     expect(clan.playerClan('owner')?.ownerId).toBe('bob');
     expect(clan.playerClan('owner')?.memberIds).toEqual(expect.arrayContaining(['owner', 'bob']));
@@ -365,6 +413,7 @@ describe('ClanService', () => {
     clan.createClan('owner', 'Warriors', 'swords');
     clan.invitePlayer('owner', 'bob');
     clan.acceptInvitation('bob', clan.invitationsFor('bob')[0]!.invitationId);
+    clan.promoteVeteran('owner', 'bob');
     clan.makeLeader('owner', 'bob');
     expect(clan.leaveClan('owner').ok).toBe(true);
     const again = new ClanService(store, economy);
@@ -390,7 +439,7 @@ describe('ClanService', () => {
       id: 'bob',
       text: clanInviteChat('Ada', 'Warriors'),
     }]);
-    expect(clan.invitePlayer('owner', 'bob').ok).toBe(true);
+    expect(clan.invitePlayer('owner', 'bob').error).toBe(CLAN_INVITE_EXISTS_ERROR);
     expect(mail).toHaveLength(1);
     const clanId = clan.playerClan('owner')!.clanId;
     clan.handleAction('bob', { type: 'clan_action', action: 'select_clan', clanId });
