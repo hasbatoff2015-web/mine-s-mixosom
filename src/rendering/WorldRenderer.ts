@@ -38,6 +38,9 @@ interface MeshJob {
   revision: string;
   startedAt: number;
   cpuMs: number;
+  contentVersion: number;
+  lightVersion: number;
+  stale: boolean;
 }
 
 export class WorldRenderer {
@@ -263,10 +266,27 @@ export class WorldRenderer {
     this.finalizeMeshJob(chunk, visual, job);
   }
 
-  meshJobDebug(key: string): { minSection: number; maxSection: number; nextSection: number } | undefined {
+  meshJobDebug(key: string): {
+    minSection: number;
+    maxSection: number;
+    nextSection: number;
+    stale: boolean;
+    contentVersion: number;
+  } | undefined {
     const job = this.meshJobs.get(key);
     if (!job) return undefined;
-    return { minSection: job.minSection, maxSection: job.maxSection, nextSection: job.nextSection };
+    return {
+      minSection: job.minSection,
+      maxSection: job.maxSection,
+      nextSection: job.nextSection,
+      stale: job.stale,
+      contentVersion: job.contentVersion,
+    };
+  }
+
+  sectionChests(key: string, section: number): Array<{ x: number; y: number; z: number }> {
+    const chests = this.chunks.get(key)?.sections.get(section)?.userData.chests;
+    return Array.isArray(chests) ? chests as Array<{ x: number; y: number; z: number }> : [];
   }
 
   get pendingMeshJobCount(): number {
@@ -330,7 +350,15 @@ export class WorldRenderer {
       : chunk.meshSectionRange(maxY);
     const revision = this.meshRevision(chunk, range.minSection, range.maxSection, range.partial);
     const existing = this.meshJobs.get(key);
-    if (existing && existing.revision === revision) return existing;
+    if (existing && existing.nextSection <= existing.maxSection) {
+      if (range.maxSection > existing.maxSection) existing.maxSection = range.maxSection;
+      if (range.minSection < existing.minSection) existing.stale = true;
+      if (chunk.meshContentVersion !== existing.contentVersion) existing.stale = true;
+      if (chunk.lightVersion !== existing.lightVersion) existing.stale = true;
+      existing.partial = existing.partial && range.partial;
+      existing.revision = revision;
+      return existing;
+    }
     const job: MeshJob = {
       key,
       minSection: range.minSection,
@@ -339,7 +367,10 @@ export class WorldRenderer {
       partial: range.partial,
       revision,
       startedAt: performance.now(),
-      cpuMs: existing && existing.revision === revision ? existing.cpuMs : 0,
+      cpuMs: 0,
+      contentVersion: chunk.meshContentVersion,
+      lightVersion: chunk.lightVersion,
+      stale: false,
     };
     this.meshJobs.set(key, job);
     return job;
@@ -355,15 +386,22 @@ export class WorldRenderer {
     }
     this.refreshVisualMeta(visual);
     this.signs.invalidateVisibility();
-    chunk.dirty = false;
-    chunk.meshedLightVersion = chunk.lightVersion;
-    this.world.acknowledgeMeshed(chunk);
-    this.meshJobs.delete(job.key);
+    const stale = job.stale
+      || chunk.meshContentVersion !== job.contentVersion
+      || chunk.lightVersion !== job.lightVersion;
     const jobMs = job.cpuMs;
     this.meshJobMaximumMs = Math.max(this.meshJobMaximumMs, jobMs);
     this.meshSamples += 1;
     this.meshTotalMs += jobMs;
     this.meshMaximumMs = Math.max(this.meshMaximumMs, jobMs);
+    this.meshJobs.delete(job.key);
+    if (stale) {
+      chunk.dirty = true;
+      return;
+    }
+    chunk.dirty = false;
+    chunk.meshedLightVersion = chunk.lightVersion;
+    this.world.acknowledgeMeshed(chunk);
   }
 
   private refreshVisualMeta(visual: ChunkVisual): void {

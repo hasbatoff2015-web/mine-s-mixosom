@@ -29,6 +29,7 @@ import {
   rotateBlockState,
   rotateOffset,
   captureTemplateFromWorld,
+  templateFootprint,
   type EventTemplate,
   type TemplateYaw,
 } from './eventTemplates';
@@ -91,6 +92,16 @@ export const DEFAULT_WORLD_EVENTS_CONFIG: WorldEventsConfig = {
 };
 
 export const SEARCH_RETRY_MS = 30_000;
+/** Wall-clock hint for one search tick of `continueGeneration`. One generator feature phase may still exceed this. */
+export const EVENT_SEARCH_GENERATION_BUDGET_MS = 4;
+/** Search must not finish several fresh far chunks in one server tick. */
+export const EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK = 1;
+
+const EVENT_TRANSIENT_BATCH = {
+  skipSupport: true,
+  deferLighting: true,
+  record: false,
+} as const;
 
 export interface EventPlacementCell {
   readonly x: number;
@@ -152,6 +163,11 @@ interface SearchJob {
   day: string;
   countsAsDaily: boolean;
   context?: SpawnValidationContext;
+  pending?: {
+    x: number;
+    z: number;
+    chunks: Array<{ cx: number; cz: number }>;
+  };
 }
 
 export interface WorldEventsHost {
@@ -211,6 +227,24 @@ const PLAYERISH = new Set<number>([
 
 function randomYaw(random: () => number): TemplateYaw {
   return ([0, 90, 180, 270] as const)[Math.floor(random() * 4)]!;
+}
+
+function footprintChunkCoords(
+  template: EventTemplate,
+  x: number,
+  z: number,
+  yaw: TemplateYaw,
+): Array<{ cx: number; cz: number }> {
+  const footprint = templateFootprint(template, yaw);
+  const minCx = floorDiv(x + footprint.minX, CHUNK_SIZE);
+  const maxCx = floorDiv(x + footprint.maxX, CHUNK_SIZE);
+  const minCz = floorDiv(z + footprint.minZ, CHUNK_SIZE);
+  const maxCz = floorDiv(z + footprint.maxZ, CHUNK_SIZE);
+  const coords: Array<{ cx: number; cz: number }> = [];
+  for (let cz = minCz; cz <= maxCz; cz += 1) {
+    for (let cx = minCx; cx <= maxCx; cx += 1) coords.push({ cx, cz });
+  }
+  return coords;
 }
 
 function serializeStack(stack: ItemStack | null): ItemStack | null {
@@ -353,11 +387,11 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
       z: cell.z,
       block: isKnownBlockId(cell.blockId) ? cell.blockId : BlockId.Air,
     })),
-    { skipSupport: true, deferLighting: true },
+    EVENT_TRANSIENT_BATCH,
   );
   for (const cell of snapshot) {
     const key = blockKey(cell.x, cell.y, cell.z);
-    if (cell.state) world.replaceBlockState(cell.x, cell.y, cell.z, cell.state);
+    world.replaceBlockState(cell.x, cell.y, cell.z, cell.state);
     if (cell.chest) {
       const chest = world.getChest(cell.x, cell.y, cell.z);
       chest.slots = cell.chest.map(serializeStack);
@@ -392,6 +426,11 @@ export class WorldEventsManager {
   config: WorldEventsConfig = { ...DEFAULT_WORLD_EVENTS_CONFIG };
   lastSearchError?: string;
   lastValidationStoreReads = 0;
+  lastSearchChunkCommits = 0;
+  lastSearchGenerationMs = 0;
+  searchGenerationBudgetMs = EVENT_SEARCH_GENERATION_BUDGET_MS;
+  searchMaxChunkCommitsPerTick = EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK;
+  searchClock?: () => number;
   private store: WorldEventsStore = { templates: [] };
   private search: SearchJob | undefined;
   private searchRetryAt = 0;
@@ -522,6 +561,14 @@ export class WorldEventsManager {
       this.sendWarning(scheduled);
     }
     if (now >= scheduled.spawnAt) {
+      if (now >= scheduled.cleanupAt) {
+        this.discardUnplacedOccurrence(
+          true,
+          'Окно ежедневного ивента истекло, сундук не появился.',
+        );
+        this.ensureSchedule(now);
+        return;
+      }
       if (now < this.searchRetryAt) return;
       this.beginSpawn(now);
     }
@@ -718,6 +765,11 @@ export class WorldEventsManager {
           cleanupAt: this.store.active.cleanupAt,
         }
       : eventTimeline(now, this.config);
+    if (now >= timeline.cleanupAt) {
+      this.discardUnplacedOccurrence(true, 'Окно ежедневного ивента истекло, сундук не появился.');
+      this.ensureSchedule(now);
+      return;
+    }
     this.search = {
       attempts: 0,
       yaw: randomYaw(this.host.random),
@@ -733,35 +785,138 @@ export class WorldEventsManager {
   private stepSearch(now: number): void {
     const job = this.search;
     if (!job) return;
+    if (now >= job.timeline.cleanupAt) {
+      this.discardUnplacedOccurrence(
+        job.countsAsDaily,
+        'Окно ивента истекло до появления сундука.',
+      );
+      if (job.countsAsDaily) this.ensureSchedule(now);
+      return;
+    }
     if (!job.context) job.context = this.freshValidationContext();
     else {
       job.context.homes = this.host.homes();
       job.context.players = this.host.players();
     }
-    const budget = Math.max(1, this.config.attemptsPerTick);
-    for (let i = 0; i < budget; i += 1) {
+    this.lastSearchChunkCommits = 0;
+    this.lastSearchGenerationMs = 0;
+    let validated = 0;
+    if (job.pending) {
+      if (!this.advancePendingGeneration(job)) return;
+      const candidate = this.candidateFromPending(job);
+      job.pending = undefined;
       job.attempts += 1;
-      const candidate = this.randomCandidate();
-      if (candidate && this.validateCandidate(job.template, candidate, job.yaw, job.context)) {
-        const placed = this.placeAt(job.template, candidate, job.yaw, job.timeline, job.day, job.countsAsDaily);
-        this.search = undefined;
-        if (!placed.ok) {
-          this.lastSearchError = placed.error;
-          this.host.log(placed.error);
-        }
+      validated += 1;
+      if (candidate && this.tryPlaceCandidate(job, candidate)) return;
+      if (this.failSearchIfExhausted(job, now)) return;
+    }
+    const budget = Math.max(1, this.config.attemptsPerTick);
+    while (validated < budget) {
+      const xz = this.randomCandidateXz();
+      if (!xz) {
+        job.attempts += 1;
+        validated += 1;
+        if (this.failSearchIfExhausted(job, now)) return;
+        continue;
+      }
+      const chunks = footprintChunkCoords(job.template, xz.x, xz.z, job.yaw);
+      if (!this.chunksReady(chunks)) {
+        job.pending = { x: xz.x, z: xz.z, chunks };
+        this.advancePendingGeneration(job);
         return;
       }
-      if (job.attempts >= this.config.maxSearchAttempts) {
-        this.lastSearchError = `Не найдено место для ивента после ${job.attempts} попыток (кольцо ${this.config.spawnMinDistance}–${this.config.spawnMaxDistance}).`;
-        this.host.log(this.lastSearchError);
-        this.searchRetryAt = now + SEARCH_RETRY_MS;
-        this.search = undefined;
-        return;
-      }
+      job.attempts += 1;
+      validated += 1;
+      const candidate = { x: xz.x, y: this.host.world.surfaceY(xz.x, xz.z) + 1, z: xz.z };
+      if (this.tryPlaceCandidate(job, candidate)) return;
+      if (this.failSearchIfExhausted(job, now)) return;
     }
   }
 
-  private randomCandidate(): BlockPos | undefined {
+  private searchNow(): number {
+    return this.searchClock?.() ?? performance.now();
+  }
+
+  private chunksReady(chunks: readonly { cx: number; cz: number }[]): boolean {
+    return chunks.every(({ cx, cz }) => this.host.world.getChunk(cx, cz, false)?.generated === true);
+  }
+
+  private advancePendingGeneration(job: SearchJob): boolean {
+    if (!job.pending) return true;
+    if (this.chunksReady(job.pending.chunks)) return true;
+    const budgetMs = Math.max(0.5, this.searchGenerationBudgetMs);
+    const maxCommits = Math.max(1, this.searchMaxChunkCommitsPerTick);
+    const start = this.searchNow();
+    let commits = 0;
+    for (const { cx, cz } of job.pending.chunks) {
+      if (this.host.world.getChunk(cx, cz, false)?.generated) continue;
+      const before = this.host.world.generationCommitCount;
+      this.host.world.continueGeneration(cx, cz, budgetMs, {
+        maxColumns: 16,
+        now: this.searchClock,
+      });
+      const added = this.host.world.generationCommitCount - before;
+      if (added > 0) {
+        commits += added;
+        this.lastSearchChunkCommits += added;
+      }
+      this.lastSearchGenerationMs = this.searchNow() - start;
+      if (commits >= maxCommits) break;
+      if (this.searchNow() - start >= budgetMs) break;
+    }
+    return this.chunksReady(job.pending.chunks);
+  }
+
+  private candidateFromPending(job: SearchJob): BlockPos | undefined {
+    const pending = job.pending;
+    if (!pending) return undefined;
+    const surface = this.host.world.surfaceY(pending.x, pending.z);
+    return { x: pending.x, y: surface + 1, z: pending.z };
+  }
+
+  private tryPlaceCandidate(job: SearchJob, candidate: BlockPos): boolean {
+    const cached = job.context ?? emptyValidationContext();
+    if (!this.validateCandidate(job.template, candidate, job.yaw, cached)) return false;
+    const fresh = this.freshValidationContext();
+    job.context = fresh;
+    if (!this.validateCandidate(job.template, candidate, job.yaw, fresh)) return false;
+    const placed = this.placeAt(job.template, candidate, job.yaw, job.timeline, job.day, job.countsAsDaily);
+    this.search = undefined;
+    if (!placed.ok) {
+      this.lastSearchError = placed.error;
+      this.host.log(placed.error);
+    }
+    return true;
+  }
+
+  private failSearchIfExhausted(job: SearchJob, now: number): boolean {
+    if (job.attempts < this.config.maxSearchAttempts) return false;
+    if (now >= job.timeline.cleanupAt) {
+      this.discardUnplacedOccurrence(job.countsAsDaily, 'Окно ивента истекло до появления сундука.');
+      if (job.countsAsDaily) this.ensureSchedule(now);
+      return true;
+    }
+    this.lastSearchError = `Не найдено место для ивента после ${job.attempts} попыток (кольцо ${this.config.spawnMinDistance}–${this.config.spawnMaxDistance}).`;
+    this.host.log(this.lastSearchError);
+    this.searchRetryAt = now + SEARCH_RETRY_MS;
+    this.search = undefined;
+    return true;
+  }
+
+  private discardUnplacedOccurrence(countsAsDaily: boolean, message: string): void {
+    this.search = undefined;
+    this.searchRetryAt = 0;
+    this.lastSearchError = message;
+    this.host.log(message);
+    if (!countsAsDaily) return;
+    const active = this.store.active;
+    if (!active) return;
+    if (active.phase !== 'scheduled' && active.phase !== 'warning_sent') return;
+    this.store.active = undefined;
+    this.persist();
+  }
+
+  private randomCandidateXz(): { x: number; z: number } | undefined {
     const spawn = this.host.spawn();
     const minR = this.config.spawnMinDistance;
     const maxR = this.config.spawnMaxDistance;
@@ -774,8 +929,7 @@ export class WorldEventsManager {
       if (Math.abs(x) > border || Math.abs(z) > border) continue;
       const dist = Math.hypot(x - spawn[0], z - spawn[2]);
       if (dist < minR || dist > maxR) continue;
-      const surface = this.host.world.surfaceY(x, z);
-      return { x, y: surface + 1, z };
+      return { x, z };
     }
     return undefined;
   }
@@ -830,6 +984,10 @@ export class WorldEventsManager {
     day: string,
     countsAsDaily: boolean,
   ): { ok: true; event: ActiveWorldEvent } | { ok: false; error: string } {
+    const now = this.host.now();
+    if (now >= timeline.cleanupAt) {
+      return { ok: false, error: 'Окно ивента уже истекло.' };
+    }
     const volume = placedVolume(template, chest, yaw);
     const snapshot = snapshotVolumeDetailed(this.host.world, volume);
     const loot = generateEventChestLoot(this.host.random);
@@ -849,10 +1007,11 @@ export class WorldEventsManager {
         ...(state ? { state } : {}),
       };
     });
+    const locked = now < timeline.unlockAt;
     const event: ActiveWorldEvent = {
       type: 'resource_chest',
       id: `chest-${timeline.spawnAt}`,
-      phase: 'spawned_locked',
+      phase: locked ? 'spawned_locked' : 'active_unlocked',
       worldId: this.host.worldId(),
       templateName: template.name,
       rotation: yaw,
@@ -867,7 +1026,7 @@ export class WorldEventsManager {
       loot,
       chestSlots,
       snapshot,
-      chestLocked: true,
+      chestLocked: locked,
     };
     this.store.journal = { phase: 'placing', event: cloneEvent(event) };
     this.persist();
@@ -879,7 +1038,12 @@ export class WorldEventsManager {
     this.host.flush();
     this.host.persistWorld?.();
     const coords = this.config.announceCoordinates ? ` Координаты: ${chest.x} ${chest.y} ${chest.z}.` : '';
-    this.host.broadcast(`Ивентовый сундук появился.${coords} Сундук откроется через ${this.config.unlockDelayMinutes} мин.`);
+    if (locked) {
+      const remain = Math.max(1, minutesRemaining(timeline.unlockAt, now));
+      this.host.broadcast(`Ивентовый сундук появился.${coords} Сундук откроется через ${remain} мин.`);
+    } else {
+      this.host.broadcast(`Ивентовый сундук появился.${coords} Сундук открыт!`);
+    }
     return { ok: true, event };
   }
 
@@ -892,10 +1056,10 @@ export class WorldEventsManager {
         z: cell.z,
         block: isKnownBlockId(cell.blockId) ? cell.blockId : BlockId.Air,
       })),
-      { skipSupport: true, deferLighting: true },
+      EVENT_TRANSIENT_BATCH,
     );
     for (const cell of event.placement) {
-      if (cell.state) this.host.world.replaceBlockState(cell.x, cell.y, cell.z, cell.state);
+      this.host.world.replaceBlockState(cell.x, cell.y, cell.z, cell.state);
     }
     const loot = event.loot ?? [];
     const slots = event.chestSlots?.map(serializeStack) ?? fillChestSlots(loot, () => 0);
@@ -923,7 +1087,10 @@ export class WorldEventsManager {
     if (active?.snapshot) restoreSnapshot(this.host.world, active.snapshot);
     else if (active?.chest) {
       this.host.world.chests.delete(blockKey(active.chest.x, active.chest.y, active.chest.z));
-      this.host.world.setBlock(active.chest.x, active.chest.y, active.chest.z, BlockId.Air);
+      this.host.world.applyBlockBatch(
+        [{ x: active.chest.x, y: active.chest.y, z: active.chest.z, block: BlockId.Air }],
+        EVENT_TRANSIENT_BATCH,
+      );
     }
     this.store.active = undefined;
     this.persist();

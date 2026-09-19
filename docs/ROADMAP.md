@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-19: World events persistence/streaming races
+
+- [x] Event placement/cleanup uses `applyBlockBatch(..., { record: false })` so the overlay is not a permanent modification.
+- [x] Snapshot restore clears missing `BlockRenderState` via `replaceBlockState(x,y,z, state | undefined)`.
+- [x] `Chunk.meshContentVersion` + finish-then-refresh MeshJob so a mutation inside an already-built section is remeshed.
+- [x] Server event search pending candidate + `continueGeneration` (max 1 chunk commit / tick).
+- [x] Failed search cannot place after `cleanupAt`; catch-up lock/announce follows actual `now`.
+- [x] Fresh `SpawnValidationContext` immediately before `placeAt`.
+- [ ] Owner live Anarchy QA of FPS at event distance with the new F3 latest/max lines.
+
 ## 2026-09-19: World events hardening + bounded streaming
 
 - [x] Europe/Moscow IANA schedule, catch-up, failed-search retry, manual force does not eat the daily event.

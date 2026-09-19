@@ -195,6 +195,8 @@ export class VoxelWorld {
   generationJobSamples = 0;
   generationJobTotalMs = 0;
   generationJobMaximumMs = 0;
+  /** Chunks committed via `finishGeneratedChunk` (sliced or getChunk). */
+  generationCommitCount = 0;
   private readonly generationJobs = new Map<string, TerrainGenJob>();
   meshDirtyMarks = 0;
   lightQueueMarks = 0;
@@ -433,6 +435,7 @@ export class VoxelWorld {
     }
     this.chunks.set(key, chunk);
     activateGeneratedFluidBoundaries(this, chunk);
+    this.generationCommitCount += 1;
     this.generationJobSamples += 1;
     this.generationJobTotalMs += jobMilliseconds;
     this.generationJobMaximumMs = Math.max(this.generationJobMaximumMs, jobMilliseconds);
@@ -527,11 +530,18 @@ export class VoxelWorld {
   }
 
   /**
-   * Import-only: store authored state without support/fluid side effects.
+   * Import/restore: store authored state without support/fluid side effects,
+   * or clear it when `state` is undefined so snapshot restore can remove a
+   * render state that the overlay introduced on the same block ID.
    * Mesh dirty is still required so stairs/doors/rails appear correctly.
    */
-  replaceBlockState(x: number, y: number, z: number, state: BlockRenderState): void {
-    this.blockStates.set(blockKey(x, y, z), state);
+  replaceBlockState(x: number, y: number, z: number, state: BlockRenderState | undefined): void {
+    const key = blockKey(x, y, z);
+    if (state === undefined) {
+      if (!this.blockStates.delete(key)) return;
+    } else {
+      this.blockStates.set(key, state);
+    }
     this.markBlockDirty(x, z);
   }
 
@@ -879,6 +889,7 @@ export class VoxelWorld {
   markMeshDirty(chunk: Chunk, y?: number): void {
     this.meshDirtyMarks += 1;
     chunk.dirty = true;
+    chunk.bumpMeshContentVersion();
     if (y === undefined) chunk.noteMeshDirtyAllY();
     else chunk.noteMeshDirtyY(y);
     this.pendingMesh.add(chunkKey(chunk.x, chunk.z));

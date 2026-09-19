@@ -274,11 +274,16 @@ export function eventLatchBounds(img) {
 }
 
 export async function loadEventChestSource() {
-  const candidates = [WINDOWS_SOURCE, sourcePath, fallbackSource];
+  const candidates = [
+    { path: WINDOWS_SOURCE, kind: 'windows-canonical' },
+    { path: sourcePath, kind: 'repo-surrogate' },
+    { path: fallbackSource, kind: 'normal-fallback' },
+  ];
   let lastError;
-  for (const path of candidates) {
+  for (const candidate of candidates) {
     try {
-      return decodeRgbaPng(await readFile(path));
+      const image = decodeRgbaPng(await readFile(candidate.path));
+      return { image, sourcePath: candidate.path, sourceKind: candidate.kind };
     } catch (error) {
       lastError = error;
       if (!error || error.code !== 'ENOENT') throw error;
@@ -288,7 +293,8 @@ export async function loadEventChestSource() {
 }
 
 export async function writeEventChestTextures() {
-  const source = await loadEventChestSource();
+  const loaded = await loadEventChestSource();
+  const source = loaded.image;
   if (source.width !== 128 || source.height !== 128) {
     throw new Error(`event chest source must be 128×128, got ${source.width}×${source.height}`);
   }
@@ -306,7 +312,12 @@ export async function writeEventChestTextures() {
   } catch {
     await copyFile(fallbackSource, sourcePath);
   }
-  return { sourcePath, outEntity, outBlock };
+  return {
+    sourcePath: loaded.sourcePath,
+    sourceKind: loaded.sourceKind,
+    outEntity,
+    outBlock,
+  };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
@@ -314,4 +325,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   console.log('wrote', written.outEntity);
   console.log('wrote', written.outBlock);
   console.log('source', written.sourcePath);
+  console.log('sourceKind', written.sourceKind);
 }

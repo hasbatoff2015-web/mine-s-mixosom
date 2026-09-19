@@ -1,5 +1,13 @@
 # Архитектура
 
+## Timed world events persistence/streaming races — 2026-09-19
+
+Event voxels are a transient overlay: `applyPlacement` / `restoreSnapshot` call `applyBlockBatch` with `record: false`. Persistence stays in `plugin-data/world-events/state.json` and the crash journal. Pre-existing `world.modifications` inside the volume are left untouched. `VoxelWorld.replaceBlockState` accepts `state | undefined` so a snapshot can restore both presence and absence of `BlockRenderState` when the overlay reused the same block ID.
+
+`Chunk.meshContentVersion` increments in `markMeshDirty` (block ID and render-state writes). An in-progress `MeshJob` stores the version at start and is marked stale on mismatch; it still finishes remaining sections (no rewind / AutoMine starvation), then `finalizeMeshJob` keeps `dirty` and skips `acknowledgeMeshed`. The next job covers the union dirty range.
+
+Server event search picks X/Z without `surfaceY`/`getChunk(true)`. Needed footprint chunks are generated with `continueGeneration` (`EVENT_SEARCH_GENERATION_BUDGET_MS = 4`, max 1 chunk commit per tick). `attemptsPerTick` counts finished validations, not monolithic generates. Immediately before `placeAt`, `freshValidationContext()` runs once. If `now >= cleanupAt` and the occurrence was never placed, search/schedule is discarded without a spawn announcement (`lastSpawnDayKey` still only after a successful scheduled place). Placement phase/lock/announce are derived from `now` vs `unlockAt`.
+
 ## Timed world events + event chest — 2026-09-19 (hardening)
 
 `eventScheduler` uses IANA `timeZone` (`Europe/Moscow` default). Daily 20:00 Moscow is 17:00 UTC. Catch-up spawns inside the duration window; after the window the day is missed. `lastSpawnDayKey` is set only after a successful scheduled placement (`countsAsDaily`). Manual `/events force spawn` does not consume the daily slot. Failed search retries after `SEARCH_RETRY_MS` without marking the day done.

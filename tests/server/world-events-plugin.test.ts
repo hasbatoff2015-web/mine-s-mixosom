@@ -145,11 +145,13 @@ describe('world events plugin commands', () => {
     const y = world.world.surfaceY(x, z) + 1;
     const marker = { x: 22, y: world.world.surfaceY(22, 22) + 1, z: 22 };
     world.world.setBlock(marker.x, marker.y, marker.z, BlockId.GoldBlock);
+    const modsBefore = world.world.serializeModifications();
 
     const spawned = world.worldEvents.forceSpawn({ at: { x, y, z }, yaw: 0 });
     expect(spawned.ok).toBe(true);
     if (!spawned.ok || !('event' in spawned)) return;
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(world.world.serializeModifications()).toEqual(modsBefore);
     expect(world.worldEvents.isLockedChest(x, y, z)).toBe(true);
 
     const breakEvent = world.events.emit('blockBreak', world.events.createBlockBreak(op.player.id, x, y, z, BlockId.EventChest));
@@ -181,6 +183,7 @@ describe('world events plugin commands', () => {
     await world.save();
     expect(world.world.getBlock(x, y, z)).not.toBe(BlockId.EventChest);
     expect(world.world.getBlock(marker.x, marker.y, marker.z)).toBe(BlockId.GoldBlock);
+    expect(world.world.serializeModifications()).toEqual(modsBefore);
   });
 
   it('denies user and block-anchor claims that overlap the event column, then allows them after cleanup', async () => {

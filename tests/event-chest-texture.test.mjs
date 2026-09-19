@@ -5,7 +5,7 @@ import { alphaMask, eventLatchBounds, loadEventChestSource, paintEventChestAtlas
 
 describe('event chest visual assets', () => {
   it('keeps the source canvas size and alpha mask', async () => {
-    const source = await loadEventChestSource();
+    const { image: source } = await loadEventChestSource();
     const painted = paintEventChestAtlas(source);
     expect(source.width).toBe(128);
     expect(source.height).toBe(128);
@@ -17,7 +17,7 @@ describe('event chest visual assets', () => {
   it('ships the generated entity sheet and 16×16 fallback tile', async () => {
     const entity = decodeRgbaPng(await readFile('public/textures/entity/chest/event.png'));
     const tile = decodeRgbaPng(await readFile('public/textures/block/event_chest.png'));
-    const source = await loadEventChestSource();
+    const { image: source } = await loadEventChestSource();
     expect(entity.width).toBe(128);
     expect(entity.height).toBe(128);
     expect(alphaMask(entity).equals(alphaMask(source))).toBe(true);
@@ -49,7 +49,7 @@ describe('event chest visual assets', () => {
   });
 
   it('keeps the source latch island opaque and contrasted in the painted atlas', async () => {
-    const source = await loadEventChestSource();
+    const { image: source } = await loadEventChestSource();
     const painted = paintEventChestAtlas(source);
     const bounds = eventLatchBounds(source);
     expect(bounds.maxX).toBeGreaterThanOrEqual(bounds.minX);
@@ -78,5 +78,11 @@ describe('event chest visual assets', () => {
     expect(paintedOpaque).toBe(sourceOpaque);
     expect(paintedOpaque).toBeGreaterThan(8);
     expect(maxLuma - minLuma).toBeGreaterThan(0.12);
+  });
+
+  it('reports which event-chest source was actually decoded', async () => {
+    const loaded = await loadEventChestSource();
+    expect(['windows-canonical', 'repo-surrogate', 'normal-fallback']).toContain(loaded.sourceKind);
+    expect(loaded.sourcePath).toMatch(/event_chest\.png|event-chest-source\.png|normal\.png$/);
   });
 });

@@ -7,11 +7,15 @@ import { MAX_WORLD_Y, MIN_WORLD_Y } from '../../src/core/constants';
 import { VoxelWorld } from '../../src/world/World';
 import { createItemStack } from '../../src/inventory';
 import { EVENT_CHEST_LOOT_TABLE, generateEventChestLoot } from '../../server/services/eventLoot';
+import {
+  dayKey,
+} from '../../server/services/eventScheduler';
 import { emptyValidationContext } from '../../server/services/spawnValidation';
 import { eventProtectionVolume } from '../../server/services/eventProtection';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import {
   DEFAULT_WORLD_EVENTS_CONFIG,
+  EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK,
   SEARCH_RETRY_MS,
   WorldEventsManager,
   type WorldEventsHost,
@@ -65,6 +69,18 @@ function spawnChest(manager: WorldEventsManager, world: VoxelWorld) {
   const result = manager.forceSpawn({ at: { x, y, z }, yaw: 0 });
   if (!result.ok || !('event' in result)) throw new Error('ok' in result && !result.ok ? result.error : 'searching');
   return { x, y, z, event: result.event };
+}
+
+function findValidPlusXColumn(seed: string, minX: number, maxX: number): { x: number; y: number; z: number } {
+  const world = new VoxelWorld(seed);
+  const manager = new WorldEventsManager(memoryHost(world));
+  manager.load();
+  const template = manager.getTemplate('chest_shrine')!;
+  for (let x = minX; x <= maxX; x += 1) {
+    const y = world.surfaceY(x, 0) + 1;
+    if (manager.validateCandidate(template, { x, y, z: 0 }, 0)) return { x, y, z: 0 };
+  }
+  throw new Error(`no valid +X shrine column in ${seed} for ${minX}..${maxX}`);
 }
 
 describe('event chest loot', () => {
@@ -492,6 +508,348 @@ describe('world events lifecycle', () => {
     expect(eventProtectionVolume(structure)).toEqual({
       minX: 100, maxX: 104, minZ: 200, maxZ: 204, minY: MIN_WORLD_Y, maxY: MAX_WORLD_Y,
     });
+  });
+
+  it('does not record temporary event blocks as world.modifications', () => {
+    const world = new VoxelWorld('world-events-mods-a');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const x = 24;
+    const z = 24;
+    world.surfaceY(x, z);
+    const before = world.serializeModifications();
+    const spawned = spawnChest(manager, world);
+    expect(world.getBlock(spawned.x, spawned.y, spawned.z)).toBe(BlockId.EventChest);
+    expect(world.serializeModifications()).toEqual(before);
+    manager.forceCleanup();
+    manager.acknowledgeWorldSaved();
+    expect(world.serializeModifications()).toEqual(before);
+    expect(world.getBlock(spawned.x, spawned.y, spawned.z)).not.toBe(BlockId.EventChest);
+  });
+
+  it('keeps a pre-existing modification through spawn and cleanup', () => {
+    const world = new VoxelWorld('world-events-mods-b');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const x = 24;
+    const z = 24;
+    const y = world.surfaceY(x, z) + 1;
+    world.setBlock(x + 2, y, z + 2, BlockId.GoldBlock);
+    const before = world.serializeModifications();
+    expect(Object.keys(before).length).toBeGreaterThan(0);
+    expect(manager.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    expect(world.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    manager.forceCleanup();
+    manager.acknowledgeWorldSaved();
+    expect(world.serializeModifications()).toEqual(before);
+    expect(world.getBlock(x + 2, y, z + 2)).toBe(BlockId.GoldBlock);
+  });
+
+  it('restores missing BlockRenderState when the overlay reused the same block id', () => {
+    const world = new VoxelWorld('world-events-state-absent');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const x = 24;
+    const z = 24;
+    const y = world.surfaceY(x, z) + 1;
+    const stair = { x, y, z: z - 2 };
+    world.setBlock(stair.x, stair.y, stair.z, BlockId.StoneBrickStairs);
+    expect(world.getBlockState(stair.x, stair.y, stair.z)).toBeUndefined();
+    expect(manager.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    expect(world.getBlock(stair.x, stair.y, stair.z)).toBe(BlockId.StoneBrickStairs);
+    expect(world.getBlockState(stair.x, stair.y, stair.z)).toEqual({ facing: 'north', stairHalf: 'bottom' });
+    manager.forceCleanup();
+    manager.acknowledgeWorldSaved();
+    expect(world.getBlock(stair.x, stair.y, stair.z)).toBe(BlockId.StoneBrickStairs);
+    expect(world.getBlockState(stair.x, stair.y, stair.z)).toBeUndefined();
+  });
+
+  it('restores an existing BlockRenderState 1:1 after cleanup', () => {
+    const world = new VoxelWorld('world-events-state-keep');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const x = 24;
+    const z = 24;
+    const y = world.surfaceY(x, z) + 1;
+    const stair = { x, y, z: z - 2 };
+    const original = { facing: 'east' as const, stairHalf: 'top' as const };
+    world.setBlock(stair.x, stair.y, stair.z, BlockId.StoneBrickStairs);
+    world.setBlockState(stair.x, stair.y, stair.z, original);
+    expect(manager.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    manager.forceCleanup();
+    manager.acknowledgeWorldSaved();
+    expect(world.getBlock(stair.x, stair.y, stair.z)).toBe(BlockId.StoneBrickStairs);
+    expect(world.getBlockState(stair.x, stair.y, stair.z)).toEqual(original);
+  });
+
+  it('does not spawn a failed daily search after cleanupAt', () => {
+    const world = new VoxelWorld('world-events-expired-search');
+    const host = memoryHost(world);
+    const messages: string[] = [];
+    host.broadcast = (text) => { messages.push(text); };
+    host.nowMs = Date.UTC(2026, 8, 19, 20, 0, 1);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({
+      ...DEFAULT_WORLD_EVENTS_CONFIG,
+      timeZone: 'UTC',
+      dailyTime: '20:00',
+      durationMinutes: 120,
+      spawnMinDistance: 3000,
+      spawnMaxDistance: 3000,
+      worldBorder: 8,
+      maxSearchAttempts: 3,
+      attemptsPerTick: 3,
+    });
+    manager.load();
+    manager.enabled = true;
+    manager.tick();
+    expect(manager.lastSearchError).toMatch(/Не найдено место/);
+    expect(manager.active?.phase === 'spawned_locked' || manager.active?.phase === 'active_unlocked').toBe(false);
+
+    host.random = () => 0;
+    host.nowMs = Date.UTC(2026, 8, 19, 22, 0, 1);
+    manager.config = {
+      ...manager.config,
+      spawnMinDistance: 24,
+      spawnMaxDistance: 24,
+      worldBorder: 10_000,
+      maxSearchAttempts: 80,
+    };
+    const y = world.surfaceY(24, 0) + 1;
+    messages.length = 0;
+    manager.tick();
+    expect(world.getBlock(24, y, 0)).not.toBe(BlockId.EventChest);
+    expect(manager.active?.phase === 'spawned_locked' || manager.active?.phase === 'active_unlocked').toBe(false);
+    expect(messages.some((line) => line.includes('Ивентовый сундук появился'))).toBe(false);
+    expect(manager.active?.phase).toBe('scheduled');
+    expect(dayKey(manager.active!.spawnAt, 'UTC')).toBe('2026-09-20');
+  });
+
+  it('catch-up before unlock keeps the chest locked with the actual remaining time', () => {
+    const site = findValidPlusXColumn('world-events-catchup-lock', 48, 96);
+    const world = new VoxelWorld('world-events-catchup-lock');
+    const host = memoryHost(world);
+    const messages: string[] = [];
+    host.broadcast = (text) => { messages.push(text); };
+    host.random = () => 0;
+    host.nowMs = Date.UTC(2026, 8, 19, 20, 2, 0);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({
+      ...DEFAULT_WORLD_EVENTS_CONFIG,
+      timeZone: 'UTC',
+      dailyTime: '20:00',
+      unlockDelayMinutes: 5,
+      durationMinutes: 120,
+      spawnMinDistance: site.x,
+      spawnMaxDistance: site.x,
+      worldBorder: 10_000,
+      announceCoordinates: false,
+    });
+    manager.load();
+    manager.enabled = true;
+    manager.searchGenerationBudgetMs = 1_000;
+    let guard = 0;
+    while (!manager.active?.chest && guard < 40) {
+      manager.tick();
+      guard += 1;
+    }
+    expect(manager.active?.phase).toBe('spawned_locked');
+    expect(manager.active?.chestLocked).toBe(true);
+    expect(manager.isLockedChest(manager.active!.chest!.x, manager.active!.chest!.y, manager.active!.chest!.z)).toBe(true);
+    expect(messages.some((line) => line.includes('откроется через 5 мин'))).toBe(false);
+    expect(messages.some((line) => line.includes('откроется через 3 мин'))).toBe(true);
+  });
+
+  it('catch-up after unlock spawns the chest already open', () => {
+    const site = findValidPlusXColumn('world-events-catchup-open', 48, 96);
+    const world = new VoxelWorld('world-events-catchup-open');
+    const host = memoryHost(world);
+    const messages: string[] = [];
+    host.broadcast = (text) => { messages.push(text); };
+    host.random = () => 0;
+    host.nowMs = Date.UTC(2026, 8, 19, 20, 10, 0);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({
+      ...DEFAULT_WORLD_EVENTS_CONFIG,
+      timeZone: 'UTC',
+      dailyTime: '20:00',
+      unlockDelayMinutes: 5,
+      durationMinutes: 120,
+      spawnMinDistance: site.x,
+      spawnMaxDistance: site.x,
+      worldBorder: 10_000,
+      announceCoordinates: false,
+    });
+    manager.load();
+    manager.enabled = true;
+    manager.searchGenerationBudgetMs = 1_000;
+    let guard = 0;
+    while (!manager.active?.chest && guard < 40) {
+      manager.tick();
+      guard += 1;
+    }
+    expect(manager.active?.phase).toBe('active_unlocked');
+    expect(manager.active?.chestLocked).toBe(false);
+    expect(manager.isLockedChest(manager.active!.chest!.x, manager.active!.chest!.y, manager.active!.chest!.z)).toBe(false);
+    expect(messages.some((line) => line.includes('откроется через 5 мин'))).toBe(false);
+    expect(messages.some((line) => line.includes('Сундук открыт!'))).toBe(true);
+  });
+
+  it('rejects a candidate against a claim created after the cached search context', () => {
+    const site = findValidPlusXColumn('world-events-toctou', 48, 80);
+    const world = new VoxelWorld('world-events-toctou');
+    const claims: Array<{ minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number }> = [];
+    const host = memoryHost(world);
+    host.random = () => 0;
+    host.createValidationContext = () => {
+      host.storeReads += 1;
+      return emptyValidationContext({
+        storeReads: 1,
+        claimVolumes: claims.map((volume) => ({ ...volume })),
+        homes: host.homes(),
+        players: host.players(),
+      });
+    };
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({
+      ...DEFAULT_WORLD_EVENTS_CONFIG,
+      timeZone: 'UTC',
+      spawnMinDistance: site.x,
+      spawnMaxDistance: site.x,
+      worldBorder: 10_000,
+    });
+    manager.load();
+    manager.enabled = true;
+    manager.searchGenerationBudgetMs = 1_000;
+    host.storeReads = 0;
+    expect(manager.forceSpawn({ yaw: 0 })).toEqual({ ok: true, searching: true });
+    expect(host.storeReads).toBe(1);
+    claims.push({
+      minX: site.x - 2,
+      minY: MIN_WORLD_Y,
+      minZ: site.z - 2,
+      maxX: site.x + 2,
+      maxY: MAX_WORLD_Y,
+      maxZ: site.z + 2,
+    });
+    let guard = 0;
+    while (guard < 40 && manager.active?.phase !== 'spawned_locked' && manager.active?.phase !== 'active_unlocked') {
+      manager.tick();
+      guard += 1;
+      if (manager.lastSearchError?.includes('Не найдено место')) break;
+    }
+    expect(world.getBlock(site.x, site.y, site.z)).not.toBe(BlockId.EventChest);
+    expect(manager.active?.chest).toBeUndefined();
+    expect(host.storeReads).toBeGreaterThanOrEqual(2);
+    expect(host.storeReads).toBeLessThan(20);
+  });
+
+  it('reapplies a placing journal without polluting modifications', () => {
+    const world = new VoxelWorld('world-events-crash-place-mods');
+    const host = memoryHost(world);
+    const first = new WorldEventsManager(host);
+    first.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    first.load();
+    first.enabled = true;
+    const x = 24;
+    const z = 24;
+    world.surfaceY(x, z);
+    const before = world.serializeModifications();
+    const spawned = spawnChest(first, world);
+    expect(world.serializeModifications()).toEqual(before);
+    const loot = world.getChest(spawned.x, spawned.y, spawned.z).slots.map((slot) => slot && { ...slot });
+    world.setBlock(spawned.x, spawned.y, spawned.z, BlockId.Air, false);
+    world.chests.delete(`${spawned.x},${spawned.y},${spawned.z}`);
+    const recovered = new WorldEventsManager(host);
+    recovered.setConfig(first.config);
+    recovered.load();
+    expect(recovered.active?.phase).toBe('spawned_locked');
+    expect(world.getBlock(spawned.x, spawned.y, spawned.z)).toBe(BlockId.EventChest);
+    expect(world.getChest(spawned.x, spawned.y, spawned.z).slots).toEqual(loot);
+    expect(world.serializeModifications()).toEqual(before);
+  });
+
+  it('repeats cleaning restore without destroying pre-event modifications', () => {
+    const world = new VoxelWorld('world-events-crash-clean-mods');
+    const host = memoryHost(world);
+    const first = new WorldEventsManager(host);
+    first.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    first.load();
+    first.enabled = true;
+    const x = 24;
+    const z = 24;
+    const y = world.surfaceY(x, z) + 1;
+    world.setBlock(x + 2, y, z + 2, BlockId.DiamondBlock);
+    const before = world.serializeModifications();
+    expect(first.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    first.forceCleanup();
+    expect((host.saved as { journal?: { phase?: string } }).journal?.phase).toBe('cleaning');
+    world.setBlock(x, y, z, BlockId.EventChest, false);
+    const recovered = new WorldEventsManager(host);
+    recovered.setConfig(first.config);
+    recovered.load();
+    expect(recovered.active).toBeUndefined();
+    expect(world.getBlock(x, y, z)).not.toBe(BlockId.EventChest);
+    expect(world.getBlock(x + 2, y, z + 2)).toBe(BlockId.DiamondBlock);
+    expect(world.serializeModifications()).toEqual(before);
+    recovered.acknowledgeWorldSaved();
+    expect(recovered.isProtected(x, y, z)).toBe(false);
+  });
+
+  it('time-slices far candidate generation instead of completing several chunks in one tick', () => {
+    const seed = 'world-events-far-search';
+    const site = findValidPlusXColumn(seed, 64, 112);
+    const world = new VoxelWorld(seed);
+    const host = memoryHost(world);
+    host.random = () => 0;
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({
+      ...DEFAULT_WORLD_EVENTS_CONFIG,
+      timeZone: 'UTC',
+      spawnMinDistance: site.x,
+      spawnMaxDistance: site.x,
+      worldBorder: 10_000,
+      maxSearchAttempts: 16,
+      attemptsPerTick: 4,
+    });
+    manager.load();
+    manager.enabled = true;
+    manager.searchGenerationBudgetMs = 2;
+    manager.searchMaxChunkCommitsPerTick = EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK;
+    let t = 0;
+    manager.searchClock = () => {
+      t += 1;
+      return t;
+    };
+    expect(manager.forceSpawn({ yaw: 0 })).toEqual({ ok: true, searching: true });
+    const commits: number[] = [];
+    let guard = 0;
+    while (!manager.active?.chest && guard < 200) {
+      const before = world.generationCommitCount;
+      manager.tick();
+      const added = world.generationCommitCount - before;
+      commits.push(added);
+      expect(added).toBeLessThanOrEqual(EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK);
+      expect(manager.lastSearchChunkCommits).toBeLessThanOrEqual(EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK);
+      guard += 1;
+    }
+    expect(manager.active?.chest).toBeDefined();
+    expect(world.getBlock(manager.active!.chest!.x, manager.active!.chest!.y, manager.active!.chest!.z)).toBe(BlockId.EventChest);
+    expect(commits.some((count) => count === 0 || count === 1)).toBe(true);
+    expect(Math.max(...commits)).toBeLessThanOrEqual(1);
+    expect(guard).toBeGreaterThan(1);
   });
 });
 

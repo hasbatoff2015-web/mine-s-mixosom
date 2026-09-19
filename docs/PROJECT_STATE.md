@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: World events persistence/streaming races — 2026-09-19
+
+- Follow-up после code audit: event overlay больше не пишет `world.modifications`; snapshot restore снимает `BlockRenderState` когда его не было; resumable MeshJob не помечает chunk clean после mutation уже собранной секции; server event search генерирует far chunks через `continueGeneration` с лимитом 1 commit/tick; failed search не спавнит после `cleanupAt`; catch-up берёт lock/announce из фактического `now`; перед place — один fresh validation context.
+- Не переписывались scheduler IANA, virtual claim, journal/saveGeneration, loot, texture art.
+- Подробности: `docs/reports/2026-09-19_world-events-persistence-streaming-races.md`.
+
 ## Последний проход: World events hardening + bounded streaming — 2026-09-19
 
 - Follow-up после live QA: Europe/Moscow scheduler, virtual full-height event protection, spawn validation без sync disk IO, crash journal, incremental mesh/generation slices, F3 latest/max spike telemetry.
