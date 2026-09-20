@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-20: Clan base point
+
+- [x] One persistent clan diamond base (same radius as personal diamond claim).
+- [x] Leader-only set/move with 24h clan cooldown; overlap with any existing claim denied.
+- [x] Bedrock is never replaced; members teleport via TeleportService.
+- [ ] Owner live Anarchy QA of clan base place/move/teleport.
+
 ## 2026-09-19: Auction history + menu unread badges
 
 - [x] Clan announcement format `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - text` (no quotes).

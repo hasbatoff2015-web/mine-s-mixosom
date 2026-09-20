@@ -162,6 +162,10 @@ describe('clan overlay CSS contracts', () => {
     expect(gameUi).toContain("action: 'set_ranking_sort'");
     expect(gameUi).toContain("data-clan-action=\"open_announce\"");
     expect(gameUi).toContain("data-clan-action=\"send_announcement\"");
+    expect(gameUi).toContain("data-clan-action=\"set_base\"");
+    expect(gameUi).toContain("data-clan-action=\"teleport_to_base\"");
+    expect(gameUi).toContain('Добавить точку базы клана');
+    expect(gameUi).toContain('Телепорт на базу клана');
     expect(gameUi).toContain("data-clan-action=\"reject_invitation\"");
     expect(gameUi).toContain('Объявление соклановцам');
     expect(gameUi).toContain('Напишите объявление клану');

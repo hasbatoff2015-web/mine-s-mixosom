@@ -540,7 +540,9 @@ export type ClanActionKind =
   | 'reject_invitation'
   | 'open_announce'
   | 'set_announce_text'
-  | 'send_announcement';
+  | 'send_announcement'
+  | 'set_base'
+  | 'teleport_to_base';
 
 export interface ClientClanActionMessage {
   readonly type: 'clan_action';
@@ -1178,6 +1180,14 @@ export interface ServerClanMessage {
     readonly canAnnounce?: boolean;
     readonly announceCooldownUntil?: number;
     readonly announceCooldownLabel?: string;
+    readonly hasBase?: boolean;
+    readonly baseLabel?: string;
+    readonly canSetBase?: boolean;
+    readonly setBaseLabel?: string;
+    readonly setBaseDisabled?: boolean;
+    readonly baseCooldownUntil?: number;
+    readonly baseCooldownLabel?: string;
+    readonly canTeleportToBase?: boolean;
   };
   readonly playerCard?: {
     readonly playerId: string;
@@ -1549,6 +1559,7 @@ export const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'transfer_leader', 'confirm_transfer_leader', 'cancel_transfer_leader',
   'friends_request', 'friends_cancel',
   'reject_invitation', 'open_announce', 'set_announce_text', 'send_announcement',
+  'set_base', 'teleport_to_base',
 ];
 
 export const MENU_ACTIONS: readonly MenuActionKind[] = [

@@ -623,6 +623,19 @@ export class WorldInstance {
       requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
       cancelFriendRequest: (fromId, targetId) => this.friends.cancelOutgoing(fromId, targetId),
       notifyUnread,
+      playerPosition: (playerId) => {
+        const live = this.players.get(playerId);
+        if (!live) return undefined;
+        const pos = live.controller.position;
+        return { x: pos.x, y: pos.y, z: pos.z };
+      },
+      worldId: () => this.worldId,
+      getBlock: (x, y, z) => this.world.getBlock(x, y, z),
+      setBlock: (x, y, z, blockId) => this.worldView.setBlock(x, y, z, blockId),
+      loadClaims: () => this.loadClaimStore(),
+      saveClaims: (store) => this.saveClaimStore(store),
+      teleportNow: (playerId, dest) => this.teleports.now(playerId, dest, 'clan', { silent: true }),
+      showClaim: (playerId, claim) => this.claimBoundaries.show(playerId, claim),
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,

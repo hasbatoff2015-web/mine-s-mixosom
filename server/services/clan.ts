@@ -11,6 +11,20 @@ import {
   CLAN_ALREADY_IN_THIS_CLAN_ERROR,
   CLAN_ANNOUNCEMENT_COOLDOWN_MS,
   CLAN_ANNOUNCE_EMPTY_ERROR,
+  CLAN_BASE_ABSENT_LABEL,
+  CLAN_BASE_ALREADY_HERE_ERROR,
+  CLAN_BASE_ANCHOR_ERROR,
+  CLAN_BASE_CHANGED_MESSAGE,
+  CLAN_BASE_CHANGE_LABEL,
+  CLAN_BASE_COOLDOWN_MS,
+  CLAN_BASE_MISSING_ERROR,
+  CLAN_BASE_OVERLAP_ERROR,
+  CLAN_BASE_POSITION_ERROR,
+  CLAN_BASE_PRESENT_LABEL,
+  CLAN_BASE_SET_LABEL,
+  CLAN_BASE_SET_MESSAGE,
+  CLAN_BASE_TELEPORT_MESSAGE,
+  CLAN_BASE_WORLD_ERROR,
   CLAN_CREATE_COST,
   CLAN_DEMOTE_VETERAN_ONLY_ERROR,
   CLAN_ICON_IDS,
@@ -32,9 +46,11 @@ import {
   canClanInvite,
   canClanKick,
   canClanManageVeterans,
+  canClanSetBase,
   canClanTransferLeader,
   clanAnnounceCooldownLabel,
   clanAnnouncementChat,
+  clanBaseCooldownLabel,
   clanInviteChat,
   clanNameKey,
   clanRoleLabel,
@@ -51,8 +67,16 @@ import { CHAT_TOO_LONG_ERROR, normalizeOutgoingChatText } from '../../shared/cha
 import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
+import { BlockId } from '../../src/blocks';
 import type { EconomyService } from './economy';
 import type { JsonFileStore } from './jsonStore';
+import { overlappingClaims } from './claimAnchors';
+import type { Claim, ClaimStore } from './claims';
+import {
+  clanBaseTeleportDest,
+  createClanBaseClaim,
+  resolveClanBaseAnchor,
+} from './clanBase';
 
 export { CLAN_PLUGIN_NAME, CLAN_CREATE_COST, CLAN_MAX_MEMBERS, CLAN_PAGE_SIZE };
 
@@ -117,6 +141,14 @@ export type ClanScreen =
   | 'announce'
   | 'closed';
 
+export interface ClanBase {
+  worldId: string;
+  x: number;
+  y: number;
+  z: number;
+  claimId: string;
+}
+
 export interface ClanRecord {
   clanId: string;
   name: string;
@@ -127,6 +159,8 @@ export interface ClanRecord {
   roles: Record<string, ClanRole>;
   createdAt: number;
   announcementCooldownUntil?: number;
+  base?: ClanBase;
+  baseCooldownUntil?: number;
 }
 
 export interface ClanInvitation {
@@ -162,6 +196,14 @@ export interface ClanRuntime {
   requestFriend?(fromId: string, targetId: string): { ok: boolean; error?: string };
   cancelFriendRequest?(fromId: string, targetId: string): { ok: boolean; error?: string };
   notifyUnread?(playerId: string, category: 'clans'): void;
+  playerPosition?(playerId: string): { x: number; y: number; z: number } | undefined;
+  worldId?(): string;
+  getBlock?(x: number, y: number, z: number): number;
+  setBlock?(x: number, y: number, z: number, blockId: number): boolean;
+  loadClaims?(): ClaimStore;
+  saveClaims?(store: ClaimStore): void;
+  teleportNow?(playerId: string, dest: { x: number; y: number; z: number }): { ok: boolean; error?: string };
+  showClaim?(playerId: string, claim: Claim): void;
 }
 
 export interface ClanSession {
@@ -230,6 +272,9 @@ function parseClan(value: unknown): ClanRecord | undefined {
   }
   const cooldownRaw = Number(value.announcementCooldownUntil);
   const announcementCooldownUntil = Number.isFinite(cooldownRaw) && cooldownRaw > 0 ? cooldownRaw : undefined;
+  const baseCooldownRaw = Number(value.baseCooldownUntil);
+  const baseCooldownUntil = Number.isFinite(baseCooldownRaw) && baseCooldownRaw > 0 ? baseCooldownRaw : undefined;
+  const base = parseClanBase(value.base);
   return {
     clanId: value.clanId,
     name: value.name,
@@ -240,7 +285,18 @@ function parseClan(value: unknown): ClanRecord | undefined {
     roles,
     createdAt,
     ...(announcementCooldownUntil ? { announcementCooldownUntil } : {}),
+    ...(base ? { base } : {}),
+    ...(baseCooldownUntil ? { baseCooldownUntil } : {}),
   };
+}
+
+function parseClanBase(value: unknown): ClanBase | undefined {
+  if (!isRecord(value) || typeof value.worldId !== 'string' || typeof value.claimId !== 'string') return undefined;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  const z = Number(value.z);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return undefined;
+  return { worldId: value.worldId, x, y, z, claimId: value.claimId };
 }
 
 function parseInvitation(value: unknown): ClanInvitation | undefined {
@@ -675,6 +731,7 @@ export class ClanService {
       const clan = this.getClan(clanId) ?? this.playerClan(playerId);
       if (!clan) return { ok: false, error: clanId ? CLAN_MISSING_ERROR : CLAN_NOT_IN_CLAN_ERROR };
       if (clan.ownerId !== playerId) return { ok: false, error: CLAN_OWNER_ONLY_ERROR };
+      this.removeClanBaseClaim(clan);
       const released = [...clan.memberIds];
       this.clans.delete(clan.clanId);
       for (const [id, invitation] of [...this.invitations.entries()]) {
@@ -860,6 +917,151 @@ export class ClanService {
       }
       return { ok: true, clan };
     });
+  }
+
+  isClanMember(clanId: string, playerId: string): boolean {
+    return this.getClan(clanId)?.memberIds.includes(playerId) === true;
+  }
+
+  onClanClaimRemoved(claimId: string): void {
+    for (const clan of this.clans.values()) {
+      if (clan.base?.claimId !== claimId) continue;
+      delete clan.base;
+      this.persist();
+      return;
+    }
+  }
+
+  setClanBase(playerId: string): ClanResult {
+    const owned = this.playerClan(playerId);
+    return this.withLocks([`player:${playerId}`, owned ? `clan:${owned.clanId}` : ''], () => {
+      const clan = this.playerClan(playerId);
+      const session = this.session(playerId);
+      session.screen = clan ? 'card' : 'ranking';
+      if (clan) session.selectedClanId = clan.clanId;
+      if (!clan) {
+        session.message = CLAN_NOT_IN_CLAN_ERROR;
+        return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+      }
+      if (!canClanSetBase(this.roleOf(clan, playerId))) {
+        session.message = CLAN_OWNER_ONLY_ERROR;
+        return { ok: false, error: CLAN_OWNER_ONLY_ERROR, clan };
+      }
+      const remaining = Math.max(0, (clan.baseCooldownUntil ?? 0) - this.now());
+      if (remaining > 0) {
+        session.message = clanBaseCooldownLabel(remaining);
+        return { ok: false, error: session.message, clan };
+      }
+      const pos = this.runtime.playerPosition?.(playerId);
+      if (!pos || !this.runtime.getBlock || !this.runtime.setBlock || !this.runtime.loadClaims || !this.runtime.saveClaims) {
+        session.message = CLAN_BASE_POSITION_ERROR;
+        return { ok: false, error: CLAN_BASE_POSITION_ERROR, clan };
+      }
+      const worldId = this.runtime.worldId?.() ?? '';
+      if (!worldId) {
+        session.message = CLAN_BASE_POSITION_ERROR;
+        return { ok: false, error: CLAN_BASE_POSITION_ERROR, clan };
+      }
+      const resolved = resolveClanBaseAnchor(pos, this.runtime.getBlock);
+      if (!resolved.ok) {
+        session.message = resolved.error;
+        return { ok: false, error: resolved.error, clan };
+      }
+      const { anchor } = resolved;
+      if (clan.base
+        && clan.base.worldId === worldId
+        && clan.base.x === anchor.x
+        && clan.base.y === anchor.y
+        && clan.base.z === anchor.z) {
+        session.message = CLAN_BASE_ALREADY_HERE_ERROR;
+        return { ok: false, error: CLAN_BASE_ALREADY_HERE_ERROR, clan };
+      }
+      const volume = createClanBaseClaim(clan.clanId, clan.name, worldId, anchor).volume;
+      const store = this.runtime.loadClaims();
+      const overlapping = overlappingClaims(store.claims, worldId, volume, clan.base?.claimId);
+      if (overlapping.length > 0) {
+        session.message = CLAN_BASE_OVERLAP_ERROR;
+        return { ok: false, error: CLAN_BASE_OVERLAP_ERROR, clan };
+      }
+      if (this.runtime.getBlock(anchor.x, anchor.y, anchor.z) === BlockId.Bedrock) {
+        session.message = CLAN_BASE_ANCHOR_ERROR;
+        return { ok: false, error: CLAN_BASE_ANCHOR_ERROR, clan };
+      }
+      const previous = clan.base;
+      if (!this.runtime.setBlock(anchor.x, anchor.y, anchor.z, BlockId.DiamondBlock)) {
+        session.message = CLAN_BASE_ANCHOR_ERROR;
+        return { ok: false, error: CLAN_BASE_ANCHOR_ERROR, clan };
+      }
+      const created = createClanBaseClaim(clan.clanId, clan.name, worldId, anchor);
+      store.claims = store.claims.filter((claim) => claim.id !== previous?.claimId && claim.clanId !== clan.clanId);
+      store.claims.push(created);
+      this.runtime.saveClaims(store);
+      if (previous && (previous.x !== anchor.x || previous.y !== anchor.y || previous.z !== anchor.z || previous.worldId !== worldId)) {
+        this.runtime.setBlock(previous.x, previous.y, previous.z, BlockId.Air);
+      }
+      clan.base = {
+        worldId,
+        x: anchor.x,
+        y: anchor.y,
+        z: anchor.z,
+        claimId: created.id,
+      };
+      clan.baseCooldownUntil = this.now() + CLAN_BASE_COOLDOWN_MS;
+      this.persist();
+      this.runtime.showClaim?.(playerId, created);
+      session.message = previous ? CLAN_BASE_CHANGED_MESSAGE : CLAN_BASE_SET_MESSAGE;
+      return { ok: true, clan };
+    });
+  }
+
+  teleportToClanBase(playerId: string): ClanResult {
+    const owned = this.playerClan(playerId);
+    return this.withLocks([`player:${playerId}`, owned ? `clan:${owned.clanId}` : ''], () => {
+      const clan = this.playerClan(playerId);
+      const session = this.session(playerId);
+      session.screen = clan ? 'card' : 'ranking';
+      if (clan) session.selectedClanId = clan.clanId;
+      if (!clan) {
+        session.message = CLAN_NOT_IN_CLAN_ERROR;
+        return { ok: false, error: CLAN_NOT_IN_CLAN_ERROR };
+      }
+      if (!clan.base) {
+        session.message = CLAN_BASE_MISSING_ERROR;
+        return { ok: false, error: CLAN_BASE_MISSING_ERROR, clan };
+      }
+      const worldId = this.runtime.worldId?.();
+      if (worldId && clan.base.worldId !== worldId) {
+        session.message = CLAN_BASE_WORLD_ERROR;
+        return { ok: false, error: CLAN_BASE_WORLD_ERROR, clan };
+      }
+      if (!this.runtime.teleportNow) {
+        session.message = CLAN_BASE_MISSING_ERROR;
+        return { ok: false, error: CLAN_BASE_MISSING_ERROR, clan };
+      }
+      const dest = clanBaseTeleportDest(clan.base);
+      const result = this.runtime.teleportNow(playerId, dest);
+      if (!result.ok) {
+        session.message = result.error ?? CLAN_BASE_POSITION_ERROR;
+        return { ok: false, error: session.message, clan };
+      }
+      session.message = CLAN_BASE_TELEPORT_MESSAGE;
+      return { ok: true, clan };
+    });
+  }
+
+  private removeClanBaseClaim(clan: ClanRecord): void {
+    const store = this.runtime.loadClaims?.();
+    if (store) {
+      const next = store.claims.filter((claim) => claim.id !== clan.base?.claimId && claim.clanId !== clan.clanId);
+      if (next.length !== store.claims.length) {
+        store.claims = next;
+        this.runtime.saveClaims?.(store);
+      }
+    }
+    if (clan.base && this.runtime.setBlock) {
+      this.runtime.setBlock(clan.base.x, clan.base.y, clan.base.z, BlockId.Air);
+    }
+    delete clan.base;
   }
 
   leaveClan(playerId: string): ClanResult {
@@ -1220,6 +1422,14 @@ export class ClanService {
     if (action === 'send_announcement') {
       const result = this.sendAnnouncement(playerId, message.text ?? session.announceText);
       if (!result.ok) session.message = result.error;
+      return;
+    }
+    if (action === 'set_base') {
+      this.setClanBase(playerId);
+      return;
+    }
+    if (action === 'teleport_to_base') {
+      this.teleportToClanBase(playerId);
       return;
     }
     if (action === 'confirm_leave') {
@@ -2013,6 +2223,7 @@ export class ClanService {
       canInvite: canClanInvite(viewerRole),
       canAnnounce: canClanAnnounce(viewerRole),
       ...(this.announceCooldownFields(clan)),
+      ...(this.baseCardFields(clan, viewerRole, isMember)),
       ...(viewerRole ? { viewerRole } : {}),
       memberSort: this.session(playerId).memberSort,
       rankingSort: this.session(playerId).rankingSort,
@@ -2028,6 +2239,31 @@ export class ClanService {
     return {
       announceCooldownUntil: clan.announcementCooldownUntil,
       announceCooldownLabel: clanAnnounceCooldownLabel(remaining),
+    };
+  }
+
+  private baseCardFields(
+    clan: ClanRecord,
+    viewerRole: ClanRole | undefined,
+    isMember: boolean,
+  ): Pick<
+    NonNullable<ServerClanMessage['card']>,
+    'hasBase' | 'baseLabel' | 'canSetBase' | 'setBaseLabel' | 'setBaseDisabled' | 'baseCooldownUntil' | 'baseCooldownLabel' | 'canTeleportToBase'
+  > {
+    const hasBase = !!clan.base;
+    const remaining = Math.max(0, (clan.baseCooldownUntil ?? 0) - this.now());
+    const canSetBase = isMember && canClanSetBase(viewerRole);
+    return {
+      hasBase,
+      baseLabel: hasBase ? CLAN_BASE_PRESENT_LABEL : CLAN_BASE_ABSENT_LABEL,
+      canSetBase,
+      setBaseLabel: hasBase ? CLAN_BASE_CHANGE_LABEL : CLAN_BASE_SET_LABEL,
+      setBaseDisabled: canSetBase && remaining > 0,
+      canTeleportToBase: isMember && hasBase,
+      ...(remaining > 0 ? {
+        baseCooldownUntil: clan.baseCooldownUntil,
+        baseCooldownLabel: clanBaseCooldownLabel(remaining),
+      } : {}),
     };
   }
 

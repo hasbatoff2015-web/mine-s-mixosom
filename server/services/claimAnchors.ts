@@ -64,6 +64,20 @@ export function overlappingAnchorClaims(
   ));
 }
 
+/** Inclusive AABB overlap against every stored claim, including regular `/claim` volumes. */
+export function overlappingClaims(
+  claims: readonly Claim[],
+  worldId: string,
+  volume: SelectionVolume,
+  exceptId?: string,
+): Claim[] {
+  return claims.filter((claim) => (
+    claim.worldId === worldId
+    && claim.id !== exceptId
+    && volumesOverlap(claim.volume, volume)
+  ));
+}
+
 export function findClaimByAnchor(
   claims: readonly Claim[],
   worldId: string,

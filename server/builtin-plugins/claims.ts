@@ -88,9 +88,13 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       ): boolean => {
         if (effectiveFlag(claims, flag)) return true;
         if (bypass(playerId, playerName)) return true;
+        const trusted = (claim: Claim) => (
+          isTrusted(claim, playerName)
+          || (!!claim.clanId && ctx.clan.isClanMember(claim.clanId, playerId))
+        );
         const setter = flagSetter(claims, flag);
-        if (setter) return isTrusted(setter, playerName);
-        return claims.some((claim) => isTrusted(claim, playerName));
+        if (setter) return trusted(setter);
+        return claims.some(trusted);
       };
 
       const describeProtection = (
@@ -185,6 +189,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!claim) return;
         store.claims = store.claims.filter((entry) => entry.id !== claim.id);
         save(store);
+        if (claim.clanId) ctx.clan.onClanClaimRemoved(claim.id);
       });
       api.registerEvent('playerDamage', (event) => {
         const player = api.getPlayer(event.playerId);
@@ -292,8 +297,10 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               claim.owner === ownerKey || bypass(sender.playerId, sender.name)
             ));
             if (index < 0) return fail(`Claim '${name}' not found.`);
+            const removed = store.claims[index]!;
             store.claims.splice(index, 1);
             save(store);
+            if (removed.clanId) ctx.clan.onClanClaimRemoved(removed.id);
             return ok(`Deleted claim '${name}'.`);
           }
           if (sub === 'rename') {
@@ -425,10 +432,14 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               const name = args[2]?.toLowerCase();
               if (!name) return usageError('/claim admin delete <name>');
               const store = load();
+              const removed = store.claims.filter((claim) => claim.name === name);
               const next = store.claims.filter((claim) => claim.name !== name);
               if (next.length === store.claims.length) return fail(`Claim '${name}' not found.`);
               store.claims = next;
               save(store);
+              for (const claim of removed) {
+                if (claim.clanId) ctx.clan.onClanClaimRemoved(claim.id);
+              }
               return ok(`Admin deleted claim '${name}'.`);
             }
             return usageError('/claim admin delete <name>');

@@ -6,6 +6,7 @@ export const CLAN_NAME_MAX = 16;
 export const CLAN_INVITE_TTL_MS = 24 * 60 * 60 * 1000;
 export const CLAN_REQUEST_TTL_MS = 24 * 60 * 60 * 1000;
 export const CLAN_ANNOUNCEMENT_COOLDOWN_MS = 3 * 60 * 60 * 1000;
+export const CLAN_BASE_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 export const CLAN_PAGE_SIZE = 6;
 
 export const CLAN_ICON_IDS = [
@@ -64,6 +65,21 @@ export const CLAN_NAME_CHARS_ERROR = 'Название может содержа
 export const CLAN_NAME_UNSAFE_ERROR = 'Недопустимое название клана.';
 export const CLAN_ANNOUNCE_EMPTY_ERROR = 'Введите текст объявления.';
 export const CLAN_ANNOUNCE_COOLDOWN_PREFIX = 'Повторная отправка через ';
+export const CLAN_BASE_SET_LABEL = 'Добавить точку базы клана';
+export const CLAN_BASE_CHANGE_LABEL = 'Изменить точку базы клана';
+export const CLAN_BASE_TELEPORT_LABEL = 'Телепорт на базу клана';
+export const CLAN_BASE_PRESENT_LABEL = 'База клана: установлена';
+export const CLAN_BASE_ABSENT_LABEL = 'База клана не установлена';
+export const CLAN_BASE_OVERLAP_ERROR = 'Нельзя установить точку базы: зона пересекается с существующим приватом.';
+export const CLAN_BASE_ANCHOR_ERROR = 'Невозможно установить точку базы на этой позиции.';
+export const CLAN_BASE_POSITION_ERROR = 'Некорректная позиция для точки базы.';
+export const CLAN_BASE_MISSING_ERROR = 'База клана не установлена.';
+export const CLAN_BASE_WORLD_ERROR = 'База клана находится в другом мире.';
+export const CLAN_BASE_ALREADY_HERE_ERROR = 'База клана уже установлена здесь.';
+export const CLAN_BASE_COOLDOWN_PREFIX = 'Изменение доступно через ';
+export const CLAN_BASE_SET_MESSAGE = 'Точка базы клана установлена.';
+export const CLAN_BASE_CHANGED_MESSAGE = 'Точка базы клана изменена.';
+export const CLAN_BASE_TELEPORT_MESSAGE = 'Телепорт на базу клана.';
 
 export function isClanRole(value: string | undefined): value is ClanRole {
   return value !== undefined && (CLAN_ROLES as readonly string[]).includes(value);
@@ -91,6 +107,10 @@ export function canClanAnnounce(role: ClanRole | undefined): boolean {
   return role === 'leader';
 }
 
+export function canClanSetBase(role: ClanRole | undefined): boolean {
+  return role === 'leader';
+}
+
 export function clanInviteChat(inviterName: string, clanName: string): string {
   return `Игрок ${inviterName} пригласил вас в клан ${clanName}. Примите приглашение в меню`;
 }
@@ -111,6 +131,10 @@ export function formatRemainingDuration(ms: number): string {
 
 export function clanAnnounceCooldownLabel(remainingMs: number): string {
   return `${CLAN_ANNOUNCE_COOLDOWN_PREFIX}${formatRemainingDuration(remainingMs)}`;
+}
+
+export function clanBaseCooldownLabel(remainingMs: number): string {
+  return `${CLAN_BASE_COOLDOWN_PREFIX}${formatRemainingDuration(remainingMs)}`;
 }
 
 export function canClanTransferLeader(actor: ClanRole | undefined, target: ClanRole | undefined): boolean {

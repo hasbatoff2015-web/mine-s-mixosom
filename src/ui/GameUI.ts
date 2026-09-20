@@ -3358,17 +3358,34 @@ export class GameUI {
     const announce = card?.canAnnounce
       ? `<button type="button" class="mc-ah-btn" data-clan-action="open_announce">Объявление соклановцам</button>`
       : '';
+    const baseStatus = card?.isMember && card.baseLabel
+      ? `<div class="mc-clan-base-status">${this.escape(card.baseLabel)}</div>`
+      : '';
+    const setBaseDisabled = card?.setBaseDisabled ? ' disabled' : '';
+    const setBase = card?.canSetBase
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="set_base"${setBaseDisabled}>${this.escape(card.setBaseLabel ?? 'Добавить точку базы клана')}</button>`
+      : '';
+    const setBaseCooldown = card?.canSetBase && card.baseCooldownLabel
+      ? `<div class="mc-clan-cooldown">${this.escape(card.baseCooldownLabel)}</div>`
+      : '';
+    const teleportBase = card?.canTeleportToBase
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="teleport_to_base">Телепорт на базу клана</button>`
+      : '';
     return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
       <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
       <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${card?.killsLabel ? clanKillsHtml(card.killsLabel) : ''} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
       <div class="mc-clan-owner">Глава: ${this.escape(card?.ownerName ?? '')}</div>
+      ${baseStatus}
       ${clanSortButtonsHtml(state.memberSort ?? card?.memberSort, 'data-clan-member-sort')}
       <div class="mc-clan-list" data-clan-list>${this.clanMemberHtml(state)}</div>
       <div class="mc-ah-actions">
         ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
         ${requests}
         ${announce}
+        ${setBase}
+        ${teleportBase}
       </div>
+      ${setBaseCooldown}
       ${message}
     </div>`;
   }
