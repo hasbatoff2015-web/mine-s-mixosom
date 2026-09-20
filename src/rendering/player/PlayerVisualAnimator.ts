@@ -150,6 +150,8 @@ export class PlayerVisualAnimator {
       state.swordBlocking,
       delta,
     );
+    // Same mechanism as LMB swing: pose the right arm only. The held sword is a
+    // child of `rightArm` / `heldItem` and keeps `/moveitems` local calibration.
     if (this.blockingProgress > 0) {
       const t = this.blockingProgress;
       rightArmX += (THIRD_PERSON_SWORD_BLOCKING_ARM.x - rightArmX) * t;

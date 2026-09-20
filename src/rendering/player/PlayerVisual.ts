@@ -7,7 +7,6 @@ import {
   readThirdPersonHeldItemTransform,
   type ThirdPersonHeldItemTransform,
 } from './thirdPersonHeldItem';
-import { applyThirdPersonSwordBlockingTransform } from './swordBlockingVisual';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -257,7 +256,8 @@ export class PlayerVisual {
       return;
     }
     this.rig.heldItem.add(this.heldModel);
-    this.applyHeldItemVisual(keepBlocking ? this.lastBlockingProgress : 0);
+    this.applyHeldItemVisual();
+    if (!keepBlocking) this.lastBlockingProgress = 0;
   }
 
   /** Live overlay for the `/moveitems` calibrator. Does not change production defaults. */
@@ -265,7 +265,7 @@ export class PlayerVisual {
     this.assertActive();
     this.heldBaseTransform = cloneThirdPersonHeldItemTransform(transform);
     if (!this.heldModel) return;
-    this.applyHeldItemVisual(isSwordItem(this.heldItemId) ? this.lastBlockingProgress : 0);
+    this.applyHeldItemVisual();
   }
 
   readHeldItemTransform(): ThirdPersonHeldItemTransform | undefined {
@@ -349,7 +349,7 @@ export class PlayerVisual {
         this.bowTexturePath = texturePath;
       }
     }
-    this.syncHeldItemBlocking(pose.blockingProgress);
+    this.lastBlockingProgress = blocking ? pose.blockingProgress : 0;
     return pose;
   }
 
@@ -515,23 +515,9 @@ export class PlayerVisual {
     this.rig.leftLeg.rotation.x = pose.leftLegX;
   }
 
-  private applyHeldItemVisual(progress: number): void {
-    if (!this.heldModel || !this.heldBaseTransform) {
-      this.lastBlockingProgress = 0;
-      return;
-    }
-    if (isSwordItem(this.heldItemId) && progress > 1e-5) {
-      applyThirdPersonSwordBlockingTransform(this.heldModel, this.heldBaseTransform, progress);
-    } else {
-      applyThirdPersonHeldItemTransform(this.heldModel, this.heldBaseTransform);
-    }
-    this.lastBlockingProgress = isSwordItem(this.heldItemId) ? progress : 0;
-  }
-
-  private syncHeldItemBlocking(progress: number): void {
-    const next = isSwordItem(this.heldItemId) ? progress : 0;
-    if (next <= 1e-5 && this.lastBlockingProgress <= 1e-5) return;
-    this.applyHeldItemVisual(next);
+  private applyHeldItemVisual(): void {
+    if (!this.heldModel || !this.heldBaseTransform) return;
+    applyThirdPersonHeldItemTransform(this.heldModel, this.heldBaseTransform);
   }
 
   private assertActive(): void {

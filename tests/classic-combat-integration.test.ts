@@ -12,7 +12,7 @@ import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppear
 import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
-import { SWORD_BLOCKING_TRANSITION_SECONDS } from '../src/rendering/player/swordBlockingVisual';
+import { SWORD_BLOCKING_TRANSITION_SECONDS, THIRD_PERSON_SWORD_BLOCKING_ARM } from '../src/rendering/player/swordBlockingVisual';
 import {
   defaultThirdPersonHeldItemTransformForItem,
   thirdPersonHeldTransformsClose,
@@ -245,6 +245,19 @@ describe('movement and presentation', () => {
     });
     fp.setHeldItems('diamond_sword');
     visual.setHeldItem('diamond_sword');
+    const tpIdleFrame = {
+      viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
+      sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
+      swordBlocking: false, foodUseProgress: 0, invisible: false, hurtFlash: 0,
+    };
+    visual.update(0.05, tpIdleFrame);
+    const tpArm = visual.root.getObjectByName('player:right-arm-pivot')!;
+    const tpHolder = visual.root.getObjectByName('player:right-hand-item')!;
+    const tpSword = tpHolder.children[0];
+    if (!tpSword) throw new Error('missing held sword');
+    visual.root.updateWorldMatrix(true, true);
+    const tpIdleWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    const tpBase = defaultThirdPersonHeldItemTransformForItem('diamond_sword');
     const fpIdle: FirstPersonFrameState = {
       visible: true, movementSpeed: 0, onGround: true, sprinting: false,
       mining: false, foodUseProgress: 0, bowCharge: 0,
@@ -252,7 +265,6 @@ describe('movement and presentation', () => {
     fp.update(0.05, fpIdle);
     const idleMatrix = fp.captureHeldItemMatrixDebug()!.itemLocal.clone();
     const idlePos = new THREE.Vector3().setFromMatrixPosition(idleMatrix);
-    const tpBase = defaultThirdPersonHeldItemTransformForItem('diamond_sword');
 
     controls.movement = () => ({
       forward: 1, right: 0, sprint: false, jump: false, sneak: false, descend: false, flySprint: false,
@@ -305,13 +317,18 @@ describe('movement and presentation', () => {
     expect(blockedPos.distanceTo(idlePos)).toBeGreaterThan(0.2);
 
     visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, {
-      viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
-      sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
-      swordBlocking: session.combat.swordBlocking, foodUseProgress: 0, invisible: false, hurtFlash: 0,
+      ...tpIdleFrame,
+      swordBlocking: session.combat.swordBlocking,
     });
     expect(visual.heldItemBlockingProgress).toBe(1);
-    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, tpBase)).toBe(false);
-    expect(visual.readHeldItemTransform()!.position.y).toBeGreaterThan(tpBase.position.y);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, tpBase)).toBe(true);
+    expect(tpSword.parent).toBe(tpHolder);
+    expect(tpHolder.parent).toBe(tpArm);
+    expect(tpArm.rotation.x).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.x);
+    expect(tpArm.rotation.y).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.y);
+    visual.root.updateWorldMatrix(true, true);
+    const blockedWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    expect(blockedWorld.distanceTo(tpIdleWorld)).toBeGreaterThan(0.15);
 
     controls.using = false;
     game.tick();
@@ -319,13 +336,12 @@ describe('movement and presentation', () => {
     fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...fpIdle, swordBlocking: session.combat.swordBlocking });
     expect(fp.swordBlockingProgress).toBe(0);
     expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idleMatrix)).toBe(true);
-    visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, {
-      viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
-      sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
-      swordBlocking: session.combat.swordBlocking, foodUseProgress: 0, invisible: false, hurtFlash: 0,
-    });
+    visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, tpIdleFrame);
     expect(visual.heldItemBlockingProgress).toBe(0);
     expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, tpBase)).toBe(true);
+    visual.root.updateWorldMatrix(true, true);
+    const releasedWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    expect(releasedWorld.distanceTo(tpIdleWorld)).toBeLessThan(1e-4);
   });
 
   it('retains skeleton arrow impulse while melee uses the shared velocity transform', () => {

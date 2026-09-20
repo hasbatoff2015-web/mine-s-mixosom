@@ -7,7 +7,7 @@
 - [x] Replicate blocking to remote players via existing `presentation.swordBlocking`.
 - [x] Anarchy `tickOnline` calls the same `syncLocalCombatUse` as SP so local FP/TP `swordBlocking` is actually true while RMB is held.
 - [x] Live QA: first-person and local third-person blocking pose visible; live two-client `presentation.swordBlocking` true/false on the running Anarchy server.
-- [ ] Owner photo of remote third-person pose (spawn PvP made the second-browser screenshot pass incomplete).
+- [x] Third-person RMB uses the same arm-child held-item attachment as LMB swing (`/moveitems` local pose unchanged).
 
 ## 2026-09-20: Nameplate clipping + nick max 13
 

@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Sword blocking hand follow
+
+Report: `reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: LMB swing and RMB block keep the sword parented to `rightArm`/`heldItem`; local `/moveitems` transform is unchanged while arm pose and world position change; grip distance to the hand attachment stays constant; release restores idle world pose. First-person overlay still differs from idle. Focused **8 files / 132 tests PASS**.
+
 ## 2026-09-20 Sword blocking live Anarchy fix
 
 Report: `reports/2026-09-20_sword-blocking-animation-live-fix.md`.

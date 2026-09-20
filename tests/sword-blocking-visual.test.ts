@@ -12,7 +12,7 @@ import { PlayerVisualAnimator } from '../src/rendering/player/PlayerVisualAnimat
 import {
   FIRST_PERSON_SWORD_BLOCKING_OFFSET,
   SWORD_BLOCKING_TRANSITION_SECONDS,
-  THIRD_PERSON_SWORD_BLOCKING_OFFSET,
+  THIRD_PERSON_SWORD_BLOCKING_ARM,
   advanceSwordBlockingProgress,
 } from '../src/rendering/player/swordBlockingVisual';
 import {
@@ -69,6 +69,24 @@ function createVisual() {
   };
 }
 
+function rightArmPivot(visual: PlayerVisual): THREE.Object3D {
+  const arm = visual.root.getObjectByName('player:right-arm-pivot');
+  if (!arm) throw new Error('missing right-arm pivot');
+  return arm;
+}
+
+function heldSwordModel(visual: PlayerVisual): THREE.Object3D {
+  const holder = visual.root.getObjectByName('player:right-hand-item');
+  const sword = holder?.children[0];
+  if (!holder || !sword) throw new Error('missing held sword');
+  return sword;
+}
+
+function worldPos(object: THREE.Object3D): THREE.Vector3 {
+  object.updateWorldMatrix(true, true);
+  return new THREE.Vector3().setFromMatrixPosition(object.matrixWorld);
+}
+
 describe('sword item classification', () => {
   it('treats every registered sword as a sword and rejects tools and other items', () => {
     expect(SWORD_IDS).toEqual([
@@ -118,11 +136,13 @@ describe('blocking progress interpolation', () => {
 describe('live Anarchy missing updateUse bug', () => {
   it('keeps a non-zero blocking overlay so progress=1 cannot match idle', () => {
     const fp = FIRST_PERSON_SWORD_BLOCKING_OFFSET;
-    const tp = THIRD_PERSON_SWORD_BLOCKING_OFFSET;
     expect(Math.hypot(fp.position.x, fp.position.y, fp.position.z)).toBeGreaterThan(0.2);
     expect(Math.hypot(fp.rotation.x, fp.rotation.y, fp.rotation.z)).toBeGreaterThan(0.8);
-    expect(Math.hypot(tp.position.x, tp.position.y, tp.position.z)).toBeGreaterThan(0.05);
-    expect(Math.hypot(tp.rotation.x, tp.rotation.y, tp.rotation.z)).toBeGreaterThan(0.8);
+    expect(Math.hypot(
+      THIRD_PERSON_SWORD_BLOCKING_ARM.x,
+      THIRD_PERSON_SWORD_BLOCKING_ARM.y,
+      THIRD_PERSON_SWORD_BLOCKING_ARM.z,
+    )).toBeGreaterThan(0.8);
   });
 
   it('held sword stays idle if CombatSystem.updateUse is skipped while using is true', () => {
@@ -206,7 +226,7 @@ describe('first-person sword blocking overlay', () => {
 });
 
 describe('third-person sword blocking overlay', () => {
-  it('raises the held sword on top of production calibration and restores it', () => {
+  it('raises the arm like LMB swing while the sword keeps /moveitems local calibration', () => {
     const { visual, dispose } = createVisual();
     visual.setHeldItem('diamond_sword');
     const base = defaultThirdPersonHeldItemTransformForItem('diamond_sword');
@@ -221,25 +241,44 @@ describe('third-person sword blocking overlay', () => {
     });
 
     visual.update(0.05, visualIdle);
-    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, base)).toBe(true);
+    const sword = heldSwordModel(visual);
+    const arm = rightArmPivot(visual);
+    expect(sword.parent?.name).toBe('player:right-hand-item');
+    expect(sword.parent?.parent).toBe(arm);
+    const idleLocal = visual.readHeldItemTransform()!;
+    const idleArm = arm.rotation.clone();
+    const idleSwordWorld = worldPos(sword);
+    const idleHandWorld = worldPos(sword.parent!);
+    const idleGripDistance = idleSwordWorld.distanceTo(idleHandWorld);
+
+    visual.swing();
+    visual.update(0.12, visualIdle);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, idleLocal)).toBe(true);
+    expect(arm.rotation.x).not.toBeCloseTo(idleArm.x);
+    const swingSwordWorld = worldPos(sword);
+    expect(swingSwordWorld.distanceTo(idleSwordWorld)).toBeGreaterThan(0.05);
+    expect(worldPos(sword).distanceTo(worldPos(sword.parent!))).toBeCloseTo(idleGripDistance, 5);
+    visual.update(0.32, visualIdle);
 
     visual.update(0.01, { ...visualIdle, swordBlocking: true });
     expect(visual.heldItemBlockingProgress).toBeCloseTo(0.1);
-    const mid = visual.readHeldItemTransform()!;
-    expect(thirdPersonHeldTransformsClose(mid, base)).toBe(false);
-    expect(mid.position.y).toBeGreaterThan(base.position.y);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, base)).toBe(true);
 
     visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...visualIdle, swordBlocking: true });
     expect(visual.heldItemBlockingProgress).toBe(1);
-    const blocked = visual.readHeldItemTransform()!;
-    expect(blocked.position.x).toBeCloseTo(base.position.x + THIRD_PERSON_SWORD_BLOCKING_OFFSET.position.x);
-    expect(blocked.position.y).toBeCloseTo(base.position.y + THIRD_PERSON_SWORD_BLOCKING_OFFSET.position.y);
-    expect(blocked.position.z).toBeCloseTo(base.position.z + THIRD_PERSON_SWORD_BLOCKING_OFFSET.position.z);
-    expect(blocked.scale).toEqual(base.scale);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, base)).toBe(true);
+    expect(arm.rotation.x).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.x);
+    expect(arm.rotation.y).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.y);
+    expect(arm.rotation.z).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.z);
+    const blockedSwordWorld = worldPos(sword);
+    expect(blockedSwordWorld.distanceTo(idleSwordWorld)).toBeGreaterThan(0.15);
+    expect(worldPos(sword).distanceTo(worldPos(sword.parent!))).toBeCloseTo(idleGripDistance, 5);
+    expect(sword.parent?.parent).toBe(arm);
 
     visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, visualIdle);
     expect(visual.heldItemBlockingProgress).toBe(0);
     expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, base)).toBe(true);
+    expect(worldPos(sword).distanceTo(idleSwordWorld)).toBeLessThan(1e-4);
     dispose();
   });
 
@@ -252,7 +291,8 @@ describe('third-person sword blocking overlay', () => {
     live.rotation.z = -0.4;
     visual.applyHeldItemCalibration(live);
     visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...visualIdle, swordBlocking: true });
-    expect(visual.readHeldItemTransform()!.position.x).not.toBeCloseTo(0.12);
+    expect(visual.readHeldItemTransform()!.position.x).toBeCloseTo(0.12);
+    expect(visual.readHeldItemTransform()!.position.y).toBeCloseTo(0.30);
     visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, visualIdle);
     expect(visual.readHeldItemTransform()!.position.x).toBeCloseTo(0.12);
     expect(visual.readHeldItemTransform()!.position.y).toBeCloseTo(0.30);
@@ -333,7 +373,12 @@ describe('remote players receive authoritative sword blocking', () => {
     expect(thirdPersonHeldTransformsClose(
       visual.readHeldItemTransform()!,
       defaultThirdPersonHeldItemTransformForItem('iron_sword'),
-    )).toBe(false);
+    )).toBe(true);
+    const sword = heldSwordModel(visual);
+    const arm = rightArmPivot(visual);
+    expect(sword.parent?.parent).toBe(arm);
+    expect(arm.rotation.x).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.x);
+    expect(worldPos(sword).distanceTo(worldPos(sword.parent!))).toBeGreaterThan(0);
 
     view.applySnapshot({
       id: 'actor',
