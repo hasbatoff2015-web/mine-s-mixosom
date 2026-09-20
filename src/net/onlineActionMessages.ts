@@ -10,6 +10,7 @@ import type {
   BlockUseAction,
   BowReleaseAction,
   AttackAction,
+  EntityUseAction,
 } from '../../shared/playerActions';
 
 export function attackMessageFromAttack(action: AttackAction): ClientActionMessage {
@@ -22,6 +23,20 @@ export function attackMessageFromAttack(action: AttackAction): ClientActionMessa
     ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
     ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
     ...(action.targetId !== undefined ? { targetId: action.targetId } : {}),
+    ...(action.targetRenderTick !== undefined ? { targetRenderTick: action.targetRenderTick } : {}),
+  };
+}
+
+export function entityUseMessage(action: EntityUseAction): ClientActionMessage {
+  return {
+    type: 'action',
+    kind: 'entity_use',
+    actionSeq: action.actionSeq,
+    commandSeq: action.commandSeq,
+    selectedSlot: action.selectedSlot,
+    targetId: action.targetId,
+    ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+    ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
     ...(action.targetRenderTick !== undefined ? { targetRenderTick: action.targetRenderTick } : {}),
   };
 }

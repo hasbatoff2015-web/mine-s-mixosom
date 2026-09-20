@@ -9,8 +9,14 @@ import {
   SHEEP_BASE_MODEL,
   SHEEP_WOOL_MODEL,
   SPIDER_MODEL,
+  WOLF_MODEL,
+  CAT_MODEL,
   ZOMBIE_MODEL,
 } from '../src/entities/mobModels';
+import {
+  applyCatVisualPose,
+  applyWolfVisualPose,
+} from '../src/entities/petPoses';
 import {
   legacyBoxCenterToLocal,
   legacyRotationPointToWorld,
@@ -26,9 +32,9 @@ import {
 import { ATLAS_GUTTER, ATLAS_TILE_SIZE, calculateAtlasLayout } from '../src/rendering/TextureAtlas';
 
 const MOB_KINDS: readonly MobKind[] = [
-  'cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider',
+  'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider',
 ];
-const ENTITY_TEXTURE_MODULES = import.meta.glob('../public/textures/entity/*.png');
+const ENTITY_TEXTURE_MODULES = import.meta.glob('../public/textures/entity/**/*.png');
 
 describe('legacy textured mob models', () => {
   it('reserves mip-safe atlas gutters around content tiles', () => {
@@ -38,13 +44,13 @@ describe('legacy textured mob models', () => {
     expect(layout.width & (layout.width - 1)).toBe(0);
     expect(layout.height & (layout.height - 1)).toBe(0);
   });
-  it('declares all eight requested mobs and every selected local sheet exists', () => {
+  it('declares every requested mob and every selected local sheet exists', () => {
     expect(Object.keys(MOB_MODEL_DESCRIPTORS).sort()).toEqual([...MOB_KINDS].sort());
     for (const descriptor of Object.values(MOB_MODEL_DESCRIPTORS)) {
       const paths = [descriptor.texturePath, ...(descriptor.overlayTexturePaths ?? [])];
       for (const texturePath of paths) {
         expect(
-          Object.keys(ENTITY_TEXTURE_MODULES).some((path) => path.endsWith(`/entity/${texturePath.split('/').at(-1)}.png`)),
+          Object.keys(ENTITY_TEXTURE_MODULES).some((path) => path.replace(/\\/g, '/').endsWith(`/${texturePath}.png`)),
           texturePath,
         ).toBe(true);
       }
@@ -179,6 +185,90 @@ describe('legacy textured mob models', () => {
     const zombieBody = zombie.parts.get('body')?.children[0] as THREE.Mesh;
     expect((skeletonBody.material as THREE.Material).side).toBe(THREE.DoubleSide);
     expect((zombieBody.material as THREE.Material).side).toBe(THREE.FrontSide);
+    visuals.dispose();
+  });
+
+  it('keeps the wolf legacy pivots, four legs, mane and tail grounded', () => {
+    expect(WOLF_MODEL.logicalTextureSize).toEqual([64, 32]);
+    expect(WOLF_MODEL.parts.map((part) => part.name)).toEqual([
+      'head', 'body', 'mane', 'leg1', 'leg2', 'leg3', 'leg4', 'tail',
+    ]);
+    expect(WOLF_MODEL.parts.find((part) => part.name === 'head')?.rotationPoint).toEqual([-1, 13.5, -7]);
+    expect(WOLF_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
+      rotationPoint: [0, 14, 2],
+      rotation: [Math.PI / 2, 0, 0],
+      boxes: [{ origin: [-4, -2, -3], size: [6, 9, 6], textureOffset: [18, 14] }],
+    });
+    expect(WOLF_MODEL.parts.find((part) => part.name === 'mane')?.boxes[0]).toMatchObject({
+      origin: [-4, -3, -3], size: [8, 6, 7], textureOffset: [21, 0],
+    });
+    const legs = WOLF_MODEL.parts.filter((part) => part.name.startsWith('leg'));
+    expect(legs).toHaveLength(4);
+    expect(legs.map((part) => part.rotationPoint)).toEqual([
+      [-2.5, 16, 7], [0.5, 16, 7], [-2.5, 16, -4], [0.5, 16, -4],
+    ]);
+    expect(WOLF_MODEL.parts.find((part) => part.name === 'tail')?.rotationPoint).toEqual([-1, 12, 8]);
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'wolf');
+    expect(model.legs).toHaveLength(4);
+    expect(model.tail).toBeDefined();
+    expect(model.mane).toBeDefined();
+    const root = asObject3D(model.root)!;
+    root.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(root);
+    expect(bounds.min.y).toBeLessThan(0.2);
+    expect(bounds.min.y).toBeGreaterThan(-0.15);
+    visuals.dispose();
+  });
+
+  it('keeps the cat/ocelot legacy pivots, split tail and grounded legs', () => {
+    expect(CAT_MODEL.logicalTextureSize).toEqual([64, 32]);
+    expect(CAT_MODEL.parts.map((part) => part.name)).toEqual([
+      'head', 'body', 'tail1', 'tail2', 'backLeftLeg', 'backRightLeg', 'frontLeftLeg', 'frontRightLeg',
+    ]);
+    expect(CAT_MODEL.parts.find((part) => part.name === 'head')?.rotationPoint).toEqual([0, 15, -9]);
+    expect(CAT_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
+      rotationPoint: [0, 12, -10],
+      rotation: [Math.PI / 2, 0, 0],
+      boxes: [{ origin: [-2, 3, -8], size: [4, 16, 6], textureOffset: [20, 0] }],
+    });
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'cat');
+    expect(model.legs).toHaveLength(4);
+    expect(model.tail).toBeDefined();
+    expect(model.tail2).toBeDefined();
+    const root = asObject3D(model.root)!;
+    root.updateMatrixWorld(true);
+    const bounds = new THREE.Box3().setFromObject(root);
+    expect(bounds.min.y).toBeLessThan(0.2);
+    expect(bounds.min.y).toBeGreaterThan(-0.3);
+    visuals.dispose();
+  });
+
+  it('applies sitting poses without accumulating offsets across stand/sit cycles', () => {
+    const visuals = new VoxelVisualFactory();
+    const wolf = createMobModel(visuals, 'wolf');
+    const cat = createMobModel(visuals, 'cat');
+    const snapshot = (model: typeof wolf) => [...model.parts.entries()].map(([name, part]) => ({
+      name,
+      x: part.position.x, y: part.position.y, z: part.position.z,
+      rx: part.rotation.x, ry: part.rotation.y, rz: part.rotation.z,
+    }));
+    const wolfBase = snapshot(wolf);
+    const catBase = snapshot(cat);
+    applyWolfVisualPose(wolf, true, 12, 2);
+    applyCatVisualPose(cat, true, 12, 2);
+    expect(snapshot(wolf)).not.toEqual(wolfBase);
+    expect(snapshot(cat)).not.toEqual(catBase);
+    applyWolfVisualPose(wolf, false, 0, 0);
+    applyCatVisualPose(cat, false, 0, 0);
+    expect(snapshot(wolf)).toEqual(wolfBase);
+    expect(snapshot(cat)).toEqual(catBase);
+    applyWolfVisualPose(wolf, true, 4, 1);
+    applyWolfVisualPose(wolf, false, 0, 0);
+    applyWolfVisualPose(wolf, true, 9, 3);
+    applyWolfVisualPose(wolf, false, 0, 0);
+    expect(snapshot(wolf)).toEqual(wolfBase);
     visuals.dispose();
   });
 });

@@ -8,7 +8,8 @@ export type PlayerActionKind =
   | 'block_break_abort'
   | 'block_break_finish'
   | 'bow_release'
-  | 'attack';
+  | 'attack'
+  | 'entity_use';
 
 export interface BlockTargetIntent {
   readonly targetX: number;
@@ -109,13 +110,22 @@ export interface CombatActionDiagnostics {
   readonly pendingTicks?: number;
 }
 
+export interface EntityUseAction extends SequencedAction {
+  readonly kind: 'entity_use';
+  readonly targetId: string;
+  readonly yaw?: number;
+  readonly pitch?: number;
+  readonly targetRenderTick?: number;
+}
+
 export type PlayerAction =
   | BlockUseAction
   | BlockBreakStartAction
   | BlockBreakAbortAction
   | BlockBreakFinishAction
   | BowReleaseAction
-  | AttackAction;
+  | AttackAction
+  | EntityUseAction;
 
 export type ActionRejectReason =
   | 'dead'
@@ -146,7 +156,9 @@ export type ActionRejectReason =
   | 'look'
   | 'invalid'
   | 'vehicle_occupied'
-  | 'already_riding';
+  | 'already_riding'
+  | 'pet_limit'
+  | 'not_owner';
 
 export interface ActionResult {
   readonly ok: boolean;

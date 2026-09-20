@@ -73,7 +73,7 @@ import {
   isWithinNearbyChatRange,
   type ChatChannel,
 } from '../shared/chat';
-import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
+import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction, EntityUseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -96,6 +96,7 @@ import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityVi
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
+import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService } from './services/selection';
 import { AutoMineManager } from './services/autoMine';
@@ -129,7 +130,13 @@ import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore, type Claim } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
+import {
+  formatGameplayKernelTrace,
+  movementDuringItemUse,
+  petLimitReachedMessage,
+  playerCanReachHologram,
+  tameSuccessMessage,
+} from '../src/gameplay';
 import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
@@ -577,6 +584,7 @@ export class WorldInstance {
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
     });
+    this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
     this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
@@ -2540,6 +2548,50 @@ export class WorldInstance {
       ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
       ...(result.combat ? { combat: result.combat } : {}),
     });
+  }
+
+  handleSequencedEntityUse(
+    player: ServerPlayer,
+    action: EntityUseAction,
+  ): { ok: true } | { ok: false; reason: string } {
+    if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
+    if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || (action.yaw !== undefined && !Number.isFinite(action.yaw))
+      || (action.pitch !== undefined && !Number.isFinite(action.pitch))
+      || !action.targetId) {
+      return { ok: false, reason: 'invalid' };
+    }
+    const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
+    if (!slot.ok) return slot;
+    this.commitActionSelectedSlot(player, slot.value, action.commandSeq);
+    const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
+    const result = this.gameplay.useEntity(player, action, slot.value, petLimit);
+    this.flushPlayerInventory(player);
+    if (result.ok && result.kind === 'tame') {
+      this.dirty = true;
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: tameSuccessMessage(result.mobKind),
+        kind: 'system',
+      });
+    } else if (result.ok && (result.kind === 'sit' || result.kind === 'stand')) {
+      this.dirty = true;
+    } else if (!result.ok && result.reason === 'pet_limit') {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: petLimitReachedMessage(result.ownedCount ?? 0, result.petLimit ?? petLimit),
+        kind: 'system',
+      });
+    } else if (result.ok && result.kind === 'tame_failed' && result.consume) {
+      this.dirty = true;
+    }
+    return result.ok ? { ok: true } : { ok: false, reason: result.reason };
   }
 
   interact(

@@ -201,6 +201,9 @@ export interface EntitySnapshot {
   readonly passengerId?: string;
   readonly state?: string;
   readonly blockId?: number;
+  readonly ownerId?: string;
+  readonly sitting?: boolean;
+  readonly angry?: boolean;
 }
 
 export type NetworkEntityEventKind = 'hurt' | 'death' | 'projectile_spawn' | 'projectile_hit';
@@ -1890,7 +1893,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (commandSeq === undefined) return { error: 'action.commandSeq invalid' };
       const kind = raw.kind;
       if (kind !== 'block_use' && kind !== 'block_break_start' && kind !== 'block_break_abort'
-        && kind !== 'block_break_finish' && kind !== 'bow_release' && kind !== 'attack') {
+        && kind !== 'block_break_finish' && kind !== 'bow_release' && kind !== 'attack'
+        && kind !== 'entity_use') {
         return { error: 'action.kind invalid' };
       }
       const intent = parseIntentFields(raw);
@@ -1900,6 +1904,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const targetZ = optionalInteger(raw.targetZ ?? raw.z);
       const targetId = optionalString(raw.targetId, 64);
       if (raw.targetId !== undefined && targetId === undefined) return { error: 'action.targetId invalid' };
+      if (kind === 'entity_use' && !targetId) return { error: 'action.targetId invalid' };
       if (raw.targetRenderTick !== undefined && !finite(raw.targetRenderTick)) {
         return { error: 'action.targetRenderTick invalid' };
       }

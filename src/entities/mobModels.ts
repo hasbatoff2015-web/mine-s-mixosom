@@ -23,6 +23,18 @@ export const MOB_MODEL_DESCRIPTORS: Readonly<Record<MobKind, MobModelDescriptor>
   pig: Object.freeze({ kind: 'pig', texturePath: 'entity/pig', logicalTextureSize: [64, 32] as const }),
   chicken: Object.freeze({ kind: 'chicken', texturePath: 'entity/chicken', logicalTextureSize: [64, 32] as const }),
   sheep: Object.freeze({ kind: 'sheep', texturePath: 'entity/sheep', logicalTextureSize: [64, 32] as const, overlayTexturePaths: Object.freeze(['entity/sheep_fur']) }),
+  wolf: Object.freeze({
+    kind: 'wolf',
+    texturePath: 'entity/wolf/wolf',
+    logicalTextureSize: [64, 32] as const,
+    overlayTexturePaths: Object.freeze(['entity/wolf/wolf_collar', 'entity/wolf/wolf_angry', 'entity/wolf/wolf_tame']),
+  }),
+  cat: Object.freeze({
+    kind: 'cat',
+    texturePath: 'entity/cat/black',
+    logicalTextureSize: [64, 32] as const,
+    overlayTexturePaths: Object.freeze(['entity/cat/red', 'entity/cat/siamese', 'entity/cat/ocelot']),
+  }),
   zombie: Object.freeze({ kind: 'zombie', texturePath: 'entity/zombie', logicalTextureSize: [64, 64] as const }),
   skeleton: Object.freeze({ kind: 'skeleton', texturePath: 'entity/skeleton', logicalTextureSize: [64, 32] as const }),
   creeper: Object.freeze({ kind: 'creeper', texturePath: 'entity/creeper', logicalTextureSize: [64, 32] as const }),
@@ -143,6 +155,53 @@ export const SKELETON_MODEL: LegacyModelDefinition = {
   ],
 };
 
+export const WOLF_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/wolf/wolf', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [-1, 13.5, -7], [
+      box([-3, -3, -2], [6, 6, 4], [0, 0]),
+      box([-3, -5, 0], [2, 2, 1], [16, 14]),
+      box([1, -5, 0], [2, 2, 1], [16, 14]),
+      box([-1.5, 0, -5], [3, 3, 4], [0, 10]),
+    ]),
+    modelPart('body', [0, 14, 2], [box([-4, -2, -3], [6, 9, 6], [18, 14])], [Math.PI / 2, 0, 0]),
+    modelPart('mane', [-1, 14, 2], [box([-4, -3, -3], [8, 6, 7], [21, 0])], [Math.PI / 2, 0, 0]),
+    modelPart('leg1', [-2.5, 16, 7], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
+    modelPart('leg2', [0.5, 16, 7], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
+    modelPart('leg3', [-2.5, 16, -4], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
+    modelPart('leg4', [0.5, 16, -4], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
+    modelPart('tail', [-1, 12, 8], [box([-1, 0, -1], [2, 8, 2], [9, 18])]),
+  ],
+};
+
+export const WOLF_COLLAR_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/wolf/wolf_collar', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('mane', [-1, 14, 2], [
+      box([-4, -3, -3], [8, 6, 7], [21, 0], { inflate: 0.35, layer: 'collar', alphaTest: 0.1 }),
+    ], [Math.PI / 2, 0, 0]),
+  ],
+};
+
+export const CAT_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/cat/black', logicalTextureSize: [64, 32],
+  parts: [
+    modelPart('head', [0, 15, -9], [
+      box([-2.5, -2, -3], [5, 4, 5], [0, 0]),
+      box([-1.5, 0, -4], [3, 2, 2], [0, 24]),
+      box([-2, -3, 0], [1, 1, 2], [0, 10]),
+      box([1, -3, 0], [1, 1, 2], [6, 10]),
+    ]),
+    modelPart('body', [0, 12, -10], [box([-2, 3, -8], [4, 16, 6], [20, 0])], [Math.PI / 2, 0, 0]),
+    modelPart('tail1', [0, 15, 8], [box([-0.5, 0, 0], [1, 8, 1], [0, 15])], [0.9, 0, 0]),
+    modelPart('tail2', [0, 20, 14], [box([-0.5, 0, 0], [1, 8, 1], [4, 15])], [0.9, 0, 0]),
+    modelPart('backLeftLeg', [1.1, 18, 5], [box([-1, 0, 1], [2, 6, 2], [8, 13])]),
+    modelPart('backRightLeg', [-1.1, 18, 5], [box([-1, 0, 1], [2, 6, 2], [8, 13])]),
+    modelPart('frontLeftLeg', [1.2, 13.8, -5], [box([-1, 0, 0], [2, 10, 2], [40, 0])]),
+    modelPart('frontRightLeg', [-1.2, 13.8, -5], [box([-1, 0, 0], [2, 10, 2], [40, 0])]),
+  ],
+};
+
 export const CREEPER_MODEL: LegacyModelDefinition = {
   texturePath: 'entity/creeper', logicalTextureSize: [64, 32],
   parts: [
@@ -183,7 +242,8 @@ export const SPIDER_MODEL: LegacyModelDefinition = {
 
 export const MOB_LEGACY_MODELS: Readonly<Record<MobKind, readonly LegacyModelDefinition[]>> = {
   cow: [COW_MODEL], pig: [PIG_MODEL], sheep: [SHEEP_BASE_MODEL, SHEEP_WOOL_MODEL],
-  chicken: [CHICKEN_MODEL], zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
+  chicken: [CHICKEN_MODEL], wolf: [WOLF_MODEL, WOLF_COLLAR_MODEL], cat: [CAT_MODEL],
+  zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
   creeper: [CREEPER_MODEL], spider: [SPIDER_MODEL],
 };
 
@@ -193,23 +253,51 @@ const PART_NAMES: Readonly<Record<MobKind, {
   readonly legSwingSigns: readonly number[];
   readonly arms?: readonly string[];
   readonly wings?: readonly string[];
+  readonly tail?: string;
+  readonly tail2?: string;
+  readonly mane?: string;
 }>> = {
   cow: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   pig: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   sheep: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   chicken: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], wings: ['rightWing', 'leftWing'] },
+  wolf: {
+    head: 'head',
+    legs: ['leg1', 'leg2', 'leg3', 'leg4'],
+    legSwingSigns: [1, -1, -1, 1],
+    tail: 'tail',
+    mane: 'mane',
+  },
+  cat: {
+    head: 'head',
+    legs: ['backLeftLeg', 'backRightLeg', 'frontLeftLeg', 'frontRightLeg'],
+    legSwingSigns: [1, -1, -1, 1],
+    tail: 'tail1',
+    tail2: 'tail2',
+  },
   zombie: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   spider: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6', 'leg7', 'leg8'], legSwingSigns: [] },
 };
 
-export function createMobModel(visuals: VoxelVisualFactory, kind: MobKind): MobModel {
+export function createMobModel(
+  visuals: VoxelVisualFactory,
+  kind: MobKind,
+  options?: { readonly texturePath?: string },
+): MobModel {
   visuals.beginEntityMaterials();
   try {
-    const built = buildLegacyModel(visuals, `mob:${kind}`, MOB_LEGACY_MODELS[kind]);
+    const definitions = MOB_LEGACY_MODELS[kind].map((definition, index) => {
+      if (!options?.texturePath || definition.texturePath !== MOB_MODEL_DESCRIPTORS[kind].texturePath) {
+        return definition;
+      }
+      if (index > 0 && definition.texturePath !== MOB_LEGACY_MODELS[kind][0]?.texturePath) return definition;
+      return { ...definition, texturePath: options.texturePath };
+    });
+    const built = buildLegacyModel(visuals, `mob:${kind}`, definitions);
     const names = PART_NAMES[kind];
-    return {
+    const model: MobModel = {
       root: built.root,
       parts: built.parts,
       ...(names.head ? { head: built.parts.get(names.head) } : {}),
@@ -217,7 +305,17 @@ export function createMobModel(visuals: VoxelVisualFactory, kind: MobKind): MobM
       legSwingSigns: names.legSwingSigns,
       arms: (names.arms ?? []).map((name) => built.parts.get(name)!),
       wings: (names.wings ?? []).map((name) => built.parts.get(name)!),
+      ...(names.tail ? { tail: built.parts.get(names.tail) } : {}),
+      ...(names.tail2 ? { tail2: built.parts.get(names.tail2) } : {}),
+      ...(names.mane ? { mane: built.parts.get(names.mane) } : {}),
     };
+    if (kind === 'wolf') {
+      built.root.traverse((object) => {
+        const mesh = object as { userData?: { petLayer?: string }; visible?: boolean };
+        if (mesh.userData?.petLayer === 'collar' && mesh.visible !== undefined) mesh.visible = false;
+      });
+    }
+    return model;
   } finally {
     visuals.endEntityMaterials();
   }

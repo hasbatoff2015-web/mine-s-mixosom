@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: tameable wolves and cats — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets` (без merge в `main`). `wolf` / `cat` — обычные server-authoritative mobs в `MobManager`, не вторая симуляция. Natural spawn через weighted passive selection (лес/равнины/снег; пустыня без cat/wolf). Приручение `entity_use` (CLIENT OWNS INTENT / SERVER OWNS RESULT). `ownerId` = стабильный `player.id`. Sit/stand, follow, bounded teleport (24 кандидата, `getBlock(..., false)`), wild cat fear, tamed wolf combat через существующий damage/PvP/claims. Default pet limit 2, роли `pets.limit.N` (hard max 10). Tamed pets не distance-despawn и не занимают wild `passiveCap`.
+- Модели: code-defined legacy ModelWolf / ModelOcelot, PNG 128×64 / logical 64×32, collar overlay без shared-material mutation.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
 ## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Одна вагонетка = один пассажир (`player.ridingCartId`); `cart.rider` только derived. Disconnect/death/destruction `forceReleaseVehicle` без cancellable `vehicleExit`. Per-cart `controls` в одном `minecarts.update`. W latch с камеры только на новом press из stop; S тормоз до 0. Visual pose / 1.5× speed / rider interpolation не трогались.

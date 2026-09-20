@@ -17,7 +17,7 @@ import {
 } from '../rendering/worldLighting';
 import { TextureAtlas } from '../rendering/TextureAtlas';
 import type { VoxelWorld } from '../world/World';
-import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './EntityHost';
+import type { EntityHost, EntityVisual, MobCreateOptions, MobModel, MobVisualState } from './EntityHost';
 import {
   humanoidDeathProgress,
   humanoidDeathRotationZ,
@@ -26,6 +26,8 @@ import {
 import type { MobKind } from './mobDefinitions';
 import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
+import { petAppearanceKey, petBodyTexturePath, WOLF_COLLAR_COLOR } from './petAppearance';
+import { applyCatVisualPose, applyWolfVisualPose } from './petPoses';
 import { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
 
 export interface ThreeEntityHostOptions {
@@ -115,8 +117,8 @@ export class ThreeEntityHost implements EntityHost {
     (this.minecartVisuals ??= new MinecartVisualFactory()).pulsePrimed(asObject3D(visual), fuseRatio);
   }
 
-  createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } {
-    let model = createMobModel(this.voxelVisuals ??= new VoxelVisualFactory(), kind);
+  createMob(kind: MobKind, options?: MobCreateOptions): { visual: EntityVisual; model: MobModel } {
+    let model = createMobModel(this.voxelVisuals ??= new VoxelVisualFactory(), kind, options);
     if (kind === 'skeleton') {
       const bowArm = asObject3D(model.arms[0]!);
       const anchor = new THREE.Group();
@@ -251,11 +253,16 @@ export class ThreeEntityHost implements EntityHost {
     const legs = model.legs.map(asObject3D);
     const arms = model.arms.map(asObject3D);
     const wings = model.wings.map(asObject3D);
-    const speed = state.locomotionSpeed;
-    const walkPhase = state.walkPhase;
+    const speed = state.sitting ? 0 : state.locomotionSpeed;
+    const walkPhase = state.sitting ? 0 : state.walkPhase;
     const swing = Math.sin(walkPhase) * Math.min(0.65, speed * 0.22);
     visual.rotation.y = state.yaw;
-    if (state.kind === 'spider') {
+    this.applyPetAppearance(state);
+    if (state.kind === 'wolf') {
+      applyWolfVisualPose(model, state.sitting === true, walkPhase, speed);
+    } else if (state.kind === 'cat') {
+      applyCatVisualPose(model, state.sitting === true, walkPhase, speed);
+    } else if (state.kind === 'spider') {
       legs.forEach((leg, index) => {
         const side = index % 2 === 0 ? -1 : 1;
         const pair = Math.floor(index / 2);
@@ -358,6 +365,44 @@ export class ThreeEntityHost implements EntityHost {
     }
     if (state.fireOverlay) asObject3D(state.fireOverlay).visible = false;
     return state.fireOverlay;
+  }
+
+  private applyPetAppearance(state: MobVisualState): void {
+    const visual = asObject3D(state.visual);
+    const key = petAppearanceKey({
+      kind: state.kind,
+      ownerId: state.ownerId,
+      angry: state.angry,
+      variant: state.variant,
+    });
+    if (visual.userData.petAppearanceKey === key) return;
+    const texturePath = petBodyTexturePath({
+      kind: state.kind,
+      ownerId: state.ownerId,
+      angry: state.angry,
+      variant: state.variant,
+    });
+    const factory = this.voxelVisuals ??= new VoxelVisualFactory();
+    const map = texturePath ? factory.texture(texturePath) : undefined;
+    const showCollar = state.kind === 'wolf' && Boolean(state.ownerId);
+    visual.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      if (object.userData.petLayer === 'collar') {
+        object.visible = showCollar;
+        const material = object.material;
+        if (material instanceof THREE.MeshBasicMaterial && material.userData.entityMaterialOwned) {
+          material.color.setHex(showCollar ? WOLF_COLLAR_COLOR : 0xffffff);
+        }
+        return;
+      }
+      if (!map) return;
+      const material = object.material;
+      if (!(material instanceof THREE.MeshBasicMaterial) || !material.userData.entityMaterialOwned) return;
+      if (material.map === map) return;
+      material.map = map;
+      material.needsUpdate = true;
+    });
+    visual.userData.petAppearanceKey = key;
   }
 
   private tntTexture(textureKey: string): THREE.Texture {

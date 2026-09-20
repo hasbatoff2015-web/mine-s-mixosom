@@ -107,6 +107,39 @@ Skeleton torso alone renders `DoubleSide`, so thin ribs/spine remain readable fr
 | Base Z angles | outer `±π/4`; inner `±0.74·π/4` | alternating signs | Legacy match |
 | Eye glow overlay | same head box, inflate `0.1` | Alpha rendering approximation |
 
+## Wolf
+
+Logical texture `64×32`. Physical runtime sheets are `128×64` (`entity/wolf/wolf`, `wolf_angry`, `wolf_tame`, `wolf_collar`). Gameplay kind is `wolf`; appearance is state-driven, not extra kinds.
+
+| Part | Pivot | Boxes (`origin; size; UV`) | Статус |
+|---|---|---|---|
+| Head | `(-1,13.5,-7)` | main `(-3,-3,-2); 6×6×4; 0,0`; ears `(-3,-5,0)` / `(1,-5,0); 2×2×1; 16,14`; muzzle `(-1.5,0,-5); 3×3×4; 0,10` | Legacy match |
+| Body | `(0,14,2)`, `rx=π/2` | `(-4,-2,-3); 6×9×6; 18,14` | Legacy match |
+| Mane | `(-1,14,2)`, `rx=π/2` | `(-4,-3,-3); 8×6×7; 21,0` | Legacy match |
+| Legs 1–4 | `(-2.5,16,7)`, `(0.5,16,7)`, `(-2.5,16,-4)`, `(0.5,16,-4)` | `(-1,0,-1); 2×8×2; 0,18` | Legacy match |
+| Tail | `(-1,12,8)` | `(-1,0,-1); 2×8×2; 9,18` | Legacy match |
+
+Sitting pose uses the same legacy-to-Three adapter (`legacyRotationToThree`, Y reflection). Absolute sitting pivots: mane `(-1,16,-3)` `rx=2π/5`; body `(0,18,0)` `rx=π/4`; tail `(-1,21,6)`; rear legs `y=22` `rx=3π/2`; front legs `rx=5.811947`. **Legacy match** for coordinates; conversion is the project contract.
+
+Walk: diagonal quadruped gait `[+,-,-,+]` plus a small tail wag. **Alpha approximation**. Sitting zeroes walk phase. Collar overlay (`wolf_collar`, inflate, `petLayer=collar`) is visible only when `ownerId` is set. Wild angry uses `wolf_angry`; tamed uses `wolf_tame`.
+
+## Cat
+
+Logical texture `64×32`. Physical sheets `128×64`. Gameplay kind is `cat` with `variant=black|red|siamese`. `ocelot.png` is an unused reference asset; ocelot is not a spawn kind.
+
+Geometry is legacy `ModelOcelot`.
+
+| Part | Pivot | Boxes | Статус |
+|---|---|---|---|
+| Head | `(0,15,-9)` | main `(-2.5,-2,-3); 5×4×5; 0,0`; nose `(-1.5,0,-4); 3×2×2; 0,24`; ears `(-2,-3,0)` UV `0,10` and `(1,-3,0)` UV `6,10` | Legacy match |
+| Body | `(0,12,-10)`, `rx=π/2` | `(-2,3,-8); 4×16×6; 20,0` | Legacy match |
+| Tail1 | `(0,15,8)`, `rx=0.9` | `(-0.5,0,0); 1×8×1; 0,15` | Legacy match |
+| Tail2 | `(0,20,14)`, standing `rx=0.9` (vanilla `setRotationAngles` copies tail1) | `(-0.5,0,0); 1×8×1; 4,15` | Legacy match for pivot/box; standing `rx` from animation contract |
+| Back legs | `(1.1,18,5)`, `(-1.1,18,5)` | `(-1,0,1); 2×6×2; 8,13` | Legacy match |
+| Front legs | `(1.2,13.8,-5)`, `(-1.2,13.8,-5)` | `(-1,0,0); 2×10×2; 40,0` | Legacy match |
+
+Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`; head `Y-3.3, Z+1`; tail1 `Y+8, Z-2`, `rx=1.7278761`; tail2 `Y+2, Z-0.8`, `rx=2.670354`; front legs `y=15.8, z=-7`, `rx=-0.157`; back legs `y=21, z=1`, `rx=-π/2`. Converted through the project adapter each frame from base transforms — no accumulated offsets. Walk uses separate front/back legs and a light tail motion. **Alpha approximation**.
+
 ## Animation contract
 
 - Every animated part stores `baseRotationX/Y/Z` once and each frame computes `base + offset`; angles never accumulate.

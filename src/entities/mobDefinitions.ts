@@ -1,10 +1,13 @@
 import { ItemId } from '../items';
+import { CAT_MAX_HEALTH, WOLF_ATTACK_DAMAGE, WOLF_MAX_HEALTH } from './petConstants';
 
 export type MobKind =
   | 'cow'
   | 'pig'
   | 'chicken'
   | 'sheep'
+  | 'wolf'
+  | 'cat'
   | 'zombie'
   | 'skeleton'
   | 'creeper'
@@ -66,6 +69,18 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
     attackDamage: 0, attackCooldownSeconds: 1,
     // Deliberately white only: coloured wool remains creative-only in this alpha.
     loot: Object.freeze([{ itemId: 'white_wool', min: 1, max: 1 }]),
+  }),
+  wolf: Object.freeze({
+    kind: 'wolf', disposition: 'passive', maxHealth: WOLF_MAX_HEALTH, width: 0.6, height: 0.85,
+    eyeHeight: 0.68, speed: 2.45, detectionRange: 16, attackRange: 1.4,
+    attackDamage: WOLF_ATTACK_DAMAGE, attackCooldownSeconds: 1,
+    loot: Object.freeze([]),
+  }),
+  cat: Object.freeze({
+    kind: 'cat', disposition: 'passive', maxHealth: CAT_MAX_HEALTH, width: 0.6, height: 0.7,
+    eyeHeight: 0.5, speed: 2.55, detectionRange: 0, attackRange: 0,
+    attackDamage: 0, attackCooldownSeconds: 1,
+    loot: Object.freeze([]),
   }),
   zombie: Object.freeze({
     kind: 'zombie', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,

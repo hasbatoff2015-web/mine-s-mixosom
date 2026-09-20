@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Wolves / cats / pets
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/permissions.test.ts tests/server/anarchy-gameplay.test.ts tests/mob-polish.test.ts tests/entity-host.test.ts tests/entity-interpolation.test.ts tests/entity-snapshot-interpolation.test.ts tests/mob-hurt-flash.test.ts tests/mob-projectile-routing.test.ts tests/network-entity-visual-events.test.ts tests/entity-death-animation.test.ts tests/entity-initial-lighting.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&petState=wild|angry|tamed|sitting&view=front|side|rear|three-quarter` and `?qaMob=cat&variant=black|red|siamese&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
 ## 2026-09-19 Minecart visual pose interpolation
 
 ```text

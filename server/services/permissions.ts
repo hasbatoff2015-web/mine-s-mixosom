@@ -78,6 +78,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'home.multiple',
     'home.limit.premium',
   ],
+  pet_plus: [
+    'pets.limit.3',
+  ],
+  pet_master: [
+    'pets.limit.5',
+  ],
 };
 
 function normalize(name: string): string {

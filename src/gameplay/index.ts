@@ -63,7 +63,15 @@ export {
   slowsMovementWhileUsing,
 } from './useMovement';
 export {
-  closestPointOnAabb,
+  DEFAULT_PET_LIMIT,
+  MAX_PET_LIMIT,
+  PET_LIMIT_PERMISSION_PREFIX,
+  parsePetLimitNode,
+  petLimitReachedMessage,
+  resolvePetLimitFromPermissions,
+  tameSuccessMessage,
+} from './petLimit';
+export {
   distanceToHologramAabb,
   hologramAabb,
   pickHologramRayHit,

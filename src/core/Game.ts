@@ -20,7 +20,11 @@ import {
   type CommandContext,
 } from '../chat';
 import { AudioManager } from './AudioManager';
-import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
+import {
+  DEFAULT_PET_LIMIT,
+  petLimitReachedMessage,
+  tameSuccessMessage,
+} from '../gameplay/petLimit';
 import {
   advanceFootsteps,
   blockUnderFeet,
@@ -92,6 +96,9 @@ import {
   minecartDismountFromSprint,
   igniteMinecartTntFromFireArrow,
   MobManager,
+  LOCAL_PLAYER_FOCUS_ID,
+  PET_INTERACT_REACH,
+  isPetKind,
   type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -106,6 +113,7 @@ import {
   shouldShowPointerLockFallback,
   type PointerUnlockReason,
 } from '../input/pointerLock';
+import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
 import {
   Inventory,
   createItemStack,
@@ -227,6 +235,7 @@ import {
   captureBlockUse,
   captureAttack,
   captureBowRelease,
+  captureEntityUse,
   composeOnlineBreakFinish,
   resolveBowReleaseCommandSeq,
   selectBowRenderTick,
@@ -238,6 +247,7 @@ import {
   actionMessageFromBreakStart,
   attackMessageFromAttack,
   bowReleaseMessage,
+  entityUseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
 import {
@@ -2211,6 +2221,7 @@ export class Game {
       });
       return;
     }
+    if (this.trySendOnlinePetUse(session, source)) return;
     if (session.target) {
       const action = captureBlockUse(source, session.target);
       this.commitOnlineActionSeq(session, source);
@@ -2251,6 +2262,60 @@ export class Game {
       commandSeq: source.inputSeq,
       selectedSlot: source.selectedSlot,
     });
+  }
+
+  private petUseTarget(session: GameSession): { id: string; distance: number } | undefined {
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const mobHit = session.mobs.raycast(aim.origin, aim.direction, PET_INTERACT_REACH);
+    if (!mobHit || !mobHit.mob.alive || !isPetKind(mobHit.mob.kind)) return undefined;
+    if (session.target && session.target.distance < mobHit.distance) return undefined;
+    const cartHit = session.minecarts.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
+    if (cartHit && cartHit.distance < mobHit.distance) return undefined;
+    return { id: mobHit.mob.id, distance: mobHit.distance };
+  }
+
+  private trySendOnlinePetUse(
+    session: GameSession,
+    source: { actionSeq: number; inputSeq: number; selectedSlot: number },
+  ): boolean {
+    const online = session.online;
+    if (!online) return false;
+    const target = this.petUseTarget(session);
+    if (!target) return false;
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const action = captureEntityUse(source, target.id, { yaw: aim.yaw, pitch: aim.pitch });
+    this.commitOnlineActionSeq(session, source);
+    online.client.send(entityUseMessage(action));
+    return true;
+  }
+
+  private tryLocalPetUse(session: GameSession): boolean {
+    const target = this.petUseTarget(session);
+    if (!target) return false;
+    const mob = session.mobs.get(target.id);
+    if (!mob || !isPetKind(mob.kind)) return false;
+    const result = session.mobs.tryPetInteract(mob, {
+      playerId: LOCAL_PLAYER_FOCUS_ID,
+      heldItemId: session.inventory.getSlot(session.selectedSlot)?.itemId,
+      gamemode: session.summary.mode,
+      petLimit: DEFAULT_PET_LIMIT,
+    });
+    if (result.consume) {
+      const stack = session.inventory.getSlot(session.selectedSlot);
+      if (stack) {
+        session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      }
+      this.refreshHud();
+    }
+    if (result.ok && result.kind === 'tame') this.ui.toast(tameSuccessMessage(mob.kind));
+    else if (!result.ok && result.reason === 'pet_limit') {
+      this.ui.toast(petLimitReachedMessage(
+        result.ownedCount ?? session.mobs.countOwnedPets(LOCAL_PLAYER_FOCUS_ID),
+        result.petLimit ?? DEFAULT_PET_LIMIT,
+      ));
+    }
+    this.firstPerson?.swing();
+    return true;
   }
 
   private tryInteractBuyer(session: GameSession): boolean {
@@ -3103,6 +3168,7 @@ export class Game {
       automaticSpawning: !options?.online,
       random: this.simRandom,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
+      onPersistentStateChanged: () => { void this.saveSession(); },
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
     const combat = new CombatSystem({
@@ -4666,6 +4732,7 @@ export class Game {
           playerEyePosition: session.player.eyePosition(),
           playerAlive: !session.survival.dead,
           playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
+          heldItemId: session.inventory.getSlot(session.selectedSlot)?.itemId,
           daylight: daylightFactor(session.world.timeOfDay),
         });
       },
@@ -4805,6 +4872,7 @@ export class Game {
             attackerPosition: session.player.position,
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
+            attackerId: LOCAL_PLAYER_FOCUS_ID,
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {
@@ -5042,6 +5110,7 @@ export class Game {
       this.sendOnlineUse(session);
       return;
     }
+    if (this.tryLocalPetUse(session)) return;
     performUseHeld(this.singleplayerUseContext());
   }
 
@@ -5214,7 +5283,7 @@ export class Game {
     const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
     session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical,
-      flaming, undefined, undefined, undefined, undefined,
+      flaming, undefined, LOCAL_PLAYER_FOCUS_ID, undefined, undefined,
       this.lastConsumedArrow === ItemId.WHArrow ? 'wh' : flaming ? 'fire' : 'normal');
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
@@ -5317,6 +5386,7 @@ export class Game {
       armor: session.inventory,
     });
     if (!damage.fullHurt) return;
+    session.mobs.assignOwnedWolfTarget(LOCAL_PLAYER_FOCUS_ID, event.mobId, 'mob', 'defend');
     if (event.source === 'melee') {
       session.player.receiveMeleeKnockback({
         x: session.player.position.x - event.position.x,

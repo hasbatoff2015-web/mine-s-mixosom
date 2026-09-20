@@ -1,0 +1,211 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
+import { BlockId } from '../../src/blocks';
+import { ItemId } from '../../src/items';
+import { createItemStack } from '../../src/inventory';
+import { Vec3 } from '../../src/math/vec3';
+import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
+import { loadServerConfig } from '../../server/config';
+import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import type { EntityUseAction } from '../../shared/playerActions';
+import { parseClientMessage, type ClientInputMessage } from '../../shared/protocol';
+
+async function tempDir(): Promise<string> {
+  return mkdtemp(join(tmpdir(), 'fc-pets-anarchy-'));
+}
+
+function testConfig(dataDir: string) {
+  return {
+    ...loadServerConfig({
+      HOST: '127.0.0.1', PORT: '0', WORLD: 'anarchy', WORLD_SEED: ANARCHY_WORLD_SEED,
+      MAX_PLAYERS: '8', CHUNK_VIEW_RADIUS: '1', TICK_RATE: '20', PERSIST_INTERVAL_MS: '60000',
+    }, process.cwd()),
+    dataDir,
+    port: 0,
+    chunkViewRadius: 1,
+    persistIntervalMs: 60_000,
+    pluginDir: join(dataDir, 'no-plugins'),
+    loadExamplePlugin: false,
+    loadBuiltinPlugins: false,
+  };
+}
+
+class MemorySink implements ConnectedSink {
+  readonly payloads: unknown[] = [];
+  send(payload: unknown): void { this.payloads.push(payload); }
+}
+
+function input(seq: number, yaw = 0, pitch = 0, selectedSlot = 0): ClientInputMessage {
+  return {
+    type: 'input', seq, clientTick: seq, forward: 0, right: 0, jump: false,
+    sneak: false, sprint: false, descend: false, flySprint: false,
+    yaw, pitch, selectedSlot,
+  };
+}
+
+function lookAt(player: ServerPlayer, target: { x: number; y: number; z: number }) {
+  const origin = player.controller.eyePosition();
+  const direction = new Vec3(target.x - origin.x, target.y - origin.y, target.z - origin.z).normalize();
+  return {
+    yaw: Math.atan2(-direction.x, -direction.z),
+    pitch: Math.asin(Math.max(-1, Math.min(1, direction.y))),
+  };
+}
+
+describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
+  const dirs: string[] = [];
+  const worlds: WorldInstance[] = [];
+
+  afterEach(async () => {
+    for (const world of worlds.splice(0)) await world.stop();
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function boot() {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const aSink = new MemorySink();
+    const bSink = new MemorySink();
+    const a = world.join({ sink: aSink, name: 'Owner' });
+    const b = world.join({ sink: bSink, name: 'Guest' });
+    if ('error' in a || 'error' in b) throw new Error('join failed');
+    a.player.controller.teleport([20.5, 100, 20.5]);
+    b.player.controller.teleport([24.5, 100, 20.5]);
+    world.world.setBlock(20, 99, 20, BlockId.Stone);
+    world.world.setBlock(20, 99, 22, BlockId.Stone);
+    world.world.setBlock(24, 99, 20, BlockId.Stone);
+    return { world, owner: a.player, guest: b.player, aSink, bSink };
+  }
+
+  function prepareLook(world: WorldInstance, player: ServerPlayer, target: { x: number; y: number; z: number }, seq = 1) {
+    const look = lookAt(player, target);
+    player.controller.yaw = look.yaw;
+    player.controller.pitch = look.pitch;
+    world.applyInput(player, input(seq, look.yaw, look.pitch, player.selectedSlot));
+    world.tick();
+    return look;
+  }
+
+  function useAction(
+    actionSeq: number,
+    commandSeq: number,
+    targetId: string,
+    look: { yaw: number; pitch: number },
+    selectedSlot = 0,
+  ): EntityUseAction {
+    return {
+      kind: 'entity_use',
+      actionSeq,
+      commandSeq,
+      selectedSlot,
+      targetId,
+      yaw: look.yaw,
+      pitch: look.pitch,
+    };
+  }
+
+  it('parses entity_use and rejects a missing targetId', () => {
+    expect(parseClientMessage({
+      type: 'action', kind: 'entity_use', actionSeq: 1, commandSeq: 1, selectedSlot: 0, targetId: 'mob-1',
+    })).toMatchObject({ type: 'action', kind: 'entity_use', targetId: 'mob-1' });
+    expect(parseClientMessage({
+      type: 'action', kind: 'entity_use', actionSeq: 1, commandSeq: 1, selectedSlot: 0,
+    })).toMatchObject({ error: 'action.targetId invalid' });
+  });
+
+  it('tames on the server, sits, and shows the snapshot to another player', async () => {
+    const { world, owner, guest, aSink } = await boot();
+    const wolf = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22.5), { force: true })!;
+    owner.inventory.clear();
+    owner.inventory.setSlot(0, createItemStack(ItemId.Bone, 16));
+    owner.selectedSlot = 0;
+    let tamed = false;
+    for (let attempt = 1; attempt <= 24 && !tamed; attempt += 1) {
+      const look = prepareLook(world, owner, {
+        x: wolf.position.x, y: wolf.position.y + 0.4, z: wolf.position.z,
+      }, attempt);
+      const result = world.handleSequencedEntityUse(owner, useAction(attempt, attempt, wolf.id, look));
+      if (result.ok && wolf.ownerId === owner.id) tamed = true;
+    }
+    expect(tamed).toBe(true);
+    expect(wolf.sitting).toBe(true);
+    expect(owner.inventory.getSlot(0)?.count).toBeLessThan(16);
+    const chat = aSink.payloads.find((payload) => (
+      typeof payload === 'object' && payload !== null && (payload as { type?: string }).type === 'chat'
+      && (payload as { text?: string }).text === 'Волк приручён.'
+    ));
+    expect(chat).toBeDefined();
+    const snapshots = world.gameplay.snapshotsNear(guest.controller.position);
+    const view = snapshots.find((entry) => entry.id === wolf.id);
+    expect(view).toMatchObject({ ownerId: owner.id, sitting: true, mobKind: 'wolf' });
+  });
+
+  it('lets only the owner toggle sit and rejects a guest', async () => {
+    const { world, owner, guest } = await boot();
+    const cat = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 22.2), {
+      force: true, ownerId: owner.id, sitting: true, catVariant: 'black',
+    })!;
+    const ownerLook = prepareLook(world, owner, { x: cat.position.x, y: cat.position.y + 0.3, z: cat.position.z }, 1);
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, cat.id, ownerLook))).toEqual({ ok: true });
+    expect(cat.sitting).toBe(false);
+    guest.controller.teleport([21.5, 100, 22.5]);
+    const guestLook = prepareLook(world, guest, { x: cat.position.x, y: cat.position.y + 0.3, z: cat.position.z }, 1);
+    expect(world.handleSequencedEntityUse(guest, useAction(1, 1, cat.id, guestLook))).toEqual({
+      ok: false, reason: 'not_owner',
+    });
+    expect(cat.sitting).toBe(false);
+  });
+
+  it('rejects distant, occluded, stale, duplicate and wrong-slot entity_use', async () => {
+    const { world, owner } = await boot();
+    const near = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22.2), { force: true })!;
+    const far = world.gameplay.mobs.spawn('wolf', new Vec3(120.5, 100, 22.2), { force: true })!;
+    owner.inventory.setSlot(0, createItemStack(ItemId.Bone, 4));
+    owner.inventory.setSlot(1, createItemStack(ItemId.Bone, 4));
+    const look = prepareLook(world, owner, { x: near.position.x, y: near.position.y + 0.4, z: near.position.z }, 1);
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, far.id, look))).toEqual({
+      ok: false, reason: 'reach',
+    });
+    world.world.setBlock(20, 101, 21, BlockId.Stone);
+    const blocked = prepareLook(world, owner, { x: near.position.x, y: near.position.y + 0.4, z: near.position.z }, 2);
+    expect(world.handleSequencedEntityUse(owner, useAction(2, 2, near.id, blocked))).toEqual({
+      ok: false, reason: 'los',
+    });
+    world.world.setBlock(20, 101, 21, BlockId.Air);
+    const open = prepareLook(world, owner, { x: near.position.x, y: near.position.y + 0.4, z: near.position.z }, 3);
+    expect(world.handleSequencedEntityUse(owner, useAction(3, 2, near.id, open, 1))).toEqual({
+      ok: false, reason: 'slot',
+    });
+    expect(world.handleSequencedEntityUse(owner, useAction(4, 99, near.id, open))).toEqual({
+      ok: false, reason: 'stale',
+    });
+    const first = world.handleSequencedEntityUse(owner, useAction(5, 3, near.id, open));
+    expect(first.ok || first.reason === 'reach' || first.reason === 'invalid').toBe(true);
+    expect(world.handleSequencedEntityUse(owner, useAction(5, 3, near.id, open))).toEqual({
+      ok: false, reason: 'duplicate',
+    });
+  });
+
+  it('does not consume a bone when the pet limit is already reached', async () => {
+    const { world, owner } = await boot();
+    world.gameplay.mobs.spawn('wolf', new Vec3(18.5, 100, 20.5), {
+      force: true, ownerId: owner.id, sitting: true,
+    });
+    world.gameplay.mobs.spawn('cat', new Vec3(19.5, 100, 20.5), {
+      force: true, ownerId: owner.id, sitting: true, catVariant: 'red',
+    });
+    const wild = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22.2), { force: true })!;
+    owner.inventory.setSlot(0, createItemStack(ItemId.Bone, 3));
+    const look = prepareLook(world, owner, { x: wild.position.x, y: wild.position.y + 0.4, z: wild.position.z }, 1);
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, wild.id, look))).toEqual({
+      ok: false, reason: 'pet_limit',
+    });
+    expect(owner.inventory.getSlot(0)?.count).toBe(3);
+    expect(wild.ownerId).toBeUndefined();
+  });
+});

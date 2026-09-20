@@ -7,6 +7,7 @@ import {
   MinecartManager,
   MobManager,
   MOB_DEFINITIONS,
+  fallbackCatVariant,
   type MobKind,
 } from '../entities';
 import { createItemStack } from '../inventory';
@@ -105,9 +106,19 @@ export function applyEntitySnapshots(
             health: snap.health,
             velocity: new THREE.Vector3(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0),
             state: snap.state === 'die' ? 'die' : 'idle',
+            ownerId: snap.ownerId,
+            sitting: snap.sitting,
+            catVariant: snap.mobKind === 'cat' ? fallbackCatVariant(snap.variant) : undefined,
+            angry: snap.angry,
           });
         }
         if (!mob) break;
+        session.mobs.applyPetNetworkState(mob, {
+          ownerId: snap.ownerId,
+          sitting: snap.sitting,
+          variant: snap.variant,
+          angry: snap.angry,
+        });
         mob.position.set(snap.x, snap.y, snap.z);
         if (mob.velocity) mob.velocity.set(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0);
         if (snap.yaw !== undefined) mob.facingYaw = snap.yaw;

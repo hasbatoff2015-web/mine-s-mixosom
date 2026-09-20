@@ -32,8 +32,15 @@ export interface MobModel {
   readonly legSwingSigns: readonly number[];
   readonly arms: readonly EntityVisual[];
   readonly wings: readonly EntityVisual[];
+  readonly tail?: EntityVisual;
+  readonly tail2?: EntityVisual;
+  readonly mane?: EntityVisual;
   readonly heldItemAnchor?: EntityVisual;
   readonly heldItem?: EntityVisual;
+}
+
+export interface MobCreateOptions {
+  readonly texturePath?: string;
 }
 
 export interface MobVisualState {
@@ -55,6 +62,10 @@ export interface MobVisualState {
   readonly width: number;
   readonly height: number;
   readonly hurtFlashSeconds: number;
+  readonly sitting?: boolean;
+  readonly ownerId?: string;
+  readonly variant?: string;
+  readonly angry?: boolean;
   fireOverlay?: EntityVisual;
 }
 
@@ -66,7 +77,7 @@ export interface EntityHost {
   createMinecart(variant: 'normal' | 'tnt', tntTextureKey?: string): EntityVisual | undefined;
   setMinecartVariant(visual: EntityVisual, variant: 'normal' | 'tnt', tntTextureKey?: string): void;
   pulseMinecartTnt(visual: EntityVisual, fuseRatio: number): void;
-  createMob(kind: MobKind): { visual: EntityVisual; model: MobModel } | undefined;
+  createMob(kind: MobKind, options?: MobCreateOptions): { visual: EntityVisual; model: MobModel } | undefined;
   createArrow(flaming?: boolean, kind?: 'normal' | 'fire' | 'wh'): EntityVisual | undefined;
   createPrimedTnt?(id: string, textureKey?: string): EntityVisual | undefined;
   /** Fuse pulse / flash for primed TNT. Headless no-op. */
@@ -121,7 +132,7 @@ export class HeadlessEntityHost implements EntityHost {
 
   pulseMinecartTnt(): void {}
 
-  createMob(_kind: MobKind): undefined {
+  createMob(_kind: MobKind, _options?: MobCreateOptions): undefined {
     return undefined;
   }
 

@@ -7,6 +7,7 @@ import type {
   BlockTargetIntent,
   BlockUseAction,
   BowReleaseAction,
+  EntityUseAction,
 } from '../../shared/playerActions';
 import { snapUnitAxisFace } from '../../shared/playerCommand';
 
@@ -176,5 +177,22 @@ export function captureAttack(
     selectedSlot: source.selectedSlot,
     ...(look ? { yaw: look.yaw, pitch: look.pitch } : {}),
     ...(target ? { targetId: target.id, targetRenderTick: target.renderTick } : {}),
+  };
+}
+
+export function captureEntityUse(
+  source: ActionSeqSource,
+  targetId: string,
+  look?: { readonly yaw: number; readonly pitch: number },
+  targetRenderTick?: number,
+): EntityUseAction {
+  return {
+    kind: 'entity_use',
+    actionSeq: nextActionSeq(source),
+    commandSeq: source.inputSeq,
+    selectedSlot: source.selectedSlot,
+    targetId,
+    ...(look ? { yaw: look.yaw, pitch: look.pitch } : {}),
+    ...(targetRenderTick !== undefined ? { targetRenderTick } : {}),
   };
 }

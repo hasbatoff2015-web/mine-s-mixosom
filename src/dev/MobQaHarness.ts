@@ -1,8 +1,16 @@
 import * as THREE from 'three';
 import type { MobKind } from '../entities/mobDefinitions';
 import { ThreeEntityHost } from '../entities/ThreeEntityHost';
+import { isCatVariant, type CatVariant } from '../entities/petTypes';
+import { petBodyTexturePath } from '../entities/petAppearance';
 
 export type MobQaView = 'front' | 'side' | 'rear' | 'three-quarter';
+export type MobQaPetState = 'wild' | 'angry' | 'tamed' | 'sitting';
+
+export interface MobQaOptions {
+  readonly petState?: string | null;
+  readonly variant?: string | null;
+}
 
 const CAMERA_POSITIONS: Readonly<Record<MobQaView, readonly [number, number, number]>> = {
   front: [0, 1.05, -4],
@@ -11,12 +19,31 @@ const CAMERA_POSITIONS: Readonly<Record<MobQaView, readonly [number, number, num
   'three-quarter': [3.2, 1.35, -3.2],
 };
 
+function resolvePetState(raw: string | null | undefined): MobQaPetState {
+  if (raw === 'angry' || raw === 'tamed' || raw === 'sitting' || raw === 'wild') return raw;
+  return 'wild';
+}
+
 export function startMobQaHarness(
   canvas: HTMLCanvasElement,
   uiRoot: HTMLElement,
   kind: MobKind,
   view: MobQaView,
+  options: MobQaOptions = {},
 ): () => void {
+  const petState = resolvePetState(options.petState);
+  const variant: CatVariant | undefined = kind === 'cat' && isCatVariant(options.variant ?? undefined)
+    ? options.variant as CatVariant
+    : kind === 'cat' ? 'black' : undefined;
+  const sitting = petState === 'sitting';
+  const ownerId = petState === 'tamed' || petState === 'sitting' ? 'qa-owner' : undefined;
+  const angry = petState === 'angry';
+  const texturePath = petBodyTexturePath({
+    kind,
+    ownerId,
+    angry,
+    variant,
+  });
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -39,9 +66,11 @@ export function startMobQaHarness(
   ground.receiveShadow = true;
   scene.add(ground);
   const host = new ThreeEntityHost(scene);
-  const { visual, model } = host.createMob(kind);
+  const { visual, model } = host.createMob(kind, texturePath ? { texturePath } : undefined);
   scene.add(visual as THREE.Object3D);
-  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${kind} · ${view}</div>`;
+  const labelBits: string[] = [kind, view, petState];
+  if (variant) labelBits.push(variant);
+  uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${labelBits.join(' · ')}</div>`;
 
   const resize = (): void => {
     const width = Math.max(1, innerWidth);
@@ -56,6 +85,7 @@ export function startMobQaHarness(
   const startedAt = performance.now();
   const render = (now = performance.now()): void => {
     const elapsed = (now - startedAt) / 1000;
+    const walking = !sitting && (kind === 'chicken' || kind === 'wolf' || kind === 'cat');
     host.syncMob({
       kind,
       model,
@@ -64,17 +94,21 @@ export function startMobQaHarness(
       y: 0,
       z: 0,
       yaw: 0,
-      walkPhase: elapsed * 5,
+      walkPhase: sitting ? 0 : elapsed * 5,
       visualAge: elapsed,
-      locomotionSpeed: kind === 'chicken' ? 2.2 : 0,
+      locomotionSpeed: walking ? 2.2 : 0,
       state: kind === 'skeleton' ? 'attack' : 'idle',
       stateSeconds: elapsed,
       deathSeconds: 0,
       fuseSeconds: 0,
       onFire: false,
-      width: 0.6,
-      height: 1.8,
+      width: kind === 'wolf' || kind === 'cat' ? 0.6 : 0.6,
+      height: kind === 'cat' ? 0.7 : kind === 'wolf' ? 0.85 : 1.8,
       hurtFlashSeconds: 0,
+      sitting,
+      ownerId,
+      variant,
+      angry,
     });
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);
