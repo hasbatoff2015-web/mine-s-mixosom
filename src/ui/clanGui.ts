@@ -70,7 +70,8 @@ export function showsClanBack(screen: ServerClanMessage['screen'], source?: 'men
     || screen === 'replace-request-confirm'
     || screen === 'member-card'
     || screen === 'transfer-confirm'
-    || screen === 'announce';
+    || screen === 'announce'
+    || screen === 'set-base-confirm';
 }
 
 export function clanIconIds(): readonly ClanIconId[] {

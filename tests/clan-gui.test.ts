@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { formatCompactMegacoins } from '../shared/megacoins';
-import { CLAN_ICON_GLYPH, CLAN_ICON_IDS, validateClanName } from '../shared/clans';
+import { CLAN_ICON_GLYPH, CLAN_ICON_IDS, CLAN_BASE_CONFIRM_PROMPT, validateClanName } from '../shared/clans';
 import {
   clanIconGlyph,
   clanIconHtml,
@@ -90,6 +90,7 @@ describe('clan GUI helpers', () => {
     expect(showsClanBack('transfer-confirm')).toBe(true);
     expect(showsClanBack('accept')).toBe(true);
     expect(showsClanBack('announce')).toBe(true);
+    expect(showsClanBack('set-base-confirm')).toBe(true);
     expect(showsClanBack('accept', 'menu')).toBe(true);
   });
 
@@ -163,9 +164,17 @@ describe('clan overlay CSS contracts', () => {
     expect(gameUi).toContain("data-clan-action=\"open_announce\"");
     expect(gameUi).toContain("data-clan-action=\"send_announcement\"");
     expect(gameUi).toContain("data-clan-action=\"set_base\"");
+    expect(gameUi).toContain("'confirm_set_base'");
+    expect(gameUi).toContain("'cancel_set_base'");
     expect(gameUi).toContain("data-clan-action=\"teleport_to_base\"");
     expect(gameUi).toContain('Добавить точку базы клана');
     expect(gameUi).toContain('Телепорт на базу клана');
+    expect(gameUi).toContain('Подтвердить');
+    expect(gameUi).toContain('Отмена');
+    expect(gameUi).toContain('set-base-confirm');
+    expect(CLAN_BASE_CONFIRM_PROMPT).toBe(
+      'Вы уверены, что хотите добавить точку базы клана?\nТочка установиться в месте где вы стоите прямо сейчас.',
+    );
     expect(gameUi).toContain("data-clan-action=\"reject_invitation\"");
     expect(gameUi).toContain('Объявление соклановцам');
     expect(gameUi).toContain('Напишите объявление клану');

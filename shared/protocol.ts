@@ -542,6 +542,8 @@ export type ClanActionKind =
   | 'set_announce_text'
   | 'send_announcement'
   | 'set_base'
+  | 'confirm_set_base'
+  | 'cancel_set_base'
   | 'teleport_to_base';
 
 export interface ClientClanActionMessage {
@@ -1092,6 +1094,7 @@ export type ClanScreenKind =
   | 'member-card'
   | 'transfer-confirm'
   | 'announce'
+  | 'set-base-confirm'
   | 'closed';
 
 export interface NetworkClanRow {
@@ -1559,7 +1562,7 @@ export const CLAN_ACTIONS: readonly ClanActionKind[] = [
   'transfer_leader', 'confirm_transfer_leader', 'cancel_transfer_leader',
   'friends_request', 'friends_cancel',
   'reject_invitation', 'open_announce', 'set_announce_text', 'send_announcement',
-  'set_base', 'teleport_to_base',
+  'set_base', 'confirm_set_base', 'cancel_set_base', 'teleport_to_base',
 ];
 
 export const MENU_ACTIONS: readonly MenuActionKind[] = [

@@ -3289,12 +3289,14 @@ export class GameUI {
       </div>`;
     }
     if (this.clanConfirmScreen(state.screen)) {
+      const confirmLabel = state.screen === 'set-base-confirm' ? 'Подтвердить' : 'Да';
+      const cancelLabel = state.screen === 'set-base-confirm' ? 'Отмена' : 'Нет';
       return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
         <div class="mc-label">${this.escape(state.title)}</div>
         <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '').replace(/\n/g, '<br>')}</p>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">Да</button>
-          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">Нет</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">${confirmLabel}</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">${cancelLabel}</button>
         </div>
         ${message}
       </div>`;
@@ -3511,7 +3513,8 @@ export class GameUI {
       || screen === 'join-confirm'
       || screen === 'replace-request-confirm'
       || screen === 'request-confirm'
-      || screen === 'transfer-confirm';
+      || screen === 'transfer-confirm'
+      || screen === 'set-base-confirm';
   }
 
   private clanConfirmAction(screen: ServerClanMessage['screen']): string {
@@ -3524,6 +3527,7 @@ export class GameUI {
     if (screen === 'kick-confirm') return 'confirm_kick';
     if (screen === 'join-confirm') return 'confirm_join';
     if (screen === 'replace-request-confirm') return 'confirm_replace_request';
+    if (screen === 'set-base-confirm') return 'confirm_set_base';
     return 'confirm_accept_request';
   }
 
@@ -3537,6 +3541,7 @@ export class GameUI {
     if (screen === 'kick-confirm') return 'cancel_kick';
     if (screen === 'join-confirm') return 'cancel_join';
     if (screen === 'replace-request-confirm') return 'cancel_replace_request';
+    if (screen === 'set-base-confirm') return 'cancel_set_base';
     return 'cancel_accept_request';
   }
 

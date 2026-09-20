@@ -17,7 +17,7 @@ A clan can have at most one active diamond base. Leader sets/moves it from the c
 - Bedrock: never replaced; try one block above.
 - Move: validate new first; then delete old diamond claim+block, place new, start 24h cooldown.
 - Clan delete removes the claim and the diamond block.
-- GUI «Мой клан»: status line, leader set/change (disabled + remaining time while cooling), teleport if a base exists.
+- GUI «Мой клан»: status line, leader set/change opens a confirmation (`set-base-confirm`, Подтвердить/Отмена); install runs only on confirm from the live player position. Teleport if a base exists.
 
 ## Changed files
 

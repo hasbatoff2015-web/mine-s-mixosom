@@ -80,6 +80,14 @@ export const CLAN_BASE_COOLDOWN_PREFIX = 'Изменение доступно ч
 export const CLAN_BASE_SET_MESSAGE = 'Точка базы клана установлена.';
 export const CLAN_BASE_CHANGED_MESSAGE = 'Точка базы клана изменена.';
 export const CLAN_BASE_TELEPORT_MESSAGE = 'Телепорт на базу клана.';
+export const CLAN_BASE_CONFIRM_PROMPT =
+  'Вы уверены, что хотите добавить точку базы клана?\nТочка установиться в месте где вы стоите прямо сейчас.';
+export const CLAN_BASE_CHANGE_CONFIRM_PROMPT =
+  'Вы уверены, что хотите изменить точку базы клана?\nТочка установиться в месте где вы стоите прямо сейчас.';
+
+export function clanBaseConfirmPrompt(hasBase: boolean): string {
+  return hasBase ? CLAN_BASE_CHANGE_CONFIRM_PROMPT : CLAN_BASE_CONFIRM_PROMPT;
+}
 
 export function isClanRole(value: string | undefined): value is ClanRole {
   return value !== undefined && (CLAN_ROLES as readonly string[]).includes(value);

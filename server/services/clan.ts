@@ -16,6 +16,7 @@ import {
   CLAN_BASE_ANCHOR_ERROR,
   CLAN_BASE_CHANGED_MESSAGE,
   CLAN_BASE_CHANGE_LABEL,
+  clanBaseConfirmPrompt,
   CLAN_BASE_COOLDOWN_MS,
   CLAN_BASE_MISSING_ERROR,
   CLAN_BASE_OVERLAP_ERROR,
@@ -139,6 +140,7 @@ export type ClanScreen =
   | 'member-card'
   | 'transfer-confirm'
   | 'announce'
+  | 'set-base-confirm'
   | 'closed';
 
 export interface ClanBase {
@@ -1425,7 +1427,31 @@ export class ClanService {
       return;
     }
     if (action === 'set_base') {
+      const clan = this.playerClan(playerId);
+      if (!clan) {
+        session.screen = 'ranking';
+        session.message = CLAN_NOT_IN_CLAN_ERROR;
+        return;
+      }
+      if (!canClanSetBase(this.roleOf(clan, playerId))) {
+        session.screen = 'card';
+        session.selectedClanId = clan.clanId;
+        session.message = CLAN_OWNER_ONLY_ERROR;
+        return;
+      }
+      session.screen = 'set-base-confirm';
+      session.selectedClanId = clan.clanId;
+      session.message = undefined;
+      return;
+    }
+    if (action === 'confirm_set_base') {
       this.setClanBase(playerId);
+      return;
+    }
+    if (action === 'cancel_set_base') {
+      const clan = this.playerClan(playerId);
+      session.screen = clan ? 'card' : 'ranking';
+      if (clan) session.selectedClanId = clan.clanId;
       return;
     }
     if (action === 'teleport_to_base') {
@@ -1904,6 +1930,28 @@ export class ClanService {
       };
     }
 
+    if (session.screen === 'set-base-confirm') {
+      const clan = viewerClan;
+      if (!clan || !canClanSetBase(this.roleOf(clan, playerId))) {
+        session.screen = clan ? 'card' : 'ranking';
+        return this.buildMessage(playerId);
+      }
+      return {
+        ...base,
+        screen: 'set-base-confirm',
+        title: clan.base ? CLAN_BASE_CHANGE_LABEL : CLAN_BASE_SET_LABEL,
+        totalPages: 1,
+        totalCount: 0,
+        clans: [this.toRow(clan, this.clanTotal(clan), this.rankOf(clan.clanId, session.rankingSort))],
+        card: this.cardPayload(playerId, clan, session.selectedMemberId),
+        selected: {
+          clanId: clan.clanId,
+          clanName: clan.name,
+          prompt: clanBaseConfirmPrompt(!!clan.base),
+        },
+      };
+    }
+
     if (session.screen === 'announce') {
       const clan = viewerClan;
       if (!clan || !canClanAnnounce(this.roleOf(clan, playerId))) {
@@ -2042,6 +2090,9 @@ export class ClanService {
         session.screen = 'card';
         return;
       case 'announce':
+        session.screen = 'card';
+        return;
+      case 'set-base-confirm':
         session.screen = 'card';
         return;
       case 'request-confirm':

@@ -11,6 +11,7 @@ import { resolveClanBaseAnchor } from '../../server/services/clanBase';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import {
   CLAN_BASE_CHANGE_LABEL,
+  CLAN_BASE_CONFIRM_PROMPT,
   CLAN_BASE_COOLDOWN_MS,
   CLAN_BASE_OVERLAP_ERROR,
   CLAN_BASE_SET_LABEL,
@@ -120,6 +121,11 @@ describe('Clan base point', () => {
     player.player.controller.teleport([x + 0.5, y + 1, z + 0.5]);
   }
 
+  function confirmSetBase(world: WorldInstance, player: ReturnType<typeof join>): void {
+    world.handleClanAction(player.player, { type: 'clan_action', action: 'set_base' });
+    world.handleClanAction(player.player, { type: 'clan_action', action: 'confirm_set_base' });
+  }
+
   function loadClaims(world: WorldInstance) {
     return migrateClaimStore(world.pluginStore.load('claims/claims', { claims: [] }));
   }
@@ -137,7 +143,7 @@ describe('Clan base point', () => {
 
     standOn(world, ada, 8, 64, 8);
     ada.sink.payloads.length = 0;
-    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    confirmSetBase(world, ada);
     const card = lastClan(ada.sink);
     expect(card?.card?.hasBase).toBe(true);
     expect(card?.card?.canSetBase).toBe(true);
@@ -178,7 +184,7 @@ describe('Clan base point', () => {
     world.pluginStore.save('claims/claims', store);
     standOn(world, ada, 8, 64, 8);
     ada.sink.payloads.length = 0;
-    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    confirmSetBase(world, ada);
     expect(lastClan(ada.sink)?.message).toBe(CLAN_BASE_OVERLAP_ERROR);
     expect(world.world.getBlock(8, 64, 8)).toBe(BlockId.Dirt);
     expect(world.clan.playerClan(ada.player.id)?.base).toBeUndefined();
@@ -192,7 +198,7 @@ describe('Clan base point', () => {
     standOn(world, ada, 12, 64, 12, BlockId.Bedrock);
     world.world.setBlock(12, 65, 12, BlockId.Air);
     ada.sink.payloads.length = 0;
-    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    confirmSetBase(world, ada);
     expect(lastClan(ada.sink)?.card?.hasBase).toBe(true);
     expect(world.world.getBlock(12, 64, 12)).toBe(BlockId.Bedrock);
     expect(world.world.getBlock(12, 65, 12)).toBe(BlockId.DiamondBlock);
@@ -214,7 +220,7 @@ describe('Clan base point', () => {
       invitationId: world.clan.invitationsFor(bob.player.id)[0]!.invitationId,
     });
     standOn(world, ada, 16, 64, 16);
-    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    confirmSetBase(world, ada);
     const until = world.clan.playerClan(ada.player.id)?.baseCooldownUntil ?? 0;
     expect(until).toBeGreaterThan(Date.now());
     expect(until).toBeLessThanOrEqual(Date.now() + CLAN_BASE_COOLDOWN_MS);
@@ -228,7 +234,7 @@ describe('Clan base point', () => {
 
     ada.sink.payloads.length = 0;
     standOn(world, ada, 48, 64, 48);
-    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    confirmSetBase(world, ada);
     expect(lastClan(ada.sink)?.message).toMatch(/Изменение доступно через/);
     expect(world.world.getBlock(16, 64, 16)).toBe(BlockId.DiamondBlock);
     expect(world.world.getBlock(48, 64, 48)).toBe(BlockId.Dirt);
@@ -240,8 +246,13 @@ describe('Clan base point', () => {
 
   it('registers protocol actions and shows the set button only for leaders', async () => {
     expect(CLAN_ACTIONS).toContain('set_base');
+    expect(CLAN_ACTIONS).toContain('confirm_set_base');
+    expect(CLAN_ACTIONS).toContain('cancel_set_base');
     expect(CLAN_ACTIONS).toContain('teleport_to_base');
     expect(parseClientMessage({ type: 'clan_action', action: 'set_base' })).toMatchObject({ action: 'set_base' });
+    expect(parseClientMessage({ type: 'clan_action', action: 'confirm_set_base' })).toMatchObject({
+      action: 'confirm_set_base',
+    });
     expect(parseClientMessage({ type: 'clan_action', action: 'teleport_to_base' })).toMatchObject({
       action: 'teleport_to_base',
     });
@@ -255,5 +266,34 @@ describe('Clan base point', () => {
     expect(card?.hasBase).toBe(false);
     expect(card?.canTeleportToBase).toBe(false);
     expect(card?.baseLabel).toContain('не установлена');
+  });
+
+  it('opens a confirmation dialog and installs at the position on confirm, not on the first click', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    createClan(world, ada, 'Otters');
+    standOn(world, ada, 8, 64, 8);
+    ada.sink.payloads.length = 0;
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    const confirm = lastClan(ada.sink);
+    expect(confirm?.screen).toBe('set-base-confirm');
+    expect(confirm?.selected?.prompt).toBe(CLAN_BASE_CONFIRM_PROMPT);
+    expect(world.world.getBlock(8, 64, 8)).toBe(BlockId.Dirt);
+    expect(world.clan.playerClan(ada.player.id)?.base).toBeUndefined();
+
+    ada.sink.payloads.length = 0;
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'cancel_set_base' });
+    expect(lastClan(ada.sink)?.screen).toBe('card');
+    expect(world.clan.playerClan(ada.player.id)?.base).toBeUndefined();
+
+    standOn(world, ada, 8, 64, 8);
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'set_base' });
+    standOn(world, ada, 24, 64, 24);
+    ada.sink.payloads.length = 0;
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_set_base' });
+    expect(lastClan(ada.sink)?.card?.hasBase).toBe(true);
+    expect(world.world.getBlock(8, 64, 8)).toBe(BlockId.Dirt);
+    expect(world.world.getBlock(24, 64, 24)).toBe(BlockId.DiamondBlock);
+    expect(world.clan.playerClan(ada.player.id)?.base).toMatchObject({ x: 24, y: 64, z: 24 });
   });
 });
