@@ -1,7 +1,7 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId, isTntBlock, tntItemId, tntTextureKey } from '../blocks';
 import { clamp, FIXED_DT, GRAVITY, PLAYER_HEIGHT, PLAYER_WIDTH, WALK_SPEED } from '../core/constants';
-import { interpolateVec3 } from '../core/entityInterpolation';
+import { interpolateVec3, lerpAngle } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
@@ -33,13 +33,42 @@ export function isMinecartEntityVisual(object: { readonly userData?: { readonly 
 export const TNT_MINECART_FUSE_TICKS = 80;
 export const TNT_MINECART_EXPLOSION_POWER = 4;
 export const TNT_MINECART_EXPLOSION_RADIUS = 4;
-export const MINECART_MAX_SPEED = WALK_SPEED;
+export const MINECART_MAX_SPEED = WALK_SPEED * 1.5;
 /** On-rail player overlap impulse. Off-rail uses this times OFF_RAIL_PUSH_FACTOR. */
 export const MINECART_PUSH_GAIN = 0.28;
 export const MINECART_OFF_RAIL_PUSH_FACTOR = 0.5;
+/**
+ * `sampleRail` yaw aims Three.js local +Z along the tangent. ModelMinecart's
+ * floor is 20px on local +X (16px on Z), so the hull is a quarter-turn off.
+ * Visual-only: never add this to `cart.yaw` (steering, serialize, network).
+ */
+export const MINECART_VISUAL_YAW_OFFSET = -Math.PI / 2;
+
+/**
+ * Gameplay yaw aims local +Z along the rail tangent. ModelMinecart long axis
+ * is local +X, so yaw is offset by `MINECART_VISUAL_YAW_OFFSET`. Slope pitch
+ * must then rotate around local Z (the transverse axis) so local +X follows
+ * the 3D tangent. Putting pitch on rotation.x rolled the hull around its length.
+ *
+ * `sampleRail` pitch is `atan2(-tangentY, hypot(xz))` (negative when climbing).
+ * Euler XYZ with z = -pitch lifts local +X when tangentY > 0.
+ */
+export function minecartVisualEuler(yaw: number, pitch: number): { x: number; y: number; z: number } {
+  return {
+    x: 0,
+    y: yaw + MINECART_VISUAL_YAW_OFFSET,
+    z: -pitch,
+  };
+}
+
 const ACCEL_TIME = 0.5;
+/** Time from `MINECART_MAX_SPEED` to a full stop while holding S. */
+export const MINECART_BRAKE_TIME = 0.55;
 const COAST_FRICTION = 0.965;
 const SLOPE_GRAVITY = 6.5;
+const STOP_EPSILON = 0.02;
+const CONTROL_DEADZONE = 0.05;
+const LAUNCH_ALIGN = 0.01;
 const PUSH_GAIN = MINECART_PUSH_GAIN;
 const GROUND_FRICTION = 0.78;
 const AIR_DRAG = 0.995;
@@ -130,6 +159,8 @@ export interface MinecartEntity {
   readonly visual?: EntityVisual;
   yaw: number;
   pitch: number;
+  previousYaw: number;
+  previousPitch: number;
   rider: boolean;
   variant: MinecartVariant;
   /** Set when `variant === 'tnt'`. Ordinary / powerful / destructive. */
@@ -139,13 +170,23 @@ export interface MinecartEntity {
   progress: number;
   rail?: RailCell;
   derailGraceTicks: number;
+  /** W held at the end of the last physics step. Edge-only launch from stop. */
+  throttleHeld?: boolean;
+}
+
+export interface MinecartControlInput {
+  readonly throttle?: number;
+  readonly riderYaw?: number;
 }
 
 export interface MinecartUpdateInput {
+  /** Controlled cart id (legacy single-rider API). Prefer `controls`. */
   readonly riderId?: string;
   readonly forward?: number;
   readonly strafe?: number;
   readonly riderYaw?: number;
+  /** Per-cart input for one physics pass. Missing carts coast. */
+  readonly controls?: ReadonlyMap<string, MinecartControlInput>;
 }
 
 export interface MinecartExplosionEvent {
@@ -222,6 +263,8 @@ export class MinecartManager {
       visual,
       yaw: 0,
       pitch: 0,
+      previousYaw: 0,
+      previousPitch: 0,
       rider: false,
       variant,
       tntBlockId: cargoId,
@@ -231,6 +274,7 @@ export class MinecartManager {
       derailGraceTicks: 0,
     };
     this.snapToRail(entity);
+    this.commitVisualPrevious(entity);
     this.carts.set(entityId, entity);
     this.syncVisual(entity);
     return entity;
@@ -308,6 +352,16 @@ export class MinecartManager {
 
   isRideable(cart: MinecartEntity): boolean {
     return cart.variant === 'normal';
+  }
+
+  /**
+   * Local UX guard. Occupied carts cannot be boarded unless this is already
+   * the rider. Server occupancy is still authoritative.
+   */
+  canBoard(cart: MinecartEntity, ridingCartId?: string): boolean {
+    if (!this.isRideable(cart)) return false;
+    if (ridingCartId === cart.id) return true;
+    return !cart.rider;
   }
 
   insertTnt(cart: MinecartEntity, blockId: number = BlockId.Tnt): boolean {
@@ -464,7 +518,7 @@ export class MinecartManager {
     if (this.disposed) return;
     const dt = Number.isFinite(deltaSeconds) ? Math.min(deltaSeconds, 0.1) : FIXED_DT;
     for (const cart of [...this.carts.values()]) {
-      cart.previousPosition.copy(cart.position);
+      this.commitVisualPrevious(cart);
       if (cart.fuseTicks > 0) {
         cart.fuseTicks -= 1;
         if (cart.visual) this.host.pulseMinecartTnt(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);
@@ -487,8 +541,13 @@ export class MinecartManager {
         cart.position.x, cart.position.y, cart.position.z,
         t,
       );
-      this.host.setPosition(cart.visual, visual.x, visual.y, visual.z);
-      this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+      this.applyMinecartVisualPose(cart, {
+        x: visual.x,
+        y: visual.y,
+        z: visual.z,
+        yaw: lerpAngle(cart.previousYaw, cart.yaw, t),
+        pitch: lerpAngle(cart.previousPitch, cart.pitch, t),
+      });
       // Online skips `update()`; visual sync must re-sample after deferred lighting.
       this.host.applyLight(cart.visual, this.world, visual.x, visual.y + 0.3, visual.z, 0.3);
     }
@@ -525,7 +584,6 @@ export class MinecartManager {
       );
       if (!cart) continue;
       cart.position.set(entry.position[0], entry.position[1], entry.position[2]);
-      cart.previousPosition.copy(cart.position);
       cart.velocity.set(entry.velocity[0], entry.velocity[1], entry.velocity[2]);
       cart.yaw = entry.yaw;
       cart.fuseTicks = Math.max(0, Math.floor(entry.fuseTicks ?? 0));
@@ -537,6 +595,7 @@ export class MinecartManager {
         const tangent = this.tangentOf(cart);
         cart.alongSpeed = cart.velocity.x * tangent.x + cart.velocity.z * tangent.z;
       }
+      this.commitVisualPrevious(cart);
       this.syncVisual(cart);
     }
   }
@@ -554,6 +613,73 @@ export class MinecartManager {
     this.disposed = true;
   }
 
+  private applyOnRailControl(
+    cart: MinecartEntity,
+    dt: number,
+    sample: ReturnType<typeof sampleRail>,
+    control: { throttle: number; riderYaw?: number; ridden: boolean },
+  ): void {
+    const accelerating = control.ridden && control.throttle > CONTROL_DEADZONE;
+    const braking = control.ridden && control.throttle < -CONTROL_DEADZONE;
+    const launchPress = accelerating && !cart.throttleHeld;
+    cart.throttleHeld = accelerating;
+
+    if (Math.abs(cart.alongSpeed) <= STOP_EPSILON) cart.alongSpeed = 0;
+    const stopped = cart.alongSpeed === 0;
+    const accel = MINECART_MAX_SPEED / ACCEL_TIME;
+    const brakeDecel = MINECART_MAX_SPEED / MINECART_BRAKE_TIME;
+
+    if (accelerating) {
+      if (stopped) {
+        if (launchPress) {
+          const yaw = control.riderYaw ?? cart.yaw;
+          const along = -Math.sin(yaw) * sample.tangentX - Math.cos(yaw) * sample.tangentZ;
+          if (Math.abs(along) > LAUNCH_ALIGN) {
+            cart.alongSpeed += Math.sign(along) * accel * dt;
+          }
+        }
+      } else {
+        cart.alongSpeed += Math.sign(cart.alongSpeed) * accel * dt;
+      }
+    } else if (!braking) {
+      cart.alongSpeed *= COAST_FRICTION;
+    }
+
+    if (sample.tangentY !== 0) {
+      cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
+    }
+
+    if (braking) {
+      const delta = brakeDecel * dt;
+      if (Math.abs(cart.alongSpeed) <= delta) cart.alongSpeed = 0;
+      else cart.alongSpeed -= Math.sign(cart.alongSpeed) * delta;
+    }
+
+    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
+    if (Math.abs(cart.alongSpeed) <= STOP_EPSILON && !accelerating) cart.alongSpeed = 0;
+  }
+
+  private controlFor(
+    cart: MinecartEntity,
+    input: MinecartUpdateInput,
+  ): { throttle: number; riderYaw?: number; ridden: boolean } {
+    const mapped = input.controls?.get(cart.id);
+    if (mapped) {
+      const ridden = cart.variant === 'normal';
+      return {
+        throttle: ridden ? (mapped.throttle ?? 0) : 0,
+        riderYaw: mapped.riderYaw,
+        ridden,
+      };
+    }
+    const ridden = input.riderId === cart.id && cart.variant === 'normal';
+    return {
+      throttle: ridden ? (input.forward ?? 0) : 0,
+      riderYaw: input.riderYaw,
+      ridden,
+    };
+  }
+
   private stepCart(cart: MinecartEntity, dt: number, input: MinecartUpdateInput): void {
     if (cart.derailGraceTicks > 0) cart.derailGraceTicks -= 1;
     if (cart.rail && this.world.getBlock(cart.rail.x, cart.rail.y, cart.rail.z, false) !== BlockId.Rail) {
@@ -561,28 +687,14 @@ export class MinecartManager {
     }
     if (!cart.rail && cart.derailGraceTicks <= 0) this.tryRecapture(cart);
     if (!cart.rail) {
+      cart.throttleHeld = false;
       this.stepOffRail(cart, dt);
       return;
     }
     const sample = sampleRail(cart.rail, cart.progress);
-    const ridden = input.riderId === cart.id && cart.variant === 'normal';
-    const forward = ridden ? (input.forward ?? 0) : 0;
+    const control = this.controlFor(cart, input);
     void input.strafe;
-    const accel = MINECART_MAX_SPEED / ACCEL_TIME;
-    if (Math.abs(forward) > 0.05) {
-      const yaw = input.riderYaw ?? cart.yaw;
-      const wishX = -Math.sin(yaw) * forward;
-      const wishZ = -Math.cos(yaw) * forward;
-      const along = wishX * sample.tangentX + wishZ * sample.tangentZ;
-      cart.alongSpeed += along * accel * dt;
-    } else {
-      cart.alongSpeed *= COAST_FRICTION;
-    }
-    if (sample.tangentY !== 0) {
-      cart.alongSpeed += -sample.tangentY * SLOPE_GRAVITY * dt;
-    }
-    cart.alongSpeed = clamp(cart.alongSpeed, -MINECART_MAX_SPEED, MINECART_MAX_SPEED);
-    if (Math.abs(cart.alongSpeed) < 0.02 && Math.abs(forward) <= 0.05) cart.alongSpeed = 0;
+    this.applyOnRailControl(cart, dt, sample, control);
 
     let remaining = cart.alongSpeed * dt;
     let guard = 0;
@@ -618,6 +730,12 @@ export class MinecartManager {
         cart.rail.y - neighbor.y,
         cart.rail.z - neighbor.z,
       );
+      if (enterT === undefined) {
+        const end = sampleRail(cart.rail, tEnd);
+        this.leaveRail(cart, leftover, end);
+        remaining = 0;
+        break;
+      }
       const oldSample = sampleRail(cart.rail, tEnd);
       cart.rail = neighbor;
       cart.progress = enterT;
@@ -752,10 +870,52 @@ export class MinecartManager {
     this.carts.delete(cart.id);
   }
 
+  /**
+   * Online render pose is already interpolated by EntityInterpolationBuffer.
+   * Copy previous = current so `interpolateVisuals(1)` stays temporally identity
+   * while still applying the model-axis mapping.
+   */
+  applyInterpolatedRenderPose(cart: MinecartEntity, pose: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly yaw: number;
+    readonly pitch?: number;
+  }): void {
+    cart.position.set(pose.x, pose.y, pose.z);
+    cart.yaw = pose.yaw;
+    if (pose.pitch !== undefined) cart.pitch = pose.pitch;
+    this.commitVisualPrevious(cart);
+  }
+
+  private commitVisualPrevious(cart: MinecartEntity): void {
+    cart.previousPosition.copy(cart.position);
+    cart.previousYaw = cart.yaw;
+    cart.previousPitch = cart.pitch;
+  }
+
+  private applyMinecartVisualPose(cart: MinecartEntity, pose: {
+    readonly x: number;
+    readonly y: number;
+    readonly z: number;
+    readonly yaw: number;
+    readonly pitch: number;
+  }): void {
+    if (!cart.visual) return;
+    this.host.setPosition(cart.visual, pose.x, pose.y, pose.z);
+    const euler = minecartVisualEuler(pose.yaw, pose.pitch);
+    this.host.setRotation(cart.visual, euler.x, euler.y, euler.z);
+  }
+
   private syncVisual(cart: MinecartEntity): void {
     if (!cart.visual) return;
-    this.host.setPosition(cart.visual, cart.position.x, cart.position.y, cart.position.z);
-    this.host.setRotation(cart.visual, cart.pitch, cart.yaw, 0);
+    this.applyMinecartVisualPose(cart, {
+      x: cart.position.x,
+      y: cart.position.y,
+      z: cart.position.z,
+      yaw: cart.yaw,
+      pitch: cart.pitch,
+    });
     this.syncCargoVisual(cart);
     this.host.applyLight(
       cart.visual, this.world, cart.position.x, cart.position.y + 0.3, cart.position.z, 0.3,

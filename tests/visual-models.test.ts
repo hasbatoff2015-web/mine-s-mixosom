@@ -106,6 +106,12 @@ describe('legacy textured mob models', () => {
     expect(rightLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0] });
     expect(leftLeg.boxes[0]).toMatchObject({ origin: [-1, 0, -3], size: [3, 5, 3], textureOffset: [29, 0], mirror: true });
     expect(rightLeg.boxes[0]?.textureOffset).not.toEqual([26, 0]);
+    const model = createMobModel(new VoxelVisualFactory(), 'chicken');
+    expect(model.legs).toHaveLength(2);
+    expect(model.legSwingSigns).toEqual([1, -1]);
+    const pivotY = legacyRotationPointToWorld(rightLeg.rotationPoint)[1];
+    const localCenterY = legacyBoxCenterToLocal(rightLeg.boxes[0]!)[1];
+    expect(pivotY + localCenterY - rightLeg.boxes[0]!.size[1] / 32).toBeCloseTo(0, 8);
     expect(COW_MODEL.parts.filter((part) => part.name.startsWith('leg'))).toHaveLength(4);
   });
 

@@ -7,6 +7,7 @@ import {
   type PlayerPresentationState,
 } from '../../shared/playerPresentation';
 import type { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot } from '../rendering/player/seatVisual';
 import { EMPTY_PLAYER_EQUIPMENT } from '../inventory';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -53,6 +54,7 @@ export class RemotePlayerView {
   private hurtSeq = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private seated = false;
   private readonly whOutline: THREE.LineSegments[] = [];
   private readonly whOutlineGeometries: THREE.EdgesGeometry[] = [];
   private readonly whOutlineMaterial = new THREE.LineBasicMaterial({
@@ -99,6 +101,7 @@ export class RemotePlayerView {
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    this.seated = Boolean('ridingEntityId' in info && info.ridingEntityId);
     this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
     if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
@@ -164,6 +167,7 @@ export class RemotePlayerView {
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
+    this.seated = !dead && Boolean('ridingEntityId' in snapshot && snapshot.ridingEntityId);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
       this.nameplate.setIdentity(snapshot.name, snapshot.health);
     } else if (snapshot.name !== this.nameplate.name) {
@@ -188,7 +192,8 @@ export class RemotePlayerView {
     if (dying) this.deathSeconds += Math.max(0, deltaSeconds);
     const deathProgress = dying ? humanoidDeathProgress(this.deathSeconds) : 0;
     if (!pose) {
-      this.visual.update(deltaSeconds, {
+      const seated = this.seated && !dying;
+      const visualPose = this.visual.update(deltaSeconds, {
         viewYaw: this.spawnYaw,
         viewPitch: this.spawnPitch,
         movementSpeed: 0,
@@ -197,16 +202,19 @@ export class RemotePlayerView {
         sprinting: false,
         verticalVelocity: 0,
         ...actionFrame,
+        seated,
         invisible: false,
         hurtFlash: 0,
         deathProgress,
         onFire: this.lastRenderedPose?.onFire === true || this.joinOnFire,
       });
+      applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
     this.lastRenderedPose = pose;
-    this.visual.update(deltaSeconds, {
+    const seated = this.seated && !dying;
+    const visualPose = this.visual.update(deltaSeconds, {
       viewYaw: pose.yaw,
       viewPitch: pose.pitch,
       movementSpeed: dying || actionFrame.bedRest ? 0 : Math.hypot(pose.vx, pose.vz),
@@ -215,11 +223,13 @@ export class RemotePlayerView {
       sprinting: dying ? false : pose.sprinting,
       verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
+      seated,
       invisible: pose.invisible,
       hurtFlash: 0,
       deathProgress,
       onFire: pose.onFire === true,
     });
+    applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
     this.lastInvisible = pose.invisible === true;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);

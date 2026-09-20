@@ -45,9 +45,17 @@ export function chestFacingFromYaw(yaw: number): HorizontalFacing {
 
 /**
  * Vanilla furnace `facing` is the front (lit opening). Same opposite-of-look
- * convention as chests, kept as a separate helper so doors stay look-aligned.
+ * convention as chests. Doors use `doorOutsideFacingFromYaw` instead of look.
  */
 export function furnaceFacingFromYaw(yaw: number): HorizontalFacing {
+  return oppositeHorizontalFacing(doorFacingFromYaw(yaw));
+}
+
+/**
+ * Closed-door `facing` is the outward normal of the occupied edge, opposite
+ * the player's look. Standing outside looking north stores south.
+ */
+export function doorOutsideFacingFromYaw(yaw: number): HorizontalFacing {
   return oppositeHorizontalFacing(doorFacingFromYaw(yaw));
 }
 
@@ -169,26 +177,47 @@ export function ladderPlacementFromHit(
   };
 }
 
-/** Closed door occupies `facing`; open door swings 90° by hinge. */
+/**
+ * Physical hinge edge as viewed from outside (`facing` = closed-door outward normal).
+ * North/left → east, north/right → west, and the matching 90° turns for the other sides.
+ */
+export function doorHingeEdge(facing: HorizontalFacing, hinge: DoorHinge): HorizontalFacing {
+  switch (facing) {
+    case 'north': return hinge === 'left' ? 'east' : 'west';
+    case 'south': return hinge === 'left' ? 'west' : 'east';
+    case 'east': return hinge === 'left' ? 'south' : 'north';
+    case 'west': return hinge === 'left' ? 'north' : 'south';
+  }
+}
+
+/**
+ * Closed door occupies `facing` (outside). Open door occupies the physical hinge
+ * edge, not a generic 90° swing toward the handle.
+ */
 export function occupiedDoorFacing(
   facing: HorizontalFacing,
   open: boolean,
   hinge: DoorHinge = 'left',
 ): HorizontalFacing {
-  if (!open) return facing;
-  if (hinge === 'left') {
-    switch (facing) {
-      case 'north': return 'west';
-      case 'west': return 'south';
-      case 'south': return 'east';
-      case 'east': return 'north';
-    }
-  }
+  return open ? doorHingeEdge(facing, hinge) : facing;
+}
+
+/**
+ * Hinge from the click on the door cell: left/right as seen from outside (`facing`).
+ */
+export function doorHingeFromPlacement(
+  facing: HorizontalFacing,
+  point: { readonly x: number; readonly z: number },
+  cellX: number,
+  cellZ: number,
+): DoorHinge {
+  const lx = point.x - cellX;
+  const lz = point.z - cellZ;
   switch (facing) {
-    case 'north': return 'east';
-    case 'east': return 'south';
-    case 'south': return 'west';
-    case 'west': return 'north';
+    case 'south': return lx < 0.5 ? 'left' : 'right';
+    case 'north': return lx > 0.5 ? 'left' : 'right';
+    case 'east': return lz > 0.5 ? 'left' : 'right';
+    case 'west': return lz < 0.5 ? 'left' : 'right';
   }
 }
 

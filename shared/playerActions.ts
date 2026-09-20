@@ -144,7 +144,9 @@ export type ActionRejectReason =
   | 'collision'
   | 'no-anchor'
   | 'look'
-  | 'invalid';
+  | 'invalid'
+  | 'vehicle_occupied'
+  | 'already_riding';
 
 export interface ActionResult {
   readonly ok: boolean;

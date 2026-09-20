@@ -38,6 +38,7 @@ import {
 } from '../src/audio/worldSoundPlayback';
 import { VoxelWorld } from '../src/world/World';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
+import { collectMinecartPassengers } from '../src/entities/minecartOccupancy';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
@@ -2019,6 +2020,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    this.gameplay.forceReleaseVehicle(player, false);
     player.restingBed = undefined;
     this.gameplay.whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
@@ -2690,8 +2692,24 @@ export class WorldInstance {
 
   vehicleInput(player: ServerPlayer, message: ClientVehicleInputMessage): void {
     if (message.action === 'exit') this.gameplay.exitVehicle(player);
-    else if (message.action === 'enter' && message.entityId) this.gameplay.enterVehicle(player, message.entityId);
-    else if (message.action === 'steer' && message.forward !== undefined) {
+    else if (message.action === 'enter' && message.entityId) {
+      if (this.gameplay.enterVehicle(player, message.entityId)) return;
+      const reason = this.gameplay.consumeVehicleEnterReject();
+      const text = reason === 'already_riding'
+        ? 'Сначала выйдите из текущей вагонетки.'
+        : reason === 'vehicle_occupied'
+          ? 'Вагонетка занята.'
+          : undefined;
+      if (text) {
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      }
+    } else if (message.action === 'steer' && message.forward !== undefined) {
       player.vehicleForward = Math.max(-1, Math.min(1, message.forward));
     }
   }
@@ -3120,10 +3138,7 @@ export class WorldInstance {
   }
 
   private flushTickNetwork(): void {
-    const passengers = new Map<string, string>();
-    for (const player of this.players.values()) {
-      if (player.ridingCartId) passengers.set(player.ridingCartId, player.id);
-    }
+    const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     for (const player of this.connectedPlayers()) player.commandQueue.lastCompacted = undefined;
