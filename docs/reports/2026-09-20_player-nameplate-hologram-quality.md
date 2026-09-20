@@ -34,8 +34,9 @@ Done. `PlayerNameplate` stays a `THREE.Sprite` on `RemotePlayerView`. It now ras
 
 ## Tests
 
-- `tests/player-nameplate.test.ts` — nick/HP lines, snapshots, interpolation offset, Sprite/invisibility/distance, no local Game nameplate, plus visual contracts (no fillRect, display font, 2× scale, Linear+mipmaps, supersampled canvas, `#ff1f1f`).
-- `tests/hologram-timer.test.ts` — filter/mipmap assignments live on the shared helper; renderer still calls `configureHologramTextTexture`; `hologramTextPhysicalSize` covers custom logical sizes; world hologram size unchanged.
+- `npx vitest run tests/player-nameplate.test.ts tests/hologram-timer.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts` — 29/29 PASS (`player-nameplate` 8, `hologram-timer` 10, `hologram-style` 8, `hologram-hit` 3).
+- `npm run typecheck` PASS
+- `npm run build` PASS (`tsc --noEmit && vite build`)
 
 ## Visual QA
 
@@ -59,4 +60,4 @@ Owner review of PR #96; do not merge without owner.
 
 ## Git
 
-Branch `cursor/clan-roles-rating-d1a5` (existing draft PR #96). No merge.
+Branch `cursor/clan-roles-rating-d1a5`. Latest commit after this report update. Draft PR https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/96. No merge.
