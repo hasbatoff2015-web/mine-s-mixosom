@@ -3,7 +3,7 @@ import { getItemDefinition, itemHeldMeshKind, itemIconDescriptor, ITEMS, SPECIAL
 import { SPECIAL_ICON_PREVIEW_POLICY } from '../src/rendering/itemIconPreview';
 import { specialPreviewEntityTexturePaths } from '../src/rendering/ItemVisualFactory';
 import { BED_SHEET_KEY } from '../src/rendering/TextureAtlas';
-import { CHEST_TEXTURE_KEY, PORTAL_CHEST_TEXTURE_KEY } from '../src/rendering/chestModel';
+import { CHEST_TEXTURE_KEY, EVENT_CHEST_TEXTURE_KEY, PORTAL_CHEST_TEXTURE_KEY } from '../src/rendering/chestModel';
 
 describe('generic special preview contract', () => {
   it('routes every special_model through special_preview + shared auto-fit pose', () => {
@@ -27,6 +27,7 @@ describe('generic special preview contract', () => {
     }
     expect(itemIconDescriptor('chest')).toEqual({ kind: 'special_preview', category: 'chest' });
     expect(itemIconDescriptor('portal_chest')).toEqual({ kind: 'special_preview', category: 'chest' });
+    expect(itemIconDescriptor('event_chest')).toEqual({ kind: 'special_preview', category: 'chest' });
     expect(SPECIAL_ICON_POSES.generic).toEqual(SPECIAL_ICON_POSES.stairs);
   });
 
@@ -41,9 +42,11 @@ describe('generic special preview contract', () => {
   it('preloads entity textures used by special previews (chest) without brightness hacks', () => {
     expect(specialPreviewEntityTexturePaths()).toContain(CHEST_TEXTURE_KEY);
     expect(specialPreviewEntityTexturePaths()).toContain(PORTAL_CHEST_TEXTURE_KEY);
+    expect(specialPreviewEntityTexturePaths()).toContain(EVENT_CHEST_TEXTURE_KEY);
     expect(specialPreviewEntityTexturePaths()).toContain(BED_SHEET_KEY);
     expect(CHEST_TEXTURE_KEY).toBe('entity/chest/normal');
     expect(PORTAL_CHEST_TEXTURE_KEY).toBe('entity/chest/portal');
+    expect(EVENT_CHEST_TEXTURE_KEY).toBe('entity/chest/event');
     expect(BED_SHEET_KEY).toBe('entity/bed/white');
   });
 

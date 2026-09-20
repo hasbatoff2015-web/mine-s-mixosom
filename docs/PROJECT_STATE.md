@@ -1,5 +1,36 @@
 # Состояние проекта
 
+## Последний проход: Sync origin/main into world-events — 2026-09-20
+
+- Semantic merge `origin/main` (`9b8f785`) into `cursor/world-events-event-chest-525a`. Conflicts only in docs + `server/gameplay.ts` (kept both `isExplosionProtected` and minecart occupancy comment).
+- Clan `set_base` overlap now includes the virtual world-event column (`extraClaims`).
+- Подробности: `docs/reports/2026-09-20_merge-main-into-world-events.md`.
+
+## Последний проход: Event overlay on reconnect — 2026-09-20
+
+- Welcome/chunk_data теперь отдают effective network modifications: persistent `world.modifications` + active event `placement`. Persistent save по-прежнему без overlay (`record: false`).
+- `ServerPlayer.knownChunks` сбрасывается с connection epoch (`resetConnectionInput`), чтобы reconnect не считал новый `VoxelWorld` уже простримленным.
+- Подробности: `docs/reports/2026-09-20_world-events-reconnect-overlay.md`.
+
+## Последний проход: World events persistence/streaming races — 2026-09-19
+
+- Follow-up после code audit: event overlay больше не пишет `world.modifications`; snapshot restore снимает `BlockRenderState` когда его не было; resumable MeshJob не помечает chunk clean после mutation уже собранной секции; server event search генерирует far chunks через `continueGeneration` с лимитом 1 commit/tick; failed search не спавнит после `cleanupAt`; catch-up берёт lock/announce из фактического `now`; перед place — один fresh validation context.
+- Не переписывались scheduler IANA, virtual claim, journal/saveGeneration, loot, texture art.
+- Подробности: `docs/reports/2026-09-19_world-events-persistence-streaming-races.md`.
+
+## Последний проход: World events hardening + bounded streaming — 2026-09-19
+
+- Follow-up после live QA: Europe/Moscow scheduler, virtual full-height event protection, spawn validation без sync disk IO, crash journal, incremental mesh/generation slices, F3 latest/max spike telemetry.
+- EventChest renderer не был root cause FPS. Просадки на дистанции 3000–5000 — unbounded chunk gen/mesh.
+- Подробности: `docs/reports/2026-09-19_world-events-hardening.md`.
+
+## Последний проход: Timed world events + event chest — 2026-09-19
+
+- Anarchy builtin `world-events`: daily timed event foundation + first `resource_chest` event (warn 15 мин, spawn locked chest + 5×5 shrine, unlock 5 мин, cleanup 2 ч + snapshot restore). Persist `plugin-data/world-events/state.json`.
+- Shared `/wand` on `PlayerSelectionService` (click1/click2/cycle). AutoMine keeps a private selection and skips while wand mode is on; `/automine wand` turns shared wand off.
+- `BlockId.EventChest = 166`, texture `entity/chest/event` (Crimson Relic, UV/alpha 1:1 with source). OakSign stays 165.
+- Подробности: `docs/reports/2026-09-19_world-events-event-chest.md`.
+
 ## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
 
 - Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.
@@ -579,7 +610,7 @@
 ## Последний проход: AutoMine plugin — 2026-09-09
 
 - Builtin Anarchy plugin `automine` (`/automine`). Кубоидные авто-шахты, weighted random из 12 существующих BlockId, reset через `VoxelWorld.applyBlockBatch` (64 блока/тик), эвакуация через `TeleportService`.
-- Выделение — свой wand (`wooden_axe`), не Claims / не `PlayerSelectionService`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
+- Выделение авто-шахты — свой wand (`wooden_axe`) на `AutoMineManager`, не Claims. Общий `/wand` живёт в `PlayerSelectionService` и **не** перехватывает клики AutoMine, пока не включён `activateWand`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
 - Шансы зашиты в коде (сумма 100%, Obsidian = Coal, Titanium самый редкий). Нет команд изменения composition.
 - TitaniumOre остаётся 161; TNT Powerful/Destructive 162/163 — конфликт ID не возвращался.
 - Handoff: `docs/reports/2026-09-09_automine-plugin.md`.

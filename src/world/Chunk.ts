@@ -48,6 +48,12 @@ export class Chunk {
   meshDirtyMinY = 0;
   meshDirtyMaxY = WORLD_HEIGHT - 1;
   meshDirtyAllY = true;
+  /**
+   * Monotonic counter of mesh-relevant content changes (block ID, render
+   * state, light-driven remesh marks). Independent of the dirty Y range so a
+   * mutation inside an already-queued range cannot reuse a stale MeshJob.
+   */
+  meshContentVersion = 0;
 
   constructor(readonly x: number, readonly z: number) {}
 
@@ -99,6 +105,10 @@ export class Chunk {
 
   bumpLightVersion(): void {
     this.lightVersion += 1;
+  }
+
+  bumpMeshContentVersion(): void {
+    this.meshContentVersion += 1;
   }
 
   noteMeshDirtyY(y: number): void {

@@ -1,5 +1,52 @@
 # Тестирование
 
+## 2026-09-20 Event overlay on reconnect
+
+Focused:
+
+```text
+npx vitest run tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/anarchy-server.test.ts tests/server/anarchy-gameplay.test.ts tests/incremental-mesh.test.ts tests/fs-world-store.test.ts tests/world-state.test.ts --maxWorkers=2
+```
+
+## 2026-09-19 World events persistence/streaming races
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/server/claims.test.ts tests/server/claim-commands.test.ts tests/server/claim-anchors.test.ts tests/server/claim-anchor-blocks.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/longtask-monitor.test.ts tests/hidden-tab-motion.test.ts tests/incremental-mesh.test.ts tests/generation-stages.test.ts tests/urgent-block-mesh.test.ts tests/automine-reset-pipeline.test.ts --maxWorkers=2
+```
+
+DEV timings (not a CI gate):
+
+```text
+npx vite-node scripts/qa-streaming-budget.ts
+npx vite-node scripts/qa-world-events-races.ts
+```
+
+## 2026-09-19 World events hardening + bounded streaming
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/server/claims.test.ts tests/server/claim-commands.test.ts tests/server/claim-anchors.test.ts tests/server/claim-anchor-blocks.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/longtask-monitor.test.ts tests/hidden-tab-motion.test.ts tests/incremental-mesh.test.ts tests/generation-stages.test.ts tests/urgent-block-mesh.test.ts tests/automine-reset-pipeline.test.ts --maxWorkers=2
+```
+
+DEV timings (not a CI gate):
+
+```text
+npx vite-node scripts/qa-streaming-budget.ts
+```
+
+## 2026-09-19 Timed world events + event chest
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/special-preview-contract.test.ts --maxWorkers=2
+```
+
+**11 files / 44 tests PASS**. Related chest/plugin regression **27/27**. `typecheck` / `typecheck:server` / `typecheck:client` / `typecheck:sim` / `check:boundaries` PASS.
+
 ## 2026-09-19 Clan invitations + leader announcement
 
 Report: `reports/2026-09-19_clan-invites-announce.md`.

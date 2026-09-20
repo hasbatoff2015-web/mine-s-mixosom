@@ -84,6 +84,7 @@ describe('urgent live block remesh', () => {
     chunk.skyLateralReady = true;
     chunk.blockLightReady = true;
     const renderer = new WorldRenderer(world, atlasStub);
+    renderer.rebuildDirty(9, 50, 8, 8, { requireNeighborLight: false, allowPendingLighting: true });
     applyNetworkBlockChanges(world, [
       { x: 8, y: 41, z: 8, blockId: BlockId.OakDoor, state: { open: true, facing: 'north', half: 'lower' } },
     ]);

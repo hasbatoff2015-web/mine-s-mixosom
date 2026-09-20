@@ -204,6 +204,8 @@ export interface ClanRuntime {
   setBlock?(x: number, y: number, z: number, blockId: number): boolean;
   loadClaims?(): ClaimStore;
   saveClaims?(store: ClaimStore): void;
+  /** Virtual claims (active world-event column) that must not be stored in claims.json. */
+  extraClaims?(): readonly Claim[];
   teleportNow?(playerId: string, dest: { x: number; y: number; z: number }): { ok: boolean; error?: string };
   showClaim?(playerId: string, claim: Claim): void;
 }
@@ -980,7 +982,12 @@ export class ClanService {
       }
       const volume = createClanBaseClaim(clan.clanId, clan.name, worldId, anchor).volume;
       const store = this.runtime.loadClaims();
-      const overlapping = overlappingClaims(store.claims, worldId, volume, clan.base?.claimId);
+      const overlapping = overlappingClaims(
+        [...store.claims, ...(this.runtime.extraClaims?.() ?? [])],
+        worldId,
+        volume,
+        clan.base?.claimId,
+      );
       if (overlapping.length > 0) {
         session.message = CLAN_BASE_OVERLAP_ERROR;
         return { ok: false, error: CLAN_BASE_OVERLAP_ERROR, clan };

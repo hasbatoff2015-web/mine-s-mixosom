@@ -221,6 +221,11 @@ export class PageVisibilityProbe {
     );
   }
 
+  isBackgroundSample(now = nowMs()): boolean {
+    if (this.visibility === 'hidden') return true;
+    return this.resumeUntilMs > 0 && now <= this.resumeUntilMs;
+  }
+
   closeResumeWindow(now = nowMs()): void {
     if (!this.lastResumeWindow || this.resumeUntilMs === 0 || now < this.resumeUntilMs) return;
     this.lastResumeSummary = summarizeResumeWindow(this.lastResumeWindow);

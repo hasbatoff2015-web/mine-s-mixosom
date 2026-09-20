@@ -267,7 +267,7 @@ export class AnarchyServer {
       you: { ...player.snapshot(), appearance: player.appearance },
       inventory: player.inventory.serialize(),
       players: others,
-      modifications: this.world.modifications(),
+      modifications: this.world.networkModifications(),
       blockStates: this.world.blockStates(),
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,

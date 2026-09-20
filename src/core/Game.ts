@@ -202,6 +202,7 @@ import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
+import { CONTAINER_STRINGS } from '../ui/containerStrings';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { processDeferredLighting } from '../world/LightingAdapter';
@@ -1259,6 +1260,12 @@ export class Game {
         this.handleOnlineActionResult(session, message);
         return;
       case 'chunk_data':
+        // Block IDs come from welcome.modifications (and live block_batch).
+        // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
+        // `message.modifications` is the same effective network overlay for
+        // this column (persistent + active event); the client does not replay
+        // it here because restore() already installed the map. Signs are the
+        // payload unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);
@@ -1412,7 +1419,9 @@ export class Game {
     const y = window.y ?? 0;
     const z = window.z ?? 0;
     applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest);
-    const block = kind === 'chest' ? BlockId.Chest
+    const worldBlock = session.world.getBlock(x, y, z);
+    const block = kind === 'chest'
+      ? (worldBlock === BlockId.EventChest ? BlockId.EventChest : BlockId.Chest)
       : kind === 'portal-chest' ? BlockId.PortalChest
         : kind === 'furnace' ? BlockId.Furnace
           : BlockId.CraftingTable;
@@ -3364,16 +3373,23 @@ export class Game {
     }
     const generateLimit = loading ? 8 : 1;
     const generateBudget = Math.max(budget, loading ? 1 : 0);
+    session.world.discardObsoleteGeneration(originX, originZ, generateRadius);
+    let genWork = 0;
     for (const coord of missing) {
       if (generated >= generateLimit) break;
-      if (generateBudget > 0 && performance.now() - jobStart >= generateBudget) break;
+      if (generateBudget > 0 && performance.now() - jobStart >= generateBudget && genWork > 0) break;
       if (inspect) {
         this.jobFrame.genAttempted += 1;
         this.streamingTrace.mark('generationStarted', coord.x, coord.z, performance.now());
       }
       const genStart = performance.now();
-      session.world.getChunk(coord.x, coord.z);
+      const remaining = Math.max(0.25, generateBudget - (performance.now() - jobStart));
+      const result = session.world.continueGeneration(coord.x, coord.z, remaining, {
+        maxColumns: loading ? 64 : 16,
+      });
       this.lastGenerateMs += performance.now() - genStart;
+      if (result.advanced) genWork += 1;
+      if (!result.done) break;
       generated += 1;
       if (inspect) {
         this.jobFrame.genCompleted += 1;
@@ -3382,7 +3398,7 @@ export class Game {
         this.streamingTrace.mark('meshQueued', coord.x, coord.z, doneAt);
       }
     }
-    this.lastChunkGenerationJobs = generated;
+    this.lastChunkGenerationJobs = generated + (genWork > generated ? 1 : 0);
 
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
     this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
@@ -3415,7 +3431,7 @@ export class Game {
     const defaultMeshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
     const plan = planMeshFrame({
       loading,
-      generatedThisFrame: generated > 0,
+      generatedThisFrame: genWork > 0,
       consecutiveGenWithoutMesh: this.genWithoutMeshStreak,
       readyJobs,
       defaultMeshLimit,
@@ -3426,10 +3442,10 @@ export class Game {
     this.jobFrame.meshOldestReadyAgeMs = plan.oldestReadyAgeMs;
     this.jobFrame.meshStarvationAvoided = plan.starvationAvoided;
     this.jobFrame.meshSkippedFrame = plan.skipMesh;
-    this.jobFrame.meshSkippedDueToGenSeparation = !loading && generated > 0 && plan.skipMesh;
+    this.jobFrame.meshSkippedDueToGenSeparation = !loading && genWork > 0 && plan.skipMesh;
 
     if (plan.skipMesh || plan.meshLimit <= 0) {
-      if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
+      if (!loading && genWork > 0) this.genWithoutMeshStreak += 1;
       else this.genWithoutMeshStreak = 0;
       this.lastChunkMeshJobs = urgentMeshed;
       return;
@@ -3437,7 +3453,7 @@ export class Game {
 
     const meshBudget = Math.max(0.5, (loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS) - (performance.now() - jobStart));
     const meshStart = performance.now();
-    const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0 } : undefined;
+    const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0, sections: 0 } : undefined;
     meshed = session.worldRenderer.rebuildDirty(
       plan.meshLimit,
       meshBudget,
@@ -3449,6 +3465,7 @@ export class Game {
         counters: meshCounters,
         dirX: velocity.x,
         dirZ: velocity.z,
+        maxSections: loading ? 12 : 3,
         onMeshStart: inspect
           ? (chunk) => {
             this.lastMeshActiveKey = inspectChunkKey(chunk.x, chunk.z);
@@ -3477,7 +3494,7 @@ export class Game {
     );
     this.lastMeshMs += performance.now() - meshStart;
     this.lastChunkMeshJobs = meshed + urgentMeshed;
-    this.genWithoutMeshStreak = meshed > 0 || generated === 0 ? 0 : this.genWithoutMeshStreak + 1;
+    this.genWithoutMeshStreak = meshed > 0 || genWork === 0 ? 0 : this.genWithoutMeshStreak + 1;
     if (meshCounters) {
       this.jobFrame.meshAttempted = meshCounters.attempted;
       this.jobFrame.meshCompleted = meshCounters.completed;
@@ -3999,6 +4016,7 @@ export class Game {
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'portal-chest' ? { chest: session.portalChest } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
+      ...(hit.block === BlockId.EventChest ? { containerTitle: CONTAINER_STRINGS.eventChest } : {}),
       onClose: () => {
         this.closeInventoryAndResumeLook();
         void this.saveSession();
@@ -4260,6 +4278,7 @@ export class Game {
         genJobs: this.lastChunkGenerationJobs,
         meshJobs: this.lastChunkMeshJobs,
         at: frameStart,
+        background: this.visibilityProbe.isBackgroundSample(performance.now()),
       });
     }
     if (this.profiler.enabled) {
@@ -4951,7 +4970,7 @@ export class Game {
   private releaseBlockEntityContents(hit: VoxelHit): void {
     const session = this.session!;
     const key = `${hit.x},${hit.y},${hit.z}`;
-    if (hit.block === BlockId.Chest) {
+    if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
       session.world.chests.delete(key);
@@ -6089,7 +6108,7 @@ export class Game {
       const renderInfo = this.renderer.info.render;
       const itemCache = this.itemVisuals?.cacheStats;
       const sfx = this.audio.debugSnapshot();
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / p99 ${frameTiming.p99Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max slice · job ${session.world.generationJobAverageMs.toFixed(2)} avg / ${session.world.generationJobMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshSectionAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshSectionMaximumMs.toFixed(2)} max section · job ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
       if (this.debugTickOrder && this.kernelTrace.length > 0) {
         this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
       }

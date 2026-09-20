@@ -225,6 +225,7 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
     switch (input.hit.block) {
       case BlockId.CraftingTable: return 'open-crafting-table';
       case BlockId.Chest: return 'open-chest';
+      case BlockId.EventChest: return 'open-chest';
       case BlockId.PortalChest: return 'open-portal-chest';
       case BlockId.Furnace: return 'open-furnace';
       case BlockId.Lever: return 'toggle-lever';
@@ -277,7 +278,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
       ctx.effects?.openContainer?.('crafting-table', hit.x, hit.y, hit.z);
       return;
     }
-    if (hit.block === BlockId.Chest) {
+    if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       ctx.effects?.openContainer?.('chest', hit.x, hit.y, hit.z);
       return;
     }
@@ -656,7 +657,7 @@ export function placeBlockAt(
     return { ok: true };
   }
 
-  if (blockId === BlockId.Chest || blockId === BlockId.PortalChest) {
+  if (blockId === BlockId.Chest || blockId === BlockId.PortalChest || blockId === BlockId.EventChest) {
     if (placed.solid && ctx.intersectsBlock(x, y, z)) return { ok: false, reason: 'collision' };
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
     if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
