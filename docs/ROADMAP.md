@@ -1,5 +1,24 @@
 # Roadmap
 
+## 2026-09-20: Merge origin/main into always-run / KeyC
+
+- [x] Semantic merge of world-events `main` (`6447556`) into `cursor/player-run-crouch-camera-d1a5`.
+- [x] Keep `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2`, KeyC camera, minecart `WALK_SPEED`.
+
+## 2026-09-20: Fixed always-run 7 / crouch 2
+
+- [x] `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2` as literal constants (no ×1.25 multiplier).
+- [x] WASD still always-run; Shift still existing crouch; minecart still `WALK_SPEED`.
+- [ ] Owner live speed feel QA.
+
+## 2026-09-20: Always-run movement, Shift crouch, KeyC camera
+
+- [x] Default WASD ground speed = previous walk `4.317 × 1.25` (`PLAYER_MOVE_SPEED`); no separate walk mode.
+- [x] Shift is existing crouch; crouch speed = previous sneak `1.295 × 1.25`; jump-from-crouch kept; diagonal hypot kept.
+- [x] Camera cycle on physical `KeyC`; F5 unbound from camera.
+- [x] Shared client/server speed constants; minecart still uses `WALK_SPEED`.
+- [ ] Owner live WASD/Shift/KeyC/F5 and Anarchy prediction QA.
+
 ## 2026-09-20: Sync origin/main into world-events
 
 - [x] Semantic merge of current `main` (clan base, nameplates, minecart occupancy) into the world-events branch.

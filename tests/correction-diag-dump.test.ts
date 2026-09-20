@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import {
   formatCorrectionDiag,
   resetFirstCorrectionDump,
@@ -118,7 +118,7 @@ describe('corrDiag dump sections', () => {
     expect(text).toContain('extra is NOT max(0, physicsTicks-seqGap)');
     expect(text).toContain('firstDiff=z');
     expect(text).toContain('worldRevision=mutationMarks=');
-    expect(text).toContain(`walkStep=${(WALK_SPEED * FIXED_DT).toFixed(4)}`);
+    expect(text).toContain(`walkStep=${(PLAYER_MOVE_SPEED * FIXED_DT).toFixed(4)}`);
   });
 
   it('lists non-air AABB cells', () => {

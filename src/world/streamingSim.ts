@@ -8,7 +8,7 @@ import {
   CREATIVE_FLY_SPEED,
   CREATIVE_SPRINT_FLY_SPEED,
   TARGET_FRAME_MS,
-  WALK_SPEED,
+  PLAYER_MOVE_SPEED,
   WORLD_JOB_BUDGET_MS,
   WORLD_LIGHT_BUDGET_MS,
   floorDiv,
@@ -499,7 +499,7 @@ export function zigzagPath(legs: number, chunkSpan: number): Array<{ x: number; 
 }
 
 export const STREAMING_SPEEDS = {
-  walk: WALK_SPEED,
+  walk: PLAYER_MOVE_SPEED,
   fly: CREATIVE_FLY_SPEED,
   flySprint: CREATIVE_SPRINT_FLY_SPEED,
 };

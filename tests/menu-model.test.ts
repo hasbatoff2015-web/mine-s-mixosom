@@ -16,8 +16,9 @@ describe('menu model', () => {
 
   it('documents the real desktop bindings including chat', () => {
     const bindings = DESKTOP_CONTROL_SECTIONS.flatMap((section) => section.bindings);
-    expect(bindings).toContainEqual({ action: 'Бег', key: 'Shift' });
-    expect(bindings).toContainEqual({ action: 'Присесть', key: 'C' });
+    expect(bindings).toContainEqual({ action: 'Присесть', key: 'Shift' });
+    expect(bindings).toContainEqual({ action: 'Камера (1-е / 3-е лицо)', key: 'C' });
+    expect(bindings.some((binding) => binding.action === 'Бег')).toBe(false);
     expect(bindings).toContainEqual({ action: 'Меню', key: 'M' });
     expect(bindings).toContainEqual({ action: 'Чат', key: 'T' });
     expect(bindings).toContainEqual({ action: 'Команда', key: '/' });

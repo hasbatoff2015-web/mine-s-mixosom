@@ -21,8 +21,8 @@ function isTypingElement(target: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || target.isContentEditable;
 }
 
-export const DESKTOP_SPRINT_CODES = ['ShiftLeft', 'ShiftRight'] as const;
-export const DESKTOP_SNEAK_CODE = 'KeyC';
+export const DESKTOP_SNEAK_CODES = ['ShiftLeft', 'ShiftRight'] as const;
+export const DESKTOP_CAMERA_TOGGLE_CODE = 'KeyC';
 export const DESKTOP_FLY_SPRINT_CODES = ['ControlLeft', 'ControlRight'] as const;
 
 export interface InputCallbacks {
@@ -47,7 +47,7 @@ export function shouldCyclePerspectiveOnKey(input: {
   readonly canCapture: () => boolean;
   readonly hasCallback: boolean;
 }): boolean {
-  return input.code === 'F5'
+  return input.code === DESKTOP_CAMERA_TOGGLE_CODE
     && !input.repeat
     && !input.typing
     && input.hasCallback
@@ -118,9 +118,9 @@ export class InputManager {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
       jump: this.keys.has('Space') || this.touchJump,
-      sprint: DESKTOP_SPRINT_CODES.some((code) => this.keys.has(code)) || this.touchSprint,
-      sneak: this.keys.has(DESKTOP_SNEAK_CODE) || this.touchSneak,
-      descend: DESKTOP_SPRINT_CODES.some((code) => this.keys.has(code)),
+      sprint: this.touchSprint,
+      sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
+      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)),
       flySprint: DESKTOP_FLY_SPRINT_CODES.some((code) => this.keys.has(code)),
     };
   }

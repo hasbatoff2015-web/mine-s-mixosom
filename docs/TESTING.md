@@ -1,5 +1,30 @@
 # Тестирование
 
+## 2026-09-20 Merge origin/main into always-run / KeyC
+
+Semantic merge of world-events `main` (`6447556`). Docs conflicts kept both sides. Code auto-merged.
+
+## 2026-09-20 Fixed always-run 7 / crouch 2
+
+Report: `reports/2026-09-20_player-move-speed-7-crouch-2.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/minecart-controls.test.ts tests/creative-flight.test.ts --maxWorkers=2
+```
+
+Contracts: `PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, Shift crouch + jump, hypot diagonal, minecart still `WALK_SPEED×1.5`. Focused player-physics/pipeline/prediction/minecart/move-sim **86/86 PASS**. `typecheck` PASS. `build` PASS.
+
+## 2026-09-20 Always-run / crouch ×1.25 / KeyC camera
+
+Report: `reports/2026-09-20_player-run-crouch-camera.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/lighting-physics-interaction.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/menu-model.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/creative-flight.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "binds dismount" --maxWorkers=1
+```
+
+Contracts: `PLAYER_MOVE_SPEED = 4.317×1.25`, `SNEAK_SPEED = 1.295×1.25`, Shift crouch + jump, hypot diagonal, `KeyC` camera, F5 unbound, remaining WASD/Space/E keybinds, minecart Shift/sneak dismount. Minecart cap still `WALK_SPEED×1.5`. Focused **93/93 PASS** (`player-physics` 14, lighting 8, camera 10, player-main 4, menu 3, prediction/diag/hidden-tab/pipeline 44, creative-flight 9, minecart dismount 1). `typecheck` PASS. `build` PASS.
+
 ## 2026-09-20 Event overlay on reconnect
 
 Focused:

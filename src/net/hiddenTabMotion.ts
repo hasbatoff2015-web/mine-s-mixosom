@@ -12,7 +12,7 @@
  *   show  → discard wall-clock catch-up; snap local player to latest snapshot
  */
 
-import { FIXED_DT, MAX_CATCH_UP_TICKS, WALK_SPEED } from '../core/constants';
+import { FIXED_DT, MAX_CATCH_UP_TICKS, PLAYER_MOVE_SPEED } from '../core/constants';
 import { worldSimulationActive } from '../core/gameplayModal';
 import type { LifecycleState } from '../core/lifecycleTypes';
 import { PlayerController } from '../player/PlayerController';
@@ -143,7 +143,7 @@ export function summarizeResumeWindow(window: HiddenTabResumeWindow): {
 }
 
 /** Expected server travel while the client is frozen and lastInput stays W. */
-export function hiddenServerTravelMeters(hiddenSeconds: number, speed = WALK_SPEED): number {
+export function hiddenServerTravelMeters(hiddenSeconds: number, speed = PLAYER_MOVE_SPEED): number {
   return speed * hiddenSeconds;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import { advanceFixedStep } from '../src/core/fixedStep';
 import { LocalPlayerRenderState } from '../src/core/localPlayerRenderState';
 import type { MoveInput } from '../src/input/MoveInput';
@@ -302,13 +302,16 @@ function runOnline(options: {
 }
 
 describe('local motion pipeline SP vs Online', () => {
+  const frame60 = 1 / 60;
+  const step60 = PLAYER_MOVE_SPEED * frame60;
+
   it('singleplayer 60fps walk interpolates between 20 TPS poses', () => {
-    const run = runSingleplayer(2, 1 / 60);
+    const run = runSingleplayer(2, frame60);
     const summary = statsOf(run);
     expect(summary.ticks).toBe(40);
-    expect(summary.meanStep).toBeGreaterThan(0.04);
-    expect(summary.meanStep).toBeLessThan(0.10);
-    expect(summary.maxStep).toBeLessThan(0.12);
+    expect(summary.meanStep).toBeGreaterThan(step60 * 0.5);
+    expect(summary.meanStep).toBeLessThan(step60 * 1.25);
+    expect(summary.maxStep).toBeLessThan(step60 * 1.6);
     expect(summary.zeroLerpWhileMoving).toBe(0);
     expect(summary.multiTickFrames).toBe(0);
     const withTicks = run.samples.filter((sample) => sample.ticks > 0);
@@ -318,8 +321,8 @@ describe('local motion pipeline SP vs Online', () => {
   });
 
   it('online 1:1 snapshots accept without mutating live pose and match SP render steps', () => {
-    const sp = statsOf(runSingleplayer(2, 1 / 60));
-    const run = runOnline({ seconds: 2, frameDt: 1 / 60, serverDt: FIXED_DT, mode: 'lockstep' });
+    const sp = statsOf(runSingleplayer(2, frame60));
+    const run = runOnline({ seconds: 2, frameDt: frame60, serverDt: FIXED_DT, mode: 'lockstep' });
     const summary = statsOf(run);
     expect(summary.ticks).toBe(40);
     expect(summary.corrections).toBe(0);
@@ -327,7 +330,7 @@ describe('local motion pipeline SP vs Online', () => {
     expect(summary.acceptMutations).toBe(0);
     expect(summary.collapsedLerp).toBe(0);
     expect(summary.accepts).toBeGreaterThan(30);
-    expect(summary.maxStep).toBeLessThan(0.12);
+    expect(summary.maxStep).toBeLessThan(step60 * 1.6);
     expect(Math.abs(summary.meanStep - sp.meanStep)).toBeLessThan(0.002);
   });
 
@@ -501,8 +504,8 @@ describe('local motion pipeline SP vs Online', () => {
     const online = statsOf(run(true));
     expect(sp.multiTickFrames).toBeGreaterThan(0);
     expect(online.multiTickFrames).toBe(sp.multiTickFrames);
-    expect(sp.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
-    expect(online.maxStep).toBeLessThan(WALK_SPEED * 0.055 * 1.15);
+    expect(sp.maxStep).toBeLessThan(PLAYER_MOVE_SPEED * 0.055 * 1.15);
+    expect(online.maxStep).toBeLessThan(PLAYER_MOVE_SPEED * 0.055 * 1.15);
     expect(online.corrections).toBe(0);
     expect(Math.abs(sp.meanStep - online.meanStep)).toBeLessThan(0.002);
   });
@@ -521,7 +524,7 @@ describe('local motion pipeline SP vs Online', () => {
       serverDt: FIXED_DT,
       mode: 'lockstep',
     }));
-    expect(sp.maxStep).toBeLessThan(0.08);
+    expect(sp.maxStep).toBeLessThan(PLAYER_MOVE_SPEED * (1 / 155) * 2.5);
     expect(Math.abs(noNet.meanStep - sp.meanStep)).toBeLessThan(0.002);
     expect(Math.abs(lockstep.meanStep - sp.meanStep)).toBeLessThan(0.002);
     expect(lockstep.corrections).toBe(0);

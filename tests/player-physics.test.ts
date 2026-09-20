@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
+import {
+  PLAYER_HEIGHT,
+  PLAYER_MOVE_SPEED,
+  PLAYER_SNEAK_EYE_HEIGHT,
+  PLAYER_SNEAK_HEIGHT,
+  SNEAK_SPEED,
+  WALK_SPEED,
+} from '../src/core/constants';
+import { MINECART_MAX_SPEED } from '../src/entities/MinecartManager';
 import type { MoveInput } from '../src/input/InputManager';
 import { PlayerController, type PlayerInputSource } from '../src/player';
 import type { VoxelWorld } from '../src/world/World';
@@ -46,9 +55,12 @@ function flatWorld(): TestWorld {
 
 describe('PlayerController voxel physics', () => {
   it('stands on a floor and slides without entering a wall', () => {
-    const world = flatWorld();
+    const world = new TestWorld();
+    for (let z = -24; z <= 24; z += 1) {
+      for (let x = -4; x <= 4; x += 1) world.set(x, 0, z, BlockId.Stone);
+    }
     for (let y = 1; y <= 3; y += 1) {
-      for (let z = -4; z <= 4; z += 1) world.set(1, y, z, BlockId.Stone);
+      for (let z = -24; z <= 24; z += 1) world.set(1, y, z, BlockId.Stone);
     }
     const player = new PlayerController({ position: [0.5, 1, 0.5] });
     for (let tick = 0; tick < 30; tick += 1) {
@@ -166,5 +178,86 @@ describe('PlayerController voxel physics', () => {
     expect(player.onGround).toBe(true);
     expect(player.fallDistance).toBe(0);
     expect(result.fallDamage).toBe(0);
+  });
+});
+
+describe('PlayerController always-run / crouch speeds', () => {
+  function wideFlatWorld(): TestWorld {
+    const world = new TestWorld();
+    for (let z = -24; z <= 24; z += 1) {
+      for (let x = -24; x <= 24; x += 1) world.set(x, 0, z, BlockId.Stone);
+    }
+    return world;
+  }
+
+  function horizontalSpeed(player: PlayerController): number {
+    return Math.hypot(player.velocity.x, player.velocity.z);
+  }
+
+  function settle(movement: Partial<MoveInput>, ticks = 16): PlayerController {
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+    const world = wideFlatWorld();
+    for (let tick = 0; tick < ticks; tick += 1) {
+      player.tick(world as unknown as VoxelWorld, input(movement), 0.05);
+    }
+    return player;
+  }
+
+  it('uses fixed always-run 7 and crouch 2 without changing minecart walk cap', () => {
+    expect(PLAYER_MOVE_SPEED).toBe(7);
+    expect(SNEAK_SPEED).toBe(2);
+    expect(WALK_SPEED).toBe(4.317);
+    expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
+    expect(PLAYER_MOVE_SPEED).not.toBe(WALK_SPEED);
+  });
+
+  it('uses always-run speed without sneak and does not need a sprint flag', () => {
+    const running = settle({ forward: 1 });
+    const sprintFlag = settle({ forward: 1, sprint: true });
+    expect(running.onGround).toBe(true);
+    expect(running.sneaking).toBe(false);
+    expect(running.sprinting).toBe(false);
+    expect(running.height).toBe(PLAYER_HEIGHT);
+    expect(horizontalSpeed(running)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(sprintFlag)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(running)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+  });
+
+  it('uses the new crouch speed while Shift/sneak keeps the existing stance', () => {
+    const crouched = settle({ forward: 1, sneak: true });
+    expect(crouched.onGround).toBe(true);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.sprinting).toBe(false);
+    expect(crouched.height).toBe(PLAYER_SNEAK_HEIGHT);
+    expect(crouched.eyeHeight).toBe(PLAYER_SNEAK_EYE_HEIGHT);
+    expect(horizontalSpeed(crouched)).toBeCloseTo(2, 3);
+    expect(horizontalSpeed(crouched)).toBeCloseTo(SNEAK_SPEED, 3);
+    expect(horizontalSpeed(crouched)).toBeLessThan(PLAYER_MOVE_SPEED * 0.5);
+  });
+
+  it('allows a jump while sneaking without changing jump velocity', () => {
+    const world = wideFlatWorld();
+    const standing = new PlayerController({ position: [0.5, 1, 0.5] });
+    const crouched = new PlayerController({ position: [0.5, 1, 0.5] });
+    crouched.tick(world as unknown as VoxelWorld, input({ sneak: true }), 0.05);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.onGround).toBe(true);
+    const standingJump = standing.tick(world as unknown as VoxelWorld, input({ jump: true }), 0.05);
+    const crouchedJump = crouched.tick(world as unknown as VoxelWorld, input({ sneak: true, jump: true }), 0.05);
+    expect(standingJump.jumped).toBe(true);
+    expect(crouchedJump.jumped).toBe(true);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.velocity.y).toBeGreaterThan(0);
+    expect(crouched.velocity.y).toBeCloseTo(standing.velocity.y, 6);
+  });
+
+  it('normalizes diagonal wish so W+A matches single-axis always-run speed', () => {
+    const forward = settle({ forward: 1 });
+    const strafe = settle({ right: 1 });
+    const diagonal = settle({ forward: 1, right: 1 });
+    expect(horizontalSpeed(forward)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(strafe)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(diagonal)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(diagonal)).toBeCloseTo(horizontalSpeed(forward), 3);
   });
 });
