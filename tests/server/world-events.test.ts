@@ -16,10 +16,14 @@ import { JsonFileStore } from '../../server/services/jsonStore';
 import {
   DEFAULT_WORLD_EVENTS_CONFIG,
   EVENT_SEARCH_MAX_CHUNK_COMMITS_PER_TICK,
+  overlayEventPlacementOnChunkModifications,
+  overlayEventPlacementOnModifications,
   SEARCH_RETRY_MS,
   WorldEventsManager,
   type WorldEventsHost,
 } from '../../server/services/worldEvents';
+import { CHUNK_SIZE, chunkKey, floorDiv } from '../../src/core/constants';
+import { Chunk } from '../../src/world/Chunk';
 
 function memoryHost(world: VoxelWorld, extra: Partial<WorldEventsHost> = {}): WorldEventsHost & {
   saved: unknown;
@@ -850,6 +854,126 @@ describe('world events lifecycle', () => {
     expect(commits.some((count) => count === 0 || count === 1)).toBe(true);
     expect(Math.max(...commits)).toBeLessThanOrEqual(1);
     expect(guard).toBeGreaterThan(1);
+  });
+
+  it('overlays event placement onto network modifications without mutating persistence', () => {
+    const persistent = { '0,0': { '1': BlockId.Dirt } };
+    const snapshot = JSON.parse(JSON.stringify(persistent)) as typeof persistent;
+    const cell = { x: 4, y: 40, z: 5, blockId: BlockId.StoneBricks };
+    const air = { x: 4, y: 41, z: 5, blockId: BlockId.Air };
+    const key = chunkKey(0, 0);
+    const composed = overlayEventPlacementOnModifications(persistent, [cell, air]);
+    expect(persistent).toEqual(snapshot);
+    expect(composed[key]?.[String(Chunk.index(4, 40, 5))]).toBe(BlockId.StoneBricks);
+    expect(composed[key]?.[String(Chunk.index(4, 41, 5))]).toBe(BlockId.Air);
+    expect(composed[key]?.['1']).toBe(BlockId.Dirt);
+    const chunk = overlayEventPlacementOnChunkModifications({}, [cell, air], 0, 0);
+    expect(chunk[String(Chunk.index(4, 40, 5))]).toBe(BlockId.StoneBricks);
+    expect(overlayEventPlacementOnChunkModifications({}, [cell], 1, 0)).toEqual({});
+  });
+
+  it('reconnects a fresh client world to the live shrine without persistent mods', () => {
+    const world = new VoxelWorld('world-events-reconnect-visual');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const spawned = spawnChest(manager, world);
+    const persistent = world.serializeModifications();
+    expect(persistent).toEqual({});
+    const network = overlayEventPlacementOnModifications(persistent, manager.networkPlacement());
+    expect(network).not.toEqual(persistent);
+
+    const client = new VoxelWorld('world-events-reconnect-visual');
+    client.restore({
+      timeOfDay: world.timeOfDay,
+      modifications: network,
+      chests: {},
+      furnaces: {},
+      blockStates: world.serializeBlockStates(),
+    });
+    const cx = floorDiv(spawned.x, CHUNK_SIZE);
+    const cz = floorDiv(spawned.z, CHUNK_SIZE);
+    client.getChunk(cx, cz, true);
+    expect(client.getBlock(spawned.x, spawned.y, spawned.z)).toBe(BlockId.EventChest);
+    expect(client.getBlock(spawned.x, spawned.y, spawned.z)).toBe(world.getBlock(spawned.x, spawned.y, spawned.z));
+    expect(client.getBlockState(spawned.x, spawned.y, spawned.z)).toEqual(world.getBlockState(spawned.x, spawned.y, spawned.z));
+    expect(client.getBlock(spawned.x, spawned.y - 1, spawned.z)).toBe(BlockId.StoneBricks);
+    expect(client.getBlock(spawned.x - 2, spawned.y, spawned.z - 2)).toBe(BlockId.RedWool);
+    expect(client.getBlock(spawned.x - 2, spawned.y + 1, spawned.z - 2)).toBe(BlockId.OakFence);
+    expect(client.getBlock(spawned.x, spawned.y + 1, spawned.z)).toBe(BlockId.Air);
+    expect(client.getBlockState(spawned.x, spawned.y, spawned.z - 2)).toEqual({
+      facing: 'north',
+      stairHalf: 'bottom',
+    });
+    for (const cell of manager.active!.placement!) {
+      expect(client.getBlock(cell.x, cell.y, cell.z)).toBe(world.getBlock(cell.x, cell.y, cell.z));
+      expect(client.getBlockState(cell.x, cell.y, cell.z)).toEqual(world.getBlockState(cell.x, cell.y, cell.z));
+    }
+
+    const control = new VoxelWorld('world-events-reconnect-visual');
+    control.restore({
+      timeOfDay: world.timeOfDay,
+      modifications: persistent,
+      chests: {},
+      furnaces: {},
+      blockStates: {},
+    });
+    control.getChunk(cx, cz, true);
+    expect(control.getBlock(spawned.x, spawned.y, spawned.z)).not.toBe(BlockId.EventChest);
+
+    client.pruneChunks(spawned.x + 10_000, spawned.z + 10_000, 0);
+    expect(client.getChunk(cx, cz, false)).toBeUndefined();
+    client.getChunk(cx, cz, true);
+    expect(client.getBlock(spawned.x, spawned.y, spawned.z)).toBe(BlockId.EventChest);
+
+    manager.forceCleanup();
+    manager.acknowledgeWorldSaved();
+    expect(world.serializeModifications()).toEqual(persistent);
+    const after = overlayEventPlacementOnModifications(world.serializeModifications(), manager.networkPlacement());
+    expect(after).toEqual(persistent);
+    const cleaned = new VoxelWorld('world-events-reconnect-visual');
+    cleaned.restore({
+      timeOfDay: world.timeOfDay,
+      modifications: after,
+      chests: {},
+      furnaces: {},
+      blockStates: world.serializeBlockStates(),
+    });
+    cleaned.getChunk(cx, cz, true);
+    expect(cleaned.getBlock(spawned.x, spawned.y, spawned.z)).not.toBe(BlockId.EventChest);
+    expect(cleaned.getBlock(spawned.x, spawned.y, spawned.z)).toBe(world.getBlock(spawned.x, spawned.y, spawned.z));
+  });
+
+  it('overlays a shrine that straddles a chunk border', () => {
+    const world = new VoxelWorld('world-events-chunk-border');
+    const host = memoryHost(world);
+    const manager = new WorldEventsManager(host);
+    manager.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC' });
+    manager.load();
+    manager.enabled = true;
+    const x = CHUNK_SIZE;
+    const z = CHUNK_SIZE;
+    const y = world.surfaceY(x, z) + 1;
+    expect(manager.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    const network = overlayEventPlacementOnModifications(
+      world.serializeModifications(),
+      manager.networkPlacement(),
+    );
+    expect(network['0,0']).toBeDefined();
+    expect(network['1,1']).toBeDefined();
+    const client = new VoxelWorld('world-events-chunk-border');
+    client.restore({
+      timeOfDay: world.timeOfDay,
+      modifications: network,
+      chests: {},
+      furnaces: {},
+      blockStates: world.serializeBlockStates(),
+    });
+    for (const [cx, cz] of [[0, 0], [0, 1], [1, 0], [1, 1]] as const) client.getChunk(cx, cz, true);
+    expect(client.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(client.getBlock(x - 2, y, z - 2)).toBe(world.getBlock(x - 2, y, z - 2));
   });
 });
 

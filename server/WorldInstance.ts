@@ -98,7 +98,7 @@ import { PermissionService } from './services/permissions';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
 import { AutoMineManager, mineVolume } from './services/autoMine';
-import { WorldEventsManager } from './services/worldEvents';
+import { WorldEventsManager, overlayEventPlacementOnChunkModifications, overlayEventPlacementOnModifications } from './services/worldEvents';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
@@ -1122,6 +1122,7 @@ export class WorldInstance {
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) existing.appearance = joinedAppearance;
         this.resetConnectionInput(existing);
+        this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
         const fp = sessionTokenFingerprint(existing.sessionToken);
         serverLog(
           `player joined: ${existing.name} (${existing.id}, resume) `
@@ -2991,6 +2992,26 @@ export class WorldInstance {
     return this.world.serializeModifications();
   }
 
+  /**
+   * Effective terrain deltas for a new client world: persistent modifications
+   * plus the active event overlay. Does not mutate `world.modifications`.
+   */
+  networkModifications(): WorldModifications {
+    return overlayEventPlacementOnModifications(
+      this.world.serializeModifications(),
+      this.worldEvents.networkPlacement(),
+    );
+  }
+
+  networkChunkModifications(cx: number, cz: number): Record<string, number> {
+    return overlayEventPlacementOnChunkModifications(
+      this.world.serializeChunkModifications(cx, cz),
+      this.worldEvents.networkPlacement(),
+      cx,
+      cz,
+    );
+  }
+
   blockStates(): WorldBlockStates {
     return this.world.serializeBlockStates();
   }
@@ -3351,6 +3372,7 @@ export class WorldInstance {
       pitch: player.controller.pitch,
       selectedSlot: player.selectedSlot,
     };
+    player.knownChunks.clear();
   }
 
   /** Player physics + survival + mining/use hold. Invoked from GameplayKernel `players` step. */
@@ -3783,7 +3805,7 @@ export class WorldInstance {
         if (!this.generatedChunks.has(key)) continue;
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
-          const mods = this.world.serializeChunkModifications(x, z);
+          const mods = this.networkChunkModifications(x, z);
           this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
           this.lastChunkSends += 1;
         }

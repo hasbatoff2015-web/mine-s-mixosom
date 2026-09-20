@@ -1258,6 +1258,12 @@ export class Game {
         this.handleOnlineActionResult(session, message);
         return;
       case 'chunk_data':
+        // Block IDs come from welcome.modifications (and live block_batch).
+        // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
+        // `message.modifications` is the same effective network overlay for
+        // this column (persistent + active event); the client does not replay
+        // it here because restore() already installed the map. Signs are the
+        // payload unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);

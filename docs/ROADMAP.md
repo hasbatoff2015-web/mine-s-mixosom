@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-20: Event overlay on reconnect
+
+- [x] Network-only composition of persistent modifications + active event placement for welcome/`chunk_data`.
+- [x] Reset `ServerPlayer.knownChunks` on connection epoch so reconnect resyncs streaming.
+- [x] Keep `EVENT_TRANSIENT_BATCH.record === false` and `world.serializeModifications()` free of the overlay.
+- [ ] Owner live Anarchy reconnect QA at the shrine.
+
 ## 2026-09-19: World events persistence/streaming races
 
 - [x] Event placement/cleanup uses `applyBlockBatch(..., { record: false })` so the overlay is not a permanent modification.

@@ -103,6 +103,59 @@ const EVENT_TRANSIENT_BATCH = {
   record: false,
 } as const;
 
+export type NetworkWorldModifications = Record<string, Record<string, number>>;
+
+function placementCellIndex(cell: Pick<EventPlacementCell, 'x' | 'y' | 'z'>): number {
+  return Chunk.index(positiveMod(cell.x, CHUNK_SIZE), cell.y, positiveMod(cell.z, CHUNK_SIZE));
+}
+
+/**
+ * Network-only composition: persistent terrain deltas plus the live event
+ * overlay. Does not mutate `persistent` or `world.modifications`.
+ * Air cells are kept — the template may carve generated terrain.
+ */
+export function overlayEventPlacementOnModifications(
+  persistent: NetworkWorldModifications,
+  placement: readonly EventPlacementCell[] | undefined,
+): NetworkWorldModifications {
+  if (!placement?.length) return persistent;
+  const result: NetworkWorldModifications = { ...persistent };
+  const copied = new Set<string>();
+  for (const cell of placement) {
+    if (!isValidWorldY(cell.y)) continue;
+    const key = chunkKey(floorDiv(cell.x, CHUNK_SIZE), floorDiv(cell.z, CHUNK_SIZE));
+    let chunk = result[key];
+    if (!chunk) {
+      chunk = {};
+      result[key] = chunk;
+      copied.add(key);
+    } else if (!copied.has(key)) {
+      chunk = { ...chunk };
+      result[key] = chunk;
+      copied.add(key);
+    }
+    chunk[String(placementCellIndex(cell))] = cell.blockId;
+  }
+  return result;
+}
+
+export function overlayEventPlacementOnChunkModifications(
+  persistent: Record<string, number>,
+  placement: readonly EventPlacementCell[] | undefined,
+  cx: number,
+  cz: number,
+): Record<string, number> {
+  if (!placement?.length) return persistent;
+  let result: Record<string, number> | undefined;
+  for (const cell of placement) {
+    if (!isValidWorldY(cell.y)) continue;
+    if (floorDiv(cell.x, CHUNK_SIZE) !== cx || floorDiv(cell.z, CHUNK_SIZE) !== cz) continue;
+    result ??= { ...persistent };
+    result[String(placementCellIndex(cell))] = cell.blockId;
+  }
+  return result ?? persistent;
+}
+
 export interface EventPlacementCell {
   readonly x: number;
   readonly y: number;
@@ -463,6 +516,17 @@ export class WorldEventsManager {
 
   get active(): ActiveWorldEvent | undefined {
     return this.store.active;
+  }
+
+  /**
+   * Live overlay cells for network bootstrap. Empty unless the shrine is
+   * actually in the authoritative world (`spawned_locked` / `active_unlocked`).
+   */
+  networkPlacement(): readonly EventPlacementCell[] | undefined {
+    const active = this.store.active;
+    if (!active?.placement) return undefined;
+    if (active.phase !== 'spawned_locked' && active.phase !== 'active_unlocked') return undefined;
+    return active.placement;
   }
 
   listTemplates(): readonly EventTemplate[] {

@@ -1,5 +1,9 @@
 # Архитектура
 
+## Event overlay on reconnect — 2026-09-20
+
+Persistent `world.modifications` still exclude the timed shrine (`applyBlockBatch` `record: false`). New clients receive **effective** terrain deltas: `overlayEventPlacementOnModifications(serializeModifications(), worldEvents.networkPlacement())` via `WorldInstance.networkModifications()` (welcome) and `networkChunkModifications` (`chunk_data`). `VoxelWorld.restore` stores that map; `finishGeneratedChunk` applies it when the column is actually generated, so login does not generate the 3000–5000 ring. Live `serializeBlockStates()` already has event facing/stairs. `ServerPlayer.knownChunks` is connection-scoped (`resetConnectionInput`).
+
 ## Timed world events persistence/streaming races — 2026-09-19
 
 Event voxels are a transient overlay: `applyPlacement` / `restoreSnapshot` call `applyBlockBatch` with `record: false`. Persistence stays in `plugin-data/world-events/state.json` and the crash journal. Pre-existing `world.modifications` inside the volume are left untouched. `VoxelWorld.replaceBlockState` accepts `state | undefined` so a snapshot can restore both presence and absence of `BlockRenderState` when the overlay reused the same block ID.

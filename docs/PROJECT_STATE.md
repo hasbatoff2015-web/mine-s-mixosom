@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Event overlay on reconnect — 2026-09-20
+
+- Welcome/chunk_data теперь отдают effective network modifications: persistent `world.modifications` + active event `placement`. Persistent save по-прежнему без overlay (`record: false`).
+- `ServerPlayer.knownChunks` сбрасывается с connection epoch (`resetConnectionInput`), чтобы reconnect не считал новый `VoxelWorld` уже простримленным.
+- Подробности: `docs/reports/2026-09-20_world-events-reconnect-overlay.md`.
+
 ## Последний проход: World events persistence/streaming races — 2026-09-19
 
 - Follow-up после code audit: event overlay больше не пишет `world.modifications`; snapshot restore снимает `BlockRenderState` когда его не было; resumable MeshJob не помечает chunk clean после mutation уже собранной секции; server event search генерирует far chunks через `continueGeneration` с лимитом 1 commit/tick; failed search не спавнит после `cleanupAt`; catch-up берёт lock/announce из фактического `now`; перед place — один fresh validation context.

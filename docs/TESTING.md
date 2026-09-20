@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-20 Event overlay on reconnect
+
+Focused:
+
+```text
+npx vitest run tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/anarchy-server.test.ts tests/server/anarchy-gameplay.test.ts tests/incremental-mesh.test.ts tests/fs-world-store.test.ts tests/world-state.test.ts --maxWorkers=2
+```
+
 ## 2026-09-19 World events persistence/streaming races
 
 Focused:

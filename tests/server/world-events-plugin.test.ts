@@ -8,6 +8,8 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import { DEFAULT_WORLD_EVENTS_CONFIG } from '../../server/services/worldEvents';
+import { VoxelWorld } from '../../src/world/World';
+import { CHUNK_SIZE, floorDiv } from '../../src/core/constants';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-world-events-'));
@@ -239,4 +241,138 @@ describe('world events plugin commands', () => {
     chat(world, op, '/claim pos2');
     expect(chat(world, op, '/claim create overlap-b').some((line) => line.includes("Claim 'overlap-b' created"))).toBe(true);
   });
+
+  it('reconnects and late-joins the same shrine without persistent modifications', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    world.worldEvents.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC', unlockDelayMinutes: 5 });
+    const x = 24;
+    const z = 24;
+    const y = world.world.surfaceY(x, z) + 1;
+    op.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    world.setView(op.player, floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), 2);
+    const persistentBefore = world.world.serializeModifications();
+    expect(world.worldEvents.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    expect(world.world.serializeModifications()).toEqual(persistentBefore);
+    expect(world.networkModifications()).not.toEqual(persistentBefore);
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.EventChest);
+
+    const token = op.player.sessionToken;
+    const previousConnection = op.player.connectionId;
+    expect(op.player.knownChunks.size).toBeGreaterThan(0);
+    world.disconnect(op.player.id);
+    expect(op.player.knownChunks.size).toBe(0);
+
+    const resumedSink = new MemorySink();
+    const resumed = world.join({ sink: resumedSink, name: 'Op', sessionToken: token });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.player).toBe(op.player);
+    expect(resumed.player.connectionId).not.toBe(previousConnection);
+    const chunkData = resumedSink.payloads.filter((payload) => (
+      payload && typeof payload === 'object' && (payload as { type?: string }).type === 'chunk_data'
+    ));
+    expect(chunkData.length).toBeGreaterThan(0);
+    const eventChunk = chunkData.find((payload) => {
+      const message = payload as { cx?: number; cz?: number; modifications?: Record<string, number> };
+      return message.cx === floorDiv(x, CHUNK_SIZE) && message.cz === floorDiv(z, CHUNK_SIZE);
+    }) as { modifications?: Record<string, number> } | undefined;
+    expect(eventChunk).toBeDefined();
+    expect(Object.values(eventChunk!.modifications ?? {})).toContain(BlockId.EventChest);
+
+    const reconnectClient = restoreOnlineClient(world);
+    reconnectClient.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), true);
+    expect(reconnectClient.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(reconnectClient.getBlockState(x, y, z)).toEqual(world.world.getBlockState(x, y, z));
+
+    const bob = join(world, 'Bob');
+    void bob;
+    const lateClient = restoreOnlineClient(world);
+    lateClient.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), true);
+    expect(lateClient.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(lateClient.getBlock(x, y - 1, z)).toBe(world.world.getBlock(x, y - 1, z));
+
+    const afterResume = resumedSink.payloads.filter((payload) => (
+      payload && typeof payload === 'object' && (payload as { type?: string }).type === 'chunk_data'
+    )).length;
+    world.tick();
+    world.tick();
+    const afterTicks = resumedSink.payloads.filter((payload) => (
+      payload && typeof payload === 'object' && (payload as { type?: string }).type === 'chunk_data'
+    )).length;
+    expect(afterTicks).toBe(afterResume);
+
+    world.worldEvents.forceCleanup();
+    await world.save();
+    expect(world.world.serializeModifications()).toEqual(persistentBefore);
+    expect(world.networkModifications()).toEqual(persistentBefore);
+    const cleaned = restoreOnlineClient(world);
+    cleaned.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), true);
+    expect(cleaned.getBlock(x, y, z)).not.toBe(BlockId.EventChest);
+    expect(cleaned.getBlock(x, y, z)).toBe(world.world.getBlock(x, y, z));
+  });
+
+  it('restores overlay after restart via storedPlayers without persisting it', async () => {
+    const dir = await tempDir();
+    dirs.push(dir);
+    const first = new WorldInstance(testConfig(dir));
+    worlds.push(first);
+    await first.initialize();
+    await first.loadPlugins();
+    await first.plugins.enableAll();
+    first.worldEvents.setConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG, timeZone: 'UTC', unlockDelayMinutes: 5 });
+    const op = join(first, 'Op');
+    const x = 24;
+    const z = 24;
+    const y = first.world.surfaceY(x, z) + 1;
+    op.player.controller.teleport([x + 0.5, y, z + 0.5]);
+    first.setView(op.player, floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), 2);
+    expect(first.worldEvents.forceSpawn({ at: { x, y, z }, yaw: 0 }).ok).toBe(true);
+    const persistent = first.world.serializeModifications();
+    const token = op.player.sessionToken;
+    first.disconnect(op.player.id);
+    await first.save();
+    await first.stop();
+    worlds.splice(worlds.indexOf(first), 1);
+
+    const second = new WorldInstance(testConfig(dir));
+    worlds.push(second);
+    await second.initialize();
+    await second.loadPlugins();
+    await second.plugins.enableAll();
+    expect(second.world.serializeModifications()).toEqual(persistent);
+    expect(second.world.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(second.networkModifications()).not.toEqual(persistent);
+
+    const sink = new MemorySink();
+    const resumed = second.join({ sink, name: 'Op', sessionToken: token });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.resumed).toBe(true);
+    expect(resumed.player.knownChunks.size).toBeGreaterThan(0);
+    const eventChunk = sink.payloads.find((payload) => {
+      const message = payload as { type?: string; cx?: number; cz?: number; modifications?: Record<string, number> };
+      return message.type === 'chunk_data'
+        && message.cx === floorDiv(x, CHUNK_SIZE)
+        && message.cz === floorDiv(z, CHUNK_SIZE);
+    }) as { modifications?: Record<string, number> } | undefined;
+    expect(Object.values(eventChunk?.modifications ?? {})).toContain(BlockId.EventChest);
+
+    const client = restoreOnlineClient(second);
+    client.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), true);
+    expect(client.getBlock(x, y, z)).toBe(BlockId.EventChest);
+    expect(client.getBlockState(x, y, z)).toEqual(second.world.getBlockState(x, y, z));
+    expect(second.world.serializeModifications()).toEqual(persistent);
+  });
 });
+
+function restoreOnlineClient(instance: WorldInstance): VoxelWorld {
+  const client = new VoxelWorld(instance.seed);
+  client.restore({
+    timeOfDay: instance.world.timeOfDay,
+    modifications: instance.networkModifications(),
+    chests: {},
+    furnaces: {},
+    blockStates: instance.blockStates(),
+  });
+  return client;
+}
