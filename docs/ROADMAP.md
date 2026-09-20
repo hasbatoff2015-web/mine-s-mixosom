@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-20: Nameplate clipping + nick max 13
+
+- [x] Size nameplate canvas from measureText + stroke/padding so 13-char Press Start 2P nicks are not clipped.
+- [x] `MAX_PLAYER_NAME_LENGTH` 16 → 13 (client + server reject 14+; clan names unchanged).
+- [x] Lower nameplate offset `2.15 → 2.05`.
+- [ ] Owner live Anarchy QA of a 13-char nick close-up.
+
 ## 2026-09-20: Player nameplate hologram visuals
 
 - [x] Remove nameplate background panel; keep nick + heart/HP text only.

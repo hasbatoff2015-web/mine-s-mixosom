@@ -73,7 +73,7 @@ import {
   shouldShowClanEmptyHint,
   type ChatMessage,
 } from '../chat';
-import { MAX_CHAT_LENGTH } from '../../shared/config';
+import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH } from '../../shared/config';
 import {
   FRIENDS_ALREADY_LABEL,
   FRIENDS_OUTGOING_LABEL,
@@ -694,7 +694,7 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
         <div class="form-grid">
           <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
-          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="16" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
+          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
           <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
           <p class="menu-notice account-error hidden" data-account-error></p>
         </div>

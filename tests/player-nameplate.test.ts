@@ -24,10 +24,12 @@ import {
   NAMEPLATE_SIZE_SCALE,
   NAMEPLATE_TEXT_LOGICAL_HEIGHT,
   NAMEPLATE_TEXT_LOGICAL_WIDTH,
+  NAMEPLATE_TEXT_PAD_X,
   NAMEPLATE_WIDTH,
   PlayerNameplate,
   nameplateLines,
   nameplateOpacity,
+  nameplateTextLayout,
 } from '../src/rendering/player/PlayerNameplate';
 import { VoxelWorld } from '../src/world/World';
 import gameSource from '../src/core/Game.ts?raw';
@@ -181,7 +183,7 @@ describe('player nameplate', () => {
     expect(NAMEPLATE_SIZE_SCALE).toBe(2);
     expect(NAMEPLATE_WIDTH).toBeCloseTo(2.1);
     expect(NAMEPLATE_HEIGHT).toBeCloseTo(0.84);
-    expect(NAMEPLATE_HEIGHT_OFFSET).toBe(2.15);
+    expect(NAMEPLATE_HEIGHT_OFFSET).toBe(2.05);
     expect(NAMEPLATE_FONT).toBe('display');
     expect(NAMEPLATE_NAME_COLOR).toBe('#fff7c2');
     expect(NAMEPLATE_HEALTH_COLOR).toBe('#ff1f1f');
@@ -199,6 +201,8 @@ describe('player nameplate', () => {
     expect(nameplateSource).toContain('setTransform');
     expect(nameplateSource).toContain('texture.needsUpdate = true');
     expect(nameplateSource).not.toContain('HologramRenderer');
+    expect(nameplateSource).not.toMatch(/slice\(0,\s*16\)/);
+    expect(nameplateSource).toContain('measureText');
 
     const plate = new PlayerNameplate('Misha', 20);
     expect(plate.sprite.scale.x).toBeCloseTo(NAMEPLATE_WIDTH);
@@ -214,6 +218,38 @@ describe('player nameplate', () => {
       expect(canvas.height).toBe(NAMEPLATE_TEXT_LOGICAL_HEIGHT * scale);
       expect(canvas.width).toBeGreaterThan(256);
       expect(canvas.height).toBeGreaterThan(96);
+    }
+    plate.dispose();
+  });
+
+  it('fits a max-length nick inside the logical atlas with side padding', () => {
+    const longNick = '1234567890123';
+    expect(longNick).toHaveLength(13);
+    const layout = nameplateTextLayout(longNick, 20);
+    expect(layout.logicalWidth).toBeGreaterThan(NAMEPLATE_TEXT_LOGICAL_WIDTH);
+    expect(layout.nameLeft).toBeGreaterThanOrEqual(NAMEPLATE_TEXT_PAD_X);
+    expect(layout.paddingLeft).toBeGreaterThanOrEqual(NAMEPLATE_TEXT_PAD_X);
+    expect(layout.paddingRight).toBeGreaterThanOrEqual(NAMEPLATE_TEXT_PAD_X);
+    expect(layout.nameRight + NAMEPLATE_TEXT_PAD_X).toBeLessThanOrEqual(layout.logicalWidth + 1e-9);
+    expect(layout.nameRight).toBeLessThanOrEqual(layout.logicalWidth);
+    expect(layout.worldHeight).toBeCloseTo(NAMEPLATE_HEIGHT);
+    expect(layout.worldWidth).toBeGreaterThan(NAMEPLATE_WIDTH);
+
+    const short = nameplateTextLayout('Misha', 20);
+    expect(short.logicalWidth).toBe(NAMEPLATE_TEXT_LOGICAL_WIDTH);
+    expect(short.worldWidth).toBeCloseTo(NAMEPLATE_WIDTH);
+    expect(short.paddingLeft).toBeGreaterThanOrEqual(NAMEPLATE_TEXT_PAD_X);
+
+    const plate = new PlayerNameplate(longNick, 20);
+    expect(plate.logicalCanvasWidth).toBe(layout.logicalWidth);
+    expect(plate.sprite.scale.x).toBeCloseTo(layout.worldWidth);
+    expect(plate.sprite.scale.y).toBeCloseTo(NAMEPLATE_HEIGHT);
+    const material = plate.sprite.material as THREE.SpriteMaterial;
+    const canvas = material.map?.image as HTMLCanvasElement | undefined;
+    if (canvas && canvas.width > 0) {
+      const scale = hologramTextCanvasScale(hologramDevicePixelRatio());
+      expect(canvas.width).toBe(layout.logicalWidth * scale);
+      expect(canvas.height).toBe(NAMEPLATE_TEXT_LOGICAL_HEIGHT * scale);
     }
     plate.dispose();
   });
