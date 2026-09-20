@@ -28,7 +28,21 @@ Removed: `PLAYER_MOVE_SPEED_MULTIPLIER`, `SNEAK_SPEED_REFERENCE`.
 
 ## Tests
 
-Recorded after the run.
+```text
+npx vitest run tests/player-physics.test.ts tests/local-motion-pipeline.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/minecart-controls.test.ts tests/move-sim-compare.test.ts tests/creative-flight.test.ts --maxWorkers=2
+```
+
+- player-physics **14/14** (`PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, crouch stance, jump, hypot, `MINECART_MAX_SPEED = WALK_SPEED×1.5`)
+- local-motion-pipeline **8/8**
+- prediction-timeline **8/8**
+- pred-isolation-matrix **9/9**
+- correction-diag-dump **10/10**
+- hidden-tab-motion **9/9**
+- minecart-controls **13/13**
+- move-sim-compare **6/6** (client/server lockstep)
+- creative-flight **9/9**
+
+`npm run typecheck` PASS. `npm run build` PASS (300 modules).
 
 ## Git
 

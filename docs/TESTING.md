@@ -8,7 +8,7 @@ Report: `reports/2026-09-20_player-move-speed-7-crouch-2.md`.
 npx vitest run tests/player-physics.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/minecart-controls.test.ts tests/creative-flight.test.ts --maxWorkers=2
 ```
 
-Contracts: `PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, Shift crouch + jump, hypot diagonal, minecart still `WALK_SPEED×1.5`.
+Contracts: `PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, Shift crouch + jump, hypot diagonal, minecart still `WALK_SPEED×1.5`. Focused player-physics/pipeline/prediction/minecart/move-sim **86/86 PASS**. `typecheck` PASS. `build` PASS.
 
 ## 2026-09-20 Always-run / crouch ×1.25 / KeyC camera
 
