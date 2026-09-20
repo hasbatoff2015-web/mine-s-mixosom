@@ -1,9 +1,10 @@
 import { BlockId, getBlockDefinition } from '../../src/blocks';
 import { CHUNK_SIZE, MAX_WORLD_Y, MIN_WORLD_Y, floorDiv, isValidWorldY } from '../../src/core/constants';
 import type { VoxelWorld } from '../../src/world/World';
+import { WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../../src/world/worldBorder';
 
-export const RTP_MIN = -10_000;
-export const RTP_MAX = 10_000;
+export const RTP_MIN = WORLD_BORDER_MIN;
+export const RTP_MAX = WORLD_BORDER_MAX - 1;
 
 export interface RtpSearchOptions {
   readonly minX: number;

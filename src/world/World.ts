@@ -13,6 +13,7 @@ import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
 import { TerrainGenerator, type Biome, type TerrainGenJob } from './Generator';
+import { gameplayMayMutateBlock } from './worldBorder';
 import {
   consumeLightTouched,
   continuePendingLight,
@@ -1436,6 +1437,7 @@ export class VoxelWorld {
       this.scheduled.splice(index, 1);
       this.scheduledKeys.delete(blockKey(scheduled.x, scheduled.y, scheduled.z));
       processed += 1;
+      if (!gameplayMayMutateBlock(scheduled.x, scheduled.z)) continue;
       const block = this.getBlock(scheduled.x, scheduled.y, scheduled.z);
       const definition = getBlockDefinition(block);
       if (definition.gravity && scheduled.y > 0) {
@@ -1455,6 +1457,7 @@ export class VoxelWorld {
   }
 
   private tickFire(x: number, y: number, z: number): void {
+    if (!gameplayMayMutateBlock(x, z)) return;
     if (this.getBlock(x, y, z, false) !== BlockId.Fire) return;
     const below = this.getBlock(x, y - 1, z, false);
     const support = getBlockDefinition(below);

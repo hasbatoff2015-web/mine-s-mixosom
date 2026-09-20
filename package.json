@@ -29,6 +29,7 @@
     "benchmark:streaming": "vite-node scripts/benchmark-streaming-scheduler.ts",
     "benchmark:worldgen": "vite-node scripts/benchmark-worldgen.ts",
     "sample:worldgen-v2": "vite-node scripts/sample-worldgen-v2.ts",
+    "sample:worldgen-v3": "vite-node scripts/sample-worldgen-v3.ts",
     "benchmark:fluids": "vite-node scripts/benchmark-fluids.ts",
     "benchmark:farming": "vite-node scripts/benchmark-farming.ts",
     "build": "tsc --noEmit && vite build",

@@ -5,6 +5,7 @@ import { interpolateVec3, lerpAngle } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import { clampHorizontalCenterToWorldBorder } from '../world/worldBorder';
 import type { EntityHost, EntityVisual } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
@@ -747,8 +748,14 @@ export class MinecartManager {
 
     if (!cart.rail) return;
     const pose = sampleRail(cart.rail, cart.progress);
-    cart.position.set(pose.x, pose.y, pose.z);
-    cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
+    const clamped = clampHorizontalCenterToWorldBorder(pose.x, pose.z, BODY.width);
+    cart.position.set(clamped.x, pose.y, clamped.z);
+    if (clamped.x !== pose.x || clamped.z !== pose.z) {
+      cart.alongSpeed = 0;
+      cart.velocity.set(0, 0, 0);
+    } else {
+      cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
+    }
     cart.yaw = pose.yaw;
     cart.pitch = pose.pitch;
   }

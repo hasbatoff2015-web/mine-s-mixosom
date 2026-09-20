@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Worldgen V3 — hydrology, gourds, world border — 2026-09-21
+
+- `WORLDGEN_VERSION = 3`. Migration A: V2 saves keep player modifications and rematerialize natural terrain with the V3 generator; the next save writes `worldgenVersion: 3`. There is no retained V2 generator.
+- Hydrology is a negative-only, seed+XZ deterministic layer (`src/world/hydrology.ts`). Land biomes stay plains/forest/desert/snowy_plains; `ColumnInfo.waterBiome` is `none|lake|ocean`.
+- Wild Pumpkin/Melon use existing block IDs and separate decoration salts. Staged `generate` matches monolithic.
+- Playable world is `-10000 <= x,z < 10000` (`src/world/worldBorder.ts`). Shared AABB collision on client prediction and server. `WorldBorderRenderer` draws four translucent red planes; scenery chunks beyond the plane still stream with normal view distance.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
 ## Последний проход: Merge origin/main into always-run / KeyC — 2026-09-20
 
 - Semantic merge `origin/main` (`6447556`, world events + event chest) into `cursor/player-run-crouch-camera-d1a5`.

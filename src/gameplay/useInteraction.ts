@@ -39,6 +39,7 @@ import {
   torchPlacementFromHit,
 } from '../blocks';
 import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
+import { gameplayMayMutateBlock } from '../world/worldBorder';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
@@ -463,6 +464,7 @@ export function placeBlockAt(
   hit?: VoxelHit,
 ): PlaceResult {
   if (!isValidWorldY(y)) return { ok: false, reason: 'bounds' };
+  if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
   const blockId = resolvePlacingBlockId(ctx, requestedBlock);
   if (blockId === undefined) return { ok: false, reason: 'inventory' };
   if (!isKnownBlockId(blockId) || blockId === BlockId.Air) return { ok: false, reason: 'block' };
@@ -492,6 +494,7 @@ export function placeBlockAt(
     const facing = doorFacingFromYaw(ctx.yaw);
     const head = bedHeadCell(x, y, z, facing);
     if (!isValidWorldY(head.y)) return { ok: false, reason: 'bed-space' };
+    if (!gameplayMayMutateBlock(head.x, head.z)) return { ok: false, reason: 'bed-space' };
     const headBlock = ctx.world.getBlock(head.x, head.y, head.z, false);
     if (headBlock !== BlockId.Air && getBlockDefinition(headBlock).replaceable !== true) {
       return { ok: false, reason: 'bed-space' };

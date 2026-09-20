@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-21 Worldgen V3 / world border
+
+Report: `reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+```text
+npx vitest run tests/worldgen-v3.test.ts tests/world-border.test.ts tests/worldgen-terrain.test.ts tests/worldgen-v2.test.ts tests/generation-stages.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npm run benchmark:worldgen
+```
+
+Contracts: `WORLDGEN_VERSION === 3`, V2 snapshot overlays on V3 terrain, hydrology lakes/oceans, gourd salts, playable `-10000 <= x,z < 10000`, opacity 0 at ≥50, max alpha ≤ 0.28. Focused worldgen/border **57/57 PASS**. `typecheck` / `typecheck:server` / `typecheck:client` / `typecheck:sim` PASS. `check:boundaries` PASS. `build` PASS.
+
 ## 2026-09-20 Merge origin/main into always-run / KeyC
 
 Semantic merge of world-events `main` (`6447556`). Docs conflicts kept both sides. Code auto-merged.

@@ -1,7 +1,16 @@
 import { BlockId, getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, MAX_GENERATED_SURFACE, SEA_LEVEL, WORLD_HEIGHT } from '../core/constants';
 import { Chunk } from './Chunk';
+import { decorateWildGourds } from './gourdDecorations';
+import {
+  applyHydrologyHeight,
+  hydrologyAt,
+  LAND_MIN_SURFACE,
+  type WaterBiome,
+} from './hydrology';
 import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
+
+export type { WaterBiome };
 
 export type Biome = 'plains' | 'forest' | 'desert' | 'snowy_plains';
 
@@ -143,10 +152,15 @@ export const ORE_RULES: readonly OreRule[] = [
 
 export interface ColumnInfo {
   biome: Biome;
+  waterBiome: WaterBiome;
   height: number;
+  legacyHeight: number;
   base: number;
   hills: number;
   mountain: number;
+  climate: number;
+  dryness: number;
+  waterMask: number;
 }
 
 export interface SpawnColumn {
@@ -193,7 +207,7 @@ export function collectSpawnColumns(
   return columns;
 }
 
-const MIN_SURFACE = 58;
+const MIN_SURFACE = LAND_MIN_SURFACE;
 const BASE_HEIGHT = 66;
 const MAX_SURFACE = MAX_GENERATED_SURFACE;
 
@@ -207,7 +221,8 @@ export type TerrainGenPhase =
   | 'ores'
   | 'deposits'
   | 'decorate'
-  | 'cane';
+  | 'cane'
+  | 'gourds';
 
 export interface TerrainGenJob {
   readonly chunk: Chunk;
@@ -250,8 +265,21 @@ export class TerrainGenerator {
     const mountainMask = smoothstep(0.16, 0.46, mountainField);
     const mountainAmp = 10 + (fbm2D(this.numericSeed + 277, x / 180, z / 180, 2) + 1) * 5;
     const mountain = mountainMask * mountainAmp;
-    const height = Math.max(MIN_SURFACE, Math.min(MAX_SURFACE, Math.floor(base + hills + mountain)));
-    return { biome, height, base, hills, mountain };
+    const legacyHeight = Math.max(MIN_SURFACE, Math.min(MAX_SURFACE, Math.floor(base + hills + mountain)));
+    const hydro = hydrologyAt(this.numericSeed, x, z);
+    const height = applyHydrologyHeight(legacyHeight, hydro);
+    return {
+      biome,
+      waterBiome: hydro.waterBiome,
+      height,
+      legacyHeight,
+      base,
+      hills,
+      mountain,
+      climate,
+      dryness,
+      waterMask: hydro.waterMask,
+    };
   }
 
   generate(chunk: Chunk): void {
@@ -328,7 +356,12 @@ export class TerrainGenerator {
       job.phase = 'cane';
       return false;
     }
-    this.decorateSugarCane(job.chunk);
+    if (job.phase === 'cane') {
+      this.decorateSugarCane(job.chunk);
+      job.phase = 'gourds';
+      return false;
+    }
+    this.decorateGourds(job.chunk);
     job.chunk.generated = true;
     job.chunk.dirty = true;
     return true;
@@ -982,6 +1015,10 @@ export class TerrainGenerator {
       else if (kind < 0.96) chunk.set(x, plantY, z, BlockId.Poppy);
       else chunk.set(x, plantY, z, BlockId.OxeyeDaisy);
     }
+  }
+
+  private decorateGourds(chunk: Chunk): void {
+    decorateWildGourds(chunk, this);
   }
 
   /** Separate deterministic namespace: old ore, tree, and flower RNG streams are unchanged. */

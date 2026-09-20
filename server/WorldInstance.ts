@@ -3,6 +3,7 @@ import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -532,6 +533,7 @@ export class WorldInstance {
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
+  private loadedWorldgenVersion?: number;
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private saveGeneration = 0;
@@ -716,6 +718,7 @@ export class WorldInstance {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
           player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
@@ -852,6 +855,7 @@ export class WorldInstance {
         });
       },
       log: (message) => serverLog(`plugin world-events ${message}`),
+      loadedWorldgenVersion: () => this.loadedWorldgenVersion,
     });
     this.gameplay.isExplosionProtected = (x, y, z) => this.worldEvents.isProtected(x, y, z);
     this.holograms = new HologramNetwork((list) => {
@@ -886,6 +890,7 @@ export class WorldInstance {
     const existing = await this.worldStore.load(this.worldId);
     if (existing) {
       this.createdAt = existing.summary.createdAt;
+      this.loadedWorldgenVersion = existing.worldgenVersion;
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
@@ -895,7 +900,7 @@ export class WorldInstance {
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
-      this.spawn = [spawn[0], spawn[1], spawn[2]];
+      this.spawn = this.relocatePose(spawn[0], spawn[1], spawn[2]);
       this.storedPlayers = existing.players ?? {};
       for (const stored of Object.values(this.storedPlayers)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
@@ -914,7 +919,7 @@ export class WorldInstance {
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
-    this.spawn = estimateWorldSpawn(this.world);
+    this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
     this.createdAt = Date.now();
     this.permissions.load();
     this.economy.load();
@@ -3849,6 +3854,11 @@ export class WorldInstance {
     }
   }
 
+  private relocatePose(x: number, y: number, z: number): [number, number, number] {
+    const pose = relocateStandingPoseInsidePlayableWorld(this.world, x, y, z);
+    return [pose.x, pose.y, pose.z];
+  }
+
   private preloadSpawnChunks(): void {
     const cx = floorDiv(Math.floor(this.spawn[0]), 16);
     const cz = floorDiv(Math.floor(this.spawn[2]), 16);
@@ -3922,6 +3932,7 @@ export class WorldInstance {
       spawn: (): [number, number, number] => instance.spawn,
       setSpawn: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         instance.spawn = [x, y, z];
         instance.dirty = true;
         return true;
@@ -3932,6 +3943,7 @@ export class WorldInstance {
         if (!isKnownBlockId(blockId) || !isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) {
           return false;
         }
+        if (!gameplayMayMutateBlock(x, z)) return false;
         if (!instance.world.setBlock(x, y, z, blockId)) return false;
         instance.dirty = true;
         instance.flushBlockChanges();
@@ -3972,8 +3984,9 @@ export class WorldInstance {
         pitch: player.controller.pitch,
       }),
       snapshot: () => player.snapshot(),
-      teleport: (x: number, y: number, z: number) => {
+        teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
@@ -4064,7 +4077,7 @@ export class WorldInstance {
 
   private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
     const controller = new PlayerController({
-      position: [stored.x, stored.y, stored.z],
+      position: this.relocatePose(stored.x, stored.y, stored.z),
       yaw: stored.yaw,
       pitch: stored.pitch,
     });

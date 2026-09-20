@@ -26,6 +26,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
+import { gameplayMayMutateBlock } from '../src/world/worldBorder';
 import {
   clearDoorBlocks,
   daylightFactor,
@@ -708,6 +709,7 @@ export class ServerGameplay {
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
@@ -767,6 +769,7 @@ export class ServerGameplay {
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!intent && !this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     let hit: VoxelHit | undefined;
     if (intent) {

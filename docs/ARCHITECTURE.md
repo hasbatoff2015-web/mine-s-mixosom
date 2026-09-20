@@ -1,5 +1,17 @@
 # Архитектура
 
+## Worldgen V3 hydrology / gourds / playable border — 2026-09-21
+
+`WORLDGEN_VERSION = 3`. `columnAt` still computes the V2 legacy height (`BASE 66 + broad + detail + hills + mountains`, land clamp `LAND_MIN_SURFACE = 58`), then applies a **negative-only** hydrology depression from `src/world/hydrology.ts`. When `waterMask = 0`, `height === legacyHeight`. Climate biomes are unchanged; `ColumnInfo.waterBiome` is an extra `none | lake | ocean` field so `forest + ocean` stays a forest coast.
+
+Ocean: domain-warped fBm, scale 620, enter 0.24 / core 0.38. Lake: higher-frequency warped fBm, scale 130, enter 0.38 / core 0.52. Floor clamp `WATER_FLOOR_MIN = 52` is hydrology-only. Water fill is still `y > height && y ≤ SEA_LEVEL` (63); snowy exposed `SEA_LEVEL` is Ice. Generator is mathematically infinite — it does not clip at ±10000.
+
+Wild gourds (`src/world/gourdDecorations.ts`) are a post-cane decoration phase with salts `81427` / `91541` and 32-block world cells. Pumpkin: plains, rarer forest. Melon: forest, humid plains, plains near deterministic water. No stems/farmland. Ore/tree/plant RNG namespaces are unchanged.
+
+Playable gameplay is `-10000 <= x,z < 10000` in `src/world/worldBorder.ts`. `clipAabbAxisToWorldBorder` runs in `PlayerController` and `moveVoxelBody` so prediction and authority match. Mutations (break/place/explosion/fluids/farming/fire/plugins) use `gameplayMayMutateBlock`. `WorldBorderRenderer` is four `MeshBasicMaterial` planes (`#ff2020`, `transparent`, `depthWrite: false`); alpha is `worldBorderOpacity(cameraDistance)` per side (0 at ≥50, max 0.28). Chunk streaming uses ordinary view distance, including scenery beyond the plane.
+
+Migration A: load ignores stored `worldgenVersion` for generator selection; `WorldInstance` / `Game` always write `WORLDGEN_VERSION`. Active world-event snapshots are rebased onto current V3 terrain when the loaded save is older than 3.
+
 ## Always-run / crouch / KeyC camera — 2026-09-20
 
 Ground locomotion still lives in `PlayerController.updateHorizontalVelocity`. Default WASD uses literal `PLAYER_MOVE_SPEED = 7`. Crouch uses literal `SNEAK_SPEED = 2` when `this.sneaking`. Wish is hypot-normalized before scaling, so W+A cannot exceed the axis speed. Jump does not check sneak. `WALK_SPEED` remains the Java 1.9 walk constant for minecarts (`MINECART_MAX_SPEED = WALK_SPEED × 1.5`).
@@ -1274,12 +1286,13 @@ Online local motion: the Anarchy client **does** run `PlayerController.tick` for
 `TerrainGenerator` хеширует строковый seed и использует собственные value-noise/fBm helpers (`smoothstep` для mountain mask). Worldgen V2 выбирает biome из прежних dryness/climate полей в строгом порядке: `dryness > 0.24 → desert`, иначе `climate < -0.36 → snowy_plains`, иначе `climate < -0.14 → forest`, иначе plains. Канонические коды `Chunk.biomeCodes`: plains 0, forest 1, desert 2, snowy_plains 3; `biomeCode()`/`BIOME_CODES` — единая exhaustive mapping для generator, mesher и tests. Column height:
 
 ```text
-height = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + mountainMask×amp(10–20), 58, MAX_GENERATED_SURFACE=84)
+legacyHeight = clamp(BASE(66) + broad×4 + detail×1.5×biomeDetail + hills(0–8) + mountainMask×amp(10–20), LAND_MIN_SURFACE=58, MAX_GENERATED_SURFACE=84)
+height = applyHydrologyHeight(legacyHeight, hydrologyAt(seed, x, z))  // identity when waterMask=0
 ```
 
 Mountain mask — low-frequency fBm (`x/260`) с `smoothstep(0.16, 0.46)`, поэтому возвышенности широкие и пересекают несколько chunks. Biome влияет на surface/material/vegetation и только на detail amplitude, не на macro height, чтобы не было cliff на границах. Snowy deliberately наследует прежний cold-forest `biomeDetail = 1.05`: новый biome не меняет base/hills/mountains/cave noise этих координат. Above-sea snowy column имеет `SnowBlock + Dirt×3 + Stone`; flooded column получает `Ice` только на `SEA_LEVEL`, а нижние water layers остаются `Water`.
 
-Chunk pipeline: terrain+caves → lava ponds → ores → cave deposits → surface decoration. Первый pass заполняет bedrock (`Y 0–2`), world-wide Stone cap (`Y=3`, `BEDROCK_COVER_DEPTH = 1`), stone/top layers/water и вырезает ridged 3D caves (world-coordinate noise, не per-chunk RNG; `minCaveY = 4`). Lava ponds остаются маленькими irregular basins depth 1–3 со shrink/reject open waterline and cave-edge drops via deterministic `terrainSolid`; “missing chunk = wall” не используется. Ores и namespace `numericSeed + 991` не менялись: coal/iron/gold/redstone attempts ×2, diamond `veins: 1` + `extraVeinChance: 1/3`, Titanium rule/Y/size прежние.
+Chunk pipeline: terrain+caves → lava ponds → ores → cave deposits → surface decoration → sugar cane → wild gourds. Первый pass заполняет bedrock (`Y 0–2`), world-wide Stone cap (`Y=3`, `BEDROCK_COVER_DEPTH = 1`), stone/top layers/water и вырезает ridged 3D caves (world-coordinate noise, не per-chunk RNG; `minCaveY = 4`). Lava ponds остаются маленькими irregular basins depth 1–3 со shrink/reject open waterline and cave-edge drops via deterministic `terrainSolid`; “missing chunk = wall” не используется. Ores и namespace `numericSeed + 991` не менялись: coal/iron/gold/redstone attempts ×2, diamond `veins: 1` + `extraVeinChance: 1/3`, Titanium rule/Y/size прежние.
 
 `generateCaveDeposits` идёт после ores и использует отдельную 3D world-space lattice `12×10×12` с hash namespaces `12101..12110`. Candidate ellipsoid сначала фильтруется как natural Stone с 6-neighbor natural cave Air, затем берётся largest connected component и deterministic connected cap: Gravel 6–18, Clay 4–10. Фактическая запись заменяет только всё ещё существующий `BlockId.Stone`, поэтому ore/lava/water/dirt/sand/snow/cap/bedrock не могут быть затёрты. Диапазон Y 14–54 отделён от lava surface ≤12; fluid adjacency дополнительно отклоняется. Gravel candidate обязан иметь natural Stone снизу, а при записи — solid non-fluid support, поэтому generation не запускает falling cascade. Neighbor lattice cells проверяются до границ эллипсоида, поэтому patch может продолжаться через chunk seam и не зависит от порядка materialization. Plan/column caches bounded до 512/8192 entries; non-intersecting jitter plans отсекаются до cave sampling.
 
@@ -1505,7 +1518,7 @@ flowchart LR
   FS --> ServerRestore["WorldInstance restore"]
 ```
 
-`WorldSnapshot` is the canonical gameplay record (`SerializedWorldState` is the same type). `WORLD_SCHEMA_VERSION` is 1. Future schema versions fail parse instead of wiping the world. Additive `worldgenVersion?: number` records `WORLDGEN_VERSION = 2` for newly saved SP/server/import worlds; missing metadata remains valid for old snapshots and is written on their next normal save. This field documents which generator produced the current natural base, but does not store generated chunks or select an old generator implementation. Visual clocks and Three.js objects are not stored.
+`WorldSnapshot` is the canonical gameplay record (`SerializedWorldState` is the same type). `WORLD_SCHEMA_VERSION` is 1. Future schema versions fail parse instead of wiping the world. Additive `worldgenVersion?: number` records `WORLDGEN_VERSION = 3` for newly saved SP/server/import worlds; missing or older metadata remains valid to parse. The field does not select a legacy generator: Worldgen V3 migration A rematerializes natural terrain with the current generator and overlays stored modifications. Visual clocks and Three.js objects are not stored.
 
 `IdbWorldStore` wraps `SaveService`: IndexedDB database `frontier-cubes-saves`, store `worlds`, key `summary.id`. Structured clone on the storage boundary; summaries sorted by `updatedAt`; autosaves still chained in `Game`. Missing IndexedDB falls back to an in-memory Map (not durable).
 

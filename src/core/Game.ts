@@ -149,6 +149,7 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { HologramRenderer } from '../rendering/HologramRenderer';
 import { ClaimBoundaryRenderer } from '../rendering/ClaimBoundaryRenderer';
+import { WorldBorderRenderer } from '../rendering/WorldBorderRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
@@ -208,6 +209,7 @@ import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, ligh
 import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
+import { gameplayMayMutateBlock, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
   ANARCHY_SERVER_ID,
@@ -656,6 +658,7 @@ export class Game {
   private holograms?: HologramRenderer;
   private serverTimeOffsetMs = 0;
   private claimBoundaries?: ClaimBoundaryRenderer;
+  private worldBorderRenderer?: WorldBorderRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly longTasks = new LongTaskMonitor();
@@ -2663,6 +2666,7 @@ export class Game {
   }
 
   private startOnlineMine(session: GameSession, targetKey: string): void {
+    if (session.target && !gameplayMayMutateBlock(session.target.x, session.target.z)) return;
     session.miningTarget = targetKey;
     session.miningProgress = 0;
     if (session.online) {
@@ -2678,6 +2682,12 @@ export class Game {
   }
 
   private applyOnlineMiningTick(session: GameSession, targetKey: string | undefined, attackPressed: boolean): void {
+    if (session.target && !gameplayMayMutateBlock(session.target.x, session.target.z)) {
+      if (session.miningTarget) this.sendOnlineMiningAbort(session);
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      return;
+    }
     const online = session.online!;
     if (online.miningFinishKey) {
       online.finishWaitTicks = (online.finishWaitTicks ?? 0) + 1;
@@ -2950,7 +2960,8 @@ export class Game {
 
     const player = new PlayerController();
     const spawn = restored?.player.position ?? options?.spawn ?? this.estimateSpawn(world);
-    player.teleport(spawn);
+    const safeSpawn = relocateStandingPoseInsidePlayableWorld(world, spawn[0], spawn[1], spawn[2]);
+    player.teleport([safeSpawn.x, safeSpawn.y, safeSpawn.z]);
     syncCreativeFlightAllowed(player, summary.mode);
     if (restored) {
       player.restore({
@@ -2959,6 +2970,14 @@ export class Game {
         yaw: restored.player.yaw,
         pitch: restored.player.pitch,
       });
+      const safe = relocateStandingPoseInsidePlayableWorld(
+        world,
+        player.position.x,
+        player.position.y,
+        player.position.z,
+      );
+      player.position.set(safe.x, safe.y, safe.z);
+      player.previousPosition.copy(player.position);
       this.input.yaw = restored.player.yaw;
       this.input.pitch = restored.player.pitch;
     } else {
@@ -2975,11 +2994,11 @@ export class Game {
       onDeath: (source) => this.handleDeath(source),
     });
     const savedServerSpawn = restored?.serverWorld?.spawn ?? options?.serverWorld?.spawn;
-    survival.setSpawnPoint(
-      isFiniteSpawn(savedServerSpawn)
-        ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]]
-        : restored?.player.spawnPoint ?? spawn,
-    );
+    const spawnSource = isFiniteSpawn(savedServerSpawn)
+      ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]] as const
+      : restored?.player.spawnPoint ?? [safeSpawn.x, safeSpawn.y, safeSpawn.z] as const;
+    const safePoint = relocateStandingPoseInsidePlayableWorld(world, spawnSource[0], spawnSource[1], spawnSource[2]);
+    survival.setSpawnPoint([safePoint.x, safePoint.y, safePoint.z]);
     if (restored && (restored.player.absorption !== undefined || restored.player.absorptionTicks !== undefined)) {
       survival.restore({
         health: survival.health,
@@ -3032,6 +3051,8 @@ export class Game {
       },
     );
     this.scene.add(worldRenderer.group);
+    this.worldBorderRenderer?.dispose();
+    this.worldBorderRenderer = new WorldBorderRenderer(this.scene);
     const drops = new DroppedItemManager(entityHost, world, {
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
@@ -3189,6 +3210,7 @@ export class Game {
     const originX = Math.floor(session.player.position.x);
     const originZ = Math.floor(session.player.position.z);
     const tryColumn = (x: number, z: number): boolean => {
+      if (!gameplayMayMutateBlock(x, z)) return false;
       const column = session.world.generator.columnAt(x, z);
       if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
       const surface = session.world.surfaceY(x, z);
@@ -4807,6 +4829,10 @@ export class Game {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
+    } else if (!gameplayMayMutateBlock(session.target.x, session.target.z)) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
     } else {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
@@ -4861,6 +4887,7 @@ export class Game {
     const session = this.session!;
     const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return;
     if (session.online) {
       const hold = breakFinishHoldReason(session.online, hit.x, hit.y, hit.z);
       if (hold !== 'ok') {
@@ -5906,6 +5933,7 @@ export class Game {
     this.ui.fadeChatLines(now, chatLineOpacity);
     this.holograms?.update();
     this.claimBoundaries?.update(now);
+    this.worldBorderRenderer?.update(this.camera.position.x, this.camera.position.z);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -6221,6 +6249,8 @@ export class Game {
     this.holograms = undefined;
     this.claimBoundaries?.dispose();
     this.claimBoundaries = undefined;
+    this.worldBorderRenderer?.dispose();
+    this.worldBorderRenderer = undefined;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();
