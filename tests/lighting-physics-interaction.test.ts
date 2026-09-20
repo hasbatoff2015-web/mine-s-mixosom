@@ -9,7 +9,7 @@ import {
 } from '../src/blocks';
 import { FallingBlockManager } from '../src/entities/FallingBlockManager';
 import { moveVoxelBody } from '../src/entities/voxelPhysics';
-import { DESKTOP_SNEAK_CODE, DESKTOP_SPRINT_CODES } from '../src/input/InputManager';
+import { DESKTOP_CAMERA_TOGGLE_CODE, DESKTOP_SNEAK_CODES } from '../src/input/InputManager';
 import { classifyItemForRendering } from '../src/items/itemRenderProfiles';
 import { RedstoneSystem } from '../src/redstone';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
@@ -44,9 +44,9 @@ function refreshLight(world: VoxelWorld, x: number, z: number): void {
 }
 
 describe('lighting, physics and interaction polish', () => {
-  it('maps desktop sprint to Shift and sneak to C', () => {
-    expect(DESKTOP_SPRINT_CODES).toEqual(['ShiftLeft', 'ShiftRight']);
-    expect(DESKTOP_SNEAK_CODE).toBe('KeyC');
+  it('maps desktop sneak/crouch to Shift and camera toggle to physical KeyC', () => {
+    expect(DESKTOP_SNEAK_CODES).toEqual(['ShiftLeft', 'ShiftRight']);
+    expect(DESKTOP_CAMERA_TOGGLE_CODE).toBe('KeyC');
   });
 
   it('propagates torch block light to neighbouring air and keeps occluded cells dark', () => {

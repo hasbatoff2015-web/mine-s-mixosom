@@ -1,5 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
+import {
+  JUMP_VELOCITY,
+  PLAYER_HEIGHT,
+  PLAYER_MOVE_SPEED,
+  PLAYER_MOVE_SPEED_MULTIPLIER,
+  PLAYER_SNEAK_EYE_HEIGHT,
+  PLAYER_SNEAK_HEIGHT,
+  SNEAK_SPEED,
+  SNEAK_SPEED_REFERENCE,
+  WALK_SPEED,
+} from '../src/core/constants';
 import type { MoveInput } from '../src/input/InputManager';
 import { PlayerController, type PlayerInputSource } from '../src/player';
 import type { VoxelWorld } from '../src/world/World';
@@ -166,5 +177,82 @@ describe('PlayerController voxel physics', () => {
     expect(player.onGround).toBe(true);
     expect(player.fallDistance).toBe(0);
     expect(result.fallDamage).toBe(0);
+  });
+});
+
+describe('PlayerController always-run / crouch speeds', () => {
+  function wideFlatWorld(): TestWorld {
+    const world = new TestWorld();
+    for (let z = -24; z <= 24; z += 1) {
+      for (let x = -24; x <= 24; x += 1) world.set(x, 0, z, BlockId.Stone);
+    }
+    return world;
+  }
+
+  function horizontalSpeed(player: PlayerController): number {
+    return Math.hypot(player.velocity.x, player.velocity.z);
+  }
+
+  function settle(movement: Partial<MoveInput>, ticks = 16): PlayerController {
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+    const world = wideFlatWorld();
+    for (let tick = 0; tick < ticks; tick += 1) {
+      player.tick(world as unknown as VoxelWorld, input(movement), 0.05);
+    }
+    return player;
+  }
+
+  it('derives the new ground speeds from the previous walk/sneak values × 1.25', () => {
+    expect(PLAYER_MOVE_SPEED_MULTIPLIER).toBe(1.25);
+    expect(WALK_SPEED).toBe(4.317);
+    expect(SNEAK_SPEED_REFERENCE).toBe(1.295);
+    expect(PLAYER_MOVE_SPEED).toBe(WALK_SPEED * 1.25);
+    expect(SNEAK_SPEED).toBe(SNEAK_SPEED_REFERENCE * 1.25);
+    expect(PLAYER_MOVE_SPEED).toBeCloseTo(5.39625, 8);
+    expect(SNEAK_SPEED).toBeCloseTo(1.61875, 8);
+  });
+
+  it('uses always-run speed without sneak and does not need a sprint flag', () => {
+    const running = settle({ forward: 1 });
+    const sprintFlag = settle({ forward: 1, sprint: true });
+    expect(running.onGround).toBe(true);
+    expect(running.sneaking).toBe(false);
+    expect(running.sprinting).toBe(false);
+    expect(running.height).toBe(PLAYER_HEIGHT);
+    expect(horizontalSpeed(running)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+    expect(horizontalSpeed(sprintFlag)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+  });
+
+  it('uses the new crouch speed while Shift/sneak keeps the existing stance', () => {
+    const crouched = settle({ forward: 1, sneak: true });
+    expect(crouched.onGround).toBe(true);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.sprinting).toBe(false);
+    expect(crouched.height).toBe(PLAYER_SNEAK_HEIGHT);
+    expect(crouched.eyeHeight).toBe(PLAYER_SNEAK_EYE_HEIGHT);
+    expect(horizontalSpeed(crouched)).toBeCloseTo(SNEAK_SPEED, 3);
+    expect(horizontalSpeed(crouched)).toBeLessThan(PLAYER_MOVE_SPEED * 0.5);
+  });
+
+  it('allows a jump while sneaking without changing jump velocity', () => {
+    const world = wideFlatWorld();
+    const player = new PlayerController({ position: [0.5, 1, 0.5] });
+    player.tick(world as unknown as VoxelWorld, input({ sneak: true }), 0.05);
+    expect(player.sneaking).toBe(true);
+    expect(player.onGround).toBe(true);
+    const result = player.tick(world as unknown as VoxelWorld, input({ sneak: true, jump: true }), 0.05);
+    expect(result.jumped).toBe(true);
+    expect(player.sneaking).toBe(true);
+    expect(player.velocity.y).toBeCloseTo(JUMP_VELOCITY, 6);
+  });
+
+  it('normalizes diagonal wish so W+A matches single-axis always-run speed', () => {
+    const forward = settle({ forward: 1 });
+    const strafe = settle({ right: 1 });
+    const diagonal = settle({ forward: 1, right: 1 });
+    expect(horizontalSpeed(forward)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+    expect(horizontalSpeed(strafe)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+    expect(horizontalSpeed(diagonal)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+    expect(horizontalSpeed(diagonal)).toBeCloseTo(horizontalSpeed(forward), 3);
   });
 });

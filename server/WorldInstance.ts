@@ -3075,7 +3075,7 @@ export class WorldInstance {
     });
     for (const player of this.players.values()) {
       if (!player.connected) continue;
-      this.gameplay.updateRiding(player, player.lastInput.sprint);
+      this.gameplay.updateRiding(player, player.lastInput.sneak);
     }
     this.recordCombatPoses();
     this.processPendingBowReleases();

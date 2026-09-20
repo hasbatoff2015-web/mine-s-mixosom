@@ -1,4 +1,4 @@
-import { CHUNK_SIZE, FIXED_DT, WALK_SPEED, floorDiv } from '../core/constants';
+import { CHUNK_SIZE, FIXED_DT, PLAYER_MOVE_SPEED, floorDiv } from '../core/constants';
 import type { PlayerController, PlayerMovementState } from '../player/PlayerController';
 import type { PredictionFlightTrace } from './localPlayerPrediction';
 import type { PlayerSnapshot } from '../../shared/protocol';
@@ -164,7 +164,7 @@ export interface CorrectionDiag {
   readonly flight?: PredictionFlightTrace;
 }
 
-const WALK_STEP = WALK_SPEED * FIXED_DT;
+const WALK_STEP = PLAYER_MOVE_SPEED * FIXED_DT;
 
 function fmt3(value: number): string {
   return Number.isFinite(value) ? value.toFixed(3) : 'NaN';

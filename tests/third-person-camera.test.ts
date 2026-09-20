@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it, vi } from 'vitest';
-import { shouldCyclePerspectiveOnKey } from '../src/input/InputManager';
+import { DESKTOP_CAMERA_TOGGLE_CODE, shouldCyclePerspectiveOnKey } from '../src/input/InputManager';
 import { Game } from '../src/core/Game';
 import { Inventory } from '../src/inventory';
 import {
@@ -101,9 +101,13 @@ describe('third-person camera', () => {
     expect(game.camera.position.z).toBeLessThan(game.cameraPivot.z);
   });
 
-  it('captures one F5 edge only in active gameplay and leaves browser/menu F5 alone', () => {
-    const active = { code: 'F5', repeat: false, typing: false, canCapture: () => true, hasCallback: true };
+  it('captures one KeyC edge only in active gameplay and leaves F5 / menu typing alone', () => {
+    expect(DESKTOP_CAMERA_TOGGLE_CODE).toBe('KeyC');
+    const active = { code: DESKTOP_CAMERA_TOGGLE_CODE, repeat: false, typing: false, canCapture: () => true, hasCallback: true };
     expect(shouldCyclePerspectiveOnKey(active)).toBe(true);
+    expect(shouldCyclePerspectiveOnKey({ ...active, code: 'F5' })).toBe(false);
+    expect(shouldCyclePerspectiveOnKey({ ...active, code: 'KeyW' })).toBe(false);
+    expect(shouldCyclePerspectiveOnKey({ ...active, code: 'KeyF' })).toBe(false);
     expect(shouldCyclePerspectiveOnKey({ ...active, repeat: true })).toBe(false);
     expect(shouldCyclePerspectiveOnKey({ ...active, typing: true })).toBe(false);
     expect(shouldCyclePerspectiveOnKey({ ...active, canCapture: () => false })).toBe(false);
@@ -111,7 +115,7 @@ describe('third-person camera', () => {
     let captureReads = 0;
     expect(shouldCyclePerspectiveOnKey({
       ...active,
-      code: 'KeyW',
+      code: 'F5',
       canCapture: () => { captureReads += 1; return true; },
     })).toBe(false);
     expect(captureReads).toBe(0);

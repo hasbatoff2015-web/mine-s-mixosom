@@ -5453,7 +5453,7 @@ export class Game {
   private updateMinecartRiding(session: GameSession): void {
     const id = session.ridingCartId;
     if (!id) {
-      this.minecartDismountHeld = this.input.movement().sprint;
+      this.minecartDismountHeld = this.input.movement().sneak;
       return;
     }
     const cart = session.minecarts.get(id);
@@ -5461,7 +5461,7 @@ export class Game {
       this.clearMinecartRide(session);
       return;
     }
-    const edge = minecartDismountFromSprint(this.input.movement().sprint, this.minecartDismountHeld);
+    const edge = minecartDismountFromSprint(this.input.movement().sneak, this.minecartDismountHeld);
     this.minecartDismountHeld = edge.held;
     if (edge.dismount) {
       this.clearMinecartRide(session, true);

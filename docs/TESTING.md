@@ -1,5 +1,16 @@
 # Тестирование
 
+## 2026-09-20 Always-run / crouch ×1.25 / KeyC camera
+
+Report: `reports/2026-09-20_player-run-crouch-camera.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/lighting-physics-interaction.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/menu-model.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/creative-flight.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "binds dismount" --maxWorkers=1
+```
+
+Contracts: `PLAYER_MOVE_SPEED = 4.317×1.25`, `SNEAK_SPEED = 1.295×1.25`, Shift crouch + jump, hypot diagonal, `KeyC` camera, F5 unbound, remaining WASD/Space/E keybinds, minecart Shift/sneak dismount. Minecart cap still `WALK_SPEED×1.5`.
+
 ## 2026-09-19 Clan invitations + leader announcement
 
 Report: `reports/2026-09-19_clan-invites-announce.md`.

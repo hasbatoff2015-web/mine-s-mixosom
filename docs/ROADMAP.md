@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-20: Always-run movement, Shift crouch, KeyC camera
+
+- [x] Default WASD ground speed = previous walk `4.317 × 1.25` (`PLAYER_MOVE_SPEED`); no separate walk mode.
+- [x] Shift is existing crouch; crouch speed = previous sneak `1.295 × 1.25`; jump-from-crouch kept; diagonal hypot kept.
+- [x] Camera cycle on physical `KeyC`; F5 unbound from camera.
+- [x] Shared client/server speed constants; minecart still uses `WALK_SPEED`.
+- [ ] Owner live WASD/Shift/KeyC/F5 and Anarchy prediction QA.
+
 ## 2026-09-20: Nameplate clipping + nick max 13
 
 - [x] Size nameplate canvas from measureText + stroke/padding so 13-char Press Start 2P nicks are not clipped.

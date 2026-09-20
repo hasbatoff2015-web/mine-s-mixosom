@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: Always-run WASD, Shift=crouch, KeyC camera — 2026-09-20
+
+- Обычная ходьба убрана: WASD без Shift всегда использует `PLAYER_MOVE_SPEED = WALK_SPEED × 1.25` (4.317 → 5.39625). Источник истины — `src/core/constants.ts`, тот же `PlayerController` на клиенте и сервере.
+- Shift — существующий crouch/sneak (высота 1.5, глаз 1.27, pose, edge protection). Скорость приседа `SNEAK_SPEED = 1.295 × 1.25` (1.61875). Прыжок из crouch по-прежнему разрешён. Диагональ нормализуется `hypot`.
+- Камера 1P↔3P: физическая `event.code === 'KeyC'` (`DESKTOP_CAMERA_TOGGLE_CODE`). F5 больше не переключает камеру и не получает новое действие.
+- Desktop sprint key убран; touch sprint и `movement.sprint` остаются для mobile pose/FOV. Minecart dismount — rising edge Shift/sneak, не KeyC.
+- `WALK_SPEED = 4.317` сохранён для minecart cap (`×1.5`). Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-run-crouch-camera.md`.
+
 ## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
 
 - Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.
@@ -172,7 +181,7 @@
 
 ## Последний проход: Utility Items final polish — 2026-09-15
 
-- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
+- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая camera-toggle перспектива не переписывается, KeyC в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
 - Только `totem.activate`: catalog volume `0.9 → 0.45`; optional `startOffsetSeconds = 0.7` передаётся через `named()` в `AudioBufferSourceNode.start(0, 0.7)`, чтобы сразу начать после тишины внутри MP3. Остальные события используют `start(0)`; короткий/невалидный buffer тоже безопасно использует `start(0)`. Combat voice policy, retry и один authoritative `world_sound` не менялись.
 - HUD offhand отделён от центрированного hotbar: CSS gap `8 → 20px` (сдвиг влево на 12 CSS px). Браузерные измерения при 1280×720, 1920×1080, 2560×1440, 960×600 подтвердили центр hotbar и 20px gap. Browser Audio QA: 27/27 decoded, volume 0.45, один `recentPlays`, без drops. Relevant tests 123/123, sim 66/66, typechecks/build/checks PASS; full Vitest 234/238 files, 2289/2297 tests и один worker timeout — не green (известные extractor/CRLF/fire timeout/tick-load failures). Интерактивный bed/PvP QA в in-app browser ограничен недоступным pointer lock; 10 двухклиентных активаций со слуховой проверкой не выполнены. Детали: `docs/reports/2026-09-15_utility-items-final-polish.md`.
 
@@ -1043,7 +1052,7 @@
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
 - Owner: одна вкладка игры, переключение на ChatGPT на 1–2 с → jitter сильно хуже / иногда снова гладко. Не duplicate sessionToken.
-- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`WALK_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
+- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`PLAYER_MOVE_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
 - **Политика:** hide → один idle (сервер останавливается); show → `previousTime`/`accumulator` reset, force resync к последнему snapshot, history сброшена, look сохранён. Не меняли physics / tolerance / interpolation / TPS.
 - DEV: F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots`, `inGap/inBurst`; логи `[vis]`, `[vis-resume]`, `[vis-resync]`.
 - Tests: hidden-tab **9/9**; prediction **29/29**; tick-clock **6/6**; typecheck client/server/sim PASS.
@@ -1177,8 +1186,8 @@
 - `Game.tickOnline` не запускает client world simulation. Perspective и `PlayerVisual` остаются presentation-only; gameplay targeting/reach по-прежнему строятся из `PlayerController.eyePosition()` / `viewDirection()`.
 - `RemotePlayerView` больше не создаёт временный `BoxGeometry`: bounded snapshot interpolation управляет feet/yaw/pitch/velocity/state, а canonical `PlayerVisual` отвечает за rig, render-frame locomotion, invisibility и shared entity lighting.
 - Protocol несёт appearance metadata только на join/welcome/`player_joined` и редком `player_appearance`; live `player_state` по-прежнему без skin texture/`skinId`. Remote `PlayerVisual` получает `info.appearance`, а не `DEFAULT_PLAYER_APPEARANCE`.
-- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
-- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- KeyC сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay (`event.code === 'KeyC'`) и не очищает WASD/input sequence или network session. F5 камеру не переключает. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- KeyC сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
 - `BlockBreakingOverlay` остаётся render-path consumer того же authoritative eye/look target во всех perspectives; mapping/cache/no-remesh contract не менялся.
 - Focused player gate **41/41**, expanded player/server/network/overlay gate **236/236**, shared sim **42/42**, server **73/73**; all typechecks, boundaries, Node smokes, build, size and archive pass. Full comparable run has no new failure class versus exact main; details below.
 - Подробности исходной реализации: `docs/reports/2026-08-31_player-skins-third-person.md`; post-server results добавлены в его секцию `POST-SERVER INTEGRATION`. Отдельный integration handoff: `docs/reports/2026-09-02_pr31-player-visual-server-integration.md`.
@@ -1191,7 +1200,7 @@
 - First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
 - Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
 - Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует. Визуал без background panel, шрифт hologram `display` (Press Start 2P), высота 2×, supersample как у обычных holograms, HP `#ff1f1f`. Logical width считается от `measureText` с padding, max ник 13, offset `2.05`.
-- F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
+- KeyC в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; F5 больше не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
 - Права на 45 пользовательских skins не выводятся из технической интеграции: перед публикацией владелец проекта должен подтвердить происхождение/лицензии, особенно для узнаваемых персонажей. Generated ImageGen concept сохранён только в ignored `.local/` и не ship/commit.
@@ -1522,7 +1531,7 @@
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1 для **singleplayer**; online Anarchy persist — filesystem `server/data/worlds/anarchy/` |
-| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
+| Desktop input | Готово | Pointer lock, WASD always-run, Shift crouch / fly descend, Ctrl fly sprint, double Space Creative flight, KeyC camera 1P/3P (layout-independent `event.code`), mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Готово для alpha | Cached sample SFX (`AudioManager.play` / `playAt` / `playBlock`), ~26 short MP3, material sound groups, restrained mining/footsteps, positional world events; pause/mute/volume; no music |

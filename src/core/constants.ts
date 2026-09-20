@@ -56,9 +56,16 @@ export const PLAYER_REACH = 5;
 export const PLAYER_NET_REACH_SLACK = 1.5;
 export const PLAYER_NET_REACH = PLAYER_REACH + PLAYER_NET_REACH_SLACK;
 
+/** Java 1.9 walk (m/s). Minecart cap and historical probes still use this. */
 export const WALK_SPEED = 4.317;
+/** Default WASD ground speed: always-run = walk × 1.25. Shared client/server. */
+export const PLAYER_MOVE_SPEED_MULTIPLIER = 1.25;
+export const PLAYER_MOVE_SPEED = WALK_SPEED * PLAYER_MOVE_SPEED_MULTIPLIER;
+/** Java 1.9 sprint (m/s). Unused for default WASD; always-run uses PLAYER_MOVE_SPEED. */
 export const SPRINT_SPEED = 5.612;
-export const SNEAK_SPEED = 1.295;
+/** Historical sneak speed before the 1.25× always-run/crouch pass. */
+export const SNEAK_SPEED_REFERENCE = 1.295;
+export const SNEAK_SPEED = SNEAK_SPEED_REFERENCE * PLAYER_MOVE_SPEED_MULTIPLIER;
 export const WATER_SPEED = 2.2;
 export const GRAVITY = 32;
 export const WATER_GRAVITY = 5;

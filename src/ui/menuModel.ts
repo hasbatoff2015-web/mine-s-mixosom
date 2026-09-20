@@ -46,8 +46,7 @@ export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [
       { action: 'Влево', key: 'A' },
       { action: 'Вправо', key: 'D' },
       { action: 'Прыжок', key: 'Пробел' },
-      { action: 'Бег', key: 'Shift' },
-      { action: 'Присесть', key: 'C' },
+      { action: 'Присесть', key: 'Shift' },
       { action: 'Полёт', key: 'Двойной пробел', note: 'Творческий режим' },
       { action: 'Снизиться в полёте', key: 'Shift', note: 'Творческий режим' },
     ],
@@ -55,6 +54,7 @@ export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [
   {
     title: 'Игровой процесс',
     bindings: [
+      { action: 'Камера (1-е / 3-е лицо)', key: 'C' },
       { action: 'Обзор', key: 'Мышь' },
       { action: 'Атаковать / разрушить', key: 'ЛКМ' },
       { action: 'Использовать / установить', key: 'ПКМ' },

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIXED_DT, MAX_CATCH_UP_TICKS, MAX_FRAME_DELTA, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, MAX_CATCH_UP_TICKS, MAX_FRAME_DELTA } from '../src/core/constants';
 import { advanceFixedStep } from '../src/core/fixedStep';
 import { worldSimulationActive } from '../src/core/gameplayModal';
 import { PageVisibilityProbe } from '../src/debug/pageVisibilityProbe';

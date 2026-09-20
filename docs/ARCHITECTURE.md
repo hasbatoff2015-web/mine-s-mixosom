@@ -1,5 +1,11 @@
 # Архитектура
 
+## Always-run / crouch / KeyC camera — 2026-09-20
+
+Ground locomotion still lives in `PlayerController.updateHorizontalVelocity`. Default WASD uses `PLAYER_MOVE_SPEED = WALK_SPEED × 1.25`. Crouch uses `SNEAK_SPEED = SNEAK_SPEED_REFERENCE × 1.25` when `this.sneaking`. Wish is hypot-normalized before scaling, so W+A cannot exceed the axis speed. Jump does not check sneak. `WALK_SPEED` remains the Java 1.9 walk constant for minecarts (`MINECART_MAX_SPEED = WALK_SPEED × 1.5`).
+
+Desktop input: `DESKTOP_SNEAK_CODES = ShiftLeft/ShiftRight` (also fly descend). `movement.sprint` is touch-only. Camera cycle is `shouldCyclePerspectiveOnKey` on `DESKTOP_CAMERA_TOGGLE_CODE = KeyC` (`event.code`, not `event.key`). F5 is not bound. Minecart dismount rising-edge uses sneak on both client (`Game.updateMinecartRiding`) and server (`WorldInstance` → `updateRiding(player, lastInput.sneak)`).
+
 ## Merge latest main into entity-special-visual-fixes — 2026-09-20
 
 Production third-person held items stay on latest main `thirdPersonHeldItem.ts` (sword/tool/axe group poses and `/moveitems`). Feature seated pose, player fire overlay, special-block QA harnesses, minecart occupancy/controls, and visual interpolation remain.
@@ -70,7 +76,7 @@ Occupancy кровати не хранится отдельным `Map`. `resolv
 
 ## Utility Items final polish — 2026-09-15
 
-`effectiveCameraPerspective(preferred, resting)` в `ThirdPersonCamera` вычисляет только текущий render mode. `Game.updateFirstPerson` до `render()` и `Game.updatePlayerPresentation` внутри `render()` читают тот же `session.restingBed`: при rest hands/viewmodel выключены, local `PlayerVisual` включён, camera travel использует `thirdPersonBack`. `Game.cycleCameraPerspective` игнорирует F5 при rest, поэтому stored `cameraPerspective` остаётся прежним и сразу возвращается после выхода. `formatLocalAimDebug` также показывает эффективный вид. Bed anchor, pose rig, prediction, server state и camera pivot не меняются.
+`effectiveCameraPerspective(preferred, resting)` в `ThirdPersonCamera` вычисляет только текущий render mode. `Game.updateFirstPerson` до `render()` и `Game.updatePlayerPresentation` внутри `render()` читают тот же `session.restingBed`: при rest hands/viewmodel выключены, local `PlayerVisual` включён, camera travel использует `thirdPersonBack`. `Game.cycleCameraPerspective` игнорирует camera-toggle при rest, поэтому stored `cameraPerspective` остаётся прежним и сразу возвращается после выхода. `formatLocalAimDebug` также показывает эффективный вид. Bed anchor, pose rig, prediction, server state и camera pivot не меняются.
 
 `SoundEventProfile.startOffsetSeconds?` — optional смещение внутри decoded sample. `named()` сохраняет его лишь для заданного события; только `totem.activate` задаёт `0.7` и catalog volume `0.45`. `AudioManager.startBuffer` вызывает `source.start(0, 0.7)` только если offset и duration конечны и sample длиннее offset с запасом, иначе `source.start(0)`. Это не schedule delay: audio play начинается сейчас. Existing voice admission, retries, buses и server sound routing не затронуты. `#offhand-hud` остаётся привязан к half-width centered hotbar, но его gap увеличен с 8 до 20 CSS px; размер ячейки и inventory offhand не меняются.
 
@@ -791,7 +797,7 @@ World Select keeps the existing `WorldListActions` contract. Rows own selection 
 
 `Game` владеет одним registry/cache на приложение. `GameSession.playerVisual` владеет instance material/transforms и освобождается вместе с миром; `FirstPersonRenderer` держит отдельный skin handle, поэтому texture реально общая, а смена appearance безопасна до release предыдущего handle. `ItemVisualFactory` остаётся единственным источником held geometry/material/texture для first- и third-person. Player skin material использует entity-light uniform; held item наследует тот же root light. Hurt flash меняет per-player light multiply; invisibility выключает только skin meshes, сохраняя held item.
 
-Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; F5 меняет только presentation state. `THIRD_PERSON_CAMERA_DISTANCE = 4`. `availableThirdPersonDistance` делает 8 offset segment probes радиусом 0.1 через реальный `blockCollisionBoxes`, поэтому full cubes, stairs, slabs, fences, doors/chests/lantern/chain учитываются, non-solid decoration — нет. Retraction immediate, restore exponential; camera position и live look применяются каждый RAF. Front mode ставит camera перед view vector и разворачивает yaw `+π`, pitch меняет знак; input/player facing не инвертируются.
+Camera mode — `firstPerson | thirdPersonBack | thirdPersonFront`; physical `KeyC` меняет только presentation state, F5 камеру не трогает. `THIRD_PERSON_CAMERA_DISTANCE = 4`. `availableThirdPersonDistance` делает 8 offset segment probes радиусом 0.1 через реальный `blockCollisionBoxes`, поэтому full cubes, stairs, slabs, fences, doors/chests/lantern/chain учитываются, non-solid decoration — нет. Retraction immediate, restore exponential; camera position и live look применяются каждый RAF. Front mode ставит camera перед view vector и разворачивает yaw `+π`, pitch меняет знак; input/player facing не инвертируются.
 
 Future UI: панель «Персонаж / Скин» в главном меню использует только `Game.setPlayerAppearance()`, показывает preview тем же `PlayerVisual`, выбирает built-in skin/model. Кастомный PNG из IndexedDB по-прежнему deferred.
 
