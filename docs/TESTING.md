@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Sword blocking live Anarchy fix
+
+Report: `reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: Anarchy `tickOnline` and SP `tickPlayers` share `syncLocalCombatUse`; skipping `updateUse` while `using=true` leaves the idle first-person matrix; after `updateUse` the held-sword transform differs from idle (`distance > 0.2`). Overlay offsets are non-zero. Focused **8 files / 132 tests PASS**.
+
 ## 2026-09-20 Sword blocking animation
 
 Report: `reports/2026-09-20_sword-blocking-animation.md`.

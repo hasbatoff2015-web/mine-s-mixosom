@@ -115,6 +115,45 @@ describe('blocking progress interpolation', () => {
   });
 });
 
+describe('live Anarchy missing updateUse bug', () => {
+  it('keeps a non-zero blocking overlay so progress=1 cannot match idle', () => {
+    const fp = FIRST_PERSON_SWORD_BLOCKING_OFFSET;
+    const tp = THIRD_PERSON_SWORD_BLOCKING_OFFSET;
+    expect(Math.hypot(fp.position.x, fp.position.y, fp.position.z)).toBeGreaterThan(0.2);
+    expect(Math.hypot(fp.rotation.x, fp.rotation.y, fp.rotation.z)).toBeGreaterThan(0.8);
+    expect(Math.hypot(tp.position.x, tp.position.y, tp.position.z)).toBeGreaterThan(0.05);
+    expect(Math.hypot(tp.rotation.x, tp.rotation.y, tp.rotation.z)).toBeGreaterThan(0.8);
+  });
+
+  it('held sword stays idle if CombatSystem.updateUse is skipped while using is true', () => {
+    const combat = new CombatSystem({ heldItemId: 'diamond_sword' });
+    expect(combat.swordBlocking).toBe(false);
+
+    const visuals = new ItemVisualFactory();
+    const fp = new FirstPersonRenderer(visuals, { freezeIdleMotion: true });
+    fp.setHeldItems('diamond_sword');
+    fp.update(0.05, fpIdle);
+    const idle = fp.captureHeldItemMatrixDebug()!.itemLocal.clone();
+
+    fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...fpIdle, swordBlocking: combat.swordBlocking });
+    expect(combat.swordBlocking).toBe(false);
+    expect(fp.swordBlockingProgress).toBe(0);
+    expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idle)).toBe(true);
+
+    combat.updateUse(true, true, true);
+    expect(combat.swordBlocking).toBe(true);
+    fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...fpIdle, swordBlocking: combat.swordBlocking });
+    expect(fp.swordBlockingProgress).toBe(1);
+    expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idle)).toBe(false);
+    const blocked = new THREE.Vector3().setFromMatrixPosition(fp.captureHeldItemMatrixDebug()!.itemLocal);
+    const idlePos = new THREE.Vector3().setFromMatrixPosition(idle);
+    expect(blocked.distanceTo(idlePos)).toBeGreaterThan(0.2);
+
+    fp.dispose();
+    visuals.dispose();
+  });
+});
+
 describe('first-person sword blocking overlay', () => {
   it('lerps the held sword on top of the idle calibration and restores it', () => {
     const visuals = new ItemVisualFactory();

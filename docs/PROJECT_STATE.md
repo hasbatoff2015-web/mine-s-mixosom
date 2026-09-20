@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Sword blocking animation live fix — 2026-09-20
+
+- Живой Anarchy: замедление ПКМ работало, а поза меча не менялась. Причина: `tickOnline` слал `use` и тормозил из `input.using`, но не вызывал `combat.updateUse`, поэтому локальный `swordBlocking` оставался `false`. Overlay в `FirstPersonRenderer` / `PlayerVisual` не запускался.
+- И SP, и Anarchy теперь синхронизируют held/use через `Game.syncLocalCombatUse` до `setHeldItems`. Transform overlay (base calibration + extra TRS) не переписывался — он просто не получал `swordBlocking === true`.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
 ## Последний проход: Sword blocking animation (1.5.2-style) — 2026-09-20
 
 - Удержание ПКМ с мечом по-прежнему берёт существующий `CombatSystem.swordBlocking` / `input.using` / `input.use`. Скорость движения ×0.2 не менялась.

@@ -5,6 +5,7 @@
 - [x] Reuse existing `CombatSystem.swordBlocking` / RMB use-item for first- and third-person blocking poses.
 - [x] Interpolate idle → block → idle (0.1 s) as an overlay on `/moveitems` and first-person idle calibration.
 - [x] Replicate blocking to remote players via existing `presentation.swordBlocking`.
+- [x] Anarchy `tickOnline` calls the same `syncLocalCombatUse` as SP so local FP/TP `swordBlocking` is actually true while RMB is held.
 - [ ] Owner live Anarchy QA: two clients, hold RMB with a sword, observer sees the block pose.
 
 ## 2026-09-20: Nameplate clipping + nick max 13
