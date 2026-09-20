@@ -36,7 +36,10 @@ Nameplate drew 44px Press Start 2P (advance ≈ 1em) into a **fixed 512×205** a
 
 ## Tests
 
-Focused nameplate + nickname tests, typecheck, build — filled in after the run.
+- `npx vitest run tests/player-nameplate.test.ts tests/player-nickname.test.ts tests/hologram-timer.test.ts tests/hologram-style.test.ts tests/hologram-hit.test.ts` — 36/36 PASS (nameplate 9, nickname 6, hologram-timer 10, hologram-style 8, hologram-hit 3).
+- `npx vitest run tests/server/console-and-nickname.test.ts` — 6/6 PASS
+- `npm run typecheck` PASS
+- `npm run build` PASS
 
 ## Visual QA
 
