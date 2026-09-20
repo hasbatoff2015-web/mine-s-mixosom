@@ -222,6 +222,17 @@ describe('world events plugin commands', () => {
     );
     expect(diamond.cancelled).toBe(true);
 
+    world.economy.deposit(op.player.id, 20_000, 'ADMIN_GIVE');
+    world.handleClanAction(op.player, { type: 'clan_action', action: 'set_name', name: 'Foxes' });
+    world.handleClanAction(op.player, { type: 'clan_action', action: 'select_icon', icon: 'swords' });
+    world.handleClanAction(op.player, { type: 'clan_action', action: 'confirm_create' });
+    expect(world.clan.playerClan(op.player.id)?.name).toBe('Foxes');
+    world.world.setBlock(x, y + 3, z, BlockId.Dirt);
+    op.player.controller.teleport([x + 0.5, y + 4, z + 0.5]);
+    world.handleClanAction(op.player, { type: 'clan_action', action: 'set_base' });
+    world.handleClanAction(op.player, { type: 'clan_action', action: 'confirm_set_base' });
+    expect(world.clan.playerClan(op.player.id)?.base).toBeUndefined();
+
     world.worldEvents.forceCleanup();
     await world.save();
     op.player.controller.teleport([x, y, z]);

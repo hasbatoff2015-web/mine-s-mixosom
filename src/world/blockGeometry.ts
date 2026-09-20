@@ -336,6 +336,107 @@ export function railRunsEastWest(shape: RailShape): boolean {
   return railTextureYaw(shape) !== 0;
 }
 
+export interface RailEndpoint {
+  readonly dx: number;
+  readonly dy: number;
+  readonly dz: number;
+}
+
+const CARDINAL_DIRS: readonly HorizontalFacing[] = ['north', 'south', 'east', 'west'];
+
+/** Two endpoints of a rail, matching `railPath` t=0 then t=1. */
+export function railEndDirections(shape: RailShape): readonly [RailEndpoint, RailEndpoint] {
+  switch (shape) {
+    case 'north_south': return [{ dx: 0, dy: 0, dz: -1 }, { dx: 0, dy: 0, dz: 1 }];
+    case 'east_west': return [{ dx: -1, dy: 0, dz: 0 }, { dx: 1, dy: 0, dz: 0 }];
+    case 'north_east': return [{ dx: 0, dy: 0, dz: -1 }, { dx: 1, dy: 0, dz: 0 }];
+    case 'north_west': return [{ dx: 0, dy: 0, dz: -1 }, { dx: -1, dy: 0, dz: 0 }];
+    case 'south_east': return [{ dx: 0, dy: 0, dz: 1 }, { dx: 1, dy: 0, dz: 0 }];
+    case 'south_west': return [{ dx: 0, dy: 0, dz: 1 }, { dx: -1, dy: 0, dz: 0 }];
+    case 'ascending_east': return [{ dx: -1, dy: 0, dz: 0 }, { dx: 1, dy: 1, dz: 0 }];
+    case 'ascending_west': return [{ dx: 1, dy: 0, dz: 0 }, { dx: -1, dy: 1, dz: 0 }];
+    case 'ascending_north': return [{ dx: 0, dy: 0, dz: 1 }, { dx: 0, dy: 1, dz: -1 }];
+    case 'ascending_south': return [{ dx: 0, dy: 0, dz: -1 }, { dx: 0, dy: 1, dz: 1 }];
+  }
+}
+
+export function railConnectsToward(shape: RailShape, dx: number, dy: number, dz: number): boolean {
+  return railEndDirections(shape).some((end) => end.dx === dx && end.dy === dy && end.dz === dz);
+}
+
+function facingFromDelta(dx: number, dz: number): HorizontalFacing {
+  if (dx === 1) return 'east';
+  if (dx === -1) return 'west';
+  if (dz === 1) return 'south';
+  return 'north';
+}
+
+function horizontalEnds(shape: RailShape): readonly [HorizontalFacing, HorizontalFacing] {
+  const [end0, end1] = railEndDirections(shape);
+  return [facingFromDelta(end0.dx, end0.dz), facingFromDelta(end1.dx, end1.dz)];
+}
+
+interface RailNeighborLink {
+  readonly dir: HorizontalFacing;
+  readonly slope: -1 | 0 | 1;
+  readonly nx: number;
+  readonly ny: number;
+  readonly nz: number;
+}
+
+function railNeighborLink(
+  world: BlockNeighborView,
+  x: number,
+  y: number,
+  z: number,
+  dir: HorizontalFacing,
+): RailNeighborLink | undefined {
+  const [dx, , dz] = HORIZONTAL_OFFSET[dir];
+  if (isRailAt(world, x + dx, y, z + dz)) {
+    return { dir, slope: 0, nx: x + dx, ny: y, nz: z + dz };
+  }
+  if (isRailAt(world, x + dx, y + 1, z + dz)) {
+    return { dir, slope: 1, nx: x + dx, ny: y + 1, nz: z + dz };
+  }
+  if (isRailAt(world, x + dx, y - 1, z + dz)) {
+    return { dir, slope: -1, nx: x + dx, ny: y - 1, nz: z + dz };
+  }
+  return undefined;
+}
+
+function neighborConnectsBack(
+  world: BlockNeighborView,
+  x: number,
+  y: number,
+  z: number,
+  link: RailNeighborLink,
+): boolean {
+  const shape = defaultRailShape(world.getBlockState?.(link.nx, link.ny, link.nz));
+  return railConnectsToward(shape, x - link.nx, y - link.ny, z - link.nz);
+}
+
+function railShapeFromDirs(
+  a: HorizontalFacing,
+  b: HorizontalFacing,
+  slopeOf: (dir: HorizontalFacing) => -1 | 0 | 1,
+): RailShape {
+  const pair = new Set<HorizontalFacing>([a, b]);
+  if (pair.has('east') && pair.has('west')) {
+    if (slopeOf('east') === 1) return 'ascending_east';
+    if (slopeOf('west') === 1) return 'ascending_west';
+    return 'east_west';
+  }
+  if (pair.has('north') && pair.has('south')) {
+    if (slopeOf('north') === 1) return 'ascending_north';
+    if (slopeOf('south') === 1) return 'ascending_south';
+    return 'north_south';
+  }
+  if (pair.has('north') && pair.has('east')) return 'north_east';
+  if (pair.has('north') && pair.has('west')) return 'north_west';
+  if (pair.has('south') && pair.has('east')) return 'south_east';
+  return 'south_west';
+}
+
 export function resolveRailShape(
   world: BlockNeighborView,
   x: number,
@@ -343,24 +444,48 @@ export function resolveRailShape(
   z: number,
 ): RailShape {
   const existing = world.getBlockState?.(x, y, z)?.railShape;
-  const north = isRailAt(world, x, y, z - 1) || isRailAt(world, x, y + 1, z - 1);
-  const south = isRailAt(world, x, y, z + 1) || isRailAt(world, x, y + 1, z + 1);
-  const east = isRailAt(world, x + 1, y, z) || isRailAt(world, x + 1, y + 1, z);
-  const west = isRailAt(world, x - 1, y, z) || isRailAt(world, x - 1, y + 1, z);
-  const upNorth = isRailAt(world, x, y + 1, z - 1);
-  const upSouth = isRailAt(world, x, y + 1, z + 1);
-  const upEast = isRailAt(world, x + 1, y + 1, z);
-  const upWest = isRailAt(world, x - 1, y + 1, z);
-  if (upNorth) return 'ascending_north';
-  if (upSouth) return 'ascending_south';
-  if (upEast) return 'ascending_east';
-  if (upWest) return 'ascending_west';
-  if (north && east && !south && !west) return 'north_east';
-  if (north && west && !south && !east) return 'north_west';
-  if (south && east && !north && !west) return 'south_east';
-  if (south && west && !north && !east) return 'south_west';
-  if (east || west) return 'east_west';
-  if (north || south) return 'north_south';
+  const links = CARDINAL_DIRS
+    .map((dir) => railNeighborLink(world, x, y, z, dir))
+    .filter((link): link is RailNeighborLink => Boolean(link));
+  const slopeOf = (dir: HorizontalFacing): -1 | 0 | 1 => (
+    links.find((link) => link.dir === dir)?.slope ?? 0
+  );
+  const occupied = links.map((link) => link.dir);
+  const reciprocal = links
+    .filter((link) => neighborConnectsBack(world, x, y, z, link))
+    .map((link) => link.dir);
+  const pick = (first: HorizontalFacing, second: HorizontalFacing): RailShape => (
+    railShapeFromDirs(first, second, slopeOf)
+  );
+
+  if (occupied.length === 2) return pick(occupied[0]!, occupied[1]!);
+
+  if (occupied.length >= 3) {
+    if (reciprocal.length === 2) return pick(reciprocal[0]!, reciprocal[1]!);
+    if (existing) {
+      const ends = horizontalEnds(existing);
+      if (occupied.includes(ends[0]) && occupied.includes(ends[1])) {
+        return pick(ends[0], ends[1]);
+      }
+    }
+    if (reciprocal.length >= 2) {
+      if (existing) {
+        const ends = horizontalEnds(existing);
+        const keep = reciprocal.filter((dir) => ends.includes(dir));
+        if (keep.length === 2) return pick(keep[0]!, keep[1]!);
+        if (keep.length === 1) {
+          const extra = reciprocal.find((dir) => dir !== keep[0]);
+          if (extra) return pick(keep[0]!, extra);
+        }
+      }
+      return pick(reciprocal[0]!, reciprocal[1]!);
+    }
+    return existing ?? 'north_south';
+  }
+
+  if (occupied.length === 1) {
+    return pick(occupied[0]!, oppositeFacing(occupied[0]!));
+  }
   return existing ?? 'north_south';
 }
 
@@ -434,6 +559,30 @@ export function ladderLocalBox(facing: HorizontalFacing): LocalBox {
     return { minX: plane.min, minY: 0, minZ: 0, maxX: plane.max, maxY: 1, maxZ: 1 };
   }
   return { minX: 0, minY: 0, minZ: plane.min, maxX: 1, maxY: 1, maxZ: plane.max };
+}
+
+/**
+ * Thin post + board for standing signs; a 2px slab flush to the attached wall.
+ * Width stays inside the cell so the outline is not a near-full cube.
+ */
+export function signLocalBoxes(state: BlockRenderState | undefined): LocalBox[] {
+  const t = 2 / 16;
+  if (state?.attachment !== 'wall') {
+    return [
+      { minX: 7 / 16, minY: 0, minZ: 7 / 16, maxX: 9 / 16, maxY: 8 / 16, maxZ: 9 / 16 },
+      { minX: 0, minY: 8 / 16, minZ: 7 / 16, maxX: 1, maxY: 1, maxZ: 9 / 16 },
+    ];
+  }
+  switch (state.facing ?? 'south') {
+    case 'north':
+      return [{ minX: 0, minY: 4 / 16, minZ: 1 - t, maxX: 1, maxY: 12 / 16, maxZ: 1 }];
+    case 'south':
+      return [{ minX: 0, minY: 4 / 16, minZ: 0, maxX: 1, maxY: 12 / 16, maxZ: t }];
+    case 'west':
+      return [{ minX: 1 - t, minY: 4 / 16, minZ: 0, maxX: 1, maxY: 12 / 16, maxZ: 1 }];
+    case 'east':
+      return [{ minX: 0, minY: 4 / 16, minZ: 0, maxX: t, maxY: 12 / 16, maxZ: 1 }];
+  }
 }
 
 export function doorLocalBox(state: BlockRenderState | undefined): LocalBox {
@@ -631,8 +780,7 @@ export function selectionLocalBoxes(
     case 'ladder': return [ladderLocalBox(state?.facing ?? 'north')];
     case 'cross': return [CROSS_BOX];
     case 'bed': return [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1 }];
-    case 'sign': return [{ minX: 0.05, minY: state?.attachment === 'wall' ? 0.28 : 0,
-      minZ: 0.05, maxX: 0.95, maxY: 0.92, maxZ: 0.95 }];
+    case 'sign': return signLocalBoxes(state);
     case 'fire': return [FIRE_BOX];
     case 'stairs':
       return stairLocalBoxes(

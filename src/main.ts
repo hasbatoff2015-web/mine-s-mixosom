@@ -25,12 +25,13 @@ if (import.meta.env.DEV) {
   const qaFrozenWater = search.get('qaFrozenWater') === '1';
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
-  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-homes', 'menu-friends', 'menu-trade', 'trade-session', 'chat-open', 'pause']);
+  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-homes', 'menu-friends', 'menu-trade', 'menu-rating', 'clan-ranking', 'trade-session', 'chat-open', 'pause']);
   const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';
   const qaArrow = search.has('qaArrow');
   const qaPlayer = search.get('qaPlayer') === '1';
+  const qaSpecial = search.get('qaSpecial');
   const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
   const qaBed = search.get('qaBed') === '1';
   const qaSign = search.get('qaSign') === '1';
@@ -42,6 +43,26 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/MoveItemsHarness').then(async ({ startMoveItemsHarness }) => {
       disposeApplication = await startMoveItemsHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'rails') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startRailQaHarness }) => {
+      disposeApplication = await startRailQaHarness(canvas, uiRoot, search.get('row'));
+    });
+  } else if (qaSpecial === 'doors') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startDoorQaHarness }) => {
+      disposeApplication = await startDoorQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'seated') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startSeatedCartQaHarness }) => {
+      disposeApplication = await startSeatedCartQaHarness(canvas, uiRoot);
+    });
+  } else if (qaSpecial === 'lights') {
+    runningDevHarness = true;
+    void import('./dev/SpecialBlockQaHarness').then(async ({ startLightBlockQaHarness }) => {
+      disposeApplication = await startLightBlockQaHarness(canvas, uiRoot);
     });
   } else if (qaWorldgenDeposit === 'gravel' || qaWorldgenDeposit === 'clay') {
     runningDevHarness = true;

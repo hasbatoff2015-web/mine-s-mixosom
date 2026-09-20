@@ -55,6 +55,8 @@ export interface Claim {
   flags: ClaimFlagMap;
   /** Present only on claims created by placing an iron/gold/diamond block. */
   readonly anchor?: ClaimAnchor;
+  /** Clan-owned diamond base. Access is live clan membership, not `members`. */
+  readonly clanId?: string;
 }
 
 export interface ClaimStore {
@@ -167,6 +169,7 @@ export function migrateClaim(raw: unknown): Claim | undefined {
     ? record.members.filter((member): member is string => typeof member === 'string').map((member) => member.toLowerCase())
     : [];
   const anchor = migrateAnchor(record.anchor);
+  const clanId = typeof record.clanId === 'string' && record.clanId.trim() ? record.clanId : undefined;
   return {
     id: record.id,
     name: record.name,
@@ -179,6 +182,7 @@ export function migrateClaim(raw: unknown): Claim | undefined {
     priority: clampClaimPriority(typeof record.priority === 'number' ? record.priority : CLAIM_PRIORITY_DEFAULT),
     flags: migrateFlags(record.flags),
     ...(anchor ? { anchor } : {}),
+    ...(clanId ? { clanId } : {}),
   };
 }
 

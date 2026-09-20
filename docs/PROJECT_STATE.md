@@ -25,8 +25,109 @@
 - `BlockId.EventChest = 166`, texture `entity/chest/event` (Crimson Relic, UV/alpha 1:1 with source). OakSign stays 165.
 - Подробности: `docs/reports/2026-09-19_world-events-event-chest.md`.
 
-## Последний проход: Third-person axe 180° handle flip — 2026-09-18
+## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
 
+- Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.
+- `MAX_PLAYER_NAME_LENGTH = 13`. Сервер/`sanitizePlayerName` отклоняют 14+, без silent truncate. UI `maxlength` берёт ту же константу. Названия кланов (3–16) не трогались.
+- Nameplate offset `2.15 → 2.05`.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-clip-nick-limit.md`.
+
+## Последний проход: Player nameplate без фона, пиксельный шрифт, 2× и качество holograms — 2026-09-20
+
+- `PlayerNameplate` остаётся Sprite на `RemotePlayerView` (не world hologram entity). Ник, HP, hide/fade/invisibility, appearance/skins не менялись по логике.
+- Фон/плашка убраны. Ник — тот же `hologramCanvasFont('display')` / **Press Start 2P**. Весь текст 2× (world 2.1×0.84, canvas 44px/36px). HP `#ff1f1f`.
+- Качество close-up: те же `hologramTextCanvas.ts` helpers, что у `HologramRenderer` (supersample 2–4×dpr, Linear mag, mipmaps, `needsUpdate`).
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-hologram-quality.md`.
+
+## Последний проход: Точка базы клана — 2026-09-20
+
+- У клана одна persistent серверная точка базы: Diamond claim того же радиуса 30, что и личный алмазный приват (`CLAIM_ANCHOR_RADIUS.diamond_block`).
+- Глава ставит/меняет базу с текущей позиции (блок под ногами → `diamond_block`). Кнопка открывает подтверждение (`Подтвердить` / `Отмена`); установка идёт только после подтверждения с live-позицией. Bedrock не заменяется: якорь на блок выше. Пересечение с любым существующим claim запрещено, в том числе со своими личными. Cooldown 24ч на клан, только после успешной установки.
+- Участники телепортируются через существующий `TeleportService` (`reason: 'clan'`) на `x+0.5, y+1, z+0.5`. Доступ в зону — текущее членство (`Claim.clanId`), не статический список UUID.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_clan-base-point.md`.
+
+## Последний проход: Auction history + menu unread badges — 2026-09-19
+
+- Формат объявления главы: `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - текст` (без кавычек, цвет `#4ecfdc` без изменений).
+- Аукцион: кнопка **История сделок** (вложенный экран меню). Только подтверждённые buy/sell, 24ч TTL, UI 20 записей, persist `plugin-data/auction/history.json`.
+- Unread badges на плитках Друзья/Кланы/Аукцион/Обмен: жёлтый квадрат, чёрная цифра. Сервер `NotificationService` (`plugin-data/notifications/unread.json`). Сброс при `menu_action open` соответствующей вкладки.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_auction-history-menu-notifications.md`.
+
+## Последний проход: Clan invitations + leader announcement — 2026-09-19
+
+- Рейтинг: суммы монет рисуются через существующий `icon_coin.png` / `.mc-menu-coin`, без Unicode 🪙.
+- Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
+- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - …` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
+- Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
+- Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
+- Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.
+
+## Последний проход: Clan roles + Rating menu — 2026-09-19
+
+- Существующий `ClanService` расширен ролями **Глава / Ветеран / Участник**. `ownerId` по-прежнему лидер. Ветеран: invite + kick только `member`. Глава: все права. Передача главы только ветерану; старый глава становится ветераном.
+- Приглашение по нику на вкладке Запросы, inline-ошибки, TTL 24ч. `/clan add` по-прежнему только online.
+- Карточка участника: ник, онлайн-снимок (без polling), роль, монеты, убийства, друзья (добавить / уже / исходящая+отмена), «Это вы», kick/promote/demote/transfer по правам.
+- PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
+- Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
+- Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
+- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay` **не** вызывает `enterPlaying()` (только PLAYING + pointer lock, если нет blocking overlay); роли `.mc-clan-role` `#e8e8e8`, owner/card-meta `#d8d8d8`. Transparent `icon_rating.png`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
+
+## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Одна вагонетка = один пассажир (`player.ridingCartId`); `cart.rider` только derived. Disconnect/death/destruction `forceReleaseVehicle` без cancellable `vehicleExit`. Per-cart `controls` в одном `minecarts.update`. W latch с камеры только на новом press из stop; S тормоз до 0. Visual pose / 1.5× speed / rider interpolation не трогались.
+- Подробности: `docs/reports/2026-09-20_minecart-occupancy-controls.md`.
+
+## Последний проход: minecart visual pose interpolation — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Cart visual interpolates position **and** yaw/pitch (`lerpAngle`). Slope pitch is `rotation.z = -pitch`, not `rotation.x`. `MINECART_VISUAL_YAW_OFFSET = −π/2` and `MINECART_MAX_SPEED = WALK_SPEED * 1.5` сохранены. Rider sample origin не откатывался.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-pose-interpolation.md`.
+
+## Последний проход: minecart rider interpolation + 1.5× speed — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Local seated visual origin = `LocalPlayerRenderState` sample (`seatedLocalPlayerVisualOrigin`), not current `cart.position`. `MINECART_MAX_SPEED = WALK_SPEED * 1.5` (~6.4755), `ACCEL_TIME` 0.5 s. Remote `RemotePlayerView` still uses interpolated `group.position`.
+- Подробности: `docs/reports/2026-09-19_minecart-rider-interpolation-speed.md`.
+
+## Последний проход: minecart visual yaw −π/2 — 2026-09-19
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Visual-only: `MINECART_VISUAL_YAW_OFFSET = −π/2` в `MinecartManager.applyVisualTransform`. `cart.yaw`, railPath и seated не менялись.
+- Подробности: `docs/reports/2026-09-19_minecart-visual-yaw.md`.
+
+## Последний проход: rail corner UV south-east + straight seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). `rail_corner.png` authored L = image **bottom+right** = **south+east**; identity UV is `south_east` (previous SW identity was a horizontal flip). Topology (`railEndDirections` / reciprocal path / π/4) не переписывалась. Seated: hip `π/2`, прямые ноги вперёд, `bodyPitch`/`bodyYOffset` = 0; visual seat root `+Z` back 0.25 и hip на `MINECART_FLOOR_TOP`.
+- Подробности: `docs/reports/2026-09-18_rail-corner-uv-seated-straight.md`.
+
+## Последний проход: seated pose sign, door outside facing, rail connectivity — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Seated X rotations `+1.18` / `+0.42` (front = local −Z). Door `facing` = outward normal via `doorOutsideFacingFromYaw`; open occupancy = `doorHingeEdge`. Rails: reciprocal `railEndDirections`, `entryProgress` may be `undefined`, curve length `π/4`. `RAIL_CORNER_UV` не трогали.
+- Подробности: `docs/reports/2026-09-18_seated-door-rail-connectivity.md`.
+
+## Последний проход: rail corners, sign, door hinge, minecart visual, seated pose — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Corner rail UV совпадает с `south_west` native `rail_corner.png`; door `occupiedDoorFacing` качает петли с внешней левой стороны; табличка 16×8×2 внутри клетки, wall flush; minecart — ModelMinecart UV; `seated` pose для пассажира.
+- Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
+## Последний проход: merge current main into entity-special-visual-fixes — 2026-09-18
+
+- Ветка `codex/entity-special-visual-fixes` синхронизирована с `origin/main` через `--no-ff --no-commit` semantic union. OakSign остаётся **165**; generic unknown-block compat (`65534`) сохранён. Feature history не переписывалась, `main` не менялся.
+- Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
+## Последний проход: special blocks, mob presentation, skeleton projectile routing — 2026-09-10
+
+- Ветка `codex/entity-special-visual-fixes` создана от `e4d43ff3`. Четыре implementation commits завершаются SHA `5f86c29`; подробности — `docs/reports/2026-09-10_entity-special-visual-fixes.md`.
+- Torch/redstone torch используют отдельные authored side/top/bottom UV для одного и того же floor/four-wall transform. Lantern получил читаемые standing/hanging body/cap/hanger/chain parts на authored atlas regions без изменения light/placement gameplay.
+- Rail world/held rendering отделён от collision/selection `railLocalBoxes`: десять `RailShape` рисуются одной тонкой double-sided surface, четыре ascending формы реально наклонены, четыре curve формы используют `block/rail_corner`. `railPath` разрешает форму по живым соседям, а не по stale default state.
+- Chicken остаётся двухногим legacy rig main: обе ноги grounded, opposite gait, UV island `[29, 0]` вместо прозрачного `[26, 0]`. Skeleton получает один cached `ItemVisualFactory` bow на hand anchor и отдельную ranged pose.
+- Skeleton projectile simulation принимает все living/targetable player foci со stable id, ищет ближайшее swept-segment попадание по каноническому player AABB, сравнивает его с block distance и передаёт точный `targetPlayerId`; серверный nearest-player fallback удалён. Singleplayer использует стабильный `local-player` id.
+- Third-person held item pose отделена от first-person профилей на категории sword/tool/bow/generic/block. Bow arms используют `π/2 + viewPitch` с однократной компенсацией sneak parent, поэтому положительный pitch визуально направляет руки вверх.
+- Arrow visuals: local `visualDirection` = movement segment этого tick; embed/network используют current main `impactVx/Y/Z` + `state: embedded`. Старые `visualVx` поля не возвращены.
+
+## Предыдущий проход: Third-person axe 180° handle flip — 2026-09-18
 
 - Топоры (`kind: 'tool' && tool === 'axe'`) берут **ту же** tool position/scale (`0 / 0.215 / -0.155`, `0.55`) и tool Euler, затем **локальный 180° roll** вокруг оси рукояти спрайта `(1, 1, 0)`: `qPose * qFromAxisAngle(normalize(1,1,0), π)` → Euler XYZ `3.0184 / -1.4668 / -1.4476`.
 - Кирки, лопаты, мотыги остаются на unflipped tool pose. Мечи — sword pose. First-person / block / generated / bow не менялись.
@@ -1114,7 +1215,7 @@
 - `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
 - First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
 - Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
-- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует.
+- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует. Визуал без background panel, шрифт hologram `display` (Press Start 2P), высота 2×, supersample как у обычных holograms, HP `#ff1f1f`. Logical width считается от `measureText` с padding, max ник 13, offset `2.05`.
 - F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
@@ -1558,7 +1659,7 @@
 - Hostile melee использует реальную 3D-дистанцию между eye positions и voxel line of sight, поэтому не бьёт игрока на другом этаже или через стену.
 - Creative player остаётся центром spawning/despawn, но не передаётся hostile AI как target.
 - Player и skeleton используют общий arrow visual/physics basis: blocks-per-tick velocity, continuous segment collision, air drag `0.99`, water drag `0.6`, gravity `0.05 block/tick²`, speed-based damage и in-ground state. **Fire arrow** — shapeless `arrow + lava_bucket` (остаётся empty bucket), projectile с оранжевым tint. Попадание: обычный урон стрелы + `igniteTicks` 100 (5 с) по живой цели; TNT block праймится; TNT в вагонетке вылетает primed TNT своего типа (только fire arrow; flint/обычная стрела не поджигают cargo); обычные блоки **не** поджигаются. Горение: `FIRE_CONTACT` / `FIRE_ARROW` / `SUNLIGHT` / lava — раздельные причины, общий overlay. **Все hostile** (`isHostileMob`) горят под прямым дневным солнцем (`daylight ≥ 0.82` и skylight ≥ 14), не vanilla undead whitelist. Player и passive не горят от солнца. Creeper имеет fuse/radial explosion, hostile hits передаются напрямую в armor/SurvivalSystem, смерть моба создаёт loot drops.
-- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; end of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart via `DroppedItemManager` (unprimed TNT cart also drops TNT); Creative removes without a world drop (`dropsForBrokenMinecart`); ridden and primed TNT carts are ignored. Player AABB push: on-rail tangent × `MINECART_PUSH_GAIN` (0.28); off-rail world `vx/vz` × 50% of that gain, cap `MINECART_MAX_SPEED`. TNT Use (`tnt` / `tnt_powerful` / `tnt_destructive`) stores `tntBlockId` + variant `tnt` (не rideable); cargo mesh `block/tnt*`. Flint не праймит cargo; Fire Arrow ejects primed TNT of that type (`vy=4`, fall `startY - currentY` 20/30 after leaving the rail support, explode on a closer floor or at the cap). Snapshot `blockId` syncs cargo to clients. Save `minecarts?` (position/velocity/variant/`tntBlockId`/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
+- `MinecartManager`: 3D open-top entity (`minecartGeometry.ts`, texture `entity/minecart`), не item billboard. Opaque full-width inner floor (`MINECART_FLOOR_TOP = 0.16` above the 2/16 rail strip). **ON_RAIL** (`cart.rail`) uses rail-constrained W/S; cap `MINECART_MAX_SPEED = WALK_SPEED * 1.5` (~6.4755 blocks/s), accel time 0.5 s. End of a loaded track converts `alongSpeed × tangent` to world velocity and enters **OFF_RAIL** (gravity, voxel collision, ground friction `0.78`/tick, no W/A/S/D). Crossing a real rail cell re-snaps after a 4-tick grace. Ride Use; **Shift** (sprint edge) dismounts to a clear neighbor, on- or off-rail. Local seated player visual uses the render-sampled ride pose, not current `cart.position`. LMB (attack edge) breaks a cart that is nearer than the block hit; Survival drops Minecart via `DroppedItemManager` (unprimed TNT cart also drops TNT); Creative removes without a world drop (`dropsForBrokenMinecart`); ridden and primed TNT carts are ignored. Player AABB push: on-rail tangent × `MINECART_PUSH_GAIN` (0.28); off-rail world `vx/vz` × 50% of that gain, cap `MINECART_MAX_SPEED`. TNT Use (`tnt` / `tnt_powerful` / `tnt_destructive`) stores `tntBlockId` + variant `tnt` (не rideable); cargo mesh `block/tnt*`. Flint не праймит cargo; Fire Arrow ejects primed TNT of that type (`vy=4`, fall `startY - currentY` 20/30 after leaving the rail support, explode on a closer floor or at the cap). Snapshot `blockId` syncs cargo to clients. Save `minecarts?` (position/velocity/variant/`tntBlockId`/fuse/`onRail`). Isolated rail follows player look axis; EW visual yaw `π/2`. Practical, не vanilla bit-exact.
 - Base player/mob melee knockback и full hurt flash запускаются только для `fullHurt`, в том числе при полном поглощении absorption. Rejected и differential hit не повторяют base KB/flash. Accepted extra sprint KB обрабатывается отдельно.
 - Все восемь видов используют articulated pivot rigs и собственные local legacy entity sheets. У sheep исправлена длина base legs при сохранённом коротком wool overlay; skeleton torso двусторонний только для читаемости рёбер; zombie left limbs берут mirrored classic `64×32` UV (`[40,16]`/`[0,16]`), а forward-arms pose задаётся положительным Three.js Euler (`+1.2` / `+1.55`), не Minecraft-значением `-1.2`. Spider сохраняет emissive-style `spider_eyes` overlay; gameplay hitboxes независимы от visuals.
 - `LegacyModel` отделяет `rotationPoint` от локального `addBox origin`, переводит Y-down model-space в Three.js и хранит неизменяемую base pose. Константы и уровни точности перечислены в `MOB_MODEL_REFERENCE.md`.

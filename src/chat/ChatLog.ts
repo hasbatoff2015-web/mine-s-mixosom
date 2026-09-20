@@ -2,6 +2,7 @@ import { MAX_CHAT_MESSAGES } from './chatScroll';
 import {
   CHAT_TAB_HISTORY_LIMIT,
   type ChatChannel,
+  type ChatMessageStyle,
 } from '../../shared/chat';
 
 export type ChatMessageKind = 'system' | 'player' | 'command' | 'death' | 'error';
@@ -13,6 +14,7 @@ export interface ChatMessage {
   readonly createdAtMs: number;
   readonly channel?: ChatChannel;
   readonly from?: string;
+  readonly style?: ChatMessageStyle;
 }
 
 export const CHAT_VISIBLE_MS = 8_000;
@@ -54,6 +56,7 @@ export interface ChatPushOptions {
   readonly channel?: ChatChannel;
   readonly from?: string;
   readonly id?: string;
+  readonly style?: ChatMessageStyle;
 }
 
 export function chatMessageMatchesTab(message: ChatMessage, tab: ChatChannel): boolean {
@@ -97,6 +100,7 @@ export class ChatLog {
         createdAtMs: options.nowMs ?? nowMs,
         ...(options.channel ? { channel: options.channel } : {}),
         ...(options.from ? { from: options.from } : {}),
+        ...(options.style ? { style: options.style } : {}),
       };
     }
     const message: ChatMessage = {
@@ -106,6 +110,7 @@ export class ChatLog {
       createdAtMs: options.nowMs ?? nowMs,
       ...(options.channel ? { channel: options.channel } : {}),
       ...(options.from ? { from: options.from } : {}),
+      ...(options.style ? { style: options.style } : {}),
     };
     this.seenIds.add(id);
     this.messages.push(message);

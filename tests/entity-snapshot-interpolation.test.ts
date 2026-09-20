@@ -7,8 +7,8 @@ import {
 import { packEntitySnapshots } from '../server/gameplay';
 import type { EntitySnapshot } from '../shared/protocol';
 
-function pose(x: number, tick: number, at: number, yaw = 0) {
-  return { x, y: 70, z: 0, yaw, vx: 0, vy: 0, vz: 0, tick, at };
+function pose(x: number, tick: number, at: number, yaw = 0, pitch = 0) {
+  return { x, y: 70, z: 0, yaw, pitch, vx: 0, vy: 0, vz: 0, tick, at };
 }
 
 describe('remote entity snapshot interpolation', () => {
@@ -59,6 +59,12 @@ describe('remote entity snapshot interpolation', () => {
     const delta = Math.abs(((mid.yaw - from + Math.PI) % (Math.PI * 2)) - Math.PI);
     expect(delta).toBeLessThan(Math.PI / 2);
     expect(Math.abs(mid.yaw) < 1 || Math.abs(mid.yaw - Math.PI * 2) < 1).toBe(true);
+  });
+
+  it('interpolates pitch along the shortest angle', () => {
+    const samples = [pose(0, 1, 1_000, 0, 0), pose(0, 2, 1_050, 0, -Math.PI / 2)];
+    const mid = sampleEntityPose(samples, 1_105, ENTITY_INTERP_DELAY_MS)!;
+    expect(mid.pitch).toBeCloseTo(-Math.PI / 4);
   });
 
   it('places a newly spawned entity immediately', () => {

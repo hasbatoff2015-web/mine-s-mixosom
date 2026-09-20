@@ -9,6 +9,7 @@ export const GAME_MENU_BUTTONS = [
   { id: 'claims', label: 'Приваты', icon: 'icon_claims.png' },
   { id: 'trade', label: 'Обмен', icon: 'icon_trade.png' },
   { id: 'auction', label: 'Аукцион', icon: 'icon_auction.png' },
+  { id: 'rating', label: 'Рейтинг', icon: 'icon_rating.png' },
 ] as const;
 
 export type GameMenuButtonId = (typeof GAME_MENU_BUTTONS)[number]['id'];
@@ -25,6 +26,8 @@ export type GameMenuScreen =
   | 'claim-delete-confirm'
   | 'trade'
   | 'auction'
+  | 'auction-history'
+  | 'rating'
   | 'closed';
 
 export function showsMenuBack(screen: GameMenuScreen): boolean {

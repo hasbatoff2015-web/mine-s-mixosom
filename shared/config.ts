@@ -12,7 +12,7 @@ export const PROTOCOL_VERSION = 3;
 /** Max JSON text payload accepted from a client. */
 export const MAX_CLIENT_MESSAGE_BYTES = 16_384;
 export const MAX_CHAT_LENGTH = 128;
-export const MAX_PLAYER_NAME_LENGTH = 16;
+export const MAX_PLAYER_NAME_LENGTH = 13;
 export const SESSION_RESUME_MS = 5 * 60_000;
 
 export function defaultWsUrl(host = DEFAULT_SERVER_HOST, port = DEFAULT_SERVER_PORT): string {

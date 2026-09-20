@@ -28,6 +28,7 @@ export interface FriendsRuntime {
   displayName(playerId: string): string;
   lookupPlayer(idOrName: string): { id: string; name: string; connected: boolean } | undefined;
   sendMessage(playerId: string, text: string): void;
+  notifyUnread?(playerId: string, category: 'friends'): void;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -145,6 +146,7 @@ export class FriendsService {
     this.store.requests.push(request);
     this.persist();
     this.runtime.sendMessage(target.id, `${this.runtime.displayName(fromPlayerId)} хочет добавить вас в друзья.`);
+    this.runtime.notifyUnread?.(target.id, 'friends');
     return { ok: true, request, affected: [fromPlayerId, target.id] };
   }
 
@@ -163,6 +165,23 @@ export class FriendsService {
     this.persist();
     this.runtime.sendMessage(request.fromPlayerId, `${this.runtime.displayName(playerId)} добавил вас в друзья.`);
     return { ok: true, request, affected: [playerId, request.fromPlayerId] };
+  }
+
+  cancelOutgoing(playerId: string, targetPlayerId: string): FriendsResult {
+    const before = this.store.requests.length;
+    this.store.requests = this.store.requests.filter(
+      (entry) => !(entry.fromPlayerId === playerId && entry.toPlayerId === targetPlayerId),
+    );
+    if (this.store.requests.length === before) return { ok: false, error: FRIENDS_REQUEST_MISSING_ERROR };
+    this.persist();
+    return { ok: true, affected: [playerId, targetPlayerId] };
+  }
+
+  relation(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none' {
+    if (viewerId === targetId) return 'self';
+    if (this.isFriend(viewerId, targetId)) return 'friend';
+    if (this.outgoingRequests(viewerId).some((request) => request.toPlayerId === targetId)) return 'outgoing';
+    return 'none';
   }
 
   reject(playerId: string, requestId: string): FriendsResult {

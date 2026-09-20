@@ -1,14 +1,18 @@
 import type { ClientMenuActionMessage, GameMenuScreenKind } from '../../shared/protocol';
+import { isGameMenuScreenKind } from '../../shared/protocol';
 import { FRIENDS_EMPTY_NAME_ERROR } from '../../shared/friends';
 import { HOME_MISSING_ERROR, validateHomeName } from '../../shared/homes';
 import { TRADE_EMPTY_NAME_ERROR } from '../../shared/trade';
 import type { HomeService } from './home';
 import type { FriendsService } from './friends';
 import type { TradeService } from './trade';
-import type { ClanService } from './clan';
+import { CLAN_ALREADY_MEMBER_ERROR, type ClanService } from './clan';
+import type { NotificationService } from './notifications';
+import { notificationCategoryForScreen } from '../../shared/notifications';
 import type { Claim, ClaimStore } from './claims';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
+import { isRankingKind } from '../../shared/ranking';
 
 export interface MenuPlayer {
   readonly id: string;
@@ -26,7 +30,7 @@ export type MenuActionOutcome =
   | { kind: 'spawn' }
   | { kind: 'home-teleport'; name: string }
   | { kind: 'friend-teleport'; playerId: string }
-  | { kind: 'open-clan'; view: 'ranking' | 'create' | 'mine' }
+  | { kind: 'open-clan'; view: 'ranking' | 'create' | 'mine' | 'accept' }
   | { kind: 'open-auction'; view: 'browse' | 'list' | 'sell' }
   | { kind: 'trade-request'; affected: readonly string[] }
   | { kind: 'trade-session'; affected: readonly string[] }
@@ -37,6 +41,7 @@ export interface MenuActionHost {
   friends: FriendsService;
   trade: TradeService;
   clan: ClanService;
+  notifications: NotificationService;
   worldId: string;
   maxHomesFor(player: MenuPlayer): number;
   loadClaims(): ClaimStore;
@@ -52,7 +57,27 @@ export function applyGameMenuAction(
 ): MenuActionOutcome {
   const action = message.action;
   if (action === 'open') {
-    session.screen = message.screen && message.screen !== 'closed' ? message.screen as GameMenuSession['screen'] : 'root';
+    const requested = message.screen && message.screen !== 'closed'
+      ? message.screen
+      : (isGameMenuScreenKind(message.name) && message.name !== 'closed' ? message.name : 'root');
+    session.screen = requested as GameMenuSession['screen'];
+    if (session.screen === 'rating') {
+      session.ratingKind = session.ratingKind || 'players-money';
+      session.ratingPage = 1;
+    }
+    const category = notificationCategoryForScreen(session.screen);
+    if (category) host.notifications.clear(player.id, category);
+    return { kind: 'flush' };
+  }
+  if (action === 'rating_set' && isRankingKind(message.ratingKind ?? message.name)) {
+    session.screen = 'rating';
+    session.ratingKind = (message.ratingKind ?? message.name) as typeof session.ratingKind;
+    session.ratingPage = 1;
+    return { kind: 'flush' };
+  }
+  if (action === 'rating_page') {
+    session.screen = 'rating';
+    session.ratingPage = message.page ?? session.ratingPage;
     return { kind: 'flush' };
   }
   if (action === 'back') {
@@ -177,7 +202,14 @@ export function applyGameMenuAction(
     return { kind: 'refresh-players', affected };
   }
   if (action === 'clans_list') return { kind: 'open-clan', view: 'ranking' };
-  if (action === 'clans_create') return { kind: 'open-clan', view: 'create' };
+  if (action === 'clans_create') {
+    if (host.clan.playerClan(player.id)) {
+      session.screen = 'clans';
+      session.message = CLAN_ALREADY_MEMBER_ERROR;
+      return { kind: 'flush' };
+    }
+    return { kind: 'open-clan', view: 'create' };
+  }
   if (action === 'clans_mine') {
     if (!host.clan.playerClan(player.id)) {
       session.screen = 'clans';
@@ -186,6 +218,7 @@ export function applyGameMenuAction(
     }
     return { kind: 'open-clan', view: 'mine' };
   }
+  if (action === 'clans_invitations') return { kind: 'open-clan', view: 'accept' };
   if (action === 'claim_open' && message.claimId) {
     const claim = host.findOwnedClaim(player, message.claimId);
     if (!claim) {
@@ -329,6 +362,10 @@ export function applyGameMenuAction(
   if (action === 'auction_open') return { kind: 'open-auction', view: 'browse' };
   if (action === 'auction_list') return { kind: 'open-auction', view: 'list' };
   if (action === 'auction_sell') return { kind: 'open-auction', view: 'sell' };
+  if (action === 'auction_history') {
+    session.screen = 'auction-history';
+    return { kind: 'flush' };
+  }
   void (message.screen as GameMenuScreenKind | undefined);
   return { kind: 'flush' };
 }

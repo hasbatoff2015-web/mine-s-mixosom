@@ -12,6 +12,8 @@ export interface PlayerAnimationState {
   readonly bowCharge: number;
   readonly swordBlocking: boolean;
   readonly foodUseProgress: number;
+  /** Reusable sit pose (minecart now; chairs/sofas later). Independent of bed rest. */
+  readonly seated?: boolean;
 }
 
 export interface PlayerVisualPose {
@@ -79,11 +81,11 @@ export class PlayerVisualAnimator {
     this.bodyYaw = dampAngle(this.bodyYaw, desiredBodyYaw, moving ? 9 : 6, delta);
     const headYaw = THREE.MathUtils.clamp(wrapRadians(state.viewYaw - this.bodyYaw), -maximumHeadYaw, maximumHeadYaw);
 
-    const targetWalk = state.onGround
-      ? THREE.MathUtils.clamp(state.movementSpeed / 4.3, 0, 1) * (state.sprinting ? 1.18 : 1)
-      : 0;
+    const targetWalk = state.seated || !state.onGround
+      ? 0
+      : THREE.MathUtils.clamp(state.movementSpeed / 4.3, 0, 1) * (state.sprinting ? 1.18 : 1);
     this.walkStrength += (targetWalk - this.walkStrength) * Math.min(1, delta * 10);
-    this.walkPhase += delta * (4.8 + state.movementSpeed * 1.55);
+    if (!state.seated) this.walkPhase += delta * (4.8 + state.movementSpeed * 1.55);
     const stride = Math.sin(this.walkPhase) * this.walkStrength;
     let rightLegX = stride;
     let leftLegX = -stride;
@@ -93,8 +95,19 @@ export class PlayerVisualAnimator {
     let leftArmY = 0;
     let rightArmZ = 0.04;
     let leftArmZ = -0.04;
+    const seated = state.seated === true;
+    const bodyPitch = seated ? 0 : state.sneaking ? -0.48 : 0;
+    const bodyYOffset = 0;
 
-    if (!state.onGround) {
+    if (seated) {
+      this.walkStrength = 0;
+      // Hip 90°: a −Y limb with +X rotation lies along local −Z (model front).
+      // Seat height is a presentation root offset, not upper-body deformation.
+      rightLegX = Math.PI / 2;
+      leftLegX = Math.PI / 2;
+      rightArmX = 0;
+      leftArmX = 0;
+    } else if (!state.onGround) {
       const falling = state.verticalVelocity < -0.05;
       rightLegX = falling ? 0.18 : -0.18;
       leftLegX = falling ? -0.18 : 0.18;
@@ -127,7 +140,9 @@ export class PlayerVisualAnimator {
     }
 
     if (state.bowCharge > 0) {
-      const aim = Math.PI / 2 - state.viewPitch;
+      // Positive input pitch looks upward. Compensate the sneaking parent once
+      // so the resulting world-space arms follow the same elevation as the head.
+      const aim = Math.PI / 2 + state.viewPitch - bodyPitch;
       rightArmX = aim;
       leftArmX = aim;
       rightArmY = headYaw - 0.12;
@@ -140,9 +155,8 @@ export class PlayerVisualAnimator {
       bodyYaw: this.bodyYaw,
       headYaw,
       headPitch: state.viewPitch,
-      bodyPitch: state.sneaking ? -0.48 : 0,
-      // Hip stays over the legs; sneak lean is rotation around the waist pivot.
-      bodyYOffset: 0,
+      bodyPitch,
+      bodyYOffset,
       bodyZOffset: 0,
       rightArmX,
       rightArmY,

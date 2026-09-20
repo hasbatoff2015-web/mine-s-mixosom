@@ -19,6 +19,8 @@ import {
   chainPlacementFromHit,
   chestFacingFromYaw,
   doorFacingFromYaw,
+  doorHingeFromPlacement,
+  doorOutsideFacingFromYaw,
   furnaceFacingFromYaw,
   getBlockDefinition,
   horizontalFacingFromXZ,
@@ -40,6 +42,7 @@ import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
+  type MinecartEntity,
 } from '../entities';
 import { damageItem, type Inventory, type ItemStack } from '../inventory';
 import { ItemId, tryGetItemDefinition } from '../items';
@@ -198,6 +201,19 @@ export function cartIsCloser(
   return Boolean(cartRay && (!hit || cartRay.distance <= hit.distance));
 }
 
+function tryEnterMinecart(ctx: UseSimulationContext, cart: MinecartEntity): void {
+  if (ctx.ridingCartId === cart.id) return;
+  if (ctx.ridingCartId) {
+    ctx.effects?.toast?.('Сначала выйдите из текущей вагонетки.');
+    return;
+  }
+  if (cart.rider) {
+    ctx.effects?.toast?.('Вагонетка занята.');
+    return;
+  }
+  ctx.enterVehicle?.(cart.id);
+}
+
 /**
  * Pure use-order helper. Same inputs → same kind for SP-shaped and server-shaped
  * callers. Does not mutate the world.
@@ -325,7 +341,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
     }
     const tntId = tntBlockIdFromItem(stack?.itemId);
     if (tntId && insertTntCart(ctx, undefined, origin, direction, tntId)) return;
-    if (ctx.minecarts.isRideable(cartRay.cart)) ctx.enterVehicle?.(cartRay.cart.id);
+    if (ctx.minecarts.isRideable(cartRay.cart)) tryEnterMinecart(ctx, cartRay.cart);
     return;
   }
 
@@ -343,7 +359,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
   const nearbyCart = cartRay?.cart
     ?? (hit ? ctx.minecarts.cartAt(hit.x, hit.y, hit.z) : ctx.minecarts.nearest(ctx.position, 1.5));
   if (nearbyCart && ctx.minecarts.isRideable(nearbyCart)) {
-    ctx.enterVehicle?.(nearbyCart.id);
+    tryEnterMinecart(ctx, nearbyCart);
     return;
   }
 
@@ -574,7 +590,7 @@ export function placeBlockAt(
 
   if (blockId === BlockId.OakDoor) {
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
-    return placeDoor(ctx, x, y, z, existing);
+    return placeDoor(ctx, x, y, z, existing, hit);
   }
 
   if (blockId === BlockId.Torch || blockId === BlockId.RedstoneTorch) {
@@ -723,14 +739,24 @@ export function clearDoorBlocks(world: VoxelWorld, x: number, y: number, z: numb
   return halves;
 }
 
+const RAIL_REFRESH_PASSES = 4;
+
 export function refreshNeighborRails(world: VoxelWorld, x: number, y: number, z: number): void {
-  const cells = [
-    [x, y, z], [x + 1, y, z], [x - 1, y, z], [x, y, z + 1], [x, y, z - 1],
-    [x + 1, y + 1, z], [x - 1, y + 1, z], [x, y + 1, z + 1], [x, y + 1, z - 1],
-  ];
-  for (const [cx, cy, cz] of cells) {
-    if (world.getBlock(cx!, cy!, cz!, false) !== BlockId.Rail) continue;
-    world.setBlockState(cx!, cy!, cz!, { railShape: resolveRailShape(world, cx!, cy!, cz!) });
+  const cells: Array<readonly [number, number, number]> = [];
+  for (let dy = -1; dy <= 1; dy += 1) {
+    cells.push([x, y + dy, z]);
+    cells.push([x + 1, y + dy, z], [x - 1, y + dy, z], [x, y + dy, z + 1], [x, y + dy, z - 1]);
+  }
+  for (let pass = 0; pass < RAIL_REFRESH_PASSES; pass += 1) {
+    let changed = false;
+    for (const [cx, cy, cz] of cells) {
+      if (world.getBlock(cx, cy, cz, false) !== BlockId.Rail) continue;
+      const next = resolveRailShape(world, cx, cy, cz);
+      if (world.getBlockState(cx, cy, cz)?.railShape === next) continue;
+      world.setBlockState(cx, cy, cz, { railShape: next });
+      changed = true;
+    }
+    if (!changed) break;
   }
 }
 
@@ -849,6 +875,7 @@ function placeDoor(
   y: number,
   z: number,
   previous: number,
+  hit?: VoxelHit,
 ): PlaceResult {
   if (y + 1 >= WORLD_HEIGHT) return { ok: false, reason: 'door-space' };
   const upperBlock = ctx.world.getBlock(x, y + 1, z);
@@ -863,9 +890,12 @@ function placeDoor(
     ctx.world.setBlock(x, y, z, previous);
     return { ok: false, reason: 'rejected' };
   }
-  const facing = doorFacingFromYaw(ctx.yaw);
-  ctx.world.setBlockState(x, y, z, { facing, hinge: 'left', open: false, half: 'lower' });
-  ctx.world.setBlockState(x, y + 1, z, { facing, hinge: 'left', open: false, half: 'upper' });
+  const facing = doorOutsideFacingFromYaw(ctx.yaw);
+  const hinge = hit?.point
+    ? doorHingeFromPlacement(facing, hit.point, x, z)
+    : 'left' as const;
+  ctx.world.setBlockState(x, y, z, { facing, hinge, open: false, half: 'lower' });
+  ctx.world.setBlockState(x, y + 1, z, { facing, hinge, open: false, half: 'upper' });
   ctx.redstone.notifyBlockChanged(x, y, z);
   ctx.redstone.notifyBlockChanged(x, y + 1, z);
   ctx.effects?.playBlock?.('place', BlockId.OakDoor, x, y, z);

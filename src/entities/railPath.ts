@@ -1,6 +1,6 @@
 import { BlockId, type RailShape } from '../blocks';
 import { CHUNK_SIZE, floorDiv } from '../core/constants';
-import { defaultRailShape } from '../world/blockGeometry';
+import { railEndDirections, resolveRailShape } from '../world/blockGeometry';
 import type { VoxelWorld } from '../world/World';
 
 export interface RailCell {
@@ -23,10 +23,23 @@ export interface RailSample {
 }
 
 const QUARTER = Math.PI / 2;
+const CURVE_RADIUS = 0.5;
+const CURVE_LENGTH = CURVE_RADIUS * QUARTER;
+
+function isCurveShape(shape: RailShape): boolean {
+  return shape === 'north_east' || shape === 'north_west'
+    || shape === 'south_east' || shape === 'south_west';
+}
+
+export function railLength(shape: RailShape): number {
+  if (shape.startsWith('ascending_')) return Math.SQRT2;
+  if (isCurveShape(shape)) return CURVE_LENGTH;
+  return 1;
+}
 
 export function railAt(world: VoxelWorld, x: number, y: number, z: number): RailShape | undefined {
   if (world.getBlock(x, y, z, false) !== BlockId.Rail) return undefined;
-  return defaultRailShape(world.getBlockState(x, y, z));
+  return resolveRailShape(world, x, y, z);
 }
 
 export function findRailCell(world: VoxelWorld, x: number, y: number, z: number): RailCell | undefined {
@@ -42,16 +55,6 @@ export function findRailCell(world: VoxelWorld, x: number, y: number, z: number)
 
 export function isRailChunkLoaded(world: VoxelWorld, x: number, z: number): boolean {
   return world.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), false) !== undefined;
-}
-
-export function railLength(shape: RailShape): number {
-  if (shape.startsWith('ascending_')) return Math.SQRT2;
-  if (shape.includes('_')) {
-    const curve = shape === 'north_east' || shape === 'north_west'
-      || shape === 'south_east' || shape === 'south_west';
-    if (curve) return QUARTER;
-  }
-  return 1;
 }
 
 export function sampleRail(cell: RailCell, t: number): RailSample {
@@ -104,66 +107,51 @@ export function progressOnRail(shape: RailShape, localX: number, localZ: number)
 
 /**
  * Neighbor cell this end of the rail connects to. `tEnd` is 0 or 1.
- * Checks same Y, then +1 (ascending into), then -1 (coming down).
+ * The neighbor must have a reciprocal endpoint facing this cell.
  */
 export function nextRail(
   world: VoxelWorld,
   cell: RailCell,
   tEnd: 0 | 1,
 ): RailCell | undefined {
-  const dir = endDirection(cell.shape, tEnd);
+  const dir = railEndDirections(cell.shape)[tEnd]!;
   const candidates: Array<readonly [number, number, number]> = [
     [cell.x + dir.dx, cell.y + dir.dy, cell.z + dir.dz],
-    [cell.x + dir.dx, cell.y + dir.dy + 1, cell.z + dir.dz],
-    [cell.x + dir.dx, cell.y + dir.dy - 1, cell.z + dir.dz],
+    [cell.x + dir.dx, cell.y, cell.z + dir.dz],
+    [cell.x + dir.dx, cell.y + 1, cell.z + dir.dz],
+    [cell.x + dir.dx, cell.y - 1, cell.z + dir.dz],
   ];
+  const seen = new Set<string>();
   for (const [x, y, z] of candidates) {
+    const key = `${x},${y},${z}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
     if (!isRailChunkLoaded(world, x, z)) return undefined;
     const shape = railAt(world, x, y, z);
     if (!shape) continue;
+    if (entryProgress(shape, cell.x - x, cell.y - y, cell.z - z) === undefined) continue;
     return { x, y, z, shape };
   }
   return undefined;
 }
 
 /** Progress (0 or 1) at which `shape` is entered from the previous cell's offset. */
-export function entryProgress(shape: RailShape, fromDx: number, fromDy: number, fromDz: number): number {
-  const end0 = endDirection(shape, 0);
-  if (end0.dx === fromDx && end0.dz === fromDz && Math.abs(end0.dy - fromDy) <= 1) return 0;
-  return 1;
+export function entryProgress(
+  shape: RailShape,
+  fromDx: number,
+  _fromDy: number,
+  fromDz: number,
+): 0 | 1 | undefined {
+  const [end0, end1] = railEndDirections(shape);
+  const match0 = end0.dx === fromDx && end0.dz === fromDz;
+  const match1 = end1.dx === fromDx && end1.dz === fromDz;
+  if (match0 === match1) return undefined;
+  return match0 ? 0 : 1;
 }
 
 function quarterProgress(alongA: number, alongB: number): number {
   const angle = Math.atan2(Math.max(0, alongB), Math.max(0, alongA));
   return Math.max(0, Math.min(1, angle / QUARTER));
-}
-
-function endDirection(shape: RailShape, tEnd: 0 | 1): { dx: number; dy: number; dz: number } {
-  const sign = tEnd === 0 ? -1 : 1;
-  switch (shape) {
-    case 'east_west':
-      return { dx: sign, dy: 0, dz: 0 };
-    case 'north_south':
-      return { dx: 0, dy: 0, dz: sign };
-    case 'ascending_east':
-      return tEnd === 0 ? { dx: -1, dy: 0, dz: 0 } : { dx: 1, dy: 1, dz: 0 };
-    case 'ascending_west':
-      return tEnd === 0 ? { dx: 1, dy: 0, dz: 0 } : { dx: -1, dy: 1, dz: 0 };
-    case 'ascending_south':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: -1 } : { dx: 0, dy: 1, dz: 1 };
-    case 'ascending_north':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: 1 } : { dx: 0, dy: 1, dz: -1 };
-    case 'north_east':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: -1 } : { dx: 1, dy: 0, dz: 0 };
-    case 'north_west':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: -1 } : { dx: -1, dy: 0, dz: 0 };
-    case 'south_east':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: 1 } : { dx: 1, dy: 0, dz: 0 };
-    case 'south_west':
-      return tEnd === 0 ? { dx: 0, dy: 0, dz: 1 } : { dx: -1, dy: 0, dz: 0 };
-    default:
-      return { dx: 0, dy: 0, dz: sign };
-  }
 }
 
 function sampleLocal(shape: RailShape, t: number): { x: number; y: number; z: number; tx: number; ty: number; tz: number } {

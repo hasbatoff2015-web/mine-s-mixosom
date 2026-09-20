@@ -2,9 +2,14 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
   BlockId,
+  doorHingeEdge,
+  doorHingeFromPlacement,
+  doorOutsideFacingFromYaw,
   getBlockDefinition,
   ladderPlacementFromHit,
   occupiedDoorFacing,
+  type DoorHinge,
+  type HorizontalFacing,
 } from '../src/blocks';
 import { CRAFTING_RECIPES } from '../src/crafting';
 import {
@@ -26,6 +31,7 @@ import {
   bedVisualParts,
   doorFaceTextureUv,
   doorHalfTexture,
+  doorLocalBox,
   ladderPlaneLocal,
   selectionBoxesForBlock,
 } from '../src/rendering/specialBlockGeometry';
@@ -248,8 +254,10 @@ describe('oak door world model', () => {
     expect(doorFaceTextureUv('edge', 'left')[2] - doorFaceTextureUv('edge', 'left')[0]).toBeCloseTo(3 / 16, 6);
 
     expect(occupiedDoorFacing('south', false, 'left')).toBe('south');
-    expect(occupiedDoorFacing('south', true, 'left')).toBe('east');
-    expect(occupiedDoorFacing('south', true, 'right')).toBe('west');
+    expect(occupiedDoorFacing('south', true, 'left')).toBe('west');
+    expect(occupiedDoorFacing('south', true, 'right')).toBe('east');
+    expect(occupiedDoorFacing('north', true, 'left')).toBe('east');
+    expect(occupiedDoorFacing('east', true, 'left')).toBe('south');
 
     const keys: string[] = [];
     const atlas = {
@@ -282,6 +290,48 @@ describe('oak door world model', () => {
     expect(Math.min(...boxes[0]!.size)).toBeCloseTo(DOOR_THICKNESS, 6);
     disposeMeshed(meshed);
     disposeMeshed(opened);
+  });
+
+  it('occupies the closed outward edge and the physical hinge edge when open', () => {
+    const t = DOOR_THICKNESS;
+    const cases: ReadonlyArray<{
+      facing: HorizontalFacing;
+      hinge: DoorHinge;
+      closed: HorizontalFacing;
+      open: HorizontalFacing;
+    }> = [
+      { facing: 'north', hinge: 'left', closed: 'north', open: 'east' },
+      { facing: 'north', hinge: 'right', closed: 'north', open: 'west' },
+      { facing: 'south', hinge: 'left', closed: 'south', open: 'west' },
+      { facing: 'south', hinge: 'right', closed: 'south', open: 'east' },
+      { facing: 'east', hinge: 'left', closed: 'east', open: 'south' },
+      { facing: 'east', hinge: 'right', closed: 'east', open: 'north' },
+      { facing: 'west', hinge: 'left', closed: 'west', open: 'north' },
+      { facing: 'west', hinge: 'right', closed: 'west', open: 'south' },
+    ];
+    const edgeOf = (box: ReturnType<typeof doorLocalBox>): HorizontalFacing => {
+      if (box.maxZ - box.minZ <= t + 1e-6) return box.minZ < 0.5 ? 'north' : 'south';
+      return box.minX < 0.5 ? 'west' : 'east';
+    };
+    for (const row of cases) {
+      expect(doorHingeEdge(row.facing, row.hinge)).toBe(row.open);
+      expect(occupiedDoorFacing(row.facing, false, row.hinge)).toBe(row.closed);
+      expect(occupiedDoorFacing(row.facing, true, row.hinge)).toBe(row.open);
+      expect(edgeOf(doorLocalBox({ facing: row.facing, hinge: row.hinge, open: false }))).toBe(row.closed);
+      expect(edgeOf(doorLocalBox({ facing: row.facing, hinge: row.hinge, open: true }))).toBe(row.open);
+    }
+    expect(doorOutsideFacingFromYaw(0)).toBe('south');
+    expect(doorOutsideFacingFromYaw(Math.PI)).toBe('north');
+    expect(doorOutsideFacingFromYaw(-Math.PI / 2)).toBe('west');
+    expect(doorOutsideFacingFromYaw(Math.PI / 2)).toBe('east');
+    expect(doorHingeFromPlacement('north', { x: 5.8, z: 5.1 }, 5, 5)).toBe('left');
+    expect(doorHingeFromPlacement('north', { x: 5.2, z: 5.1 }, 5, 5)).toBe('right');
+    expect(doorHingeFromPlacement('south', { x: 5.2, z: 5.9 }, 5, 5)).toBe('left');
+    expect(doorHingeFromPlacement('south', { x: 5.8, z: 5.9 }, 5, 5)).toBe('right');
+    expect(doorHingeFromPlacement('east', { x: 5.9, z: 5.8 }, 5, 5)).toBe('left');
+    expect(doorHingeFromPlacement('east', { x: 5.9, z: 5.2 }, 5, 5)).toBe('right');
+    expect(doorHingeFromPlacement('west', { x: 5.1, z: 5.2 }, 5, 5)).toBe('left');
+    expect(doorHingeFromPlacement('west', { x: 5.1, z: 5.8 }, 5, 5)).toBe('right');
   });
 });
 

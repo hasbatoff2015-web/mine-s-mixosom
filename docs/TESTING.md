@@ -47,6 +47,112 @@ npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates
 
 **11 files / 44 tests PASS**. Related chest/plugin regression **27/27**. `typecheck` / `typecheck:server` / `typecheck:client` / `typecheck:sim` / `check:boundaries` PASS.
 
+## 2026-09-19 Clan invitations + leader announcement
+
+Report: `reports/2026-09-19_clan-invites-announce.md`.
+
+```text
+npx vitest run tests/server/clan-invites-announce.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
+## 2026-09-19 Clan roles + Rating menu
+
+Report: `reports/2026-09-19_clan-roles-rating.md`.
+
+```text
+npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts tests/server/friends.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
+Contracts: roles leader/veteran/member with server-side invite/kick/promote/transfer; nickname invite errors; online snapshot; PvP kills persist independently of economy cooldown and ignore mobs; clan kills = current members; four ranking kinds, top 50 / 10 per page / personal place >50; menu 4+4 + `icon_rating.png` and no «Топ»; friends cancel outgoing; missing roles/kills migrate. Focused **8 files / 80 tests PASS**. `typecheck` / client / server / sim and `check:boundaries` PASS. `test:server` **56/548**, `test:sim` **12/66**, build **4.78 MiB / 405 files**.
+
+## 2026-09-19 Minecart visual pose interpolation
+
+```text
+npx vitest run tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/entity-snapshot-interpolation.test.ts tests/entity-host.test.ts tests/server/tnt-minecart.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "caps at 1.5" --maxWorkers=1
+```
+
+Focused: **tnt-minecart 18/18** (four ascending shapes, alpha 0.5 yaw/pitch, wrap), **rail-corner-path 10/10**, **player-visual-animation 18/18**, **entity-snapshot-interpolation 11/11**, **entity-host 5/5**, **server/tnt-minecart 5/5**, **anarchy-gameplay** PASS, isolated fire-contact W/S **PASS**. `typecheck` ×4, `check:boundaries`, `build` PASS. Full `fire-contact-sunlight-minecart.test.ts` still hangs on this host (baseline).
+
+Подробности: `docs/reports/2026-09-19_minecart-visual-pose-interpolation.md`.
+
+## 2026-09-19 Minecart rider interpolation / 1.5× speed
+
+```text
+npx vitest run tests/player-visual-animation.test.ts tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/server/tnt-minecart.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "caps at 1.5" --maxWorkers=1
+```
+
+Focused: **player-visual-animation 18/18**, **tnt-minecart 10/10**, **rail-corner-path 10/10**, isolated fire-contact W/S **PASS**, **server/tnt-minecart + anarchy-gameplay 40/40**. `typecheck` ×4, `check:boundaries`, `build` PASS. Full `fire-contact-sunlight-minecart.test.ts` still hangs on this host (baseline); that one W/S case uses `deferredLighting` so it can finish.
+
+Подробности: `docs/reports/2026-09-19_minecart-rider-interpolation-speed.md`.
+
+## 2026-09-19 Minecart visual yaw
+
+```text
+npx vitest run tests/tnt-minecart.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/entity-special-block-rendering.test.ts --maxWorkers=2
+```
+
+Подробности: `docs/reports/2026-09-19_minecart-visual-yaw.md`.
+
+## 2026-09-18 Rail corner UV south-east / straight seated pose
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/tnt-minecart.test.ts tests/lighting-physics-interaction.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts --maxWorkers=2
+```
+
+Focused: **entity-special-block-rendering 9/9** (PNG bottom+right probe + SE identity), **rail-corner-path 10/10**, **player-visual-animation 17/17**, **tnt-minecart 8/8**, **block-registry + unknown-block-load 21/21**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` PASS (**4.75 MiB / 404 files**).
+
+Подробности: `docs/reports/2026-09-18_rail-corner-uv-seated-straight.md`.
+
+## 2026-09-18 Seated pose / door facing / rail connectivity
+
+```text
+npx vitest run tests/player-visual-animation.test.ts tests/rail-corner-path.test.ts tests/special-block-items.test.ts tests/entity-special-block-rendering.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-minecart.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/content-pass.test.ts tests/chest-model.test.ts tests/use-interaction.test.ts tests/server/anarchy-gameplay.test.ts --maxWorkers=2
+```
+
+Focused: **player-visual-animation 16/16**, **rail-corner-path 10/10**, **special-block-items 13/13**, **entity-special-block-rendering 8/8**, **block-registry + unknown-block-load 21/21**, **tnt-minecart 8/8**. Related anarchy/content/chest/use **PASS**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` PASS (**4.75 MiB / 404 files**). Full `fire-contact-sunlight-minecart.test.ts` skipped (known host hang); topology cases live in `rail-corner-path`.
+
+Manual DEV: `/?qaSpecial=rails&row=tracks`, `/?qaSpecial=doors`, `/?qaSpecial=seated`.
+
+Подробности: `docs/reports/2026-09-18_seated-door-rail-connectivity.md`.
+
+## 2026-09-18 Rail corners / sign / door / minecart / seated
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/sign-entity-model.test.ts tests/special-block-items.test.ts tests/rail-corner-path.test.ts tests/player-visual-animation.test.ts tests/lighting-physics-interaction.test.ts tests/tnt-minecart.test.ts tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/utility-items.test.ts tests/arrow-visual-orientation.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/server/anarchy-gameplay.test.ts tests/block-selection-raycast.test.ts --maxWorkers=2
+```
+
+Focused (without full fire-contact file): **rail-corner-path 3/3**, **sign-entity-model 3/3**, **special-block-items 12/12**, **player-visual-animation 16/16**, **entity-special-block-rendering 8/8**, plus 165/unknown and anarchy 35/35. Isolated minecart floor visual **PASS**. `typecheck` ×4, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS (**4.75 MiB / 404 files**).
+
+Подробности: `docs/reports/2026-09-18_rail-sign-door-minecart-seated.md`.
+
+## 2026-09-18 Merge current main into entity-special-visual-fixes
+
+Save/block:
+
+```text
+npx vitest run tests/block-registry.test.ts tests/unknown-block-load.test.ts tests/fs-world-store.test.ts --maxWorkers=1
+```
+
+**29/29 PASS.** `BlockId.OakSign === 165`, `isKnownBlockId(165) === true`, restore of `"165"` / numeric 165 succeeds as `oak_sign`. Generic unknown `65534` stays unregistered placeholder `unknown_65534` and serializes as 65534.
+
+Focused feature:
+
+```text
+npx vitest run tests/entity-special-block-rendering.test.ts tests/skeleton-presentation.test.ts tests/mob-projectile-routing.test.ts tests/visual-models.test.ts tests/player-visual-animation.test.ts tests/server/anarchy-gameplay.test.ts tests/arrow-visual-orientation.test.ts tests/network-entity-visual-events.test.ts --maxWorkers=2
+```
+
+Plus related main arrow tests already in that set. **12 files / 122 tests PASS.**
+
+`npm run typecheck`, `typecheck:sim`, `typecheck:client`, `typecheck:server`, `check:boundaries`, `build`, `check:size`, `check:archive` — PASS. Production **4.75 MiB / 404 files**.
+
+Full `npx vitest run --maxWorkers=2`: **251 passed / 5 failed / 256 files**. Failures match current origin/main host baseline classes (extractor parse, chat-layout CRLF, fire-contact-sunlight-minecart timeout, worldgen timeout, tick-load-flight >80ms). Isolated `tnt-minecart` / `import-schematic` / `block-geometry` PASS; `lighting-scheduler` radius-6 can flake under load.
+
+Manual QA harnesses (`/?qaSpecial=1`, `/?qaChicken=1`, `/?qaSkeleton=1`, `/?qaPlayer=1`, `/?qaArrow=1`) exercised in the Cursor browser. Live two-client skeleton attribution and continuous minecart ride remain owner-deferred. This browser had no IndexedDB save with 165; restore coverage is the 29/29 suite.
+
+Подробности: `docs/reports/2026-09-18_merge-main-into-entity-special-visuals.md`.
+
 ## 2026-09-18 Third-person axe 180° handle flip
 
 Focused:

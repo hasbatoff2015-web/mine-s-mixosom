@@ -23,8 +23,10 @@ import {
   clanIconIds,
   clanJoinCaption,
   clanJoinDisabled,
+  clanKillsHtml,
   clanMembersHtml,
   clanRankHtml,
+  clanSortButtonsHtml,
   keepClanSearchDraft,
   showsClanBack,
 } from './clanGui';
@@ -71,7 +73,12 @@ import {
   shouldShowClanEmptyHint,
   type ChatMessage,
 } from '../chat';
-import { MAX_CHAT_LENGTH } from '../../shared/config';
+import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH } from '../../shared/config';
+import {
+  FRIENDS_ALREADY_LABEL,
+  FRIENDS_OUTGOING_LABEL,
+  FRIENDS_SELF_CARD_LABEL,
+} from '../../shared/friends';
 import {
   CHAT_NO_CLAN_HINT,
   formatPlayerChatLine,
@@ -87,6 +94,7 @@ import {
 import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import { isClanActionKind, isGameMenuScreenKind, isMenuActionKind } from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -255,6 +263,10 @@ export interface InventoryContext {
 
 interface ContainerAdapter {
   slots: Array<ItemStack | null>;
+}
+
+interface OverlayCloseOptions {
+  keepModal?: boolean;
 }
 
 export class GameUI {
@@ -683,7 +695,7 @@ export class GameUI {
         <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
         <div class="form-grid">
           <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
-          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="16" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
+          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
           <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
           <p class="menu-notice account-error hidden" data-account-error></p>
         </div>
@@ -1306,6 +1318,7 @@ export class GameUI {
     line.className = `chat-line kind-${message.kind}`;
     if (message.channel === 'nearby') line.classList.add('channel-nearby');
     if (message.channel === 'clan') line.classList.add('channel-clan');
+    if (message.style === 'announcement') line.classList.add('style-announcement');
     line.dataset.at = String(message.createdAtMs);
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
@@ -1376,7 +1389,8 @@ export class GameUI {
 
   closeInventory(returnStacks = true): void {
     const context = this.inventoryContext;
-    if (context && returnStacks) {
+    if (!context) return;
+    if (returnStacks) {
       for (const stack of [...this.craftSlots, this.cursorStack]) {
         if (!stack) continue;
         const remainder = context.inventory.add(stack);
@@ -1384,10 +1398,6 @@ export class GameUI {
       }
       context.onChanged();
     }
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.inventoryContext = undefined;
     this.craftMenuOpen = false;
     this.craftSearch = '';
@@ -1395,11 +1405,11 @@ export class GameUI {
     this.cursorStack = null;
     this.craftSlots = [];
     this.ghostCraft = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay();
   }
 
   isInventoryOpen(): boolean {
-    return this.modal !== undefined;
+    return this.inventoryContext !== undefined;
   }
 
   playTotemActivation(): void {
@@ -1542,13 +1552,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isAuctionOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeClan();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('auction');
     if (alreadyOpen) this.patchAuction(state);
     else {
       this.auctionState = state;
@@ -1565,19 +1569,14 @@ export class GameUI {
     this.openAuction(state, this.auctionActions);
   }
 
-  closeAuction(): void {
+  closeAuction(options?: OverlayCloseOptions): void {
     if (this.auctionSearchTimer !== undefined) {
       window.clearTimeout(this.auctionSearchTimer);
       this.auctionSearchTimer = undefined;
     }
-    if (this.auctionState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.auctionState = undefined;
-      this.setControlsSuppressed(false);
-    }
+    if (!this.auctionState) return;
+    this.auctionState = undefined;
+    this.releaseOverlay(options);
   }
 
   openClan(state: ServerClanMessage, actions: ClanGuiActions): void {
@@ -1587,13 +1586,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isClanOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('clan');
     if (alreadyOpen) this.patchClan(state);
     else {
       this.clanState = state;
@@ -1610,19 +1603,14 @@ export class GameUI {
     this.openClan(state, this.clanActions);
   }
 
-  closeClan(): void {
+  closeClan(options?: OverlayCloseOptions): void {
     if (this.clanSearchTimer !== undefined) {
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = undefined;
     }
-    if (this.clanState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.clanState = undefined;
-      this.setControlsSuppressed(false);
-    }
+    if (!this.clanState) return;
+    this.clanState = undefined;
+    this.releaseOverlay(options);
   }
 
   openBuyer(state: ServerBuyerMessage, actions: BuyerGuiActions): void {
@@ -1632,13 +1620,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isBuyerOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeGameMenu();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('buyer');
     if (alreadyOpen) this.patchBuyer(state);
     else {
       this.buyerState = state;
@@ -1655,15 +1637,10 @@ export class GameUI {
     this.openBuyer(state, this.buyerActions);
   }
 
-  closeBuyer(): void {
-    if (this.buyerState) {
-      this.itemTooltip?.dispose();
-      this.itemTooltip = undefined;
-      this.modal?.remove();
-      this.modal = undefined;
-      this.buyerState = undefined;
-      this.setControlsSuppressed(false);
-    }
+  closeBuyer(options?: OverlayCloseOptions): void {
+    if (!this.buyerState) return;
+    this.buyerState = undefined;
+    this.releaseOverlay(options);
   }
 
   openGameMenu(state: ServerMenuMessage, actions: MenuGuiActions): void {
@@ -1673,13 +1650,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isGameMenuOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeBuyer();
-      this.closeTrade();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('menu');
     this.menuState = state;
     this.renderGameMenu();
     this.setControlsSuppressed(true);
@@ -1693,14 +1664,10 @@ export class GameUI {
     this.openGameMenu(state, this.menuActions);
   }
 
-  closeGameMenu(): void {
+  closeGameMenu(options?: OverlayCloseOptions): void {
     if (!this.menuState) return;
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.menuState = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay(options);
   }
 
   openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
@@ -1710,13 +1677,7 @@ export class GameUI {
       return;
     }
     const alreadyOpen = this.isTradeOpen() && this.modal !== undefined;
-    if (!alreadyOpen) {
-      this.closeAuction();
-      this.closeClan();
-      this.closeBuyer();
-      this.closeGameMenu();
-      this.closeInventory(false);
-    }
+    if (!alreadyOpen) this.closeSiblingOverlays('trade');
     this.tradeState = state;
     this.renderTrade();
     this.setControlsSuppressed(true);
@@ -1730,14 +1691,10 @@ export class GameUI {
     this.openTrade(state, this.tradeActions);
   }
 
-  closeTrade(): void {
+  closeTrade(options?: OverlayCloseOptions): void {
     if (!this.tradeState) return;
-    this.itemTooltip?.dispose();
-    this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = undefined;
     this.tradeState = undefined;
-    this.setControlsSuppressed(false);
+    this.releaseOverlay(options);
   }
 
   openHologramEditor(hologram: NetworkHologram, actions: HologramEditorActions): void {
@@ -2074,12 +2031,10 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const stage = containerStageSize('craft', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
           <div class="mc-label">${CONTAINER_STRINGS.crafting}</div>
@@ -2094,7 +2049,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
     this.bindCraftSearch();
   }
@@ -2162,15 +2116,13 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const stage = containerStageSize('creative', false);
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
     const catalog = obtainableItems();
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-creative" data-container-kind="inventory" data-creative-current="${this.creativeTab}">
           <div class="mc-creative-tabs" role="tablist" aria-label="Разделы творческого инвентаря">
@@ -2189,7 +2141,6 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
   }
 
@@ -2223,11 +2174,9 @@ export class GameUI {
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.dataset.bookUi = layoutKey;
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.dataset.bookUi = layoutKey;
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         ${recipe}
         <div class="mc-panel" data-container-kind="${context.kind}">
@@ -2238,7 +2187,6 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
-    this.root.append(this.modal);
     this.bindContainerChrome(context);
     this.bindRecipeBookControls(context);
   }
@@ -2754,6 +2702,51 @@ export class GameUI {
       + `</button>`;
   }
 
+  /** Keep the backdrop in the DOM across nested screens so a click cannot fall through to the canvas. */
+  private resetOverlayModal(): HTMLDivElement {
+    const next = document.createElement('div');
+    next.className = 'modal-backdrop mc-backdrop';
+    if (this.modal && this.root.contains(this.modal)) this.modal.replaceWith(next);
+    else {
+      this.modal?.remove();
+      this.root.append(next);
+    }
+    this.modal = next;
+    return next;
+  }
+
+  private closeSiblingOverlays(keep: 'auction' | 'clan' | 'buyer' | 'menu' | 'trade'): void {
+    const keepModal = { keepModal: true } as const;
+    if (keep !== 'auction') this.closeAuction(keepModal);
+    if (keep !== 'clan') this.closeClan(keepModal);
+    if (keep !== 'buyer') this.closeBuyer(keepModal);
+    if (keep !== 'menu') this.closeGameMenu(keepModal);
+    if (keep !== 'trade') this.closeTrade(keepModal);
+    this.closeInventory(false);
+  }
+
+  private releaseOverlay(options?: OverlayCloseOptions): void {
+    this.itemTooltip?.dispose();
+    this.itemTooltip = undefined;
+    if (options?.keepModal) return;
+    this.modal?.remove();
+    this.modal = undefined;
+    this.setControlsSuppressed(false);
+  }
+
+  private bindOverlayPointerShield(modal: HTMLElement): void {
+    const stop = (event: Event) => event.stopPropagation();
+    modal.addEventListener('pointerdown', stop);
+    modal.addEventListener('pointerup', stop);
+    modal.addEventListener('mousedown', stop);
+    modal.addEventListener('mouseup', stop);
+    modal.addEventListener('click', stop);
+    modal.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+    });
+  }
+
   private captureAuctionInputFocus(): { kind: 'search' | 'price'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
@@ -2889,13 +2882,11 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    this.resetOverlayModal();
     const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
       ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
       : '';
-    this.modal.innerHTML = `
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         ${back}
         <div class="mc-panel" data-container-kind="chest">
@@ -2904,7 +2895,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindAuctionChrome();
     this.restoreAuctionInputFocus(keep);
   }
@@ -3030,6 +3020,7 @@ export class GameUI {
 
   private bindAuctionChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
     const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3152,12 +3143,36 @@ export class GameUI {
       return;
     }
     if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
-    list.innerHTML = this.clanListHtml(state);
+    if (list) list.innerHTML = this.clanListHtml(state);
     page.textContent = `Страница ${state.page} из ${state.totalPages}`;
     if (prev) prev.disabled = state.page <= 1;
     if (next) next.disabled = state.page >= state.totalPages;
     if (empty) empty.hidden = state.totalCount !== 0;
+    this.patchClanSortButtons(state);
+    this.patchClanInvite(state);
     this.writeClanMessage(state.message);
+  }
+
+  private patchClanSortButtons(state: ServerClanMessage): void {
+    const host = this.modal?.querySelector('.mc-clan-sort');
+    if (!host) return;
+    const ranking = state.screen === 'ranking';
+    const sort = ranking ? (state.rankingSort ?? 'money') : (state.memberSort ?? state.card?.memberSort ?? 'money');
+    const attr = ranking ? 'data-clan-ranking-sort' : 'data-clan-member-sort';
+    for (const button of host.querySelectorAll<HTMLButtonElement>('.mc-ah-btn')) {
+      const value = button.getAttribute(attr);
+      const on = value === 'kills' ? sort === 'kills' : sort !== 'kills';
+      button.classList.toggle('is-on', on);
+    }
+  }
+
+  private patchClanInvite(state: ServerClanMessage): void {
+    const input = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    if (input && !keepClanSearchDraft(document.activeElement, input)) input.value = state.inviteName ?? '';
+    const message = this.modal?.querySelector<HTMLElement>('[data-clan-invite-message]');
+    if (!message) return;
+    message.hidden = !state.inviteMessage;
+    message.textContent = state.inviteMessage ?? '';
   }
 
   private writeClanMessage(message: string | undefined): void {
@@ -3172,19 +3187,17 @@ export class GameUI {
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureClanInputFocus();
-    const logicalHeight = state.screen === 'create' || state.screen === 'card' ? 248
-      : state.screen === 'ranking' ? 232
+    const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
+      : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
         : 220;
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
+    const modal = this.resetOverlayModal();
     const back = showsClanBack(state.screen, state.source)
       ? `<button type="button" class="mc-close mc-back" data-clan-action="back" aria-label="Назад">←</button>`
       : '';
-    this.modal.innerHTML = `
+    modal.innerHTML = `
       <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
@@ -3193,12 +3206,11 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindClanChrome();
     this.restoreClanInputFocus(keep);
   }
 
-  private captureClanInputFocus(): { kind: 'search' | 'name'; value: string; start: number; end: number } | undefined {
+  private captureClanInputFocus(): { kind: 'search' | 'name' | 'invite' | 'announce'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
     if (el.hasAttribute('data-clan-search')) {
@@ -3207,12 +3219,21 @@ export class GameUI {
     if (el.hasAttribute('data-clan-name')) {
       return { kind: 'name', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
     }
+    if (el.hasAttribute('data-clan-invite-name')) {
+      return { kind: 'invite', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
+    if (el.hasAttribute('data-clan-announce-text')) {
+      return { kind: 'announce', value: el.value, start: el.selectionStart ?? el.value.length, end: el.selectionEnd ?? el.value.length };
+    }
     return undefined;
   }
 
   private restoreClanInputFocus(keep: ReturnType<GameUI['captureClanInputFocus']>): void {
     if (!keep || !this.modal) return;
-    const selector = keep.kind === 'search' ? '[data-clan-search]' : '[data-clan-name]';
+    const selector = keep.kind === 'search' ? '[data-clan-search]'
+      : keep.kind === 'invite' ? '[data-clan-invite-name]'
+        : keep.kind === 'announce' ? '[data-clan-announce-text]'
+          : '[data-clan-name]';
     const input = this.modal.querySelector<HTMLInputElement>(selector);
     if (!input) return;
     input.value = keep.value;
@@ -3229,6 +3250,7 @@ export class GameUI {
           <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="Поиск клана" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" aria-label="Поиск клана" /></label>
           <button type="button" class="mc-ah-btn" data-clan-action="refresh">Обновить</button>
         </div>
+        ${clanSortButtonsHtml(state.rankingSort, 'data-clan-ranking-sort')}
         <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
         ${this.clanNavHtml(state)}
         <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>Кланов пока нет.</div>
@@ -3269,17 +3291,54 @@ export class GameUI {
       </div>`;
     }
     if (this.clanConfirmScreen(state.screen)) {
+      const confirmLabel = state.screen === 'set-base-confirm' ? 'Подтвердить' : 'Да';
+      const cancelLabel = state.screen === 'set-base-confirm' ? 'Отмена' : 'Нет';
       return `<div class="mc-ah-body mc-clan-body" data-clan-screen="${state.screen}">
         <div class="mc-label">${this.escape(state.title)}</div>
         <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '').replace(/\n/g, '<br>')}</p>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">Да</button>
-          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">Нет</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanConfirmAction(state.screen)}">${confirmLabel}</button>
+          <button type="button" class="mc-ah-btn" data-clan-action="${this.clanCancelAction(state.screen)}">${cancelLabel}</button>
         </div>
         ${message}
       </div>`;
     }
-    if (state.screen === 'add' || state.screen === 'requests' || state.screen === 'makeleader' || state.screen === 'accept') {
+    if (state.screen === 'requests') {
+      const canInvite = state.card?.canInvite || state.viewer?.canInvite || state.viewer?.isOwner;
+      const invite = canInvite ? `<div class="mc-menu-add mc-clan-invite">
+        <input data-clan-invite-name type="text" maxlength="24" value="${this.escape(state.inviteName ?? '')}" placeholder="Введите ник игрока..." autocomplete="off" spellcheck="false" name="clan-invite" />
+        <button type="button" class="mc-ah-btn" data-clan-action="invite_by_name">Пригласить</button>
+      </div>
+      <div class="mc-ah-message" data-clan-invite-message${state.inviteMessage ? '' : ' hidden'}>${this.escape(state.inviteMessage ?? '')}</div>` : '';
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="requests">
+        <div class="mc-label">${this.escape(state.title)}</div>
+        ${invite}
+        <div class="mc-clan-list" data-clan-list>${this.clanListHtml(state)}</div>
+        ${this.clanNavHtml(state)}
+        <div class="mc-ah-empty" data-clan-empty${state.totalCount === 0 ? '' : ' hidden'}>${this.clanEmptyText(state.screen)}</div>
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'member-card') {
+      return this.clanPlayerCardHtml(state, message);
+    }
+    if (state.screen === 'announce') {
+      const cooling = !!state.announceCooldownLabel;
+      const sendDisabled = cooling ? ' disabled' : '';
+      const cooldown = state.announceCooldownLabel
+        ? `<div class="mc-clan-cooldown">${this.escape(state.announceCooldownLabel)}</div>`
+        : '';
+      return `<div class="mc-ah-body mc-clan-body" data-clan-screen="announce">
+        <div class="mc-label">Напишите объявление клану</div>
+        <div class="mc-menu-add">
+          <input data-clan-announce-text type="text" maxlength="${MAX_CHAT_LENGTH}" value="${this.escape(state.announceText ?? '')}" placeholder="Текст объявления" autocomplete="off" spellcheck="false" name="clan-announce" />
+          <button type="button" class="mc-ah-btn" data-clan-action="send_announcement"${sendDisabled}>Отправить</button>
+        </div>
+        ${cooldown}
+        ${message}
+      </div>`;
+    }
+    if (state.screen === 'add' || state.screen === 'makeleader' || state.screen === 'accept') {
       const placeholder = state.screen === 'add' ? 'Поиск по нику' : state.screen === 'accept' ? '' : 'Поиск';
       const search = state.screen === 'accept' ? '' : `<div class="mc-ah-toolbar">
         <label class="mc-ah-search"><input data-clan-search type="text" maxlength="32" placeholder="${placeholder}" value="${this.escape(state.search)}" autocomplete="off" spellcheck="false" name="clan-search" /></label>
@@ -3297,22 +3356,40 @@ export class GameUI {
     const joinDisabled = clanJoinDisabled(card);
     const joinCaption = clanJoinCaption(card);
     const showJoin = card && !card.isMember;
-    const kick = card?.isOwner && card.canKickSelected
-      ? `<button type="button" class="mc-ah-btn" data-clan-action="kick">Выгнать игрока</button>`
+    const requests = card?.canInvite || card?.isOwner
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы</button>`
       : '';
-    const requests = card?.isOwner
-      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_requests">Запросы на вступление в клан</button>`
+    const announce = card?.canAnnounce
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="open_announce">Объявление соклановцам</button>`
+      : '';
+    const baseStatus = card?.isMember && card.baseLabel
+      ? `<div class="mc-clan-base-status">${this.escape(card.baseLabel)}</div>`
+      : '';
+    const setBaseDisabled = card?.setBaseDisabled ? ' disabled' : '';
+    const setBase = card?.canSetBase
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="set_base"${setBaseDisabled}>${this.escape(card.setBaseLabel ?? 'Добавить точку базы клана')}</button>`
+      : '';
+    const setBaseCooldown = card?.canSetBase && card.baseCooldownLabel
+      ? `<div class="mc-clan-cooldown">${this.escape(card.baseCooldownLabel)}</div>`
+      : '';
+    const teleportBase = card?.canTeleportToBase
+      ? `<button type="button" class="mc-ah-btn" data-clan-action="teleport_to_base">Телепорт на базу клана</button>`
       : '';
     return `<div class="mc-ah-body mc-clan-body" data-clan-screen="card">
       <div class="mc-label mc-clan-card-title">${clanIconHtml(card?.icon)} ${this.escape(card?.name ?? state.title)}</div>
-      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
-      <div class="mc-clan-owner">Владелец: ${this.escape(card?.ownerName ?? '')}</div>
+      <div class="mc-clan-card-meta">${clanBalanceHtml(card?.totalLabel ?? '0')} ${card?.killsLabel ? clanKillsHtml(card.killsLabel) : ''} ${clanMembersHtml(card?.memberCount ?? 0)}</div>
+      <div class="mc-clan-owner">Глава: ${this.escape(card?.ownerName ?? '')}</div>
+      ${baseStatus}
+      ${clanSortButtonsHtml(state.memberSort ?? card?.memberSort, 'data-clan-member-sort')}
       <div class="mc-clan-list" data-clan-list>${this.clanMemberHtml(state)}</div>
       <div class="mc-ah-actions">
         ${showJoin ? `<button type="button" class="mc-ah-btn"${joinDisabled ? ' disabled' : ''} data-clan-action="join">${this.escape(joinCaption)}</button>` : ''}
-        ${kick}
         ${requests}
+        ${announce}
+        ${setBase}
+        ${teleportBase}
       </div>
+      ${setBaseCooldown}
       ${message}
     </div>`;
   }
@@ -3322,15 +3399,24 @@ export class GameUI {
       return (state.clans ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-id="${this.escape(row.clanId)}">
         ${clanRankHtml(row.rank)}
         <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.name)}</span></span>
-        ${clanBalanceHtml(row.totalLabel)}
+        ${(state.rankingSort ?? row.sort) === 'kills'
+          ? clanKillsHtml(row.killsLabel ?? '🗡️ 0 Уб.')
+          : clanBalanceHtml(row.totalLabel)}
         ${clanMembersHtml(row.memberCount)}
       </button>`).join('');
     }
     if (state.screen === 'accept') {
-      return (state.invitations ?? []).map((row) => `<button type="button" class="mc-clan-row" data-clan-invitation="${this.escape(row.invitationId)}">
-        <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
-        <span class="mc-clan-owner-mini">${this.escape(row.ownerName)}</span>
-      </button>`).join('');
+      return (state.invitations ?? []).map((row) => `<div class="mc-clan-row mc-clan-invite-row">
+        <div class="mc-player-main">
+          <span class="mc-clan-row-name">${clanIconHtml(row.icon)}<span>${this.escape(row.clanName)}</span></span>
+          <span class="mc-clan-invite-meta">Пригласил: ${this.escape(row.fromName ?? row.ownerName)}</span>
+          ${row.remainingLabel ? `<span class="mc-clan-invite-meta">Осталось: ${this.escape(row.remainingLabel)}</span>` : ''}
+        </div>
+        <span class="mc-menu-row-actions">
+          <button type="button" class="mc-ah-btn mc-btn-positive" data-clan-action="confirm_accept" data-clan-invitation-id="${this.escape(row.invitationId)}">Принять</button>
+          <button type="button" class="mc-ah-btn mc-btn-danger" data-clan-action="reject_invitation" data-clan-invitation-id="${this.escape(row.invitationId)}">Отклонить</button>
+        </span>
+      </div>`).join('');
     }
     const rows = state.screen === 'requests' ? state.requests : state.screen === 'makeleader' ? state.members : state.players;
     if (state.screen === 'makeleader') {
@@ -3350,10 +3436,57 @@ export class GameUI {
   }
 
   private clanMemberHtml(state: ServerClanMessage): string {
-    return (state.members ?? []).map((row) => `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}" ${row.isOwner ? 'data-clan-owner="1"' : ''}>
+    const sort = state.memberSort ?? state.card?.memberSort ?? 'money';
+    return (state.members ?? []).map((row) => {
+      const metric = sort === 'kills' ? clanKillsHtml(row.killsLabel) : clanBalanceHtml(row.balanceLabel);
+      return `<button type="button" class="mc-clan-row${row.isOwner ? ' is-owner' : ''}${state.card?.selectedMemberId === row.playerId ? ' is-selected' : ''}" data-clan-member="${this.escape(row.playerId)}">
+      <span class="mc-status-dot ${row.online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
       <span class="mc-clan-row-name">${this.escape(row.name)}</span>
-      ${clanBalanceHtml(row.balanceLabel)}
-    </button>`).join('');
+      <span class="mc-clan-role">${this.escape(row.roleLabel)}</span>
+      ${metric}
+    </button>`;
+    }).join('');
+  }
+
+  private clanPlayerCardHtml(state: ServerClanMessage, message: string): string {
+    const card = state.playerCard;
+    if (!card) return `<div class="mc-ah-body mc-clan-body" data-clan-screen="member-card">${message}</div>`;
+    const status = `<div class="mc-clan-player-status">
+      <span class="mc-status-dot ${card.online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
+      <span>${this.escape(card.statusLabel)}</span>
+    </div>`;
+    let friends = '';
+    if (card.isSelf) {
+      friends = `<div class="mc-clan-self">${FRIENDS_SELF_CARD_LABEL}</div>`;
+    } else if (card.friendState === 'friend') {
+      friends = `<button type="button" class="mc-ah-btn" disabled>${FRIENDS_ALREADY_LABEL}</button>`;
+    } else if (card.friendState === 'outgoing') {
+      friends = `<div class="mc-ah-actions">
+        <button type="button" class="mc-ah-btn" disabled>${FRIENDS_OUTGOING_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-clan-action="friends_cancel">Отменить</button>
+      </div>`;
+    } else {
+      friends = `<button type="button" class="mc-ah-btn" data-clan-action="friends_request">Добавить в друзья</button>`;
+    }
+    const kick = card.canKick ? `<button type="button" class="mc-ah-btn mc-btn-danger" data-clan-action="kick">Выгнать</button>` : '';
+    const promote = card.canPromote ? `<button type="button" class="mc-ah-btn" data-clan-action="promote_veteran">Назначить ветераном</button>` : '';
+    const demote = card.canDemote ? `<button type="button" class="mc-ah-btn" data-clan-action="demote_veteran">Снять роль ветерана</button>` : '';
+    const transfer = card.canTransfer ? `<button type="button" class="mc-ah-btn" data-clan-action="transfer_leader">Передать главу</button>` : '';
+    return `<div class="mc-ah-body mc-clan-body" data-clan-screen="member-card">
+      <div class="mc-label">Игрок: ${this.escape(card.name)}</div>
+      ${status}
+      <div class="mc-clan-player-meta">Роль: ${this.escape(card.roleLabel)}</div>
+      <div class="mc-clan-player-meta">Монет: ${this.escape(card.balanceLabel)}</div>
+      <div class="mc-clan-player-meta mc-rank-kills">Убийств: ${this.escape(String(card.kills))}</div>
+      <div class="mc-ah-actions mc-clan-player-actions">
+        ${friends}
+        ${promote}
+        ${demote}
+        ${transfer}
+        ${kick}
+      </div>
+      ${message}
+    </div>`;
   }
 
   private clanNavHtml(state: ServerClanMessage): string {
@@ -3381,7 +3514,9 @@ export class GameUI {
       || screen === 'kick-confirm'
       || screen === 'join-confirm'
       || screen === 'replace-request-confirm'
-      || screen === 'request-confirm';
+      || screen === 'request-confirm'
+      || screen === 'transfer-confirm'
+      || screen === 'set-base-confirm';
   }
 
   private clanConfirmAction(screen: ServerClanMessage['screen']): string {
@@ -3390,9 +3525,11 @@ export class GameUI {
     if (screen === 'accept-confirm') return 'confirm_accept';
     if (screen === 'leave-confirm') return 'confirm_leave';
     if (screen === 'makeleader-confirm') return 'confirm_makeleader';
+    if (screen === 'transfer-confirm') return 'confirm_transfer_leader';
     if (screen === 'kick-confirm') return 'confirm_kick';
     if (screen === 'join-confirm') return 'confirm_join';
     if (screen === 'replace-request-confirm') return 'confirm_replace_request';
+    if (screen === 'set-base-confirm') return 'confirm_set_base';
     return 'confirm_accept_request';
   }
 
@@ -3402,15 +3539,22 @@ export class GameUI {
     if (screen === 'accept-confirm') return 'cancel_accept';
     if (screen === 'leave-confirm') return 'cancel_leave';
     if (screen === 'makeleader-confirm') return 'cancel_makeleader';
+    if (screen === 'transfer-confirm') return 'cancel_transfer_leader';
     if (screen === 'kick-confirm') return 'cancel_kick';
     if (screen === 'join-confirm') return 'cancel_join';
     if (screen === 'replace-request-confirm') return 'cancel_replace_request';
+    if (screen === 'set-base-confirm') return 'cancel_set_base';
     return 'cancel_accept_request';
   }
 
   private bindClanChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.clanActions?.close());
+    this.bindOverlayPointerShield(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.clanActions?.close();
+    });
     const bindField = (selector: string, action: 'search' | 'set_name') => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3426,18 +3570,49 @@ export class GameUI {
     };
     bindField('[data-clan-search]', 'search');
     bindField('[data-clan-name]', 'set_name');
+    const invite = this.modal!.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    invite?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    invite?.addEventListener('keydown', (event) => event.stopPropagation());
+    invite?.addEventListener('keyup', (event) => event.stopPropagation());
+    invite?.addEventListener('input', () => {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = window.setTimeout(() => {
+        this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
+      }, 160);
+    });
+    const announce = this.modal!.querySelector<HTMLInputElement>('[data-clan-announce-text]');
+    announce?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    announce?.addEventListener('keydown', (event) => event.stopPropagation());
+    announce?.addEventListener('keyup', (event) => event.stopPropagation());
+    announce?.addEventListener('input', () => {
+      window.clearTimeout(this.clanSearchTimer);
+      this.clanSearchTimer = window.setTimeout(() => {
+        this.clanActions?.send({ type: 'clan_action', action: 'set_announce_text', text: announce.value });
+      }, 160);
+    });
     this.modal!.addEventListener('click', (event) => {
+      event.stopPropagation();
       const current = this.clanState;
       const actions = this.clanActions;
       if (!current || !actions) return;
       const target = event.target as HTMLElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.closest('input, textarea, label')) {
+        return;
+      }
+      if (target.closest('[data-ui="close"]')) {
+        event.preventDefault();
+        actions.close();
+        return;
+      }
       const back = target.closest<HTMLElement>('[data-clan-action="back"]');
       if (back) {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'back' });
         return;
       }
       const clan = target.closest<HTMLElement>('[data-clan-id]');
       if (clan?.dataset.clanId) {
+        event.preventDefault();
         actions.send({ type: 'clan_action', action: 'select_clan', clanId: clan.dataset.clanId });
         return;
       }
@@ -3458,11 +3633,22 @@ export class GameUI {
       }
       const member = target.closest<HTMLElement>('[data-clan-member]');
       if (member?.dataset.clanMember) {
-        if (member.dataset.clanOwner === '1') return;
         actions.send({ type: 'clan_action', action: 'select_member', playerId: member.dataset.clanMember });
         return;
       }
-      const icon = target.closest<HTMLElement>('[data-clan-icon]');
+      const rankingSort = target.closest<HTMLElement>('[data-clan-ranking-sort]');
+      if (rankingSort?.dataset.clanRankingSort === 'money' || rankingSort?.dataset.clanRankingSort === 'kills') {
+        event.preventDefault();
+        actions.send({ type: 'clan_action', action: 'set_ranking_sort', sort: rankingSort.dataset.clanRankingSort });
+        return;
+      }
+      const memberSort = target.closest<HTMLElement>('[data-clan-member-sort]');
+      if (memberSort?.dataset.clanMemberSort === 'money' || memberSort?.dataset.clanMemberSort === 'kills') {
+        event.preventDefault();
+        actions.send({ type: 'clan_action', action: 'set_member_sort', sort: memberSort.dataset.clanMemberSort });
+        return;
+      }
+      const icon = target.closest<HTMLElement>('.mc-clan-icon-pick[data-clan-icon]');
       if (icon?.dataset.clanIcon) {
         actions.send({ type: 'clan_action', action: 'select_icon', icon: icon.dataset.clanIcon });
         return;
@@ -3478,17 +3664,24 @@ export class GameUI {
       }
       const button = target.closest<HTMLElement>('[data-clan-action]');
       const kind = button?.dataset.clanAction;
-      if (!kind || kind === 'back') return;
+      if (!kind || kind === 'back' || !isClanActionKind(kind)) return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      event.preventDefault();
+      const inviteName = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]')?.value;
+      const announceText = this.modal?.querySelector<HTMLInputElement>('[data-clan-announce-text]')?.value;
       actions.send({
         type: 'clan_action',
-        action: kind as ClientClanActionMessage['action'],
+        action: kind,
         ...(current.card?.clanId ? { clanId: current.card.clanId } : {}),
-        ...(current.selected?.playerId || current.card?.selectedMemberId
-          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId }
+        ...(current.selected?.playerId || current.card?.selectedMemberId || current.playerCard?.playerId
+          ? { playerId: current.selected?.playerId ?? current.card?.selectedMemberId ?? current.playerCard?.playerId }
           : {}),
-        ...(current.selected?.invitationId ? { invitationId: current.selected.invitationId } : {}),
+        ...(button.dataset.clanInvitationId || current.selected?.invitationId
+          ? { invitationId: button.dataset.clanInvitationId ?? current.selected?.invitationId }
+          : {}),
         ...(current.selected?.requestId ? { requestId: current.selected.requestId } : {}),
+        ...(kind === 'invite_by_name' && inviteName !== undefined ? { name: inviteName } : {}),
+        ...(kind === 'send_announcement' && announceText !== undefined ? { text: announceText } : {}),
       });
     });
   }
@@ -3564,10 +3757,8 @@ export class GameUI {
     const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${this.buyerBodyHtml(state)}
@@ -3575,7 +3766,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindBuyerChrome();
     this.restoreBuyerInputFocus(keep);
   }
@@ -3602,6 +3792,7 @@ export class GameUI {
 
   private bindBuyerChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
@@ -3697,10 +3888,8 @@ export class GameUI {
     const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    const modal = this.resetOverlayModal();
+    modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
@@ -3708,7 +3897,6 @@ export class GameUI {
         </div>
         ${this.closeButtonHtml()}
       </div>`;
-    this.root.append(this.modal);
     this.bindGameMenuChrome();
     this.restoreMenuInputFocus(keep);
   }
@@ -3743,7 +3931,12 @@ export class GameUI {
   }
 
   private bindGameMenuChrome(): void {
-    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.menuActions?.close());
+    this.bindOverlayPointerShield(this.modal!);
+    this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.menuActions?.close();
+    });
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
@@ -3765,16 +3958,29 @@ export class GameUI {
       }, { passive: false });
     }
     this.modal!.addEventListener('click', (event) => {
+      event.stopPropagation();
       const actions = this.menuActions;
       const current = this.menuState;
       if (!actions || !current) return;
       const target = event.target as HTMLElement;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target.closest('input, textarea, label')) {
+        return;
+      }
+      if (target.closest('[data-ui="close"]')) {
+        event.preventDefault();
+        actions.close();
+        return;
+      }
       const open = target.closest<HTMLElement>('[data-menu-open]');
       if (open?.dataset.menuOpen) {
         if (open instanceof HTMLButtonElement && open.disabled) return;
+        event.preventDefault();
         const id = open.dataset.menuOpen;
         if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
-        else actions.send({ type: 'menu_action', action: 'open', screen: id as ServerMenuMessage['screen'] });
+        else if (id === 'rating') actions.send({ type: 'menu_action', action: 'open', screen: 'rating' });
+        else if (isGameMenuScreenKind(id) && id !== 'closed') {
+          actions.send({ type: 'menu_action', action: 'open', screen: id });
+        }
         return;
       }
       const home = target.closest<HTMLElement>('[data-menu-home]');
@@ -3842,10 +4048,25 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'trade_reject', requestId: tradeReject.dataset.menuTradeReject });
         return;
       }
+      const ratingKind = target.closest<HTMLElement>('[data-menu-rating]');
+      if (ratingKind?.dataset.menuRating) {
+        actions.send({ type: 'menu_action', action: 'rating_set', ratingKind: ratingKind.dataset.menuRating });
+        return;
+      }
+      const ratingPage = target.closest<HTMLElement>('[data-menu-rating-page]');
+      if (ratingPage?.dataset.menuRatingPage === 'prev' && (current.ratingPage ?? 1) > 1) {
+        actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) - 1 });
+        return;
+      }
+      if (ratingPage?.dataset.menuRatingPage === 'next' && (current.ratingPage ?? 1) < (current.ratingTotalPages ?? 1)) {
+        actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) + 1 });
+        return;
+      }
       const button = target.closest<HTMLElement>('[data-menu-action]');
       const kind = button?.dataset.menuAction;
-      if (!kind) return;
+      if (!kind || !isMenuActionKind(kind)) return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      event.preventDefault();
       if (kind === 'home_create') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-home-name]')?.value ?? current.homeNameText;
         actions.send({ type: 'menu_action', action: 'home_create', name });
@@ -3871,7 +4092,7 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'trade_request', name });
         return;
       }
-      actions.send({ type: 'menu_action', action: kind as ClientMenuActionMessage['action'] });
+      actions.send({ type: 'menu_action', action: kind });
     });
   }
 
@@ -3883,10 +4104,8 @@ export class GameUI {
     const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    this.modal?.remove();
-    this.modal = document.createElement('div');
-    this.modal.className = 'modal-backdrop mc-backdrop';
-    this.modal.innerHTML = `
+    this.resetOverlayModal();
+    this.modal!.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
           ${tradeWindowChrome(state, (value) => this.escape(value), {
@@ -3898,7 +4117,6 @@ export class GameUI {
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
-    this.root.append(this.modal);
     this.bindTradeChrome();
     this.restoreTradeInputFocus(keep);
   }
@@ -3954,6 +4172,7 @@ export class GameUI {
 
   private bindTradeChrome(): void {
     this.itemTooltip = attachItemTooltip(this.modal!);
+    this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
     const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
     money?.addEventListener('pointerdown', (event) => event.stopPropagation());

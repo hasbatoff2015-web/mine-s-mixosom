@@ -13,6 +13,13 @@ import {
   type HologramTextStyle,
 } from '../../shared/hologramStyle';
 import { pickHologramRayHit, type HologramRayHit } from '../gameplay/hologramHit';
+import {
+  configureHologramTextTexture,
+  createHologramTextCanvas,
+  ensureHologramTextCanvasResolution,
+  hologramDevicePixelRatio,
+  loadHologramCanvasFonts,
+} from './hologramTextCanvas';
 
 interface HologramVisual {
   readonly name: string;
@@ -65,7 +72,7 @@ export class HologramRenderer {
         continue;
       }
       const texture = new THREE.CanvasTexture(this.makeCanvas());
-      this.configureTextTexture(texture);
+      configureHologramTextTexture(texture);
       const textMaterial = new THREE.MeshBasicMaterial({
         map: texture,
         transparent: true,
@@ -155,38 +162,13 @@ export class HologramRenderer {
     visual.backgroundMaterial.dispose();
   }
 
-  private configureTextTexture(texture: THREE.CanvasTexture): void {
-    texture.magFilter = THREE.LinearFilter;
-    texture.minFilter = THREE.LinearMipmapLinearFilter;
-    texture.generateMipmaps = true;
-    texture.needsUpdate = true;
-  }
-
-  private devicePixelRatio(): number {
-    if (typeof window === 'undefined') return 1;
-    const dpr = window.devicePixelRatio;
-    return Number.isFinite(dpr) && dpr > 0 ? dpr : 1;
-  }
-
   private makeCanvas(): HTMLCanvasElement {
-    const canvas = document.createElement('canvas');
-    const size = hologramTextCanvasSize(this.devicePixelRatio());
-    canvas.width = size.width;
-    canvas.height = size.height;
-    return canvas;
-  }
-
-  private ensureCanvasResolution(canvas: HTMLCanvasElement, scale: number): void {
-    const width = HOLOGRAM_TEXT_LOGICAL_WIDTH * scale;
-    const height = HOLOGRAM_TEXT_LOGICAL_HEIGHT * scale;
-    if (canvas.width === width && canvas.height === height) return;
-    canvas.width = width;
-    canvas.height = height;
+    return createHologramTextCanvas(hologramDevicePixelRatio());
   }
 
   private paint(visual: HologramVisual, hologram: NetworkHologram, nowMs = this.getServerNowMs()): void {
     const lines = hologramDisplayLines(hologram, nowMs);
-    const scale = hologramTextCanvasSize(this.devicePixelRatio()).scale;
+    const scale = hologramTextCanvasSize(hologramDevicePixelRatio()).scale;
     const key = [
       hologram.kind,
       hologram.font,
@@ -200,7 +182,7 @@ export class HologramRenderer {
     ].join('|');
     if (visual.paintedKey !== key) {
       const canvas = visual.texture.image as HTMLCanvasElement;
-      this.ensureCanvasResolution(canvas, scale);
+      ensureHologramTextCanvasResolution(canvas, scale);
       this.draw(canvas, lines, hologram.font, hologram.style, scale);
       visual.texture.needsUpdate = true;
       visual.paintedKey = key;
@@ -243,16 +225,7 @@ export class HologramRenderer {
   }
 
   private prepareFonts(): void {
-    if (typeof document === 'undefined' || !document.fonts) return;
-    const sizes = [HOLOGRAM_TEXT_FONT_PX, HOLOGRAM_TEXT_FONT_PX * 2, HOLOGRAM_TEXT_FONT_PX * 4];
-    void Promise.all([
-      ...sizes.flatMap((px) => [
-        document.fonts.load(`700 ${px}px "Inter"`),
-        document.fonts.load(`400 ${px}px "Inter"`),
-        document.fonts.load(`400 ${px}px "Press Start 2P"`),
-      ]),
-      document.fonts.ready,
-    ]).then(() => {
+    loadHologramCanvasFonts(() => {
       if (this.fontsReady) return;
       this.fontsReady = true;
       this.sync(this.holograms);

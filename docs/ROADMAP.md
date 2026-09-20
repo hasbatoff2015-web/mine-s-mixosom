@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-20: Sync origin/main into world-events
+
+- [x] Semantic merge of current `main` (clan base, nameplates, minecart occupancy) into the world-events branch.
+- [x] Keep reconnect overlay, transient `record: false`, and virtual event protection.
+
 ## 2026-09-20: Event overlay on reconnect
 
 - [x] Network-only composition of persistent modifications + active event placement for welcome/`chunk_data`.
@@ -33,6 +38,115 @@
 - [x] Persist active event + snapshot; restore or cleanup after restart.
 - [x] Crimson Relic event-chest texture with source UV/alpha compatibility test.
 - [ ] Owner live Anarchy QA of `/wand`, template save, force spawn/unlock/cleanup, restart, and chest look.
+
+## 2026-09-20: Nameplate clipping + nick max 13
+
+- [x] Size nameplate canvas from measureText + stroke/padding so 13-char Press Start 2P nicks are not clipped.
+- [x] `MAX_PLAYER_NAME_LENGTH` 16 → 13 (client + server reject 14+; clan names unchanged).
+- [x] Lower nameplate offset `2.15 → 2.05`.
+- [ ] Owner live Anarchy QA of a 13-char nick close-up.
+
+## 2026-09-20: Player nameplate hologram visuals
+
+- [x] Remove nameplate background panel; keep nick + heart/HP text only.
+- [x] Reuse hologram `display` pixel font (Press Start 2P) and hologram canvas supersample helpers.
+- [x] 2× world/text size, bright-red HP `#ff1f1f`, existing nick/HP/hide/distance logic unchanged.
+- [ ] Owner live Anarchy QA: walk up to another player; nick stays sharp, no plate, HP bright red.
+
+## 2026-09-20: Clan base point
+
+- [x] One persistent clan diamond base (same radius as personal diamond claim).
+- [x] Leader-only set/move with 24h clan cooldown; overlap with any existing claim denied.
+- [x] Bedrock is never replaced; members teleport via TeleportService.
+- [ ] Owner live Anarchy QA of clan base place/move/teleport.
+
+## 2026-09-19: Auction history + menu unread badges
+
+- [x] Clan announcement format `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - text` (no quotes).
+- [x] Auction deal history (confirmed buy/sell only, 24h, max 20 UI, `plugin-data/auction/history.json`).
+- [x] Server-authoritative unread badges on Friends/Clans/Auction/Trade tiles; persist `plugin-data/notifications/unread.json`.
+- [x] Opening a tab clears that category; one domain event increments once.
+
+## 2026-09-19: Clan invitations + leader announcement
+
+- [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
+- [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
+- [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+- [x] Agent live Anarchy QA of invites inbox, announce cooldown after restart, transfer button visibility, and ranking coin icons.
+
+## 2026-09-19: Clan roles + Rating menu
+
+- [x] Roles Глава / Ветеран / Участник on existing `ClanService` (no parallel clan system).
+- [x] Veteran invite + kick members; leader-only promote/demote/transfer; transfer only to veteran.
+- [x] Nickname invite on Requests with inline errors; 24h TTL; `/clan add` stays online-only.
+- [x] Member list: role, online snapshot, leader first, money/kills sort; player card with friends + rights.
+- [x] Persistent PvP kills on `EconomyService`; clan kills = live sum of current members.
+- [x] Main-menu Рейтинг (4 rankings, top 50 / 10 per page); 4+4 grid; `icon_rating.png`.
+- [ ] Owner live Anarchy QA of rating, invites, transfer, and kill increment.
+
+## 2026-09-20: minecart occupancy + stable vehicle controls
+
+- [x] One passenger per cart on the authoritative server; occupancy from `ridingCartId`.
+- [x] Per-cart rider input in a single `MinecartManager.update`.
+- [x] W launches from camera only on a new press from a stop; S brakes to zero.
+- [ ] Owner live: two-client same-cart / two-cart / disconnect / slope QA.
+
+## 2026-09-19: minecart visual pose interpolation
+
+- [x] Interpolate cart yaw/pitch with position; shortest-angle wrap.
+- [x] Slope pitch on local Z so local +X follows the 3D rail tangent (all four ascending shapes).
+- [ ] Owner live: third-person max-speed corners and slopes.
+
+## 2026-09-19: minecart rider interpolation + 1.5× speed
+
+- [x] Local seated origin uses render-sampled ride pose, not current `cart.position`.
+- [x] `MINECART_MAX_SPEED = WALK_SPEED * 1.5`; keep 0.5 s accel time.
+- [ ] Owner live: third-person ride on straight/corners/slopes; Anarchy observer.
+
+## 2026-09-19: minecart visual yaw
+
+- [x] Visual-only −π/2 so ModelMinecart local +X follows the rail tangent.
+- [ ] Owner live: cart hull along NS/EW and around corners.
+
+## 2026-09-18: rail corner UV south-east + straight seated pose
+
+- [x] Identity `RAIL_CORNER_UV` = south+east (asset bottom+right); SW/NE/NW are H/V/180 flips.
+- [x] Seated hip `π/2`, upright torso, relaxed arms; seat visual offset instead of `bodyYOffset`.
+- [ ] Owner live: four-corner texture joins, side-view seated cart.
+
+## 2026-09-18: seated pose sign, door outside facing, rail connectivity
+
+- [x] Flip seated limb X rotations so tips go to local −Z (forward).
+- [x] Store door `facing` as closed-door outward normal; `doorHingeEdge` is the open occupied edge.
+- [x] Reciprocal rail endpoints for resolve/path; curve length `π/4`; bounded neighbor refresh.
+- [ ] Owner live: seated cart third-person, four door facings, straight→corner minecart tracks.
+
+## 2026-09-18: rail corners / sign / door hinge / minecart visual / seated pose
+
+- [x] Align `rail_corner` UV with south+west authored L; keep live `resolveRailShape` + `railPath`.
+- [x] Fit standing/wall OakSign mesh and selection inside the cell; wall flush to attached face.
+- [x] Open doors around the outside-left hinge (south+left → west).
+- [x] Rebuild minecart from `entity/minecart` ModelMinecart floor+walls.
+- [x] Reusable `seated` animator pose for minecart passengers (local + remote `ridingEntityId`).
+- [ ] Owner live: four-corner ride, wall sign against a real block, left/right door swing, sit in cart third-person.
+
+## 2026-09-18: merge current main into entity-special-visual-fixes
+
+- [x] Semantic merge `origin/main` into `codex/entity-special-visual-fixes` without shifting OakSign off 165 or dropping unknown-block compatibility.
+- [ ] Owner review of the synchronized feature branch before any merge to main.
+
+## 2026-09-10: special blocks, mob presentation, skeleton hit routing
+
+- [x] Give torch/redstone torch explicit authored side/top/bottom UV while preserving floor/four-wall attachment and light gameplay.
+- [x] Rebuild standing/hanging lantern silhouette from authored body/cap/hanger regions.
+- [x] Separate ten-shape rail render surfaces from simulation collision boxes; add true slopes and authored curved tile.
+- [x] Keep current main chicken `[29, 0]` yellow-island UV with two grounded opposite-gait legs.
+- [x] Attach one shared-factory bow to skeleton hand and add distinct bounded bow/draw arm pose.
+- [x] Sweep skeleton projectiles against every living/targetable canonical player AABB, compare block distance and route exact `targetPlayerId` without nearest fallback.
+- [x] Add independent third-person sword/tool/bow/generic/block grips and correct bow pitch/sneak composition without changing first person.
+- [x] Adapt flying/embedded arrow orientation onto current `visualDirection` / `impactVx` without restoring `visualVx`.
+- [ ] Owner manual: two simultaneous Anarchy clients with skeleton fire and visible health attribution.
+- [ ] Owner manual: continuous minecart ride through break/rebuild/high/curve/save-load scenario.
 
 ## 2026-09-18: Third-person axe 180° handle flip
 

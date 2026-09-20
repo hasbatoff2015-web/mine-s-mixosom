@@ -348,6 +348,7 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     fluidDisplaceable: true,
     category: 'utility', hardness: 0.7, solid: false, opaque: false, occludesFaces: false,
     renderLayer: 'cutout', renderShape: 'rail',
+    textures: { all: 'block/rail', corner: 'block/rail_corner' },
     drop: { item: 'rail', count: 1 },
   }),
   block(BlockId.Glowstone, 'glowstone', {

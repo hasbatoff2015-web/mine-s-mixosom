@@ -46,6 +46,8 @@ import {
   MinecartManager,
   MobManager,
   dropsForBrokenMinecart,
+  extraMinecartOccupants,
+  findMinecartPassenger,
   minecartDismountFromSprint,
   igniteMinecartTntFromFireArrow,
 } from '../src/entities';
@@ -199,10 +201,11 @@ export class ServerGameplay {
   loadRegularClaimVolumes?: () => readonly SelectionVolume[];
   /** Extra per-voxel explosion deny (active world-event area). */
   isExplosionProtected?: (x: number, y: number, z: number) => boolean;
-  /** Live authoritative players; occupancy is derived from `restingBed`. */
+  /** Live authoritative players; occupancy is derived from `restingBed` / `ridingCartId`. */
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
   private pendingUseReject: string | undefined;
+  private lastVehicleEnterReject: string | undefined;
   maxTickMs = 0;
   private readonly blockDelta = new Map<string, { x: number; y: number; z: number; blockId: number }>();
   private activePressurePlates = new Set<string>();
@@ -391,26 +394,30 @@ export class ServerGameplay {
           this.minecarts.tryPushFromPlayer(player.controller, player.ridingCartId);
         }
 
-        const rider = connected.find((player) => player.ridingCartId);
-        const ridingCart = rider?.ridingCartId ? this.minecarts.get(rider.ridingCartId) : undefined;
-        const steer = Boolean(ridingCart && rider && this.minecarts.isOnRail(ridingCart));
-        this.minecarts.update(dt, {
-          riderId: rider?.ridingCartId,
-          forward: steer ? rider!.vehicleForward : 0,
-          riderYaw: rider?.controller.yaw,
-        });
+        this.reconcileMinecartOccupancy();
+        const controls = new Map<string, { throttle: number; riderYaw: number }>();
+        for (const player of connected) {
+          const cartId = player.ridingCartId;
+          if (!cartId || controls.has(cartId)) continue;
+          const ridingCart = this.minecarts.get(cartId);
+          const steer = Boolean(ridingCart && this.minecarts.isOnRail(ridingCart));
+          controls.set(cartId, {
+            throttle: steer ? player.vehicleForward : 0,
+            riderYaw: player.controller.yaw,
+          });
+        }
+        this.minecarts.update(dt, { controls });
         for (const boom of this.minecarts.consumeExplosions()) {
           this.enqueueExplosion(
             boom.position.x, boom.position.y, boom.position.z, boom.radius, boom.power, boom.blockId,
           );
-          for (const player of players) {
-            if (player.ridingCartId === boom.id) player.ridingCartId = undefined;
-          }
+          this.releaseAllFromCart(boom.id, false);
         }
       },
       tickMobs: () => {
         this.mobs.update(dt, {
           players: connected.map((player) => ({
+            id: player.id,
             position: player.controller.position,
             eyePosition: player.controller.eyePosition(),
             alive: !player.survival.dead,
@@ -424,8 +431,8 @@ export class ServerGameplay {
           this.drops.spawn(drop.stack, drop.position, { velocity: drop.velocity });
         }
         for (const event of this.mobs.consumePlayerDamage()) {
-          const victim = this.nearestSurvivalPlayer(connected, event.position);
-          if (!victim) continue;
+          const victim = connected.find((player) => player.id === event.targetPlayerId);
+          if (!victim || victim.gamemode !== 'survival' || victim.survival.dead) continue;
           const damageEvent = this.events.createPlayerDamage(victim.id, event.amount, event.source);
           this.events.emit('playerDamage', damageEvent);
           if (damageEvent.cancelled) continue;
@@ -563,6 +570,12 @@ export class ServerGameplay {
         id: projectile.id, kind: 'arrow',
         x: projectile.x, y: projectile.y, z: projectile.z,
         vx: projectile.vx, vy: projectile.vy, vz: projectile.vz,
+        state: projectile.inGround ? 'embedded' : 'flight',
+        ...(projectile.inGround ? {
+          impactVx: projectile.impactVx,
+          impactVy: projectile.impactVy,
+          impactVz: projectile.impactVz,
+        } : {}),
       });
     }
     const fireworks: EntitySnapshot[] = this.fireworks.entities
@@ -1091,8 +1104,10 @@ export class ServerGameplay {
       return { result: accepted ? 'hit' : 'immune', distance: mobHit.distance };
     }
     if (attack?.kind === 'minecart') {
+      const cartId = attack.cart.id;
       const broken = this.minecarts.breakCart(attack.cart, player.ridingCartId);
       if (!broken) return { result: 'miss', distance: cartHit?.distance };
+      this.releaseAllFromCart(cartId, false);
       this.emitWorldSound('block.break.stone', broken.position.x, broken.position.y, broken.position.z);
       for (const itemId of dropsForBrokenMinecart(player.gamemode, broken.items)) {
         this.spawnDroppedStack(createItemStack(itemId), broken.position.clone().add(new Vec3(0, 0.2, 0)), player.id);
@@ -1196,7 +1211,7 @@ export class ServerGameplay {
     }
     const cart = this.minecarts.get(id);
     if (!cart || !this.minecarts.isRideable(cart)) {
-      player.ridingCartId = undefined;
+      this.forceReleaseVehicle(player, false);
       return;
     }
     const edge = minecartDismountFromSprint(sprint, player.lastSprint);
@@ -1212,16 +1227,33 @@ export class ServerGameplay {
   }
 
   enterVehicle(player: GameplayPlayer, entityId: string): boolean {
+    this.lastVehicleEnterReject = undefined;
     const cart = this.minecarts.get(entityId);
     if (!cart || !this.minecarts.isRideable(cart)) return false;
+    if (player.ridingCartId === entityId) return true;
+    if (player.ridingCartId) {
+      this.rejectVehicleEnter('already_riding');
+      return false;
+    }
+    this.reconcileMinecartOccupancy();
+    if (this.findMinecartPassenger(entityId)) {
+      this.rejectVehicleEnter('vehicle_occupied');
+      return false;
+    }
     const event = this.events.createVehicleEnter(player.id, entityId);
     this.events.emit('vehicleEnter', event);
     if (event.cancelled) return false;
     player.ridingCartId = entityId;
-    cart.rider = true;
+    this.syncCartRiderFlag(entityId);
     player.controller.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
     player.controller.velocity.set(0, 0, 0);
     return true;
+  }
+
+  consumeVehicleEnterReject(): string | undefined {
+    const reason = this.lastVehicleEnterReject;
+    this.lastVehicleEnterReject = undefined;
+    return reason;
   }
 
   exitVehicle(player: GameplayPlayer): void {
@@ -1230,14 +1262,52 @@ export class ServerGameplay {
     const event = this.events.createVehicleExit(player.id, id);
     this.events.emit('vehicleExit', event);
     if (event.cancelled) return;
-    const cart = this.minecarts.get(id);
+    this.forceReleaseVehicle(player);
+  }
+
+  /**
+   * Non-cancellable occupancy cleanup for disconnect, death, and cart removal.
+   * Does not emit `vehicleExit`.
+   */
+  forceReleaseVehicle(player: GameplayPlayer, relocate = true): void {
+    const id = player.ridingCartId;
+    if (!id) return;
     player.ridingCartId = undefined;
-    if (!cart) return;
-    cart.rider = false;
+    player.vehicleForward = 0;
+    const cart = this.minecarts.get(id);
+    this.syncCartRiderFlag(id);
+    if (!relocate || !cart) return;
     const exit = this.minecarts.findDismountPosition(cart);
     player.controller.position.copy(exit);
     player.controller.previousPosition.copy(exit);
     player.controller.velocity.set(0, 0, 0);
+  }
+
+  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding'): void {
+    this.lastVehicleEnterReject = reason;
+    this.pendingUseReject = reason;
+  }
+
+  findMinecartPassenger(cartId: string): GameplayPlayer | undefined {
+    return findMinecartPassenger(this.listPlayers?.() ?? [], cartId);
+  }
+
+  private syncCartRiderFlag(cartId: string): void {
+    const cart = this.minecarts.get(cartId);
+    if (!cart) return;
+    cart.rider = Boolean(this.findMinecartPassenger(cartId));
+  }
+
+  private releaseAllFromCart(cartId: string, relocate = true): void {
+    for (const player of this.listPlayers?.() ?? []) {
+      if (player.ridingCartId === cartId) this.forceReleaseVehicle(player, relocate);
+    }
+  }
+
+  private reconcileMinecartOccupancy(): void {
+    for (const extra of extraMinecartOccupants(this.listPlayers?.() ?? [])) {
+      this.forceReleaseVehicle(extra);
+    }
   }
 
   /**
@@ -1252,7 +1322,7 @@ export class ServerGameplay {
     }
     player.deathLootDropped = true;
     this.flushPlayerLife?.(player);
-    if (player.ridingCartId) this.exitVehicle(player);
+    if (player.ridingCartId) this.forceReleaseVehicle(player);
     player.window = { kind: 'inventory' };
     clearMiningLock(player);
     player.bowUseTicks = 0;
@@ -1605,20 +1675,6 @@ export class ServerGameplay {
         });
       }
     }
-  }
-
-  private nearestSurvivalPlayer(players: readonly GameplayPlayer[], position: Vec3): GameplayPlayer | undefined {
-    let best: GameplayPlayer | undefined;
-    let bestDistance = 4;
-    for (const player of players) {
-      if (player.gamemode !== 'survival' || player.survival.dead) continue;
-      const distance = player.controller.position.distanceTo(position);
-      if (distance < bestDistance) {
-        best = player;
-        bestDistance = distance;
-      }
-    }
-    return best;
   }
 
   private raycastPlayers(

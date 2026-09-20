@@ -153,6 +153,7 @@ import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../rendering/player/PlayerVisual';
+import { applySeatVisualRoot, seatedLocalPlayerVisualOrigin } from '../rendering/player/seatVisual';
 import {
   PlayerArmorGeometryCache,
   PlayerArmorMaterialCache,
@@ -357,7 +358,7 @@ import {
   takePendingAppearance,
 } from '../net/remoteAppearance';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
-import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -763,6 +764,7 @@ export class Game {
     this.ui.onHudChat = () => this.openChat();
     this.ui.onHudMenu = () => this.toggleGameMenu();
     this.canvas.addEventListener('click', () => {
+      if (this.ui.isBlockingOverlay()) return;
       this.lifecycle.resumePlayingIfVisible();
       this.canvas.focus({ preventScroll: true });
     });
@@ -1312,7 +1314,11 @@ export class Game {
           });
         } else {
           if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
-          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text, {
+            channel: message.channel,
+            style: message.style,
+            id: message.messageId,
+          });
         }
         return;
       case 'inventory':
@@ -2008,6 +2014,12 @@ export class Game {
     if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
       this.ui.toast('Кровать занята');
     }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'vehicle_occupied') {
+      this.ui.toast('Вагонетка занята.');
+    }
+    if (message.kind === 'block_use' && !message.ok && message.reason === 'already_riding') {
+      this.ui.toast('Сначала выйдите из текущей вагонетки.');
+    }
     if (message.kind === 'block_use' && !message.ok
       && online.localFoodUse?.actionSeq === message.actionSeq) {
       session.foodUseTicks = 0;
@@ -2350,17 +2362,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeAuction();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isAuctionOpen()) {
@@ -2374,13 +2376,24 @@ export class Game {
     });
   }
 
+  private resumeLookIfNoOverlay(): void {
+    if (this.ui.isBlockingOverlay() || this.ui.isHologramEditorOpen()) return;
+    this.input.clearHeldKeys();
+    this.ui.hidePointerLockFallback();
+    this.lifecycle.endOnlineRespawnRestore();
+    this.lifecycle.setState(lifecycleAfterWorldSessionEnter(this.lifecycle.state));
+    this.previousTime = performance.now();
+    this.accumulator = 0;
+    this.canvas.focus({ preventScroll: true });
+    this.input.tryRequestPointerLock();
+  }
+
   private closeAuctionAndResumeLook(notifyServer: boolean): void {
     if (notifyServer && this.session?.online) {
       this.session.online.client.send({ type: 'auction_action', action: 'close' });
     }
     this.ui.closeAuction();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openClanHouse(message: Extract<ServerMessage, { type: 'clan' }>): void {
@@ -2389,17 +2402,7 @@ export class Game {
     this.ui.setPlayerInClan(Boolean(message.viewer?.clanId));
     if (message.screen === 'closed') {
       this.ui.closeClan();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isClanOpen()) {
@@ -2419,8 +2422,7 @@ export class Game {
       this.session.online.client.send({ type: 'clan_action', action: 'close' });
     }
     this.ui.closeClan();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openGameMenuHouse(message: Extract<ServerMessage, { type: 'menu' }>): void {
@@ -2428,17 +2430,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeGameMenu();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isGameMenuOpen()) {
@@ -2457,8 +2449,7 @@ export class Game {
       this.session.online.client.send({ type: 'menu_action', action: 'close' });
     }
     this.ui.closeGameMenu();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openTradeHouse(message: Extract<ServerMessage, { type: 'trade' }>): void {
@@ -2466,17 +2457,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeTrade();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isTradeOpen()) {
@@ -2495,8 +2476,7 @@ export class Game {
       this.session.online.client.send({ type: 'trade_action', action: 'close' });
     }
     this.ui.closeTrade();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private syncBuyers(session: GameSession, buyers: readonly NetworkBuyerNpc[]): void {
@@ -2541,17 +2521,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeBuyer();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isBuyerOpen()) {
@@ -2572,8 +2542,7 @@ export class Game {
       this.session.online.client.send({ type: 'buyer_action', action: 'close' });
     }
     this.ui.closeBuyer();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private sendOnlineBowRelease(session: GameSession): void {
@@ -3907,8 +3876,7 @@ export class Game {
     } else {
       this.ui.closeInventory();
     }
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   /** Resume from pause/settings and restore desktop mouse-look. Opening pause does not use this. */
@@ -4642,12 +4610,14 @@ export class Game {
         session.minecarts.tryPushFromPlayer(session.player, session.ridingCartId);
         const ridingCart = session.ridingCartId ? session.minecarts.get(session.ridingCartId) : undefined;
         const steerOnRail = Boolean(ridingCart && session.minecarts.isOnRail(ridingCart));
-        session.minecarts.update(FIXED_DT, {
-          riderId: session.ridingCartId,
-          forward: riding && steerOnRail ? movementBefore.forward : 0,
-          strafe: riding && steerOnRail ? movementBefore.right : 0,
-          riderYaw: session.player.yaw,
-        });
+        const controls = new Map<string, { throttle: number; riderYaw: number }>();
+        if (session.ridingCartId && steerOnRail) {
+          controls.set(session.ridingCartId, {
+            throttle: riding ? movementBefore.forward : 0,
+            riderYaw: session.player.yaw,
+          });
+        }
+        session.minecarts.update(FIXED_DT, { controls });
         this.updateMinecartRiding(session);
         if (session.playTicks % 80 === 0) {
           const removed = session.world.pruneChunks(
@@ -4666,7 +4636,7 @@ export class Game {
             power: boom.power,
             profile: getTntProfile(boom.blockId),
           });
-          if (session.ridingCartId === boom.id) session.ridingCartId = undefined;
+          if (session.ridingCartId === boom.id) this.clearMinecartRide(session);
         }
         simMark = this.addSimPart('entities', simMark);
       },
@@ -5469,10 +5439,33 @@ export class Game {
     const session = this.session!;
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) return;
+    if (session.ridingCartId === id) return;
+    if (session.ridingCartId) {
+      this.ui.toast('Сначала выйдите из текущей вагонетки.');
+      return;
+    }
+    if (cart.rider) {
+      this.ui.toast('Вагонетка занята.');
+      return;
+    }
     session.ridingCartId = id;
+    cart.rider = true;
     this.minecartDismountHeld = true;
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
     session.player.previousPosition.copy(session.player.position);
+    session.player.velocity.set(0, 0, 0);
+  }
+
+  private clearMinecartRide(session: GameSession, relocate = false): void {
+    const id = session.ridingCartId;
+    if (!id) return;
+    session.ridingCartId = undefined;
+    const cart = session.minecarts.get(id);
+    if (cart) cart.rider = false;
+    if (!relocate || !cart) return;
+    const exit = session.minecarts.findDismountPosition(cart);
+    session.player.position.copy(exit);
+    session.player.previousPosition.copy(exit);
     session.player.velocity.set(0, 0, 0);
   }
 
@@ -5484,17 +5477,13 @@ export class Game {
     }
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) {
-      session.ridingCartId = undefined;
+      this.clearMinecartRide(session);
       return;
     }
     const edge = minecartDismountFromSprint(this.input.movement().sprint, this.minecartDismountHeld);
     this.minecartDismountHeld = edge.held;
     if (edge.dismount) {
-      session.ridingCartId = undefined;
-      const exit = session.minecarts.findDismountPosition(cart);
-      session.player.position.copy(exit);
-      session.player.previousPosition.copy(exit);
-      session.player.velocity.set(0, 0, 0);
+      this.clearMinecartRide(session, true);
       return;
     }
     session.player.position.set(cart.position.x, cart.position.y + 0.2, cart.position.z);
@@ -5571,7 +5560,8 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()
+      || this.ui.isAuctionOpen() || this.ui.isClanOpen() || this.ui.isGameMenuOpen() || this.ui.isTradeOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -5620,7 +5610,7 @@ export class Game {
   private pushChat(
     kind: 'system' | 'player' | 'command' | 'death' | 'error',
     text: string,
-    extra: { from?: string; channel?: ChatChannel; id?: string } = {},
+    extra: { from?: string; channel?: ChatChannel; id?: string; style?: ChatMessageStyle } = {},
   ): void {
     const message = this.chat.push(kind, text, performance.now(), extra);
     this.ui.appendChat(message);
@@ -5689,7 +5679,7 @@ export class Game {
 
   private teleportPlayer(x: number, y: number, z: number): void {
     const session = this.session!;
-    session.ridingCartId = undefined;
+    this.clearMinecartRide(session);
     session.restingBed = undefined;
     const destination = new THREE.Vector3(x, clamp(y, 1, WORLD_HEIGHT - 3), z);
     session.player.teleport(destination);
@@ -5763,7 +5753,7 @@ export class Game {
     this.deathShown = false;
     this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
-    session.ridingCartId = undefined;
+    this.clearMinecartRide(session);
     session.miningProgress = 0;
     session.miningTarget = undefined;
     session.foodUseTicks = 0;
@@ -5803,12 +5793,15 @@ export class Game {
     const session = this.session;
     if (!session || this.deathShown) return;
     session.restingBed = undefined;
+    this.clearMinecartRide(session);
     this.deathShown = true;
     this.pushChat('death', deathMessage(source ?? session.survival.lastDamage?.source ?? 'generic'));
     this.ui.closeChat();
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -5925,14 +5918,15 @@ export class Game {
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
     session.playerVisual.setOffhandItem(session.inventory.offhand?.itemId);
-    session.playerVisual.root.position.copy(position);
     session.playerVisual.setVisible(
       thirdPerson
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen(),
+      && !this.ui.isBlockingOverlay(),
     );
-    session.playerVisual.update(this.renderDeltaSeconds, {
+    const seated = Boolean(session.ridingCartId);
+    const pose = session.playerVisual.update(this.renderDeltaSeconds, {
       bedRest: session.restingBed,
+      seated,
       viewYaw: this.input.yaw,
       viewPitch: this.input.pitch,
       movementSpeed: Math.hypot(session.player.velocity.x, session.player.velocity.z),
@@ -5948,6 +5942,14 @@ export class Game {
       hurtFlash: this.hurt.modelIntensity(now),
       onFire: session.survival.isOnFire,
     });
+    applySeatVisualRoot(
+      session.playerVisual.root,
+      seated
+        ? seatedLocalPlayerVisualOrigin(position)
+        : { x: position.x, y: position.y, z: position.z },
+      pose.bodyYaw,
+      seated,
+    );
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,
@@ -6019,7 +6021,7 @@ export class Game {
     const state = this.firstPersonFrameState;
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen()
+      && !this.ui.isBlockingOverlay()
       && effectiveCameraPerspective(this.cameraPerspective, Boolean(session?.restingBed)) === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
