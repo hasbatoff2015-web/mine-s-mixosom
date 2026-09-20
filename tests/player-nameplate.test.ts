@@ -13,14 +13,27 @@ import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
 import {
+  NAMEPLATE_FONT,
+  NAMEPLATE_HEALTH_COLOR,
+  NAMEPLATE_HEALTH_FONT_PX,
+  NAMEPLATE_HEIGHT,
   NAMEPLATE_HEIGHT_OFFSET,
   NAMEPLATE_MAX_DISTANCE,
+  NAMEPLATE_NAME_COLOR,
+  NAMEPLATE_NAME_FONT_PX,
+  NAMEPLATE_SIZE_SCALE,
+  NAMEPLATE_TEXT_LOGICAL_HEIGHT,
+  NAMEPLATE_TEXT_LOGICAL_WIDTH,
+  NAMEPLATE_WIDTH,
   PlayerNameplate,
   nameplateLines,
   nameplateOpacity,
 } from '../src/rendering/player/PlayerNameplate';
 import { VoxelWorld } from '../src/world/World';
 import gameSource from '../src/core/Game.ts?raw';
+import nameplateSource from '../src/rendering/player/PlayerNameplate.ts?raw';
+import { hologramCanvasFont, hologramTextCanvasScale } from '../shared/hologramStyle';
+import { hologramDevicePixelRatio } from '../src/rendering/hologramTextCanvas';
 
 const remoteInfo: RemotePlayerInfo = {
   id: 'remote', name: 'Misha', x: 0, y: 70, z: 0, yaw: 0, pitch: 0, health: 20,
@@ -162,5 +175,46 @@ describe('player nameplate', () => {
     expect(gameSource).toContain('remote.updateNameplate(this.camera)');
     expect(gameSource).not.toContain('new PlayerNameplate(');
     expect(gameSource).toContain('session.playerVisual.setVisible(');
+  });
+
+  it('draws nick and HP without a background panel, using hologram pixel font and 2× world size', () => {
+    expect(NAMEPLATE_SIZE_SCALE).toBe(2);
+    expect(NAMEPLATE_WIDTH).toBeCloseTo(2.1);
+    expect(NAMEPLATE_HEIGHT).toBeCloseTo(0.84);
+    expect(NAMEPLATE_HEIGHT_OFFSET).toBe(2.15);
+    expect(NAMEPLATE_FONT).toBe('display');
+    expect(NAMEPLATE_NAME_COLOR).toBe('#fff7c2');
+    expect(NAMEPLATE_HEALTH_COLOR).toBe('#ff1f1f');
+    expect(NAMEPLATE_NAME_FONT_PX).toBe(44);
+    expect(NAMEPLATE_HEALTH_FONT_PX).toBe(36);
+    expect(hologramCanvasFont(NAMEPLATE_FONT, 'bold', NAMEPLATE_NAME_FONT_PX)).toContain('"Press Start 2P"');
+    expect(nameplateSource).not.toMatch(/fillRect/);
+    expect(nameplateSource).not.toMatch(/NearestFilter/);
+    expect(nameplateSource).not.toMatch(/rgba\(0,\s*0,\s*0/);
+    expect(nameplateSource).toContain('hologramCanvasFont');
+    expect(nameplateSource).toContain('configureHologramTextTexture');
+    expect(nameplateSource).toContain('createHologramTextCanvas');
+    expect(nameplateSource).toContain('ensureHologramTextCanvasResolution');
+    expect(nameplateSource).toContain('hologramTextCanvasScale');
+    expect(nameplateSource).toContain('setTransform');
+    expect(nameplateSource).toContain('texture.needsUpdate = true');
+    expect(nameplateSource).not.toContain('HologramRenderer');
+
+    const plate = new PlayerNameplate('Misha', 20);
+    expect(plate.sprite.scale.x).toBeCloseTo(NAMEPLATE_WIDTH);
+    expect(plate.sprite.scale.y).toBeCloseTo(NAMEPLATE_HEIGHT);
+    const material = plate.sprite.material as THREE.SpriteMaterial;
+    expect(material.map?.magFilter).toBe(THREE.LinearFilter);
+    expect(material.map?.minFilter).toBe(THREE.LinearMipmapLinearFilter);
+    expect(material.map?.generateMipmaps).toBe(true);
+    const canvas = material.map?.image as HTMLCanvasElement | undefined;
+    if (canvas && canvas.width > 0) {
+      const scale = hologramTextCanvasScale(hologramDevicePixelRatio());
+      expect(canvas.width).toBe(NAMEPLATE_TEXT_LOGICAL_WIDTH * scale);
+      expect(canvas.height).toBe(NAMEPLATE_TEXT_LOGICAL_HEIGHT * scale);
+      expect(canvas.width).toBeGreaterThan(256);
+      expect(canvas.height).toBeGreaterThan(96);
+    }
+    plate.dispose();
   });
 });

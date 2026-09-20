@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Player nameplate без фона, пиксельный шрифт, 2× и качество holograms — 2026-09-20
+
+- `PlayerNameplate` остаётся Sprite на `RemotePlayerView` (не world hologram entity). Ник, HP, hide/fade/invisibility, appearance/skins не менялись по логике.
+- Фон/плашка убраны. Ник — тот же `hologramCanvasFont('display')` / **Press Start 2P**. Весь текст 2× (world 2.1×0.84, canvas 44px/36px). HP `#ff1f1f`.
+- Качество close-up: те же `hologramTextCanvas.ts` helpers, что у `HologramRenderer` (supersample 2–4×dpr, Linear mag, mipmaps, `needsUpdate`).
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-hologram-quality.md`.
+
 ## Последний проход: Точка базы клана — 2026-09-20
 
 - У клана одна persistent серверная точка базы: Diamond claim того же радиуса 30, что и личный алмазный приват (`CLAIM_ANCHOR_RADIUS.diamond_block`).
@@ -1124,7 +1132,7 @@
 - `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
 - First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
 - Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
-- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует.
+- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует. Визуал без background panel, шрифт hologram `display` (Press Start 2P), размер 2×, supersample как у обычных holograms, HP `#ff1f1f`.
 - F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.

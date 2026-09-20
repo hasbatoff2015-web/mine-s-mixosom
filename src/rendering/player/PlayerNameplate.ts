@@ -1,10 +1,31 @@
 import * as THREE from 'three';
+import {
+  hologramCanvasFont,
+  hologramTextCanvasScale,
+} from '../../../shared/hologramStyle';
+import {
+  configureHologramTextTexture,
+  createHologramTextCanvas,
+  ensureHologramTextCanvasResolution,
+  hologramDevicePixelRatio,
+  loadHologramCanvasFonts,
+} from '../hologramTextCanvas';
 
 export const NAMEPLATE_HEIGHT_OFFSET = 2.15;
 export const NAMEPLATE_MAX_DISTANCE = 48;
 export const NAMEPLATE_FADE_START = 32;
-export const NAMEPLATE_WIDTH = 1.05;
-export const NAMEPLATE_HEIGHT = 0.42;
+/** World-space size is 2× the original 1.05×0.42 plate. */
+export const NAMEPLATE_SIZE_SCALE = 2;
+export const NAMEPLATE_WIDTH = 1.05 * NAMEPLATE_SIZE_SCALE;
+export const NAMEPLATE_HEIGHT = 0.42 * NAMEPLATE_SIZE_SCALE;
+/** Same pixel face holograms use for `font: display`. */
+export const NAMEPLATE_FONT: 'display' = 'display';
+export const NAMEPLATE_NAME_COLOR = '#fff7c2';
+export const NAMEPLATE_HEALTH_COLOR = '#ff1f1f';
+export const NAMEPLATE_NAME_FONT_PX = 44;
+export const NAMEPLATE_HEALTH_FONT_PX = 36;
+export const NAMEPLATE_TEXT_LOGICAL_WIDTH = 512;
+export const NAMEPLATE_TEXT_LOGICAL_HEIGHT = 205;
 
 export function nameplateLines(name: string, health: number): readonly [string, string] {
   const hp = Math.max(0, Math.round(health));
@@ -19,17 +40,17 @@ export function nameplateOpacity(distance: number): number {
 
 /**
  * Billboard nameplate owned by player presentation, not world holograms.
- * Sprite always faces the camera; text is only rebuilt when name or health changes.
+ * Sprite always faces the camera. Glyphs reuse hologram canvas supersampling
+ * and the Press Start 2P face; there is no background panel.
  */
 export class PlayerNameplate {
   readonly sprite: THREE.Sprite;
-  private readonly texture: THREE.Texture;
+  private readonly texture: THREE.CanvasTexture | THREE.Texture;
   private readonly material: THREE.SpriteMaterial;
   private readonly canvas?: HTMLCanvasElement;
   private nameValue: string;
   private healthValue: number;
-  private paintedName = '';
-  private paintedHealth = Number.NaN;
+  private paintedKey = '';
   private invisible = false;
   private readonly tmp = new THREE.Vector3();
 
@@ -37,14 +58,15 @@ export class PlayerNameplate {
     this.nameValue = name;
     this.healthValue = health;
     const canPaint = typeof document !== 'undefined';
-    this.canvas = canPaint ? document.createElement('canvas') : undefined;
-    if (this.canvas) {
-      this.canvas.width = 256;
-      this.canvas.height = 96;
-    }
+    this.canvas = canPaint
+      ? createHologramTextCanvas(
+        hologramDevicePixelRatio(),
+        NAMEPLATE_TEXT_LOGICAL_WIDTH,
+        NAMEPLATE_TEXT_LOGICAL_HEIGHT,
+      )
+      : undefined;
     this.texture = this.canvas ? new THREE.CanvasTexture(this.canvas) : new THREE.Texture();
-    this.texture.magFilter = THREE.NearestFilter;
-    this.texture.minFilter = THREE.LinearFilter;
+    if (this.texture instanceof THREE.CanvasTexture) configureHologramTextTexture(this.texture);
     this.material = new THREE.SpriteMaterial({
       map: this.texture,
       transparent: true,
@@ -57,6 +79,10 @@ export class PlayerNameplate {
     this.sprite.scale.set(NAMEPLATE_WIDTH, NAMEPLATE_HEIGHT, 1);
     this.sprite.renderOrder = 9;
     this.paint();
+    loadHologramCanvasFonts(() => {
+      this.paintedKey = '';
+      this.paint();
+    });
   }
 
   get name(): string {
@@ -104,21 +130,41 @@ export class PlayerNameplate {
   }
 
   private paint(): void {
-    if (this.paintedName === this.nameValue && this.paintedHealth === this.healthValue) return;
-    this.paintedName = this.nameValue;
-    this.paintedHealth = this.healthValue;
+    const scale = hologramTextCanvasScale(hologramDevicePixelRatio());
+    const key = `${this.nameValue}|${this.healthValue}|${scale}`;
+    if (this.paintedKey === key) return;
+    this.paintedKey = key;
     const canvas = this.canvas;
     const context = canvas?.getContext?.('2d') ?? null;
     if (!canvas || !context) return;
-    const { width, height } = canvas;
-    context.clearRect(0, 0, width, height);
-    context.fillStyle = 'rgba(0, 0, 0, 0.28)';
-    context.fillRect(16, 10, width - 32, height - 20);
+    ensureHologramTextCanvasResolution(
+      canvas,
+      scale,
+      NAMEPLATE_TEXT_LOGICAL_WIDTH,
+      NAMEPLATE_TEXT_LOGICAL_HEIGHT,
+    );
+    context.setTransform(scale, 0, 0, scale, 0, 0);
+    context.clearRect(0, 0, NAMEPLATE_TEXT_LOGICAL_WIDTH, NAMEPLATE_TEXT_LOGICAL_HEIGHT);
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     const [name, health] = this.lines;
-    this.strokeFill(context, name.slice(0, 16), width / 2, height * 0.36, 'bold 22px sans-serif', '#fff7c2');
-    this.strokeFill(context, health, width / 2, height * 0.68, 'bold 18px sans-serif', '#ff6b6b');
+    const step = NAMEPLATE_TEXT_LOGICAL_HEIGHT / 3;
+    this.strokeFill(
+      context,
+      name.slice(0, 16),
+      NAMEPLATE_TEXT_LOGICAL_WIDTH / 2,
+      step,
+      hologramCanvasFont(NAMEPLATE_FONT, 'bold', NAMEPLATE_NAME_FONT_PX),
+      NAMEPLATE_NAME_COLOR,
+    );
+    this.strokeFill(
+      context,
+      health,
+      NAMEPLATE_TEXT_LOGICAL_WIDTH / 2,
+      step * 2,
+      hologramCanvasFont(NAMEPLATE_FONT, 'bold', NAMEPLATE_HEALTH_FONT_PX),
+      NAMEPLATE_HEALTH_COLOR,
+    );
     this.texture.needsUpdate = true;
   }
 
@@ -131,7 +177,7 @@ export class PlayerNameplate {
     fill: string,
   ): void {
     context.font = font;
-    context.lineWidth = 4;
+    context.lineWidth = 6;
     context.strokeStyle = '#000';
     context.strokeText(text, x, y);
     context.fillStyle = fill;

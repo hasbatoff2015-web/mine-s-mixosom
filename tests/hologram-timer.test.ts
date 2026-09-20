@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import rendererSource from '../src/rendering/HologramRenderer.ts?raw';
+import canvasHelperSource from '../src/rendering/hologramTextCanvas.ts?raw';
 import uiSource from '../src/ui/GameUI.ts?raw';
 import gameSource from '../src/core/Game.ts?raw';
 import pluginSource from '../server/builtin-plugins/holograms.ts?raw';
@@ -11,6 +12,7 @@ import {
   hologramTimerRemainingSeconds,
   hologramTextCanvasScale,
   hologramTextCanvasSize,
+  hologramTextPhysicalSize,
   hologramWorldSize,
   parseHologramAppearanceLenient,
   HOLOGRAM_TEXT_LOGICAL_HEIGHT,
@@ -128,12 +130,16 @@ describe('hologram renderer contracts', () => {
     expect(rendererSource).toContain('setFromEuler');
     expect(rendererSource).toContain('background.visible = hologram.backgroundEnabled');
     expect(rendererSource).not.toContain("fillRect");
-    expect(rendererSource).toContain('texture.magFilter = THREE.LinearFilter');
-    expect(rendererSource).toContain('texture.minFilter = THREE.LinearMipmapLinearFilter');
-    expect(rendererSource).toContain('texture.generateMipmaps = true');
+    expect(rendererSource).toContain('configureHologramTextTexture(texture)');
+    expect(rendererSource).toContain('createHologramTextCanvas');
+    expect(rendererSource).toContain('ensureHologramTextCanvasResolution');
     expect(rendererSource).not.toContain('NearestFilter');
     expect(rendererSource).toContain('setTransform');
     expect(rendererSource.split('new THREE.CanvasTexture').length - 1).toBe(1);
+    expect(canvasHelperSource).toContain('texture.magFilter = THREE.LinearFilter');
+    expect(canvasHelperSource).toContain('texture.minFilter = THREE.LinearMipmapLinearFilter');
+    expect(canvasHelperSource).toContain('texture.generateMipmaps = true');
+    expect(canvasHelperSource).not.toContain('NearestFilter');
   });
 
   it('does not send per-tick timer packets and exposes editor controls', () => {
@@ -164,6 +170,10 @@ describe('hologram text canvas resolution', () => {
     expect(hologramTextCanvasScale(8)).toBe(HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX);
     expect(hologramTextCanvasScale(0)).toBe(HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN);
     expect(hologramTextCanvasSize(8).width).toBe(HOLOGRAM_TEXT_LOGICAL_WIDTH * HOLOGRAM_TEXT_RESOLUTION_SCALE_MAX);
+    const nameplate = hologramTextPhysicalSize(512, 205, 1);
+    expect(nameplate.scale).toBe(oneX.scale);
+    expect(nameplate.width).toBe(512 * oneX.scale);
+    expect(nameplate.height).toBe(205 * oneX.scale);
   });
 
   it('does not change world-space text size when the canvas is supersampled', () => {

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-20: Player nameplate hologram visuals
+
+- [x] Remove nameplate background panel; keep nick + heart/HP text only.
+- [x] Reuse hologram `display` pixel font (Press Start 2P) and hologram canvas supersample helpers.
+- [x] 2× world/text size, bright-red HP `#ff1f1f`, existing nick/HP/hide/distance logic unchanged.
+- [ ] Owner live Anarchy QA: walk up to another player; nick stays sharp, no plate, HP bright red.
+
 ## 2026-09-20: Clan base point
 
 - [x] One persistent clan diamond base (same radius as personal diamond claim).
