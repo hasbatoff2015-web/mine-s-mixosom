@@ -1,12 +1,16 @@
 import { ItemId } from '../items';
 import type { CatVariant } from './petTypes';
 
-export const PET_TAME_CHANCE = 1 / 3;
+/** Accepted feeds required to tame. Each valid feed succeeds; there is no RNG. */
+export const PET_TAME_REQUIRED_FEEDS = 3;
 
 export const WOLF_TAME_ITEM = ItemId.Bone;
 export const CAT_TAME_ITEMS: readonly string[] = [
+  ItemId.Beef,
   ItemId.CookedBeef,
+  ItemId.Porkchop,
   ItemId.CookedPorkchop,
+  ItemId.Chicken,
   ItemId.CookedChicken,
 ];
 

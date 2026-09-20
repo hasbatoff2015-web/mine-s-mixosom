@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 import type { MobKind } from '../src/entities/mobDefinitions';
 import {
@@ -30,6 +31,8 @@ import {
   logicalUvToNormalized,
 } from '../src/rendering/TexturedCuboid';
 import { ATLAS_GUTTER, ATLAS_TILE_SIZE, calculateAtlasLayout } from '../src/rendering/TextureAtlas';
+// @ts-expect-error untyped ESM PNG decoder shared with pet-textures.test.mjs
+import { decodeRgbaPng } from '../scripts/png-rgba.mjs';
 
 const MOB_KINDS: readonly MobKind[] = [
   'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider',
@@ -196,8 +199,13 @@ describe('legacy textured mob models', () => {
     expect(WOLF_MODEL.parts.find((part) => part.name === 'head')?.rotationPoint).toEqual([-1, 13.5, -7]);
     expect(WOLF_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
       rotationPoint: [0, 14, 2],
-      rotation: [Math.PI / 2, 0, 0],
-      boxes: [{ origin: [-4, -2, -3], size: [6, 9, 6], textureOffset: [18, 14] }],
+      rotation: [-Math.PI / 2, 0, 0],
+      boxes: [{
+        origin: [-4, -2, -3],
+        size: [6, 9, 6],
+        textureOffset: [18, 14],
+        faceUvRects: { top: { u: 30, v: 14, width: 6, height: 6 } },
+      }],
     });
     expect(WOLF_MODEL.parts.find((part) => part.name === 'mane')?.boxes[0]).toMatchObject({
       origin: [-4, -3, -3], size: [8, 6, 7], textureOffset: [21, 0],
@@ -230,7 +238,7 @@ describe('legacy textured mob models', () => {
     expect(CAT_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
       rotationPoint: [0, 12, -10],
       rotation: [Math.PI / 2, 0, 0],
-      boxes: [{ origin: [-2, 3, -8], size: [4, 16, 6], textureOffset: [20, 0] }],
+      boxes: [{ origin: [-2, 3, -4], size: [4, 16, 6], textureOffset: [20, 0] }],
     });
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'cat');
@@ -271,4 +279,103 @@ describe('legacy textured mob models', () => {
     expect(snapshot(wolf)).toEqual(wolfBase);
     visuals.dispose();
   });
+
+  it('keeps wolf body and mane continuous and maps body faces to opaque sheet pixels', async () => {
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'wolf');
+    const root = asObject3D(model.root)!;
+    root.updateMatrixWorld(true);
+    const body = asObject3D(model.parts.get('body')!)!;
+    const mane = asObject3D(model.mane ?? model.parts.get('mane')!)!;
+    const head = asObject3D(model.head)!;
+    const bodyBox = new THREE.Box3().setFromObject(body);
+    const maneBox = new THREE.Box3().setFromObject(mane);
+    const headBox = new THREE.Box3().setFromObject(head);
+    expect(bodyBox.max.z + 1e-6).toBeGreaterThanOrEqual(maneBox.min.z);
+    expect(maneBox.max.z + 1e-6).toBeGreaterThanOrEqual(bodyBox.min.z);
+    expect(Math.min(bodyBox.max.z, maneBox.max.z) - Math.max(bodyBox.min.z, maneBox.min.z))
+      .toBeGreaterThan(0.2);
+    const torsoMinZ = Math.min(bodyBox.min.z, maneBox.min.z);
+    const torsoMaxZ = Math.max(bodyBox.max.z, maneBox.max.z);
+    expect(torsoMaxZ - torsoMinZ).toBeGreaterThan(0.45);
+    expect(torsoMinZ - headBox.max.z).toBeLessThan(0.08);
+    visuals.dispose();
+
+    const decoded = decodeRgbaPng(await readFile('public/textures/entity/wolf/wolf.png'));
+    const bodyBoxDef = WOLF_MODEL.parts.find((part) => part.name === 'body')!.boxes[0]!;
+    const legacyTop = cuboidUvRects({
+      size: bodyBoxDef.size, textureOffset: bodyBoxDef.textureOffset, logicalTextureSize: [64, 32],
+    }).top;
+    const mapped = cuboidUvRects({
+      size: bodyBoxDef.size,
+      textureOffset: bodyBoxDef.textureOffset,
+      logicalTextureSize: [64, 32],
+      faceUvRects: bodyBoxDef.faceUvRects,
+    });
+    expect(sheetOpaqueRatio(decoded, legacyTop)).toBe(0);
+    expect(sheetOpaqueRatio(decoded, mapped.top)).toBeGreaterThan(0.9);
+    expect(sheetOpaqueRatio(decoded, mapped.front)).toBeGreaterThan(0.9);
+    expect(sheetOpaqueRatio(decoded, mapped.back)).toBeGreaterThan(0.9);
+    expect(sheetOpaqueRatio(decoded, mapped.left)).toBeGreaterThan(0.9);
+    expect(sheetOpaqueRatio(decoded, mapped.right)).toBeGreaterThan(0.9);
+  });
+
+  it('keeps cat legs under the torso in stand, walk extremes and sitting', () => {
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'cat');
+    const root = asObject3D(model.root)!;
+    const body = asObject3D(model.parts.get('body')!)!;
+    const tail1 = asObject3D(model.tail ?? model.parts.get('tail1')!)!;
+    const tail2 = asObject3D(model.tail2 ?? model.parts.get('tail2')!)!;
+    const legs = model.legs.map((leg) => asObject3D(leg)!);
+    const assertLegsBelowSpine = (epsilon: number): void => {
+      root.updateMatrixWorld(true);
+      const torso = new THREE.Box3().setFromObject(body);
+      for (const leg of legs) {
+        const box = new THREE.Box3().setFromObject(leg);
+        expect(box.max.y).toBeLessThanOrEqual(torso.max.y + epsilon);
+      }
+    };
+    applyCatVisualPose(model, false, 0, 0);
+    assertLegsBelowSpine(0.04);
+    applyCatVisualPose(model, false, Math.PI / 2, 4);
+    assertLegsBelowSpine(0.04);
+    applyCatVisualPose(model, false, (3 * Math.PI) / 2, 4);
+    assertLegsBelowSpine(0.04);
+    applyCatVisualPose(model, true, 0, 0);
+    root.updateMatrixWorld(true);
+    const sitting = new THREE.Box3().setFromObject(root);
+    expect(sitting.min.y).toBeGreaterThan(-0.25);
+    expect(sitting.min.y).toBeLessThan(0.2);
+    const sitBody = new THREE.Box3().setFromObject(body);
+    const sitTail1 = new THREE.Box3().setFromObject(tail1);
+    const sitTail2 = new THREE.Box3().setFromObject(tail2);
+    expect(sitTail1.min.z).toBeLessThanOrEqual(sitBody.max.z + 0.08);
+    expect(sitTail2.min.z).toBeLessThanOrEqual(sitTail1.max.z + 0.08);
+    applyCatVisualPose(model, false, 0, 0);
+    visuals.dispose();
+  });
 });
+
+function sheetOpaqueRatio(
+  decoded: { readonly width: number; readonly height: number; readonly data: Uint8Array | Uint8ClampedArray },
+  rect: { readonly u: number; readonly v: number; readonly width: number; readonly height: number },
+  logical: readonly [number, number] = [64, 32],
+): number {
+  const scaleX = decoded.width / logical[0];
+  const scaleY = decoded.height / logical[1];
+  const u0 = Math.floor(rect.u * scaleX);
+  const v0 = Math.floor(rect.v * scaleY);
+  const u1 = Math.ceil((rect.u + rect.width) * scaleX);
+  const v1 = Math.ceil((rect.v + rect.height) * scaleY);
+  let opaque = 0;
+  let total = 0;
+  for (let y = v0; y < v1; y += 1) {
+    for (let x = u0; x < u1; x += 1) {
+      if (x < 0 || y < 0 || x >= decoded.width || y >= decoded.height) continue;
+      total += 1;
+      if (decoded.data[(y * decoded.width + x) * 4 + 3]! > 8) opaque += 1;
+    }
+  }
+  return total === 0 ? 0 : opaque / total;
+}

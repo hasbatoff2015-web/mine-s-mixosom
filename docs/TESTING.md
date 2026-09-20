@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Pet models / 3-step taming / rendered melee
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/melee-lag-compensation.test.ts tests/melee-action-intent.test.ts tests/use-interaction.test.ts tests/mob-pose-history.test.ts tests/entity-snapshot-interpolation.test.ts tests/combat.test.ts tests/online-consumable-use.test.ts tests/action-pose-history.test.ts tests/server/player-actions.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&view=front|side|rear|three-quarter&petState=wild|tamed|sitting` and `?qaMob=cat&view=side&walkPhase=1.5708|4.7124&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
 ## 2026-09-20 Wolves / cats / pets
 
 ```text

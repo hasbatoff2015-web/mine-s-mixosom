@@ -60,8 +60,9 @@ import {
 import { fallbackCatVariant, isPetKind, samePetOwner, type CatVariant, type PetCombatPriority, type PetCombatTargetKind } from './petTypes';
 import { petBodyTexturePath } from './petAppearance';
 import { findSafePetTeleport, lastPetTeleportSearchStats, resetPetTeleportSearchStats } from './petTeleport';
-import { isCatFearSuppressed, resolvePetInteract, type PetInteractResult } from './petTaming';
+import { isCatFearSuppressed, resolvePetInteract, sanitizeTameProgress, type PetInteractResult } from './petTaming';
 import { recordMobPose, rewindMobPose, type MobPoseSample, type RewoundMobPose } from './mobPoseHistory';
+import { raycastMobTarget } from './mobTargetBounds';
 import { DEFAULT_MAX_TAMED_PETS } from '../gameplay/petLimit';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
@@ -136,6 +137,8 @@ export interface MobSpawnOptions {
   readonly sitting?: boolean;
   readonly catVariant?: CatVariant;
   readonly angry?: boolean;
+  readonly tameProgress?: number;
+  readonly tameProgressPlayerId?: string;
 }
 
 export interface MobDamageOptions {
@@ -272,6 +275,8 @@ export interface SerializedMob {
   readonly sitting?: boolean;
   readonly variant?: string;
   readonly angry?: boolean;
+  readonly tameProgress?: number;
+  readonly tameProgressPlayerId?: string;
 }
 
 interface MobProjectile {
@@ -386,6 +391,8 @@ export class MobEntity {
   readonly poseHistory: MobPoseSample[] = [];
   ownerId?: string;
   sitting = false;
+  tameProgress = 0;
+  tameProgressPlayerId?: string;
   catVariant?: CatVariant;
   angry = false;
   angrySeconds = 0;
@@ -718,6 +725,13 @@ export class MobManager {
     );
     if (spawnOptions.ownerId) mob.ownerId = spawnOptions.ownerId;
     mob.sitting = spawnOptions.sitting === true;
+    const progress = sanitizeTameProgress(
+      spawnOptions.tameProgress,
+      spawnOptions.tameProgressPlayerId,
+      spawnOptions.ownerId,
+    );
+    mob.tameProgress = progress.progress;
+    mob.tameProgressPlayerId = progress.playerId;
     if (catVariant) mob.catVariant = catVariant;
     mob.angry = spawnOptions.angry === true;
     if (mob.sitting) {
@@ -990,16 +1004,15 @@ export class MobManager {
     let closest: MobRaycastHit | undefined;
     for (const mob of this.mobsById.values()) {
       if (!mob.alive) continue;
-      const pose = poseMode === 'render' && mob.networkRenderPose ? mob.networkRenderPose : mob.position;
-      const halfWidth = mob.definition.width * 0.5;
-      const hit = rayAabbDistance(rayOrigin, normalized, {
-        minX: pose.x - halfWidth,
-        minY: pose.y,
-        minZ: pose.z - halfWidth,
-        maxX: pose.x + halfWidth,
-        maxY: pose.y + mob.definition.height,
-        maxZ: pose.z + halfWidth,
-      });
+      const pose = poseMode === 'render' && mob.networkRenderPose
+        ? mob.networkRenderPose
+        : {
+          x: mob.position.x,
+          y: mob.position.y,
+          z: mob.position.z,
+          yaw: mob.facingYaw,
+        };
+      const hit = raycastMobTarget(rayOrigin, normalized, pose, mob.kind);
       if (!hit || hit.distance < 0) continue;
       const distance = hit.distance;
       if (distance > limit || (closest && distance >= closest.distance)) continue;
@@ -1084,21 +1097,27 @@ export class MobManager {
       alive: mob.alive,
       ownerId: mob.ownerId,
       sitting: mob.sitting,
+      tameProgress: mob.tameProgress,
+      tameProgressPlayerId: mob.tameProgressPlayerId,
     }, {
       playerId: request.playerId,
       heldItemId: request.heldItemId,
       gamemode: request.gamemode,
       ownedCount: this.countOwnedPets(request.playerId),
       petLimit: request.petLimit,
-      random: this.random,
+      tamedCount: this.countTamedPets(),
+      maxTamedPets: this.maxTamedPets,
     });
     if (!result.ok) return result;
-    if (result.kind === 'tame' && this.countTamedPets() >= this.maxTamedPets) {
-      return { ok: false, reason: 'pet_capacity', consume: false };
-    }
-    if (result.kind === 'tame') {
+    if (result.kind === 'feed') {
+      mob.tameProgress = result.progress;
+      mob.tameProgressPlayerId = request.playerId;
+      this.options.onPersistentStateChanged?.();
+    } else if (result.kind === 'tame') {
       mob.ownerId = request.playerId;
       mob.sitting = true;
+      mob.tameProgress = 0;
+      mob.tameProgressPlayerId = undefined;
       mob.angry = false;
       mob.angrySeconds = 0;
       this.clearCombatTarget(mob);
@@ -1178,6 +1197,8 @@ export class MobManager {
       ...(mob.sitting ? { sitting: true } : {}),
       ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
       ...(mob.angry ? { angry: true } : {}),
+      ...(!mob.ownerId && mob.tameProgress > 0 ? { tameProgress: mob.tameProgress } : {}),
+      ...(!mob.ownerId && mob.tameProgressPlayerId ? { tameProgressPlayerId: mob.tameProgressPlayerId } : {}),
     }));
   }
 
@@ -1216,6 +1237,8 @@ export class MobManager {
       sitting: entry.sitting === true,
       catVariant: entry.kind === 'cat' ? fallbackCatVariant(entry.variant) : undefined,
       angry: entry.angry === true,
+      tameProgress: entry.tameProgress,
+      tameProgressPlayerId: entry.tameProgressPlayerId,
     });
     if (!mob) return false;
     mob.fuseSeconds = clamp(entry.fuseSeconds ?? 0, 0, 1.5);

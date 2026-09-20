@@ -109,15 +109,16 @@ export function applyCatVisualPose(
     if (tail2) offsetLegacyPivot(tail2, [0, 2, -0.8], [2.670354, 0, 0]);
     if (frontLeft) applyLegacyPivot(frontLeft, [1.2, 15.8, -7], [-0.15707964, 0, 0]);
     if (frontRight) applyLegacyPivot(frontRight, [-1.2, 15.8, -7], [-0.15707964, 0, 0]);
-    if (backLeft) applyLegacyPivot(backLeft, [1.1, 21, 1], [-Math.PI / 2, 0, 0]);
-    if (backRight) applyLegacyPivot(backRight, [-1.1, 21, 1], [-Math.PI / 2, 0, 0]);
+    if (backLeft) applyLegacyPivot(backLeft, [1.1, 21, 1], [Math.PI / 2, 0, 0]);
+    if (backRight) applyLegacyPivot(backRight, [-1.1, 21, 1], [Math.PI / 2, 0, 0]);
     return;
   }
 
-  const swing = Math.sin(walkPhase) * Math.min(0.7, locomotionSpeed * 0.24);
+  const swing = Math.sin(walkPhase) * Math.min(0.55, locomotionSpeed * 0.24);
   model.legs.forEach((leg, index) => {
-    leg.rotation.x = numberData(leg, 'baseRotationX', 0)
-      + swing * (model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1));
+    const sign = model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1);
+    const euler = legacyRotationToThree([swing * sign, 0, 0]);
+    leg.rotation.x = numberData(leg, 'baseRotationX', 0) + euler[0];
   });
   if (tail1) {
     const wag = Math.sin(walkPhase * 0.7) * Math.min(0.18, locomotionSpeed * 0.1);

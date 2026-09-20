@@ -135,6 +135,7 @@ if (import.meta.env.DEV) {
       disposeApplication = startMobQaHarness(canvas, uiRoot, qaMob as MobKind, view, {
         petState,
         variant: petVariant,
+        walkPhase: search.get('walkPhase'),
       });
     });
   }

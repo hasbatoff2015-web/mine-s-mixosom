@@ -23,7 +23,7 @@ describe('online melee action intent', () => {
     });
   });
 
-  it('keeps air/non-player attacks hint-free and protocol-compatible', () => {
+  it('keeps air attacks hint-free and protocol-compatible', () => {
     const action = captureAttack(
       { actionSeq: 0, inputSeq: 4, selectedSlot: 0 },
       { yaw: 0, pitch: 0 },
@@ -48,6 +48,8 @@ describe('online melee action intent', () => {
   it('wires production melee through captureAttack and the sequenced message builder', () => {
     expect(gameSource).toContain('captureAttack(');
     expect(gameSource).toContain('attackMessageFromAttack(action)');
+    expect(gameSource).toContain('raycastRendered');
+    expect(gameSource).toContain('mobTarget.mob.id');
     expect(gameSource).not.toContain("client.send({ type: 'attack' })");
   });
 });

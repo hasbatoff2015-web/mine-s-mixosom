@@ -10,6 +10,7 @@ export type MobQaPetState = 'wild' | 'angry' | 'tamed' | 'sitting';
 export interface MobQaOptions {
   readonly petState?: string | null;
   readonly variant?: string | null;
+  readonly walkPhase?: string | null;
 }
 
 const CAMERA_POSITIONS: Readonly<Record<MobQaView, readonly [number, number, number]>> = {
@@ -38,6 +39,9 @@ export function startMobQaHarness(
   const sitting = petState === 'sitting';
   const ownerId = petState === 'tamed' || petState === 'sitting' ? 'qa-owner' : undefined;
   const angry = petState === 'angry';
+  const rawWalkPhase = options.walkPhase;
+  const frozenWalkPhase = rawWalkPhase != null && rawWalkPhase !== '' ? Number(rawWalkPhase) : Number.NaN;
+  const hasFrozenWalk = Number.isFinite(frozenWalkPhase);
   const texturePath = petBodyTexturePath({
     kind,
     ownerId,
@@ -70,6 +74,7 @@ export function startMobQaHarness(
   scene.add(visual as THREE.Object3D);
   const labelBits: string[] = [kind, view, petState];
   if (variant) labelBits.push(variant);
+  if (hasFrozenWalk) labelBits.push(`walkPhase=${frozenWalkPhase.toFixed(2)}`);
   uiRoot.innerHTML = `<div id="qa-label" style="position:fixed;left:16px;top:16px;padding:8px 12px;background:#111c;color:#fff;font:16px monospace;z-index:5">${labelBits.join(' · ')}</div>`;
 
   const resize = (): void => {
@@ -94,7 +99,7 @@ export function startMobQaHarness(
       y: 0,
       z: 0,
       yaw: 0,
-      walkPhase: sitting ? 0 : elapsed * 5,
+      walkPhase: sitting ? 0 : hasFrozenWalk ? frozenWalkPhase : elapsed * 5,
       visualAge: elapsed,
       locomotionSpeed: walking ? 2.2 : 0,
       state: kind === 'skeleton' ? 'attack' : 'idle',

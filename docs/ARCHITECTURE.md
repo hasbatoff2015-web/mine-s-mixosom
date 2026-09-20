@@ -1,5 +1,13 @@
 # Архитектура
 
+## Pet models / 3-step taming / mob melee rewind — 2026-09-20
+
+Taming is server-authoritative `entity_use` with `PET_TAME_REQUIRED_FEEDS = 3` and no RNG. Wild pets store `tameProgress` 0..2 plus `tameProgressPlayerId`; a different feeder resets to 1/3. Third accepted feed assigns `ownerId`, sits, and clears progress. `pets.limit.N` and `maxTamedPets` are checked before any feed; failure does not consume. SP uses toasts, Anarchy uses system chat (`tameProgressMessage` / `tameSuccessMessage`). Partial progress is optional on existing `SerializedMob`.
+
+Online melee reuses the RMB rewind window. Client `refreshLocalCrosshair` rays `mobs.raycastRendered` and, when `attack.kind === 'mob'`, sends `targetId` + `targetRenderTick`. `WorldInstance` resolves a live player first, else a live mob `rewindPose`, else stale. `ServerGameplay.attack` takes `SequencedMeleeTarget` `player | mob`. Mob hits test the frozen pose with `raycastMobTarget`, then `meleeMob` damages the current entity. Reach 3, current-world LOS, cooldown/damage stay in `CombatSystem`. `MAX_MOB_REWIND_TICKS` remains 5.
+
+`mobTargetBounds(kind)` is targeting-only (wolf/cat visual core, other kinds keep definition width/height). Physics collision still uses `MobDefinition.width/height`. Wolf body rest rotation is a local `[-π/2,0,0]` compensation for the shared Y-down adapter; the adapter itself is unchanged.
+
 ## Pet entity_use rewind / budgets — 2026-09-20
 
 Online pet interaction samples `networkRenderPose` (`raycastRendered`) and sends `targetRenderTick` as a hint. Server `entity_use` waits for `combatPoseForCommand` (same pending FIFO as melee), then rays with that boundary eye/yaw/pitch against a bounded `MobEntity.poseHistory` rewind (`MOB_POSE_HISTORY_TICKS = 16`, `MAX_MOB_REWIND_TICKS = 5`). Client yaw/pitch are not authority. Wild `maxMobs` counts only untamed mobs; `maxTamedPets` is a restore-safe global ceiling and does not replace `pets.limit.N`.

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-09-20: pet models, 3-step taming, rendered melee
+
+- [x] Wolf torso continuity (local body Rx compensation + empty top UV remap). Mane/collar stay vanilla Rx.
+- [x] Cat legs under torso (body origin Z, sitting hind `+π/2` legacy, adapter-aware walk swing).
+- [x] Deterministic 3-feed taming, candidate reset, persist, limit/capacity, chat/toast 1/3 2/3.
+- [x] Online mob melee: rendered capture + server player|mob rewind; targeting-only AABB.
+- [ ] Owner live two-client QA: 3-click tame feedback and moving-pet LMB.
+
 ## 2026-09-20: pet interaction / ownership hardening
 
 - [x] Online `entity_use` raycasts the interpolated render pose and rewinds a bounded mob pose history.

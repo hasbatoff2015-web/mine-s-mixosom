@@ -81,7 +81,7 @@ export interface AttackAction extends SequencedAction {
   readonly kind: 'attack';
   readonly yaw?: number;
   readonly pitch?: number;
-  /** Remote player rendered under the crosshair. Hint only; server proves the hit. */
+  /** Player or mob rendered under the crosshair. Hint only; server proves the hit. */
   readonly targetId?: string;
   /** Server-tick timeline on which targetId was actually rendered. */
   readonly targetRenderTick?: number;

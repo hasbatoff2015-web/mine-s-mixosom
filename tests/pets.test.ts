@@ -17,11 +17,12 @@ import {
   PET_TELEPORT_OFFSETS,
   findSafePetTeleport,
   lastPetTeleportSearchStats,
+  mobTargetBounds,
   petTeleportCandidateCount,
   pickCatVariant,
   pickPassiveSpawnKind,
+  raycastMobTarget,
   resetPetTeleportSearchStats,
-  resolvePetInteract,
 } from '../src/entities';
 import {
   DEFAULT_MAX_TAMED_PETS,
@@ -33,13 +34,14 @@ import {
   petLimitReachedMessage,
   resolveMaxTamedPets,
   resolvePetLimitFromPermissions,
+  tameProgressMessage,
   tameSuccessMessage,
 } from '../src/gameplay/petLimit';
 import { VoxelWorld } from '../src/world/World';
 import { PermissionService } from '../server/services/permissions';
 import { JsonFileStore } from '../server/services/jsonStore';
 import { resolvePetLimit } from '../server/services/playerLimits';
-import { captureEntityUse } from '../src/net/actionIntent';
+import { captureAttack, captureEntityUse } from '../src/net/actionIntent';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,92 +82,137 @@ function ownerFocus(x: number, z: number, extras: Partial<{ id: string; alive: b
   };
 }
 
+function interact(
+  manager: MobManager,
+  mob: NonNullable<ReturnType<MobManager['spawn']>>,
+  extras: {
+    playerId?: string;
+    heldItemId?: string;
+    gamemode?: 'survival' | 'creative';
+    petLimit?: number;
+  },
+) {
+  return manager.tryPetInteract(mob, {
+    playerId: extras.playerId ?? 'owner-a',
+    heldItemId: extras.heldItemId,
+    gamemode: extras.gamemode ?? 'survival',
+    petLimit: extras.petLimit ?? 2,
+  });
+}
+
+function feedTimes(
+  manager: MobManager,
+  mob: NonNullable<ReturnType<MobManager['spawn']>>,
+  item: string,
+  times: number,
+  extras: Parameters<typeof interact>[2] = {},
+) {
+  return Array.from({ length: times }, () => interact(manager, mob, { ...extras, heldItemId: item }));
+}
+
 describe('pet taming', () => {
-  it('tames a wolf with a bone, sits immediately, and consumes in survival', () => {
-    const { manager } = arena({ random: () => 0 });
+  it('tames a wolf on the third bone and consumes exactly three in survival', () => {
+    const { manager } = arena();
     const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
-    const result = manager.tryPetInteract(wolf, {
-      playerId: 'owner-a',
-      heldItemId: ItemId.Bone,
-      gamemode: 'survival',
-      petLimit: 2,
+    expect(interact(manager, wolf, { heldItemId: ItemId.Bone })).toEqual({
+      ok: true, kind: 'feed', progress: 1, consume: true,
     });
-    expect(result).toEqual({ ok: true, kind: 'tame', consume: true });
+    expect(wolf.ownerId).toBeUndefined();
+    expect(wolf.tameProgress).toBe(1);
+    expect(wolf.tameProgressPlayerId).toBe('owner-a');
+    expect(interact(manager, wolf, { heldItemId: ItemId.Bone })).toEqual({
+      ok: true, kind: 'feed', progress: 2, consume: true,
+    });
+    expect(wolf.ownerId).toBeUndefined();
+    expect(wolf.tameProgress).toBe(2);
+    expect(interact(manager, wolf, { heldItemId: ItemId.Bone })).toEqual({
+      ok: true, kind: 'tame', consume: true,
+    });
     expect(wolf.ownerId).toBe('owner-a');
     expect(wolf.sitting).toBe(true);
+    expect(wolf.tameProgress).toBe(0);
+    expect(wolf.tameProgressPlayerId).toBeUndefined();
     expect(wolf.velocity.x).toBe(0);
     expect(wolf.velocity.z).toBe(0);
   });
 
-  it('uses deterministic RNG: values >= 1/3 fail but still consume', () => {
-    const failed = resolvePetInteract(
-      { kind: 'wolf', alive: true, sitting: false },
-      {
-        playerId: 'p',
-        heldItemId: ItemId.Bone,
-        gamemode: 'survival',
-        ownedCount: 0,
-        petLimit: 2,
-        random: () => 0.34,
-      },
-    );
-    expect(failed).toMatchObject({ ok: false, reason: 'tame_failed', consume: true });
-    const success = resolvePetInteract(
-      { kind: 'wolf', alive: true, sitting: false },
-      {
-        playerId: 'p',
-        heldItemId: ItemId.Bone,
-        gamemode: 'survival',
-        ownedCount: 0,
-        petLimit: 2,
-        random: () => 0,
-      },
-    );
-    expect(success).toMatchObject({ ok: true, kind: 'tame', consume: true });
+  it('does not use RNG and rejects a second player inheriting 2/3 progress', () => {
+    const { manager } = arena();
+    const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
+    feedTimes(manager, wolf, ItemId.Bone, 2, { playerId: 'owner-a' });
+    expect(wolf.tameProgress).toBe(2);
+    expect(interact(manager, wolf, { playerId: 'owner-b', heldItemId: ItemId.Bone })).toEqual({
+      ok: true, kind: 'feed', progress: 1, consume: true,
+    });
+    expect(wolf.ownerId).toBeUndefined();
+    expect(wolf.tameProgress).toBe(1);
+    expect(wolf.tameProgressPlayerId).toBe('owner-b');
+    feedTimes(manager, wolf, ItemId.Bone, 2, { playerId: 'owner-b' });
+    expect(wolf.ownerId).toBe('owner-b');
+    expect(wolf.sitting).toBe(true);
   });
 
-  it.each([ItemId.CookedBeef, ItemId.CookedPorkchop, ItemId.CookedChicken])('tames a cat with %s', (item) => {
-    const { manager } = arena({ random: () => 0 });
+  it.each([
+    ItemId.Beef, ItemId.CookedBeef, ItemId.Porkchop, ItemId.CookedPorkchop, ItemId.Chicken, ItemId.CookedChicken,
+  ])('tames a cat with three %s', (item) => {
+    const { manager } = arena();
     const cat = manager.spawn('cat', new THREE.Vector3(1.5, 71, 1.5), { force: true, catVariant: 'red' })!;
-    expect(manager.tryPetInteract(cat, {
-      playerId: 'owner-a', heldItemId: item, gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: true, kind: 'tame', consume: true });
+    const results = feedTimes(manager, cat, item, 3);
+    expect(results[0]).toMatchObject({ ok: true, kind: 'feed', progress: 1, consume: true });
+    expect(results[1]).toMatchObject({ ok: true, kind: 'feed', progress: 2, consume: true });
+    expect(results[2]).toMatchObject({ ok: true, kind: 'tame', consume: true });
     expect(cat.catVariant).toBe('red');
     expect(cat.sitting).toBe(true);
   });
 
-  it('rejects the wrong food and does not consume', () => {
-    const { manager } = arena({ random: () => 0 });
+  it('accepts mixed raw and cooked cat meats', () => {
+    const { manager } = arena();
     const cat = manager.spawn('cat', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
-    expect(manager.tryPetInteract(cat, {
-      playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: false, reason: 'item', consume: false });
-    expect(cat.ownerId).toBeUndefined();
+    expect(interact(manager, cat, { heldItemId: ItemId.Beef })).toMatchObject({ ok: true, kind: 'feed', progress: 1 });
+    expect(interact(manager, cat, { heldItemId: ItemId.CookedChicken })).toMatchObject({
+      ok: true, kind: 'feed', progress: 2,
+    });
+    expect(interact(manager, cat, { heldItemId: ItemId.Porkchop })).toMatchObject({ ok: true, kind: 'tame' });
+    expect(cat.ownerId).toBe('owner-a');
   });
 
-  it('does not consume in creative', () => {
-    const { manager } = arena({ random: () => 0 });
+  it('rejects the wrong food and does not consume or advance', () => {
+    const { manager } = arena();
+    const cat = manager.spawn('cat', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
+    expect(interact(manager, cat, { heldItemId: ItemId.Bone })).toMatchObject({
+      ok: false, reason: 'item', consume: false,
+    });
+    expect(cat.ownerId).toBeUndefined();
+    expect(cat.tameProgress).toBe(0);
+    const wolf = manager.spawn('wolf', new THREE.Vector3(2.5, 71, 0.5), { force: true })!;
+    expect(interact(manager, wolf, { heldItemId: ItemId.Beef })).toMatchObject({
+      ok: false, reason: 'item', consume: false,
+    });
+    expect(wolf.tameProgress).toBe(0);
+  });
+
+  it('takes three creative feeds without consuming', () => {
+    const { manager } = arena();
     const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
-    expect(manager.tryPetInteract(wolf, {
-      playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'creative', petLimit: 2,
-    })).toEqual({ ok: true, kind: 'tame', consume: false });
+    const results = feedTimes(manager, wolf, ItemId.Bone, 3, { gamemode: 'creative' });
+    expect(results.map((entry) => entry.consume)).toEqual([false, false, false]);
+    expect(results[2]).toEqual({ ok: true, kind: 'tame', consume: false });
+    expect(wolf.ownerId).toBe('owner-a');
   });
 
   it('does not retame an owned pet and only the owner toggles sit', () => {
-    const { manager } = arena({ random: () => 0 });
+    const { manager } = arena();
     const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
-    manager.tryPetInteract(wolf, { playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 2 });
-    expect(manager.tryPetInteract(wolf, {
-      playerId: 'owner-b', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: false, reason: 'not_owner', consume: false });
+    feedTimes(manager, wolf, ItemId.Bone, 3);
+    expect(interact(manager, wolf, { playerId: 'owner-b', heldItemId: ItemId.Bone })).toMatchObject({
+      ok: false, reason: 'not_owner', consume: false,
+    });
     expect(wolf.sitting).toBe(true);
-    expect(manager.tryPetInteract(wolf, {
-      playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: true, kind: 'stand', consume: false });
+    expect(interact(manager, wolf, { heldItemId: ItemId.Bone })).toMatchObject({
+      ok: true, kind: 'stand', consume: false,
+    });
     expect(wolf.sitting).toBe(false);
-    expect(manager.tryPetInteract(wolf, {
-      playerId: 'owner-a', gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: true, kind: 'sit', consume: false });
+    expect(interact(manager, wolf, {})).toMatchObject({ ok: true, kind: 'sit', consume: false });
     expect(wolf.sitting).toBe(true);
   });
 });
@@ -177,21 +224,21 @@ describe('pet limit', () => {
     expect(parsePetLimitNode('pets.limit.1')).toBeUndefined();
     expect(parsePetLimitNode('pets.limit.3')).toBe(3);
     expect(parsePetLimitNode('pets.limit.999999')).toBeUndefined();
-    const { manager } = arena({ random: () => 0 });
+    const { manager } = arena();
     for (let index = 0; index < 2; index += 1) {
       const wolf = manager.spawn('wolf', new THREE.Vector3(index + 0.5, 71, 0.5), { force: true })!;
-      expect(manager.tryPetInteract(wolf, {
-        playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 2,
-      }).ok).toBe(true);
+      const results = feedTimes(manager, wolf, ItemId.Bone, 3);
+      expect(results[2]).toMatchObject({ ok: true, kind: 'tame' });
     }
     const third = manager.spawn('cat', new THREE.Vector3(8.5, 71, 0.5), { force: true })!;
-    const denied = manager.tryPetInteract(third, {
-      playerId: 'owner-a', heldItemId: ItemId.CookedBeef, gamemode: 'survival', petLimit: 2,
-    });
+    const denied = interact(manager, third, { heldItemId: ItemId.CookedBeef });
     expect(denied).toMatchObject({ ok: false, reason: 'pet_limit', consume: false, ownedCount: 2, petLimit: 2 });
     expect(third.ownerId).toBeUndefined();
+    expect(third.tameProgress).toBe(0);
     expect(petLimitReachedMessage(2, 2)).toBe('Достигнут лимит питомцев: 2/2.');
     expect(tameSuccessMessage('wolf')).toBe('Волк приручён.');
+    expect(tameProgressMessage('wolf', 1)).toBe('Волк: приручение 1/3');
+    expect(tameProgressMessage('cat', 2)).toBe('Кот: приручение 2/3');
   });
 
   it('takes the highest valid pets.limit.N and clamps the hard max', () => {
@@ -201,18 +248,14 @@ describe('pet limit', () => {
   });
 
   it('keeps extra pets when a role is removed and only blocks new tames', () => {
-    const { manager } = arena({ random: () => 0 });
+    const { manager } = arena();
     for (let index = 0; index < 3; index += 1) {
       const wolf = manager.spawn('wolf', new THREE.Vector3(index + 0.5, 71, 0.5), { force: true })!;
-      expect(manager.tryPetInteract(wolf, {
-        playerId: 'owner-a', heldItemId: ItemId.Bone, gamemode: 'survival', petLimit: 3,
-      }).ok).toBe(true);
+      expect(feedTimes(manager, wolf, ItemId.Bone, 3, { petLimit: 3 })[2]?.ok).toBe(true);
     }
     expect(manager.countOwnedPets('owner-a')).toBe(3);
     const extra = manager.spawn('cat', new THREE.Vector3(9.5, 71, 0.5), { force: true })!;
-    expect(manager.tryPetInteract(extra, {
-      playerId: 'owner-a', heldItemId: ItemId.CookedChicken, gamemode: 'survival', petLimit: 2,
-    })).toMatchObject({ ok: false, reason: 'pet_limit', consume: false });
+    expect(interact(manager, extra, { heldItemId: ItemId.CookedChicken, petLimit: 2 })).toMatchObject({ ok: false, reason: 'pet_limit', consume: false });
     expect(manager.countOwnedPets('owner-a')).toBe(3);
   });
 });
@@ -414,7 +457,7 @@ describe('follow, teleport, despawn and capacity', () => {
 });
 
 describe('cat fear and wolf combat', () => {
-  it('flees a nearby player unless cooked meat is held', () => {
+  it('flees a nearby player unless meat is held', () => {
     const { manager } = arena();
     const cat = manager.spawn('cat', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
     manager.update(0.05, {
@@ -541,6 +584,39 @@ describe('rendered interaction raycast', () => {
     expect(action.targetRenderTick).toBe(12);
   });
 
+  it('hits a wolf muzzle that sits outside the 0.6 physics AABB', () => {
+    const { manager } = arena();
+    const wolf = manager.spawn('wolf', new THREE.Vector3(8, 71, 8), { force: true })!;
+    expect(wolf.definition.width).toBe(0.6);
+    expect(wolf.definition.height).toBe(0.85);
+    const origin = new Vec3(6.5, 71.4, 7.25);
+    const direction = new Vec3(1, 0, 0);
+    expect(manager.raycast(origin, direction, 3)?.mob.id).toBe(wolf.id);
+    expect(mobTargetBounds('wolf').minZ).toBeLessThan(-0.3);
+    expect(raycastMobTarget(origin, direction, { ...wolf.position, yaw: 0 }, 'zombie')).toBeUndefined();
+  });
+
+  it('captures a moving rendered mob the same way remote players are captured', () => {
+    const { manager } = arena();
+    const cat = manager.spawn('cat', new THREE.Vector3(6.5, 71, 0.5), { force: true })!;
+    manager.setNetworkRenderPose(cat.id, 0.5, 71, 0.5, 0, 20);
+    const origin = new Vec3(0.5, 71.35, -2);
+    const direction = new Vec3(0, 0, 1);
+    const rendered = manager.raycastRendered(origin, direction, 3)!;
+    expect(rendered.mob.id).toBe(cat.id);
+    const action = captureAttack(
+      { actionSeq: 0, inputSeq: 9, selectedSlot: 0 },
+      { yaw: 0, pitch: 0 },
+      { id: rendered.mob.id, renderTick: rendered.renderTick! },
+    );
+    expect(action).toMatchObject({ targetId: cat.id, targetRenderTick: 20 });
+    cat.poseHistory.push({ tick: 20, x: 0.5, y: 71, z: 0.5, yaw: 0 });
+    cat.poseHistory.push({ tick: 22, x: 6.5, y: 71, z: 0.5, yaw: 0 });
+    const rewound = manager.rewindPose(cat.id, 20, 22)!;
+    expect(rewound.x).toBeCloseTo(0.5, 5);
+    expect(raycastMobTarget(origin, direction, rewound, 'cat')?.distance).toBeCloseTo(rendered.distance, 5);
+  });
+
   it('keeps a bounded rewind window and a separate pet safety ceiling', () => {
     expect(MAX_MOB_REWIND_TICKS).toBe(5);
     expect(MAX_SEPARATION_PAIR_CHECKS).toBe(1024);
@@ -579,6 +655,35 @@ describe('spawn weights and persistence', () => {
     expect(manager.get(cat.id)?.catVariant).toBe('siamese');
     expect(manager.get(cat.id)?.sitting).toBe(true);
     expect(manager.get('cow-1')?.ownerId).toBeUndefined();
+  });
+
+  it('round-trips partial tame progress and drops invalid values', () => {
+    const { manager } = arena();
+    const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), { force: true })!;
+    feedTimes(manager, wolf, ItemId.Bone, 2);
+    const saved = manager.serialize();
+    expect(saved[0]).toMatchObject({ tameProgress: 2, tameProgressPlayerId: 'owner-a' });
+    expect(saved[0]).not.toHaveProperty('ownerId');
+    manager.clear();
+    expect(manager.restore(saved)).toBe(1);
+    const restored = manager.get(wolf.id)!;
+    expect(restored.tameProgress).toBe(2);
+    expect(restored.tameProgressPlayerId).toBe('owner-a');
+    manager.clear();
+    expect(manager.restore([{
+      id: 'wolf-bad', kind: 'wolf', position: [1, 71, 1], velocity: [0, 0, 0],
+      health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0,
+      tameProgress: 9, tameProgressPlayerId: 'owner-a',
+    }])).toBe(1);
+    expect(manager.get('wolf-bad')?.tameProgress).toBe(0);
+    manager.clear();
+    expect(manager.restore([{
+      id: 'wolf-owned', kind: 'wolf', position: [1, 71, 1], velocity: [0, 0, 0],
+      health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0,
+      ownerId: 'owner-a', sitting: true, tameProgress: 2, tameProgressPlayerId: 'owner-b',
+    }])).toBe(1);
+    expect(manager.get('wolf-owned')?.tameProgress).toBe(0);
+    expect(manager.get('wolf-owned')?.tameProgressPlayerId).toBeUndefined();
   });
 });
 

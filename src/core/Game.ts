@@ -22,7 +22,9 @@ import {
 import { AudioManager } from './AudioManager';
 import {
   DEFAULT_PET_LIMIT,
+  petCapacityReachedMessage,
   petLimitReachedMessage,
+  tameProgressMessage,
   tameSuccessMessage,
 } from '../gameplay/petLimit';
 import {
@@ -2265,11 +2267,13 @@ export class Game {
   }
 
   private petUseTarget(session: GameSession): { id: string; distance: number; renderTick?: number } | undefined {
-    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    if (!session.mobs) return undefined;
+    const aim = this.lastLocalAim ?? (session.player ? this.sampleLocalAim(session) : undefined);
+    if (!aim) return undefined;
     const mobHit = session.mobs.raycastRendered(aim.origin, aim.direction, PET_INTERACT_REACH);
     if (!mobHit || !mobHit.mob.alive || !isPetKind(mobHit.mob.kind)) return undefined;
     if (session.target && session.target.distance < mobHit.distance) return undefined;
-    const cartHit = session.minecarts.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
+    const cartHit = session.minecarts?.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
     if (cartHit && cartHit.distance < mobHit.distance) return undefined;
     return {
       id: mobHit.mob.id,
@@ -2317,13 +2321,16 @@ export class Game {
       this.refreshHud();
     }
     if (result.ok && result.kind === 'tame') this.ui.toast(tameSuccessMessage(mob.kind));
+    else if (result.ok && result.kind === 'feed') this.ui.toast(tameProgressMessage(mob.kind, result.progress));
     else if (!result.ok && result.reason === 'pet_limit') {
       this.ui.toast(petLimitReachedMessage(
         result.ownedCount ?? session.mobs.countOwnedPets(LOCAL_PLAYER_FOCUS_ID),
         result.petLimit ?? DEFAULT_PET_LIMIT,
       ));
+    } else if (!result.ok && result.reason === 'pet_capacity') {
+      this.ui.toast(petCapacityReachedMessage());
     }
-    this.firstPerson?.swing();
+    if (result.ok) this.firstPerson?.swing();
     return true;
   }
 
@@ -4809,7 +4816,7 @@ export class Game {
     const direction = aim.direction;
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
-    const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const mobTarget = session.mobs.raycastRendered(origin, direction, Math.min(3, PLAYER_REACH));
     const remoteHit = session.online
       ? raycastRemotePlayers(session.online.remotes, origin, direction, Math.min(3, PLAYER_REACH))
       : undefined;
@@ -4832,10 +4839,15 @@ export class Game {
     if (session.online && attackPresses > 0) {
       for (let click = 0; click < attackPresses; click += 1) {
         const source = this.onlineActionSource(session);
+        const meleeTarget = remoteTarget
+          ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick }
+          : attack?.kind === 'mob' && mobTarget?.renderTick !== undefined
+            ? { id: mobTarget.mob.id, renderTick: mobTarget.renderTick }
+            : undefined;
         const action = captureAttack(
           source,
           { yaw: aim.yaw, pitch: aim.pitch },
-          remoteTarget ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick } : undefined,
+          meleeTarget,
         );
         this.commitOnlineActionSeq(session, source);
         session.online.lastCombatDiag = {

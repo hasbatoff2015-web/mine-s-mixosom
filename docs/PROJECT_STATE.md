@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: pet models / deterministic taming / rendered melee — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Wolf body uses a local negated rest X rotation so the torso reaches the head; empty body-top UV remapped. Cat body origin Z `-4`, sitting hind legs `+π/2` legacy, walk swing through the adapter. Taming is three deterministic feeds (`tameProgress` + candidate player id), persist on `SerializedMob`, chat/toast `1/3` `2/3`. Online melee captures rendered mob `targetId`/`targetRenderTick`; server pending target is player|mob rewind for hit-test only. Shared `mobTargetBounds` for ray hits; physics `width/height` unchanged.
+- Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
 ## Последний проход: pet interaction / ownership hardening — 2026-09-20
 
 - Ветка `codex/wolves-cats-pets`. Online ПКМ по питомцу использует `networkRenderPose` + `targetRenderTick`; сервер проверяет `entity_use` по command-boundary look и bounded mob pose history (`MAX_MOB_REWIND_TICKS = 5`). `petHome` сбрасывается в follow и заново ставится при потере owner. Волки одного хозяина не ассистят по его другим питомцам. Wild `maxMobs` больше не включает tamed pets; отдельный `maxTamedPets` safety ceiling.

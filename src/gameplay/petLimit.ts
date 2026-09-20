@@ -51,3 +51,8 @@ export function resolveMaxTamedPets(maxPlayers: number): number {
 export function tameSuccessMessage(kind: 'wolf' | 'cat'): string {
   return kind === 'wolf' ? 'Волк приручён.' : 'Кот приручён.';
 }
+
+export function tameProgressMessage(kind: 'wolf' | 'cat', step: 1 | 2): string {
+  const name = kind === 'wolf' ? 'Волк' : 'Кот';
+  return `${name}: приручение ${step}/3`;
+}

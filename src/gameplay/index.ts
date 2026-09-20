@@ -74,6 +74,7 @@ export {
   petLimitReachedMessage,
   resolveMaxTamedPets,
   resolvePetLimitFromPermissions,
+  tameProgressMessage,
   tameSuccessMessage,
 } from './petLimit';
 export {

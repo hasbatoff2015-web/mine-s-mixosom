@@ -137,6 +137,7 @@ import {
   petLimitReachedMessage,
   playerCanReachHologram,
   resolveMaxTamedPets,
+  tameProgressMessage,
   tameSuccessMessage,
 } from '../src/gameplay';
 import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
@@ -161,6 +162,7 @@ import {
   type CombatPoseSample,
   type RewoundCombatPose,
 } from './combatPoseHistory';
+import type { RewoundMobPose } from '../src/entities/mobPoseHistory';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
 const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
@@ -172,11 +174,19 @@ export interface ConnectedSink {
 export interface PendingMeleeAttack {
   readonly action: AttackAction;
   readonly receivedServerTick: number;
-  readonly target?: {
-    readonly playerId: string;
-    readonly requestedRenderTick: number;
-    readonly pose: RewoundCombatPose;
-  };
+  readonly target?:
+    | {
+      readonly kind: 'player';
+      readonly playerId: string;
+      readonly requestedRenderTick: number;
+      readonly pose: RewoundCombatPose;
+    }
+    | {
+      readonly kind: 'mob';
+      readonly mobId: string;
+      readonly requestedRenderTick: number;
+      readonly pose: RewoundMobPose;
+    };
 }
 
 export interface PendingEntityUse {
@@ -2442,12 +2452,38 @@ export class WorldInstance {
       receivedServerTick: this.tickNumber,
     };
     if (action.targetId === undefined || action.targetRenderTick === undefined) return pending;
-    const target = this.players.get(action.targetId);
-    const pose = target
-      ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, pending.receivedServerTick)
+    const playerTarget = this.players.get(action.targetId);
+    if (playerTarget) {
+      const pose = rewindCombatPose(
+        playerTarget.combatPoseHistory,
+        action.targetRenderTick,
+        pending.receivedServerTick,
+      );
+      if (playerTarget.id === player.id || !playerTarget.connected || playerTarget.survival.dead
+        || playerTarget.gamemode !== 'survival' || !pose || pose.dead) {
+        return {
+          ok: false,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          reason: 'stale',
+          combat: this.combatStatus(pending, 'stale'),
+        };
+      }
+      return {
+        ...pending,
+        target: {
+          kind: 'player',
+          playerId: playerTarget.id,
+          requestedRenderTick: action.targetRenderTick,
+          pose,
+        },
+      };
+    }
+    const mob = this.gameplay.mobs.get(action.targetId);
+    const mobPose = mob?.alive
+      ? this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, pending.receivedServerTick)
       : undefined;
-    if (!target || target.id === player.id || !target.connected || target.survival.dead
-      || target.gamemode !== 'survival' || !pose || pose.dead) {
+    if (!mob || !mob.alive || !mobPose) {
       return {
         ok: false,
         actionSeq: action.actionSeq,
@@ -2459,9 +2495,10 @@ export class WorldInstance {
     return {
       ...pending,
       target: {
-        playerId: target.id,
+        kind: 'mob',
+        mobId: mob.id,
         requestedRenderTick: action.targetRenderTick,
-        pose,
+        pose: mobPose,
       },
     };
   }
@@ -2481,7 +2518,7 @@ export class WorldInstance {
         combat: this.combatStatus(pending, 'stale'),
       };
     }
-    if (pending.target) {
+    if (pending.target?.kind === 'player') {
       const target = this.players.get(pending.target.playerId);
       if (!target || target.id === player.id || !target.connected || target.survival.dead
         || target.gamemode !== 'survival') {
@@ -2495,7 +2532,36 @@ export class WorldInstance {
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
         target: {
+          kind: 'player',
           player: target,
+          pose: pending.target.pose,
+          requestedRenderTick: pending.target.requestedRenderTick,
+        },
+      });
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      return {
+        ok: true,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        combat: { ...combat, ...this.combatTiming(pending) },
+      };
+    }
+    if (pending.target?.kind === 'mob') {
+      const mob = this.gameplay.mobs.get(pending.target.mobId);
+      if (!mob || !mob.alive) {
+        return {
+          ok: true,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          combat: this.combatStatus(pending, 'stale'),
+        };
+      }
+      const combat = this.gameplay.attack(player, [...this.players.values()], {
+        attackerPose,
+        target: {
+          kind: 'mob',
+          mob,
           pose: pending.target.pose,
           requestedRenderTick: pending.target.requestedRenderTick,
         },
@@ -2615,6 +2681,15 @@ export class WorldInstance {
         text: tameSuccessMessage(result.mobKind),
         kind: 'system',
       });
+    } else if (result.ok && result.kind === 'feed' && result.progress) {
+      this.dirty = true;
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: tameProgressMessage(result.mobKind, result.progress),
+        kind: 'system',
+      });
     } else if (result.ok && (result.kind === 'sit' || result.kind === 'stand')) {
       this.dirty = true;
     } else if (!result.ok && result.reason === 'pet_limit') {
@@ -2633,8 +2708,6 @@ export class WorldInstance {
         text: petCapacityReachedMessage(),
         kind: 'system',
       });
-    } else if (result.ok && result.kind === 'tame_failed' && result.consume) {
-      this.dirty = true;
     }
     return result.ok ? { ok: true } : { ok: false, reason: result.reason };
   }

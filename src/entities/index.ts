@@ -9,6 +9,7 @@ export * from './petTeleport';
 export * from './petSpawn';
 export * from './petAppearance';
 export * from './mobPoseHistory';
+export * from './mobTargetBounds';
 export * from './MinecartManager';
 export * from './minecartOccupancy';
 export * from './minecartTnt';
