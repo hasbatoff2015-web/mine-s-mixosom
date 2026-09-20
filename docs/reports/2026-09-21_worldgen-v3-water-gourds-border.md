@@ -36,7 +36,7 @@ height = floor(lerp(legacyHeight, basinFloor, waterMask))
 
 When `waterMask = 0`, `height === legacyHeight`. Shore uses `smoothstep` on the field, not a binary cliff. Depth noise keeps basin floors uneven. Ocean target depth ~3.6–11; lake ~2.1–8. `SEA_LEVEL` stays 63.
 
-`ColumnInfo` keeps climate `biome` and adds `waterBiome: 'none' | 'lake' | 'ocean'`. Forest+ocean is a forest coast; desert+lake is a desert lake; snowy+lake freezes only exposed `SEA_LEVEL` Ice with Water below.
+`ColumnInfo` keeps climate `biome` and adds `hydrologyRegion` (mask, may be dry coast) plus `waterBiome` (wet-only `none | lake | ocean`). Forest+ocean is a forest coast; desert+lake is a desert lake; snowy+lake freezes only exposed `SEA_LEVEL` Ice with Water below. Dry coasts must not report `waterBiome = ocean|lake`. Follow-up audit: `docs/reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
 
 The generator does **not** know about the playable border. Hydrology continues past ±10000.
 

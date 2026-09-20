@@ -2,6 +2,8 @@ import { MAX_GENERATED_SURFACE, SEA_LEVEL } from '../core/constants';
 import { fbm2D, smoothstep } from './noise';
 
 export type WaterBiome = 'none' | 'lake' | 'ocean';
+/** Mask-classified hydrology basin. May be set on a still-dry coast column. */
+export type HydrologyRegion = 'none' | 'lake' | 'ocean';
 
 /** Normal land never drops below this. Hydrology basins may. */
 export const LAND_MIN_SURFACE = 58;
@@ -29,12 +31,25 @@ const LAKE_WARP_Z_SALT = 5013;
 const DEPTH_SALT = 6001;
 
 export interface HydrologySample {
-  readonly waterBiome: WaterBiome;
+  readonly hydrologyRegion: HydrologyRegion;
   readonly waterMask: number;
   readonly oceanMask: number;
   readonly lakeMask: number;
   readonly targetDepth: number;
   readonly waterDepression: number;
+}
+
+/** Actual water biome: wet columns only. Dry coasts stay `none`. */
+export function waterBiomeAt(height: number, region: HydrologyRegion): WaterBiome {
+  if (height >= SEA_LEVEL) return 'none';
+  if (region === 'ocean' || region === 'lake') return region;
+  return 'none';
+}
+
+function classifyHydrologyRegion(oceanMask: number, lakeMask: number): HydrologyRegion {
+  if (oceanMask >= OCEAN_CLASSIFY) return 'ocean';
+  if (lakeMask >= LAKE_CLASSIFY) return 'lake';
+  return 'none';
 }
 
 function fieldMask(value: number, enter: number, core: number): number {
@@ -66,7 +81,7 @@ export function hydrologyAt(numericSeed: number, x: number, z: number): Hydrolog
 
   if (oceanMask <= 0 && lakeMask <= 0) {
     return {
-      waterBiome: 'none',
+      hydrologyRegion: 'none',
       waterMask: 0,
       oceanMask: 0,
       lakeMask: 0,
@@ -80,14 +95,9 @@ export function hydrologyAt(numericSeed: number, x: number, z: number): Hydrolog
   const lakeDepth = 2.1 + 4.1 * lakeMask + 1.7 * depthNoise * lakeMask;
   const waterMask = Math.max(oceanMask, lakeMask);
   const targetDepth = oceanMask >= lakeMask ? oceanDepth : lakeDepth;
-  const waterBiome: WaterBiome = oceanMask >= OCEAN_CLASSIFY
-    ? 'ocean'
-    : lakeMask >= LAKE_CLASSIFY
-      ? 'lake'
-      : 'none';
 
   return {
-    waterBiome,
+    hydrologyRegion: classifyHydrologyRegion(oceanMask, lakeMask),
     waterMask,
     oceanMask,
     lakeMask,

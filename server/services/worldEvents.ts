@@ -244,6 +244,7 @@ export interface WorldEventsHost {
   send(playerId: string, text: string): void;
   log(message: string): void;
   loadedWorldgenVersion?(): number | undefined;
+  acknowledgeWorldgenMigration?(): void;
 }
 
 export type ForceSpawnResult =
@@ -490,6 +491,7 @@ export class WorldEventsManager {
   private store: WorldEventsStore = { templates: [] };
   private search: SearchJob | undefined;
   private searchRetryAt = 0;
+  private generatorMigrationHandled = false;
 
   constructor(private readonly host: WorldEventsHost) {}
 
@@ -516,6 +518,9 @@ export class WorldEventsManager {
   /**
    * V2→V3 migration A: never restore a V2 event snapshot onto V3 terrain.
    * Recapture the current generated+persistent volume before overlay re-apply.
+   * One-shot per manager instance so plugin disable→load→enable cannot rebase twice.
+   *
+   * When a placing journal exists, that event is the recovery authority.
    */
   private rebaseTransientEventIfGeneratorMigrated(): void {
     // Hosts that do not track save worldgen (unit tests) must not rebase every load.
@@ -523,22 +528,37 @@ export class WorldEventsManager {
     if (!this.host.loadedWorldgenVersion) return;
     const loaded = this.host.loadedWorldgenVersion();
     if (loaded !== undefined && loaded >= WORLDGEN_VERSION) return;
+    if (this.generatorMigrationHandled) return;
+    this.generatorMigrationHandled = true;
     const journal = this.store.journal;
     if (journal?.phase === 'cleaning') {
       this.store.journal = undefined;
       this.store.active = undefined;
       this.persist();
       this.host.log('world-events: skipped V2 snapshot restore during V3 terrain migration');
+      this.finishGeneratorMigration();
       return;
     }
-    const active = this.store.active ?? (journal?.phase === 'placing' ? journal.event : undefined);
-    if (!active?.volume) return;
-    if (active.phase !== 'spawned_locked' && active.phase !== 'active_unlocked' && journal?.phase !== 'placing') {
+    const placing = journal?.phase === 'placing' ? journal.event : undefined;
+    const source = placing ?? this.store.active;
+    if (!source?.volume) {
+      this.finishGeneratorMigration();
       return;
     }
-    active.snapshot = snapshotVolumeDetailed(this.host.world, active.volume);
+    if (source.phase !== 'spawned_locked' && source.phase !== 'active_unlocked' && !placing) {
+      this.finishGeneratorMigration();
+      return;
+    }
+    source.snapshot = snapshotVolumeDetailed(this.host.world, source.volume);
+    if (placing) this.store.active = placing;
     this.persist();
     this.host.log('world-events: rebased event snapshot onto Worldgen V3 terrain');
+    this.finishGeneratorMigration();
+  }
+
+  private finishGeneratorMigration(): void {
+    this.host.acknowledgeWorldgenMigration?.();
+    this.host.persistWorld?.();
   }
 
   setConfig(config: WorldEventsConfig): void {

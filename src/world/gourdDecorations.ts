@@ -35,7 +35,7 @@ function nearDeterministicWater(generator: TerrainGenerator, x: number, z: numbe
   for (let dz = -WATER_SAMPLE_RADIUS; dz <= WATER_SAMPLE_RADIUS; dz += WATER_SAMPLE_STEP) {
     for (let dx = -WATER_SAMPLE_RADIUS; dx <= WATER_SAMPLE_RADIUS; dx += WATER_SAMPLE_STEP) {
       const column = generator.columnAt(x + dx, z + dz);
-      if (column.waterBiome !== 'none' || column.height < SEA_LEVEL) return true;
+      if (column.hydrologyRegion !== 'none' || column.height < SEA_LEVEL) return true;
     }
   }
   return false;
@@ -49,7 +49,7 @@ function pumpkinChance(biome: Biome): number {
 
 function melonChance(column: ColumnInfo, nearWater: boolean): number {
   if (column.biome === 'desert' || column.biome === 'snowy_plains') return 0;
-  if (column.height <= SEA_LEVEL || column.waterBiome !== 'none') return 0;
+  if (column.height <= SEA_LEVEL || column.hydrologyRegion !== 'none') return 0;
   let chance = 0;
   if (column.biome === 'forest') chance = 0.34;
   else if (humidPlains(column)) chance = 0.20;
@@ -79,7 +79,7 @@ export function planGourdPatch(
   const cx = cellX * GOURD_PATCH_CELL + 2 + Math.floor(jitterX * (GOURD_PATCH_CELL - 4));
   const cz = cellZ * GOURD_PATCH_CELL + 2 + Math.floor(jitterZ * (GOURD_PATCH_CELL - 4));
   const column = generator.columnAt(cx, cz);
-  if (column.height <= SEA_LEVEL || column.waterBiome !== 'none') return undefined;
+  if (column.height <= SEA_LEVEL || column.hydrologyRegion !== 'none') return undefined;
   const chance = kind === 'pumpkin'
     ? pumpkinChance(column.biome)
     : melonChance(column, nearDeterministicWater(generator, cx, cz));
@@ -106,7 +106,7 @@ function canPlaceFruit(chunk: Chunk, generator: TerrainGenerator, x: number, z: 
   const worldX = chunk.x * CHUNK_SIZE + x;
   const worldZ = chunk.z * CHUNK_SIZE + z;
   const column = generator.columnAt(worldX, worldZ);
-  if (column.height <= SEA_LEVEL || column.waterBiome !== 'none') return false;
+  if (column.height <= SEA_LEVEL || column.hydrologyRegion !== 'none') return false;
   if (column.biome === 'desert' || column.biome === 'snowy_plains') return false;
   const surface = chunk.get(x, column.height, z) as BlockId;
   if (!SOIL.has(surface)) return false;

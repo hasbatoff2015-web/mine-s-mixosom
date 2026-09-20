@@ -856,6 +856,10 @@ export class WorldInstance {
       },
       log: (message) => serverLog(`plugin world-events ${message}`),
       loadedWorldgenVersion: () => this.loadedWorldgenVersion,
+      acknowledgeWorldgenMigration: () => {
+        this.loadedWorldgenVersion = WORLDGEN_VERSION;
+        this.dirty = true;
+      },
     });
     this.gameplay.isExplosionProtected = (x, y, z) => this.worldEvents.isProtected(x, y, z);
     this.holograms = new HologramNetwork((list) => {
@@ -891,6 +895,9 @@ export class WorldInstance {
     if (existing) {
       this.createdAt = existing.summary.createdAt;
       this.loadedWorldgenVersion = existing.worldgenVersion;
+      if (this.loadedWorldgenVersion === undefined || this.loadedWorldgenVersion < WORLDGEN_VERSION) {
+        this.dirty = true;
+      }
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
@@ -2763,6 +2770,7 @@ export class WorldInstance {
     const eye = player.controller.eyePosition();
     const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
     if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || !gameplayMayMutateBlock(x, z)
       || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
       this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
       return;

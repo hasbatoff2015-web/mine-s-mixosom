@@ -3,12 +3,13 @@
 ## 2026-09-21: Worldgen V3 — hydrology, gourds, playable border
 
 - [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
-- [x] Keep climate biomes; add `waterBiome` none/lake/ocean.
+- [x] Keep climate biomes; `hydrologyRegion` is the mask label; `waterBiome` is wet-only none/lake/ocean.
 - [x] Wild pumpkin/melon patches with separate RNG salts; no stems/farmland.
 - [x] Migration A: V2 snapshots use V3 generator; modifications preserved; next save writes `WORLDGEN_VERSION = 3`.
 - [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
 - [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.
-- [ ] Owner live QA of large seas, gourd patches, and border fade/collision on Anarchy.
+- [x] Audit harden: bucket/flint/farming/legacy use, mining, signs, minecart AABB enter/dismount, event journal one-shot rebase, seabed materials.
+- [ ] Owner live QA of large seas, gourd patches, underwater floors, and border fade/collision on Anarchy.
 
 ## 2026-09-20: Merge origin/main into always-run / KeyC
 

@@ -8,6 +8,7 @@ import {
   PUMPKIN_DECORATION_SALT,
   planGourdPatch,
 } from '../src/world/gourdDecorations';
+import { ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import { WORLDGEN_QA_SEEDS } from '../src/world/worldgenMetrics';
 
 const SPAN = 2048;
@@ -17,8 +18,11 @@ const seeds = WORLDGEN_QA_SEEDS.slice(0, 8);
 interface WaterStats {
   columns: number;
   water: number;
-  lake: number;
-  ocean: number;
+  hydrologyOcean: number;
+  hydrologyLake: number;
+  oceanWater: number;
+  lakeWater: number;
+  legacyWater: number;
   land: number;
   depths: number[];
   shoreline: number;
@@ -71,8 +75,11 @@ function sampleSeed(seed: string): WaterStats {
   const stats: WaterStats = {
     columns: 0,
     water: 0,
-    lake: 0,
-    ocean: 0,
+    hydrologyOcean: 0,
+    hydrologyLake: 0,
+    oceanWater: 0,
+    lakeWater: 0,
+    legacyWater: 0,
     land: 0,
     depths: [],
     shoreline: 0,
@@ -94,15 +101,18 @@ function sampleSeed(seed: string): WaterStats {
       if (column.height < SEA_LEVEL) {
         stats.water += 1;
         stats.depths.push(SEA_LEVEL - column.height);
+        if (column.waterBiome === 'ocean') stats.oceanWater += 1;
+        else if (column.waterBiome === 'lake') stats.lakeWater += 1;
+        else stats.legacyWater += 1;
       } else {
         stats.land += 1;
         stats.landBiomes[column.biome] += 1;
       }
-      if (column.waterBiome === 'ocean') {
-        stats.ocean += 1;
+      if (column.hydrologyRegion === 'ocean') {
+        stats.hydrologyOcean += 1;
         oceanCells.add(key);
-      } else if (column.waterBiome === 'lake') {
-        stats.lake += 1;
+      } else if (column.hydrologyRegion === 'lake') {
+        stats.hydrologyLake += 1;
         lakeCells.add(key);
       }
     }
@@ -197,7 +207,7 @@ function samplePlacedFruit() {
             const bucket = fruit === BlockId.Pumpkin ? pumpkin : melon;
             bucket.total += 1;
             if (column.biome === 'plains' || column.biome === 'forest') bucket[column.biome] += 1;
-            if (column.height < SEA_LEVEL || column.waterBiome !== 'none') bucket.underwater += 1;
+            if (column.height < SEA_LEVEL) bucket.underwater += 1;
           }
         }
       }
@@ -228,8 +238,11 @@ const perSeed = seeds.map((seed) => ({ seed, ...sampleSeed(seed) }));
 const totals = perSeed.reduce((acc, stats) => {
   acc.columns += stats.columns;
   acc.water += stats.water;
-  acc.lake += stats.lake;
-  acc.ocean += stats.ocean;
+  acc.hydrologyOcean += stats.hydrologyOcean;
+  acc.hydrologyLake += stats.hydrologyLake;
+  acc.oceanWater += stats.oceanWater;
+  acc.lakeWater += stats.lakeWater;
+  acc.legacyWater += stats.legacyWater;
   acc.land += stats.land;
   acc.shoreline += stats.shoreline;
   acc.depths.push(...stats.depths);
@@ -243,8 +256,11 @@ const totals = perSeed.reduce((acc, stats) => {
 }, {
   columns: 0,
   water: 0,
-  lake: 0,
-  ocean: 0,
+  hydrologyOcean: 0,
+  hydrologyLake: 0,
+  oceanWater: 0,
+  lakeWater: 0,
+  legacyWater: 0,
   land: 0,
   shoreline: 0,
   depths: [] as number[],
@@ -272,13 +288,19 @@ const batchMs = performance.now() - batchStart;
 
 const share = (count: number): number => Number((count * 100 / Math.max(1, totals.columns)).toFixed(3));
 const landShare = (count: number): number => Number((count * 100 / Math.max(1, totals.land)).toFixed(3));
+const anarchy = sampleSeed(ANARCHY_WORLD_SEED);
 
 console.log(JSON.stringify({
-  inputs: { seeds, span: SPAN, step: STEP, sampledColumns: totals.columns },
+  inputs: { seeds, span: SPAN, step: STEP, sampledColumns: totals.columns, anarchySeed: ANARCHY_WORLD_SEED },
   water: {
-    totalPercent: share(totals.water),
-    lakeClassifiedPercent: share(totals.lake),
-    oceanClassifiedPercent: share(totals.ocean),
+    physicalPercent: share(totals.water),
+    hydrologyOceanPercent: share(totals.hydrologyOcean),
+    hydrologyLakePercent: share(totals.hydrologyLake),
+    actualOceanWaterPercent: share(totals.oceanWater),
+    actualLakeWaterPercent: share(totals.lakeWater),
+    legacyPuddlePercent: share(totals.legacyWater),
+    accountingIdentity:
+      totals.oceanWater + totals.lakeWater + totals.legacyWater === totals.water,
     landPercent: share(totals.land),
     shorelinePercent: share(totals.shoreline),
     avgDepth: Number(mean(totals.depths).toFixed(3)),
@@ -288,6 +310,16 @@ console.log(JSON.stringify({
     largestLakeCells: totals.lakeComponents.length > 0 ? Math.max(...totals.lakeComponents) : 0,
     oceanComponents: totals.oceanComponents.length,
     lakeComponents: totals.lakeComponents.length,
+  },
+  anarchySeed: {
+    physicalWaterPercent: Number((anarchy.water * 100 / anarchy.columns).toFixed(3)),
+    hydrologyOceanPercent: Number((anarchy.hydrologyOcean * 100 / anarchy.columns).toFixed(3)),
+    hydrologyLakePercent: Number((anarchy.hydrologyLake * 100 / anarchy.columns).toFixed(3)),
+    actualOceanWaterPercent: Number((anarchy.oceanWater * 100 / anarchy.columns).toFixed(3)),
+    actualLakeWaterPercent: Number((anarchy.lakeWater * 100 / anarchy.columns).toFixed(3)),
+    legacyPuddlePercent: Number((anarchy.legacyWater * 100 / anarchy.columns).toFixed(3)),
+    largestOcean: anarchy.oceanComponents.length > 0 ? Math.max(...anarchy.oceanComponents) : 0,
+    largestLake: anarchy.lakeComponents.length > 0 ? Math.max(...anarchy.lakeComponents) : 0,
   },
   landBiomes: Object.fromEntries((Object.keys(totals.landBiomes) as Biome[]).map((biome) => [biome, {
     count: totals.landBiomes[biome],
@@ -302,9 +334,12 @@ console.log(JSON.stringify({
   },
   perSeed: perSeed.map((stats) => ({
     seed: stats.seed,
-    waterPercent: Number((stats.water * 100 / stats.columns).toFixed(3)),
-    lakePercent: Number((stats.lake * 100 / stats.columns).toFixed(3)),
-    oceanPercent: Number((stats.ocean * 100 / stats.columns).toFixed(3)),
+    physicalWaterPercent: Number((stats.water * 100 / stats.columns).toFixed(3)),
+    hydrologyOceanPercent: Number((stats.hydrologyOcean * 100 / stats.columns).toFixed(3)),
+    hydrologyLakePercent: Number((stats.hydrologyLake * 100 / stats.columns).toFixed(3)),
+    actualOceanWaterPercent: Number((stats.oceanWater * 100 / stats.columns).toFixed(3)),
+    actualLakeWaterPercent: Number((stats.lakeWater * 100 / stats.columns).toFixed(3)),
+    legacyPuddlePercent: Number((stats.legacyWater * 100 / stats.columns).toFixed(3)),
     largestOcean: stats.oceanComponents.length > 0 ? Math.max(...stats.oceanComponents) : 0,
     largestLake: stats.lakeComponents.length > 0 ? Math.max(...stats.lakeComponents) : 0,
   })),

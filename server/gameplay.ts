@@ -26,7 +26,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
-import { gameplayMayMutateBlock } from '../src/world/worldBorder';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
   clearDoorBlocks,
   daylightFactor,
@@ -883,6 +883,7 @@ export class ServerGameplay {
     if (definition.breakable === false || definition.hardness < 0) {
       return { ok: false, reason: 'unbreakable' };
     }
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return { ok: false, reason: 'bounds' };
     if (
       !player.miningTarget
       || player.miningTarget.x !== hit.x
@@ -1233,6 +1234,10 @@ export class ServerGameplay {
     this.lastVehicleEnterReject = undefined;
     const cart = this.minecarts.get(entityId);
     if (!cart || !this.minecarts.isRideable(cart)) return false;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) {
+      this.rejectVehicleEnter('bounds');
+      return false;
+    }
     if (player.ridingCartId === entityId) return true;
     if (player.ridingCartId) {
       this.rejectVehicleEnter('already_riding');
@@ -1286,7 +1291,7 @@ export class ServerGameplay {
     player.controller.velocity.set(0, 0, 0);
   }
 
-  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding'): void {
+  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding' | 'bounds'): void {
     this.lastVehicleEnterReject = reason;
     this.pendingUseReject = reason;
   }

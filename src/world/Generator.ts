@@ -6,11 +6,16 @@ import {
   applyHydrologyHeight,
   hydrologyAt,
   LAND_MIN_SURFACE,
+  waterBiomeAt,
+  type HydrologyRegion,
   type WaterBiome,
 } from './hydrology';
 import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
 
-export type { WaterBiome };
+export type { HydrologyRegion, WaterBiome };
+
+/** Independent of ore/tree/plant/cane streams. */
+const SUBMERGED_SURFACE_SALT = 7129;
 
 export type Biome = 'plains' | 'forest' | 'desert' | 'snowy_plains';
 
@@ -152,6 +157,9 @@ export const ORE_RULES: readonly OreRule[] = [
 
 export interface ColumnInfo {
   biome: Biome;
+  /** Mask-classified basin. Dry coasts may still be lake/ocean. */
+  hydrologyRegion: HydrologyRegion;
+  /** Wet columns only: `none` whenever `height >= SEA_LEVEL`. */
   waterBiome: WaterBiome;
   height: number;
   legacyHeight: number;
@@ -270,7 +278,8 @@ export class TerrainGenerator {
     const height = applyHydrologyHeight(legacyHeight, hydro);
     return {
       biome,
-      waterBiome: hydro.waterBiome,
+      hydrologyRegion: hydro.hydrologyRegion,
+      waterBiome: waterBiomeAt(height, hydro.hydrologyRegion),
       height,
       legacyHeight,
       base,
@@ -414,14 +423,31 @@ export class TerrainGenerator {
       else if (y <= cap) block = BlockId.Stone;
       else if (y < height - (desert ? 4 : 3)) block = BlockId.Stone;
       else if (y < height) block = desert ? BlockId.Sandstone : BlockId.Dirt;
-      else if (y === height) block = desert ? BlockId.Sand : snowy ? BlockId.SnowBlock : BlockId.GrassBlock;
-      else if (y <= SEA_LEVEL) block = snowy && y === SEA_LEVEL ? BlockId.Ice : BlockId.Water;
+      else if (y === height) {
+        block = height < SEA_LEVEL
+          ? this.submergedSurfaceBlock(x, z, desert, snowy)
+          : desert ? BlockId.Sand : snowy ? BlockId.SnowBlock : BlockId.GrassBlock;
+      } else if (y <= SEA_LEVEL) block = snowy && y === SEA_LEVEL ? BlockId.Ice : BlockId.Water;
 
       if (y > cap && y <= roof && this.isCave(x, y, z, height)) {
         block = BlockId.Air;
       }
       chunk.set(localX, y, localZ, block);
     }
+  }
+
+  private submergedSurfaceBlock(x: number, z: number, desert: boolean, snowy: boolean): BlockId {
+    if (desert) return BlockId.Sand;
+    const roll = random01(this.numericSeed + SUBMERGED_SURFACE_SALT, x, 3, z);
+    if (snowy) {
+      if (roll < 0.50) return BlockId.Dirt;
+      if (roll < 0.82) return BlockId.Gravel;
+      return BlockId.Stone;
+    }
+    if (roll < 0.46) return BlockId.Dirt;
+    if (roll < 0.72) return BlockId.Gravel;
+    if (roll < 0.88) return BlockId.Clay;
+    return BlockId.Sand;
   }
 
   bedrockHeight(x: number, z: number): number {

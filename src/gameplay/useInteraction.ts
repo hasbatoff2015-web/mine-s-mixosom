@@ -39,7 +39,7 @@ import {
   torchPlacementFromHit,
 } from '../blocks';
 import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
-import { gameplayMayMutateBlock } from '../world/worldBorder';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../world/worldBorder';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
@@ -203,6 +203,7 @@ export function cartIsCloser(
 }
 
 function tryEnterMinecart(ctx: UseSimulationContext, cart: MinecartEntity): void {
+  if (!cartRideFitsPlayableWorld(cart)) return;
   if (ctx.ridingCartId === cart.id) return;
   if (ctx.ridingCartId) {
     ctx.effects?.toast?.('Сначала выйдите из текущей вагонетки.');
@@ -256,6 +257,10 @@ export function resolveUseIntent(input: UseIntentInput): UseIntentKind {
   return 'none';
 }
 
+function cartRideFitsPlayableWorld(cart: Pick<MinecartEntity, 'position'>): boolean {
+  return isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z);
+}
+
 export function performUseHeld(ctx: UseSimulationContext): void {
   const origin = new Vec3(ctx.eyePosition().x, ctx.eyePosition().y, ctx.eyePosition().z);
   const direction = new Vec3(ctx.viewDirection().x, ctx.viewDirection().y, ctx.viewDirection().z);
@@ -264,17 +269,18 @@ export function performUseHeld(ctx: UseSimulationContext): void {
   const stack = ctx.inventory.getSlot(ctx.selectedSlot);
   const item = stack ? tryGetItemDefinition(stack.itemId) : undefined;
   const cartCloser = cartIsCloser(hit, cartRay);
+  const worldHitInside = Boolean(hit && gameplayMayMutateBlock(hit.x, hit.z));
 
   if (stack?.itemId === ItemId.Bucket) {
     applyEmptyBucket(ctx, origin, direction);
     return;
   }
 
-  if (hit) {
+  if (hit && worldHitInside) {
     if (ctx.allowInteract && !ctx.allowInteract(hit.x, hit.y, hit.z, hit.block)) return;
   }
 
-  if (hit && !cartCloser) {
+  if (hit && !cartCloser && worldHitInside) {
     if (hit.block === BlockId.CraftingTable) {
       ctx.effects?.openContainer?.('crafting-table', hit.x, hit.y, hit.z);
       return;
@@ -336,6 +342,7 @@ export function performUseHeld(ctx: UseSimulationContext): void {
   }
 
   if (cartCloser && cartRay) {
+    if (!cartRideFitsPlayableWorld(cartRay.cart)) return;
     if (stack?.itemId === ItemId.FlintAndSteel) {
       applyFlint(ctx, origin, direction, undefined);
       return;
@@ -384,6 +391,7 @@ function tryFarmingUse(
     && (hit.block === BlockId.Dirt || hit.block === BlockId.GrassBlock)) {
     const above = ctx.world.getBlock(hit.x, hit.y + 1, hit.z, false);
     if (above !== BlockId.Air && getBlockDefinition(above).replaceable !== true) return false;
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return false;
     if (ctx.allowPlace && !ctx.allowPlace(hit.x, hit.y, hit.z, BlockId.Farmland)) return true;
     if (!ctx.world.setBlock(hit.x, hit.y, hit.z, BlockId.Farmland)) return true;
     ctx.world.setBlockState(hit.x, hit.y, hit.z, {
@@ -402,6 +410,7 @@ function tryFarmingUse(
     const x = hit.x, y = hit.y + 1, z = hit.z;
     const target = ctx.world.getBlock(x, y, z, false);
     if (target !== BlockId.Air && getBlockDefinition(target).replaceable !== true) return false;
+    if (!gameplayMayMutateBlock(x, z)) return false;
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, planting.block)) return true;
     if (!ctx.world.setBlock(x, y, z, planting.block)) return true;
     ctx.world.setBlockState(x, y, z, { age: 0 });
@@ -414,6 +423,7 @@ function tryFarmingUse(
   }
 
   if (itemId === ItemId.BoneMeal && isCropBlock(hit.block)) {
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return false;
     const farmland = ctx.world.getBlock(hit.x, hit.y - 1, hit.z, false) === BlockId.Farmland
       && ctx.world.getBlockState(hit.x, hit.y - 1, hit.z)?.hydrated === true;
     const age = cropAge(ctx.world.getBlockState(hit.x, hit.y, hit.z));
@@ -940,6 +950,7 @@ function bucketContext(ctx: UseSimulationContext) {
     selectedSlot: ctx.selectedSlot,
     mode: ctx.gamemode,
     onDrop: (stack: ItemStack) => ctx.effects?.dropOverflow?.(stack),
+    canMutateBlock: gameplayMayMutateBlock,
   };
 }
 
@@ -961,6 +972,7 @@ function applyFlint(
     return;
   }
   if (action.type === 'prime-tnt-block') {
+    if (!gameplayMayMutateBlock(action.x, action.z)) return;
     ctx.redstone.primeTnt(action.x, action.y, action.z);
     if (ctx.gamemode === 'survival') wearHeld(ctx);
     ctx.effects?.onFlintIgnite?.();
@@ -973,6 +985,7 @@ function applyFlint(
 }
 
 function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number): boolean {
+  if (!gameplayMayMutateBlock(x, z)) return false;
   const block = ctx.world.getBlock(x, y, z, false);
   if (isTntBlock(block)) {
     ctx.redstone.primeTnt(x, y, z);
@@ -992,7 +1005,7 @@ function insertTntCart(
 ): boolean {
   const cart = ctx.minecarts.raycast(origin, direction, ctx.reach, ctx.ridingCartId)?.cart
     ?? (hit ? ctx.minecarts.cartAt(hit.x, hit.y, hit.z) : ctx.minecarts.nearest(ctx.position, 1.6));
-  if (!cart || !ctx.minecarts.insertTnt(cart, blockId)) return false;
+  if (!cart || !cartRideFitsPlayableWorld(cart) || !ctx.minecarts.insertTnt(cart, blockId)) return false;
   ctx.effects?.playBlock?.('place', blockId as BlockId, cart.position.x, cart.position.y, cart.position.z);
   ctx.effects?.swing?.();
   if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
@@ -1010,6 +1023,7 @@ function placeMinecartOnRail(ctx: UseSimulationContext, hit: VoxelHit | undefine
     toastPlaceFail(ctx, 'minecart-rails');
     return;
   }
+  if (!gameplayMayMutateBlock(x, z)) return;
   if (!ctx.minecarts.spawn(x, y, z)) return;
   ctx.effects?.playBlock?.('place', BlockId.Rail, x, y, z);
   ctx.effects?.swing?.();

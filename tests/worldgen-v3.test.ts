@@ -98,6 +98,70 @@ describe('Worldgen V3 hydrology, gourds and V2 migration', () => {
     expect(land.column.height).toBe(land.column.legacyHeight);
     expect(land.column.height).toBeGreaterThanOrEqual(LAND_MIN_SURFACE);
     expect(land.column.waterBiome).toBe('none');
+    expect(land.column.hydrologyRegion).toBe('none');
+  });
+
+  it('never reports a dry column as lake or ocean waterBiome', () => {
+    const generator = new TerrainGenerator('alpha');
+    const dry = findColumn(generator, (column) => column.height >= SEA_LEVEL && column.waterMask <= 0);
+    expect(dry.column.waterBiome).toBe('none');
+    const wetOcean = findColumn(generator, (column) => column.hydrologyRegion === 'ocean' && column.height < SEA_LEVEL);
+    expect(wetOcean.column.waterBiome).toBe('ocean');
+    const wetLake = findColumn(generator, (column) => column.hydrologyRegion === 'lake' && column.height < SEA_LEVEL);
+    expect(wetLake.column.waterBiome).toBe('lake');
+    const coast = findColumn(
+      generator,
+      (column) => column.hydrologyRegion !== 'none' && column.height >= SEA_LEVEL,
+    );
+    expect(coast.column.waterBiome).toBe('none');
+    let physical = 0;
+    let oceanWater = 0;
+    let lakeWater = 0;
+    let legacyWater = 0;
+    for (let z = -512; z < 512; z += 8) {
+      for (let x = -512; x < 512; x += 8) {
+        const column = generator.columnAt(x, z);
+        if (column.height >= SEA_LEVEL) {
+          expect(column.waterBiome).toBe('none');
+          continue;
+        }
+        physical += 1;
+        if (column.waterBiome === 'ocean') oceanWater += 1;
+        else if (column.waterBiome === 'lake') lakeWater += 1;
+        else legacyWater += 1;
+      }
+    }
+    expect(oceanWater + lakeWater + legacyWater).toBe(physical);
+  });
+
+  it('uses submerged floor materials instead of grass or snow under water', () => {
+    const generator = new TerrainGenerator('alpha');
+    const plainsLake = findColumn(
+      generator,
+      (column) => column.biome === 'plains' && column.waterBiome === 'lake' && column.height <= SEA_LEVEL - 3,
+    );
+    const forestOcean = findColumn(
+      generator,
+      (column) => column.biome === 'forest' && column.waterBiome === 'ocean' && column.height <= SEA_LEVEL - 3,
+    );
+    const snowyLake = findColumn(
+      generator,
+      (column) => column.biome === 'snowy_plains' && column.height <= SEA_LEVEL - 3,
+    );
+    const checkFloor = (x: number, z: number, forbid: BlockId[]) => {
+      const chunk = generate(generator, floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE));
+      const lx = positiveMod(x, CHUNK_SIZE);
+      const lz = positiveMod(z, CHUNK_SIZE);
+      const height = generator.columnAt(x, z).height;
+      const floor = chunk.get(lx, height, lz);
+      for (const block of forbid) expect(floor).not.toBe(block);
+      return { chunk, lx, lz, height, floor };
+    };
+    checkFloor(plainsLake.x, plainsLake.z, [BlockId.GrassBlock, BlockId.SnowBlock]);
+    checkFloor(forestOcean.x, forestOcean.z, [BlockId.GrassBlock, BlockId.SnowBlock]);
+    const snowy = checkFloor(snowyLake.x, snowyLake.z, [BlockId.GrassBlock, BlockId.SnowBlock]);
+    expect(snowy.chunk.get(snowy.lx, SEA_LEVEL, snowy.lz)).toBe(BlockId.Ice);
+    expect(snowy.chunk.get(snowy.lx, SEA_LEVEL - 1, snowy.lz)).toBe(BlockId.Water);
   });
 
   it('creates lakes and larger oceans', () => {

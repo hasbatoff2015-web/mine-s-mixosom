@@ -209,7 +209,7 @@ import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, ligh
 import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
-import { gameplayMayMutateBlock, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
   ANARCHY_SERVER_ID,
@@ -5466,6 +5466,7 @@ export class Game {
     const session = this.session!;
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) return;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) return;
     if (session.ridingCartId === id) return;
     if (session.ridingCartId) {
       this.ui.toast('Сначала выйдите из текущей вагонетки.');

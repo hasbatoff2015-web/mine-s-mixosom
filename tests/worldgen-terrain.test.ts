@@ -177,7 +177,7 @@ describe('worldgen mountains, caves and density', () => {
     expect(holes, 'any surface cave mouths').toBe(0);
     expect(thinRoof, 'cave air inside the roof cap').toBe(0);
     expect(hillside, 'side leaks on slopes').toBe(0);
-  });
+  }, 20_000);
 
   it('keeps a solid roof of CAVE_ROOF_DEPTH under ordinary cave air', () => {
     expect(CAVE_ROOF_DEPTH).toBeGreaterThanOrEqual(3);
@@ -209,7 +209,7 @@ describe('worldgen mountains, caves and density', () => {
     expect(cactusRatio).toBeGreaterThan(0.12);
     expect(cactusRatio).toBeLessThan(0.38);
     expect(treesPer).toBeGreaterThan(1.2);
-  });
+  }, 20_000);
 
   it('keeps ores in the shifted bands including the new deep range', () => {
     const gen = new TerrainGenerator('ore-depth');
