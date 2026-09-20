@@ -4,7 +4,7 @@
 
 - Third-person ПКМ больше не задаёт отдельный local/world TRS меча. Как при ЛКМ swing: меч остаётся child `rightArm` → `heldItem` с `/moveitems` калибровкой; поднимается только рука.
 - `THIRD_PERSON_HELD_ITEM_DEFAULTS.sword` не менялся. First-person overlay на viewmodel сохранён (рука в FP скрыта).
-- Не мержить без ревью владельца.
+- Live QA: `?qaPlayer=1` + Anarchy FP/TP-front — меч следует за поднятой рукой; два WS-клиента синхронизируют `swordBlocking`. Не мержить без ревью владельца.
 - Подробности: `docs/reports/2026-09-20_sword-blocking-hand-follow.md`.
 
 ## Последний проход: Sword blocking animation live fix — 2026-09-20

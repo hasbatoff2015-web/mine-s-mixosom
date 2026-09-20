@@ -44,7 +44,21 @@ npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation
 
 ## Visual QA
 
-Pending live first/third/remote after this commit.
+`/?qaPlayer=1` (тот же `PlayerVisual`, что local TP и `RemotePlayerView`):
+
+- Idle: меч в правой руке у бедра.
+- Block: рука поднимается, клинок остаётся в этой руке (не на старом месте у бедра).
+- Release: калиброванный idle.
+- First-person: idle справа вертикально → block к центру/поперёк → restore.
+
+Live Anarchy (`http://127.0.0.1:4173`, `ws://127.0.0.1:2567`):
+
+- First-person: `/give diamond_sword`, idle → hold RMB → меч уходит в use pose → release.
+- Local third-person front (F5×2): idle у бедра → RMB рука вверх, меч в этой руке.
+- Смерть на спавне / respawn / `/gamemode creative`: поза сбрасывается и снова работает после give.
+- Два живых WS-клиента: observer видит `presentation.heldItemId=diamond_sword` и `swordBlocking` true при `use`, false после отпускания. Remote mesh = тот же `PlayerVisual`, что на qaPlayer/local TP.
+
+## Performance
 
 ## Performance
 
@@ -60,4 +74,4 @@ Owner visual acceptance. Do not merge.
 
 ## Git
 
-Branch `cursor/sword-blocking-animation-7e91`. SHA pending. Do not merge.
+Branch `cursor/sword-blocking-animation-7e91`. Code `b591152`. Do not merge.
