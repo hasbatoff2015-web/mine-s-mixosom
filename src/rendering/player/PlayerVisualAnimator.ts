@@ -1,4 +1,8 @@
 import * as THREE from 'three';
+import {
+  THIRD_PERSON_SWORD_BLOCKING_ARM,
+  advanceSwordBlockingProgress,
+} from './swordBlockingVisual';
 
 export interface PlayerAnimationState {
   readonly viewYaw: number;
@@ -32,6 +36,8 @@ export interface PlayerVisualPose {
   readonly rightLegX: number;
   readonly leftLegX: number;
   readonly swingProgress: number;
+  /** 0 = idle held pose, 1 = fully blocking. Render-only; not networked. */
+  readonly blockingProgress: number;
 }
 
 export function wrapRadians(value: number): number {
@@ -50,6 +56,7 @@ export class PlayerVisualAnimator {
   private walkStrength = 0;
   private swingSeconds = 1;
   private elapsedSeconds = 0;
+  private blockingProgress = 0;
 
   reset(viewYaw = 0): void {
     this.bodyYaw = viewYaw;
@@ -58,6 +65,11 @@ export class PlayerVisualAnimator {
     this.walkStrength = 0;
     this.swingSeconds = 1;
     this.elapsedSeconds = 0;
+    this.blockingProgress = 0;
+  }
+
+  snapBlockingProgress(value = 0): void {
+    this.blockingProgress = THREE.MathUtils.clamp(value, 0, 1);
   }
 
   triggerSwing(): void {
@@ -133,10 +145,16 @@ export class PlayerVisualAnimator {
       rightArmZ = 0.18;
     }
 
-    if (state.swordBlocking) {
-      rightArmX = 0.86;
-      rightArmY = -0.62;
-      rightArmZ = 0.42;
+    this.blockingProgress = advanceSwordBlockingProgress(
+      this.blockingProgress,
+      state.swordBlocking,
+      delta,
+    );
+    if (this.blockingProgress > 0) {
+      const t = this.blockingProgress;
+      rightArmX += (THIRD_PERSON_SWORD_BLOCKING_ARM.x - rightArmX) * t;
+      rightArmY += (THIRD_PERSON_SWORD_BLOCKING_ARM.y - rightArmY) * t;
+      rightArmZ += (THIRD_PERSON_SWORD_BLOCKING_ARM.z - rightArmZ) * t;
     }
 
     if (state.bowCharge > 0) {
@@ -167,6 +185,7 @@ export class PlayerVisualAnimator {
       rightLegX,
       leftLegX,
       swingProgress,
+      blockingProgress: this.blockingProgress,
     };
   }
 }

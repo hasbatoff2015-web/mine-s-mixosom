@@ -1,11 +1,13 @@
 import * as THREE from 'three';
-import { ItemId, bowPullingTexturePath, itemRenderProfile } from '../../items';
+import { ItemId, bowPullingTexturePath, isSwordItem, itemRenderProfile } from '../../items';
 import {
   applyThirdPersonHeldItemTransform,
+  cloneThirdPersonHeldItemTransform,
   defaultThirdPersonHeldItemTransformForItem,
   readThirdPersonHeldItemTransform,
   type ThirdPersonHeldItemTransform,
 } from './thirdPersonHeldItem';
+import { applyThirdPersonSwordBlockingTransform } from './swordBlockingVisual';
 import type { VoxelWorld } from '../../world/World';
 import {
   createPlayerAppearance,
@@ -131,6 +133,8 @@ export class PlayerVisual {
   private skinHandle: SkinTextureHandle;
   private heldModel?: THREE.Group;
   private heldItemId?: string;
+  private heldBaseTransform?: ThirdPersonHeldItemTransform;
+  private lastBlockingProgress = 0;
   private offhandModel?: THREE.Group;
   private offhandItemId?: string;
   private bowTexturePath = 'item/bow';
@@ -210,6 +214,10 @@ export class PlayerVisual {
     return this.heldItemId;
   }
 
+  get heldItemBlockingProgress(): number {
+    return this.lastBlockingProgress;
+  }
+
   get offhandItem(): string | undefined {
     return this.offhandItemId;
   }
@@ -235,20 +243,29 @@ export class PlayerVisual {
   setHeldItem(itemId?: string): void {
     this.assertActive();
     if (itemId === this.heldItemId) return;
+    const keepBlocking = isSwordItem(this.heldItemId) && isSwordItem(itemId);
+    if (!keepBlocking) this.animator.snapBlockingProgress(0);
     this.heldModel?.removeFromParent();
     this.heldItemId = itemId;
     this.heldModel = itemId ? this.itemVisuals.createItemModel(itemId) : undefined;
     this.bowTexturePath = 'item/bow';
-    if (!this.heldModel || !itemId) return;
+    this.heldBaseTransform = itemId
+      ? defaultThirdPersonHeldItemTransformForItem(itemId)
+      : undefined;
+    if (!this.heldModel || !itemId || !this.heldBaseTransform) {
+      this.lastBlockingProgress = 0;
+      return;
+    }
     this.rig.heldItem.add(this.heldModel);
-    this.applyHeldItemTransform(this.heldModel, itemId);
+    this.applyHeldItemVisual(keepBlocking ? this.lastBlockingProgress : 0);
   }
 
   /** Live overlay for the `/moveitems` calibrator. Does not change production defaults. */
   applyHeldItemCalibration(transform: ThirdPersonHeldItemTransform): void {
     this.assertActive();
+    this.heldBaseTransform = cloneThirdPersonHeldItemTransform(transform);
     if (!this.heldModel) return;
-    applyThirdPersonHeldItemTransform(this.heldModel, transform);
+    this.applyHeldItemVisual(isSwordItem(this.heldItemId) ? this.lastBlockingProgress : 0);
   }
 
   readHeldItemTransform(): ThirdPersonHeldItemTransform | undefined {
@@ -290,6 +307,8 @@ export class PlayerVisual {
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const dying = (state.deathProgress ?? 0) > 0;
     const resting = !dying && Boolean(state.bedRest);
+    if (dying || resting) this.animator.snapBlockingProgress(0);
+    const blocking = !dying && !resting && state.swordBlocking && isSwordItem(this.heldItemId);
     const pose = this.animator.advance(deltaSeconds, dying || resting
       ? {
         ...state,
@@ -301,11 +320,11 @@ export class PlayerVisual {
         swordBlocking: false,
         foodUseProgress: 0,
       }
-      : state);
+      : { ...state, swordBlocking: blocking });
     this.applyPose(resting ? {
       ...pose, bodyYaw: 0, headYaw: 0, headPitch: 0, bodyPitch: 0, bodyYOffset: 0, bodyZOffset: 0,
       rightArmX: 0, rightArmY: 0, rightArmZ: 0, leftArmX: 0, leftArmY: 0, leftArmZ: 0,
-      rightLegX: 0, leftLegX: 0, swingProgress: 0,
+      rightLegX: 0, leftLegX: 0, swingProgress: 0, blockingProgress: 0,
     } : pose);
     const restYaw = state.bedRest?.facing === 'east' ? -Math.PI / 2
       : state.bedRest?.facing === 'south' ? Math.PI
@@ -330,6 +349,7 @@ export class PlayerVisual {
         this.bowTexturePath = texturePath;
       }
     }
+    this.syncHeldItemBlocking(pose.blockingProgress);
     return pose;
   }
 
@@ -495,8 +515,23 @@ export class PlayerVisual {
     this.rig.leftLeg.rotation.x = pose.leftLegX;
   }
 
-  private applyHeldItemTransform(model: THREE.Group, itemId: string): void {
-    applyThirdPersonHeldItemTransform(model, defaultThirdPersonHeldItemTransformForItem(itemId));
+  private applyHeldItemVisual(progress: number): void {
+    if (!this.heldModel || !this.heldBaseTransform) {
+      this.lastBlockingProgress = 0;
+      return;
+    }
+    if (isSwordItem(this.heldItemId) && progress > 1e-5) {
+      applyThirdPersonSwordBlockingTransform(this.heldModel, this.heldBaseTransform, progress);
+    } else {
+      applyThirdPersonHeldItemTransform(this.heldModel, this.heldBaseTransform);
+    }
+    this.lastBlockingProgress = isSwordItem(this.heldItemId) ? progress : 0;
+  }
+
+  private syncHeldItemBlocking(progress: number): void {
+    const next = isSwordItem(this.heldItemId) ? progress : 0;
+    if (next <= 1e-5 && this.lastBlockingProgress <= 1e-5) return;
+    this.applyHeldItemVisual(next);
   }
 
   private assertActive(): void {

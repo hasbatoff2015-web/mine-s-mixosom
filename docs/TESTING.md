@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Sword blocking animation
+
+Report: `reports/2026-09-20_sword-blocking-animation.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts --maxWorkers=2
+```
+
+Contracts: sword + RMB uses existing `CombatSystem.swordBlocking`; tools do not block; 0.1 s lerp overlay on first-person and third-person held transforms; production `/moveitems` defaults unchanged; remote `presentation.swordBlocking` drives `PlayerVisual`. Focused **7 files / 125 tests PASS**.
+
 ## 2026-09-19 Clan invitations + leader announcement
 
 Report: `reports/2026-09-19_clan-invites-announce.md`.

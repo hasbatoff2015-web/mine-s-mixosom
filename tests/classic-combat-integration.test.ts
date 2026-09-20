@@ -8,6 +8,7 @@ import { InputManager, type MoveInput } from '../src/input/InputManager';
 import { Inventory, createItemStack } from '../src/inventory';
 import { PlayerController } from '../src/player';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../src/rendering/FirstPersonRenderer';
+import { SWORD_BLOCKING_TRANSITION_SECONDS } from '../src/rendering/player/swordBlockingVisual';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { SurvivalSystem } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
@@ -277,12 +278,13 @@ describe('movement and presentation', () => {
     fp.root.traverse((object) => objects.push(object));
     let blocked: THREE.Matrix4 | undefined;
     for (let cycle = 0; cycle < 100; cycle++) {
-      fp.swing(); fp.update(0.01, { ...state, swordBlocking: true });
+      fp.swing();
+      fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...state, swordBlocking: true });
       const matrix = fp.captureHeldItemMatrixDebug()!.itemLocal;
       expect(matrix.equals(idle)).toBe(false);
       if (blocked) expect(matrix.equals(blocked)).toBe(true);
       blocked = matrix.clone();
-      fp.update(0.01, state);
+      fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, state);
       expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idle)).toBe(true);
       expect(fp.objectCount).toBe(count);
     }

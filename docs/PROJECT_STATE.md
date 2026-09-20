@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Sword blocking animation (1.5.2-style) — 2026-09-20
+
+- Удержание ПКМ с мечом по-прежнему берёт существующий `CombatSystem.swordBlocking` / `input.using` / `input.use`. Скорость движения ×0.2 не менялась.
+- First-person и third-person (локальный и remote) плавно поднимают меч в blocking pose за 0.1 с поверх `/moveitems` / `FIRST_PERSON_SPRITE_POSE`. Калибровка idle не перезаписывается.
+- Сервер уже публиковал `presentation.swordBlocking`; `RemotePlayerView` → `PlayerVisual` теперь применяет тот же overlay, что и локальный third-person.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation.md`.
+
 ## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
 
 - Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.

@@ -141,6 +141,38 @@ describe('server remote presentation publication', { timeout: 20_000 }, () => {
     expect(player.remoteInfo()).not.toHaveProperty('inventory');
   });
 
+  it('sets and clears authoritative swordBlocking from held use input, never for tools', async () => {
+    const { world, player } = await boot();
+    player.inventory.setSlot(0, createItemStack('diamond_sword'));
+    player.selectedSlot = 0;
+    world.applyInput(player, input(3, { use: true, mining: false }));
+    world.tick();
+    expect(player.combat.swordBlocking).toBe(true);
+    expect(player.presentation().swordBlocking).toBe(true);
+    expect(player.snapshot().presentation?.swordBlocking).toBe(true);
+    expect(player.remoteInfo().presentation?.swordBlocking).toBe(true);
+
+    world.applyInput(player, input(4, { use: false, mining: false }));
+    world.tick();
+    expect(player.presentation().swordBlocking).toBe(false);
+
+    player.inventory.setSlot(0, createItemStack('iron_pickaxe'));
+    world.applyInput(player, input(5, { use: true, mining: false }));
+    world.tick();
+    expect(player.combat.swordBlocking).toBe(false);
+    expect(player.presentation().swordBlocking).toBe(false);
+
+    player.inventory.setSlot(0, createItemStack('iron_sword'));
+    world.applyInput(player, input(6, { use: true, mining: false }));
+    world.tick();
+    expect(player.presentation().swordBlocking).toBe(true);
+    player.inventory.setSlot(0, createItemStack('bow'));
+    player.combat.setHeldItem('bow');
+    player.combat.updateUse(true, true, true);
+    world.tick();
+    expect(player.presentation()).toMatchObject({ heldItemId: 'bow', swordBlocking: false });
+  });
+
   it('does not publish failed bow releases and presents a valid attack miss once', async () => {
     const { world, player } = await boot();
     player.inventory.setSlot(0, createItemStack('bow'));
