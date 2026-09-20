@@ -183,6 +183,8 @@ describe('Clan plugin', () => {
     const invite = lastClan(bob.sink)?.invitations?.[0];
     world.handleClanAction(bob.player, { type: 'clan_action', action: 'select_invitation', invitationId: invite!.invitationId });
     world.handleClanAction(bob.player, { type: 'clan_action', action: 'confirm_accept' });
+    expect(world.clan.playerClan(bob.player.id)?.name).toBe('Foxes');
+    expect(world.clan.promoteVeteran(ada.player.id, bob.player.id).ok).toBe(true);
     chat(world, ada, '/clan makeleader');
     world.handleClanAction(ada.player, { type: 'clan_action', action: 'select_member', playerId: bob.player.id });
     world.handleClanAction(ada.player, { type: 'clan_action', action: 'confirm_makeleader' });

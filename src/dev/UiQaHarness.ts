@@ -1,7 +1,7 @@
 import { createItemStack, Inventory } from '../inventory';
 import type { WorldSummary } from '../save/types';
 import { GameUI } from '../ui/GameUI';
-import type { ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import type { ClientClanActionMessage, ClientMenuActionMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { TRADE_SLOT_COUNT } from '../../shared/trade';
 
@@ -16,6 +16,8 @@ export type UiQaScene =
   | 'menu-homes'
   | 'menu-friends'
   | 'menu-trade'
+  | 'menu-rating'
+  | 'clan-ranking'
   | 'trade-session'
   | 'chat-open'
   | 'pause';
@@ -79,11 +81,49 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
     });
   };
 
-  const menuActions = { send: () => {}, close: () => {} };
+  const menuActions = {
+    send: (action: ClientMenuActionMessage) => {
+      if (action.action === 'open' && action.screen === 'rating') {
+        openMenu(ratingState());
+        return;
+      }
+      if (action.action === 'rating_set' && action.ratingKind) {
+        openMenu({ ...ratingState(), ratingKind: action.ratingKind as ServerMenuMessage['ratingKind'] });
+        return;
+      }
+      if (action.action === 'back' || action.action === 'open') {
+        openMenu({
+          type: 'menu',
+          screen: 'root',
+          title: 'Меню',
+          balance: 5645,
+          balanceLabel: '5 645',
+        });
+      }
+    },
+    close: () => ui.closeGameMenu(),
+  };
   const openMenu = (state: ServerMenuMessage): void => {
     showHud(20, 20);
     ui.openGameMenu(state, menuActions);
   };
+
+  function ratingState(): ServerMenuMessage {
+    return {
+      type: 'menu',
+      screen: 'rating',
+      title: 'Рейтинг',
+      ratingKind: 'players-money',
+      ratingPage: 1,
+      ratingTotalPages: 1,
+      ratingRows: [
+        { rank: 1, id: 'a', name: 'Ada', value: 5645, valueLabel: '5 645', metric: 'money', highlight: true },
+        { rank: 2, id: 'b', name: 'Bob', value: 900, valueLabel: '900', metric: 'money', highlight: false },
+      ],
+      personalRank: 1,
+      personalText: 'Ваше место: #1',
+    };
+  }
 
   if (scene === 'loading') {
     ui.showLoading('Расчёт освещения', 79, 'Подготавливаем чанки…');
@@ -152,6 +192,95 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
         { playerId: '3', name: 'Steve123', distance: 18 },
       ],
     });
+  } else if (scene === 'menu-rating') {
+    openMenu(ratingState());
+  } else if (scene === 'clan-ranking') {
+    showHud(20, 20);
+    const ranking: ServerClanMessage = {
+      type: 'clan',
+      screen: 'ranking',
+      title: 'Кланы',
+      search: '',
+      page: 1,
+      totalPages: 1,
+      totalCount: 2,
+      rankingSort: 'money',
+      source: 'menu',
+      clans: [
+        {
+          clanId: 'clan-1',
+          name: '123',
+          icon: 'flame',
+          rank: 1,
+          totalBalance: 185900,
+          totalLabel: '185.9К',
+          totalKills: 12,
+          killsLabel: '🗡️ 12 Уб.',
+          memberCount: 1,
+          createdAt: 1,
+          sort: 'money',
+        },
+        {
+          clanId: 'clan-2',
+          name: 'test',
+          icon: 'crown',
+          rank: 2,
+          totalBalance: 90100,
+          totalLabel: '90.1К',
+          totalKills: 3,
+          killsLabel: '🗡️ 3 Уб.',
+          memberCount: 1,
+          createdAt: 2,
+          sort: 'money',
+        },
+      ],
+    };
+    const clanActions = {
+      send: (action: ClientClanActionMessage) => {
+        if (action.action === 'set_ranking_sort' && (action.sort === 'money' || action.sort === 'kills')) {
+          const sorted = [...ranking.clans]
+            .sort((a, b) => (action.sort === 'kills'
+              ? (b.totalKills ?? 0) - (a.totalKills ?? 0)
+              : b.totalBalance - a.totalBalance))
+            .map((row, index) => ({ ...row, rank: index + 1, sort: action.sort as 'money' | 'kills' }));
+          ui.openClan({
+            ...ranking,
+            rankingSort: action.sort,
+            clans: sorted,
+          }, clanActions);
+          return;
+        }
+        if (action.action === 'select_clan' && action.clanId) {
+          const row = ranking.clans.find((entry) => entry.clanId === action.clanId);
+          ui.openClan({
+            ...ranking,
+            screen: 'card',
+            title: row?.name ?? 'Клан',
+            card: {
+              clanId: action.clanId,
+              name: row?.name ?? 'Клан',
+              icon: row?.icon ?? 'swords',
+              totalBalance: row?.totalBalance ?? 0,
+              totalLabel: row?.totalLabel ?? '0',
+              memberCount: row?.memberCount ?? 1,
+              ownerId: 'a',
+              ownerName: 'Ada',
+              isOwner: false,
+              isMember: false,
+              isFull: false,
+              joinState: 'none',
+            },
+            members: [],
+          }, clanActions);
+          return;
+        }
+        if (action.action === 'back') {
+          ui.openClan(ranking, clanActions);
+        }
+      },
+      close: () => ui.closeClan(),
+    };
+    ui.openClan(ranking, clanActions);
   } else if (scene === 'trade-session') {
     showHud(20, 20);
     const emptySlots = Array.from({ length: TRADE_SLOT_COUNT }, () => null);

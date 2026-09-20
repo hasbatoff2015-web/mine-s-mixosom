@@ -1,5 +1,50 @@
 # Roadmap
 
+## 2026-09-20: Nameplate clipping + nick max 13
+
+- [x] Size nameplate canvas from measureText + stroke/padding so 13-char Press Start 2P nicks are not clipped.
+- [x] `MAX_PLAYER_NAME_LENGTH` 16 → 13 (client + server reject 14+; clan names unchanged).
+- [x] Lower nameplate offset `2.15 → 2.05`.
+- [ ] Owner live Anarchy QA of a 13-char nick close-up.
+
+## 2026-09-20: Player nameplate hologram visuals
+
+- [x] Remove nameplate background panel; keep nick + heart/HP text only.
+- [x] Reuse hologram `display` pixel font (Press Start 2P) and hologram canvas supersample helpers.
+- [x] 2× world/text size, bright-red HP `#ff1f1f`, existing nick/HP/hide/distance logic unchanged.
+- [ ] Owner live Anarchy QA: walk up to another player; nick stays sharp, no plate, HP bright red.
+
+## 2026-09-20: Clan base point
+
+- [x] One persistent clan diamond base (same radius as personal diamond claim).
+- [x] Leader-only set/move with 24h clan cooldown; overlap with any existing claim denied.
+- [x] Bedrock is never replaced; members teleport via TeleportService.
+- [ ] Owner live Anarchy QA of clan base place/move/teleport.
+
+## 2026-09-19: Auction history + menu unread badges
+
+- [x] Clan announcement format `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - text` (no quotes).
+- [x] Auction deal history (confirmed buy/sell only, 24h, max 20 UI, `plugin-data/auction/history.json`).
+- [x] Server-authoritative unread badges on Friends/Clans/Auction/Trade tiles; persist `plugin-data/notifications/unread.json`.
+- [x] Opening a tab clears that category; one domain event increments once.
+
+## 2026-09-19: Clan invitations + leader announcement
+
+- [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
+- [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
+- [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+- [x] Agent live Anarchy QA of invites inbox, announce cooldown after restart, transfer button visibility, and ranking coin icons.
+
+## 2026-09-19: Clan roles + Rating menu
+
+- [x] Roles Глава / Ветеран / Участник on existing `ClanService` (no parallel clan system).
+- [x] Veteran invite + kick members; leader-only promote/demote/transfer; transfer only to veteran.
+- [x] Nickname invite on Requests with inline errors; 24h TTL; `/clan add` stays online-only.
+- [x] Member list: role, online snapshot, leader first, money/kills sort; player card with friends + rights.
+- [x] Persistent PvP kills on `EconomyService`; clan kills = live sum of current members.
+- [x] Main-menu Рейтинг (4 rankings, top 50 / 10 per page); 4+4 grid; `icon_rating.png`.
+- [ ] Owner live Anarchy QA of rating, invites, transfer, and kill increment.
+
 ## 2026-09-20: minecart occupancy + stable vehicle controls
 
 - [x] One passenger per cart on the authoritative server; occupancy from `ridingCartId`.

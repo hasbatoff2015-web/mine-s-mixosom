@@ -99,4 +99,18 @@ describe('FriendsService', () => {
     lookup.set('overflow', { id: 'overflow', name: 'Overflow', connected: true });
     expect(friends.request('ada', 'Overflow').error).toBe(FRIENDS_LIMIT_ERROR);
   });
+
+  it('cancels an outgoing request and reports already-friend/self states', async () => {
+    const { friends } = await setup();
+    expect(friends.relation('ada', 'ada')).toBe('self');
+    expect(friends.request('ada', 'Bob').ok).toBe(true);
+    expect(friends.relation('ada', 'bob')).toBe('outgoing');
+    expect(friends.cancelOutgoing('ada', 'bob').ok).toBe(true);
+    expect(friends.relation('ada', 'bob')).toBe('none');
+    expect(friends.outgoingRequests('ada')).toHaveLength(0);
+    friends.request('ada', 'Bob');
+    friends.accept('bob', friends.incomingRequests('bob')[0]!.requestId);
+    expect(friends.relation('ada', 'bob')).toBe('friend');
+    expect(friends.request('ada', 'Bob').error).toBe(FRIENDS_ALREADY_ERROR);
+  });
 });

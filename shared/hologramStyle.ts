@@ -223,7 +223,12 @@ export function hologramTextCanvasScale(devicePixelRatio = 1): number {
   );
 }
 
-export function hologramTextCanvasSize(devicePixelRatio = 1): {
+/** Physical canvas size for any logical text atlas. World-space size is independent. */
+export function hologramTextPhysicalSize(
+  logicalWidth: number,
+  logicalHeight: number,
+  devicePixelRatio = 1,
+): {
   readonly width: number;
   readonly height: number;
   readonly scale: number;
@@ -231,9 +236,21 @@ export function hologramTextCanvasSize(devicePixelRatio = 1): {
   const scale = hologramTextCanvasScale(devicePixelRatio);
   return {
     scale,
-    width: HOLOGRAM_TEXT_LOGICAL_WIDTH * scale,
-    height: HOLOGRAM_TEXT_LOGICAL_HEIGHT * scale,
+    width: logicalWidth * scale,
+    height: logicalHeight * scale,
   };
+}
+
+export function hologramTextCanvasSize(devicePixelRatio = 1): {
+  readonly width: number;
+  readonly height: number;
+  readonly scale: number;
+} {
+  return hologramTextPhysicalSize(
+    HOLOGRAM_TEXT_LOGICAL_WIDTH,
+    HOLOGRAM_TEXT_LOGICAL_HEIGHT,
+    devicePixelRatio,
+  );
 }
 
 export function clampHologramBackgroundWidth(value: number): number {

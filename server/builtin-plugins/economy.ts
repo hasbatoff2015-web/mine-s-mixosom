@@ -95,6 +95,7 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         const killerId = event.attackerId;
         if (!victim || !killerId || killerId === victim.id) return;
         if (!lookup(killerId)) return;
+        economy.recordPvpKill(killerId, victim.id, event.entityId);
         const before = economy.getBalance(victim.id);
         const result = economy.rewardPlayerKill(killerId, victim.id, event.entityId);
         if (!result.ok || !result.amount) return;

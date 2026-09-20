@@ -88,6 +88,8 @@ export function menuLogicalHeight(screen: string): number {
   if (screen === 'homes' || screen === 'home-delete-confirm') return 236;
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 248;
   if (screen === 'trade') return 268;
+  if (screen === 'auction-history') return 248;
+  if (screen === 'rating') return 292;
   return 216;
 }
 

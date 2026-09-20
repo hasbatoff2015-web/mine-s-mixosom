@@ -23,8 +23,9 @@ export function playerNicknameError(raw: string): string | undefined {
 /** Returns a valid display name, or undefined so the server can keep Player-XXXX. */
 export function sanitizePlayerName(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
-  const trimmed = raw.trim().slice(0, MAX_PLAYER_NAME_LENGTH);
-  if (!trimmed || CONTROL_OR_SPACE.test(trimmed) || !PLAYER_NICKNAME_PATTERN.test(trimmed)) {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > MAX_PLAYER_NAME_LENGTH) return undefined;
+  if (CONTROL_OR_SPACE.test(trimmed) || !PLAYER_NICKNAME_PATTERN.test(trimmed)) {
     return undefined;
   }
   return trimmed;

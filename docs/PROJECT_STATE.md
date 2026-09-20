@@ -1,5 +1,57 @@
 # Состояние проекта
 
+## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
+
+- Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.
+- `MAX_PLAYER_NAME_LENGTH = 13`. Сервер/`sanitizePlayerName` отклоняют 14+, без silent truncate. UI `maxlength` берёт ту же константу. Названия кланов (3–16) не трогались.
+- Nameplate offset `2.15 → 2.05`.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-clip-nick-limit.md`.
+
+## Последний проход: Player nameplate без фона, пиксельный шрифт, 2× и качество holograms — 2026-09-20
+
+- `PlayerNameplate` остаётся Sprite на `RemotePlayerView` (не world hologram entity). Ник, HP, hide/fade/invisibility, appearance/skins не менялись по логике.
+- Фон/плашка убраны. Ник — тот же `hologramCanvasFont('display')` / **Press Start 2P**. Весь текст 2× (world 2.1×0.84, canvas 44px/36px). HP `#ff1f1f`.
+- Качество close-up: те же `hologramTextCanvas.ts` helpers, что у `HologramRenderer` (supersample 2–4×dpr, Linear mag, mipmaps, `needsUpdate`).
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-hologram-quality.md`.
+
+## Последний проход: Точка базы клана — 2026-09-20
+
+- У клана одна persistent серверная точка базы: Diamond claim того же радиуса 30, что и личный алмазный приват (`CLAIM_ANCHOR_RADIUS.diamond_block`).
+- Глава ставит/меняет базу с текущей позиции (блок под ногами → `diamond_block`). Кнопка открывает подтверждение (`Подтвердить` / `Отмена`); установка идёт только после подтверждения с live-позицией. Bedrock не заменяется: якорь на блок выше. Пересечение с любым существующим claim запрещено, в том числе со своими личными. Cooldown 24ч на клан, только после успешной установки.
+- Участники телепортируются через существующий `TeleportService` (`reason: 'clan'`) на `x+0.5, y+1, z+0.5`. Доступ в зону — текущее членство (`Claim.clanId`), не статический список UUID.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_clan-base-point.md`.
+
+## Последний проход: Auction history + menu unread badges — 2026-09-19
+
+- Формат объявления главы: `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - текст` (без кавычек, цвет `#4ecfdc` без изменений).
+- Аукцион: кнопка **История сделок** (вложенный экран меню). Только подтверждённые buy/sell, 24ч TTL, UI 20 записей, persist `plugin-data/auction/history.json`.
+- Unread badges на плитках Друзья/Кланы/Аукцион/Обмен: жёлтый квадрат, чёрная цифра. Сервер `NotificationService` (`plugin-data/notifications/unread.json`). Сброс при `menu_action open` соответствующей вкладки.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_auction-history-menu-notifications.md`.
+
+## Последний проход: Clan invitations + leader announcement — 2026-09-19
+
+- Рейтинг: суммы монет рисуются через существующий `icon_coin.png` / `.mc-menu-coin`, без Unicode 🪙.
+- Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
+- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - …` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
+- Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
+- Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
+- Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.
+
+## Последний проход: Clan roles + Rating menu — 2026-09-19
+
+- Существующий `ClanService` расширен ролями **Глава / Ветеран / Участник**. `ownerId` по-прежнему лидер. Ветеран: invite + kick только `member`. Глава: все права. Передача главы только ветерану; старый глава становится ветераном.
+- Приглашение по нику на вкладке Запросы, inline-ошибки, TTL 24ч. `/clan add` по-прежнему только online.
+- Карточка участника: ник, онлайн-снимок (без polling), роль, монеты, убийства, друзья (добавить / уже / исходящая+отмена), «Это вы», kick/promote/demote/transfer по правам.
+- PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
+- Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
+- Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
+- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay` **не** вызывает `enterPlaying()` (только PLAYING + pointer lock, если нет blocking overlay); роли `.mc-clan-role` `#e8e8e8`, owner/card-meta `#d8d8d8`. Transparent `icon_rating.png`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
+
 ## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
 
 - Ветка `codex/entity-special-visual-fixes` (без merge в `main`). Одна вагонетка = один пассажир (`player.ridingCartId`); `cart.rider` только derived. Disconnect/death/destruction `forceReleaseVehicle` без cancellable `vehicleExit`. Per-cart `controls` в одном `minecarts.update`. W latch с камеры только на новом press из stop; S тормоз до 0. Visual pose / 1.5× speed / rider interpolation не трогались.
@@ -1138,7 +1190,7 @@
 - `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
 - First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
 - Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
-- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует.
+- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует. Визуал без background panel, шрифт hologram `display` (Press Start 2P), высота 2×, supersample как у обычных holograms, HP `#ff1f1f`. Logical width считается от `measureText` с padding, max ник 13, offset `2.05`.
 - F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
