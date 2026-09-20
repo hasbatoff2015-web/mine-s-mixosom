@@ -2,6 +2,7 @@
 export const CONTAINER_STRINGS = Object.freeze({
   chest: 'Сундук',
   portalChest: 'Портальный сундук',
+  eventChest: 'Ивентовый сундук',
   inventory: 'Инвентарь',
   catalog: 'Каталог',
   crafting: 'Создание',

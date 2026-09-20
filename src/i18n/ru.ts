@@ -48,6 +48,7 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   crafting_table: 'Верстак',
   chest: 'Сундук',
   portal_chest: 'Портальный сундук',
+  event_chest: 'Ивентовый сундук',
   furnace: 'Печь',
   torch: 'Факел',
   ladder: 'Лестница',

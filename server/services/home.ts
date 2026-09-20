@@ -120,4 +120,10 @@ export class HomeService {
   uniqueError(): HomeResult {
     return { ok: false, error: HOME_NAME_TAKEN_ERROR };
   }
+
+  all(): HomeLocation[] {
+    const homes: HomeLocation[] = [];
+    for (const list of Object.values(this.store.players)) homes.push(...list);
+    return homes;
+  }
 }

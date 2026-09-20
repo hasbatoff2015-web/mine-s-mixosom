@@ -254,6 +254,7 @@ export interface InventoryContext {
   kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
   chest?: ChestState;
   furnace?: FurnaceState;
+  containerTitle?: string;
   onClose(): void;
   onDrop(stack: ItemStack): void;
   onChanged(): void;
@@ -2329,7 +2330,8 @@ export class GameUI {
   private containerBodyHtml(context: InventoryContext): string {
     if (isChestWindowKind(context.kind)) {
       const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
-      const label = context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest;
+      const label = context.containerTitle
+        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest);
       return `<div class="mc-label">${label}</div>
         <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
     }

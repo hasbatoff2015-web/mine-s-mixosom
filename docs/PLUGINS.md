@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 
@@ -135,6 +135,8 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 | rtpportal | `/rtpportal` | `plugin-data/rtpportal/portals.json` |
 | claims | `/claim` | `plugin-data/claims/claims.json` (optional `anchor` + `blockClaimSeq`) |
 | holograms | `/holograms` (`/hologram reset`) | `plugin-data/holograms/holograms.json` (lines + font/size/style + background + billboard/yaw + timer) |
+| wand | `/wand`, `/wand clear` | memory (selection + wand mode) |
+| world-events | `/events` | `plugin-data/world-events/state.json` + `plugin-data/config/world-events.json` |
 | automine | `/automine` | `plugin-data/automine/automines.json` (+ `originals/<name>.json`) |
 | economy | `/balance`, `/bal`, `/pay`, `/baltop`, `/transactions`, `/eco` | `plugin-data/economy/balances.json`, `transactions.json`, `placed-blocks.json` |
 | auction | `/ah`, `/ah sell`, `/ah list` (`/auction`, `/auctionhouse`) | `plugin-data/auction/listings.json` |
