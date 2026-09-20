@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Sync origin/main into world-events — 2026-09-20
+
+- Semantic merge `origin/main` (`9b8f785`) into `cursor/world-events-event-chest-525a`. Conflicts only in docs + `server/gameplay.ts` (kept both `isExplosionProtected` and minecart occupancy comment).
+- Clan `set_base` overlap now includes the virtual world-event column (`extraClaims`).
+- Подробности: `docs/reports/2026-09-20_merge-main-into-world-events.md`.
+
 ## Последний проход: Event overlay on reconnect — 2026-09-20
 
 - Welcome/chunk_data теперь отдают effective network modifications: persistent `world.modifications` + active event `placement`. Persistent save по-прежнему без overlay (`record: false`).
