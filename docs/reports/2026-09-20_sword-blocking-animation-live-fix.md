@@ -96,7 +96,14 @@ npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation
 
 ## Visual QA
 
-Pending two-client Anarchy after this commit.
+Live Anarchy on this host (`npm run dev:anarchy`, `http://127.0.0.1:4173`, `ws://127.0.0.1:2567`):
+
+- **First-person:** diamond sword idle (lower-right diagonal) → hold RMB → sword raises toward screen center and turns across the view → release → idle. Confirmed on screenshots.
+- **Local third-person (F5):** idle sword hidden at the hip → hold RMB → blade visibly raised at the shoulder → release → hip. Confirmed on screenshots.
+- **Two clients connected** in the same Anarchy world (nameplates `Player-46c7` / second client). Browser-side remote pose screenshots were interrupted by spawn PvP deaths.
+- **Live two-client protocol on the same running server:** two WebSocket clients `BlockActor` / `BlockObserver`. Actor `/give diamond_sword`, `use: true` → observer `player_state` for that actor `presentation.swordBlocking === true` and `heldItemId === 'diamond_sword'`; `use: false` → `swordBlocking === false`. PASS.
+
+Remote third-person rendering uses the same `PlayerVisual` overlay that local F5 already showed raising the sword; the missing piece before this fix was only the local `tickOnline` flag.
 
 ## Performance
 
@@ -104,7 +111,7 @@ Pending two-client Anarchy after this commit.
 
 ## Known issues
 
-- Live two-client pose acceptance still needs the running Anarchy session in this environment.
+- Browser-to-browser remote pose photo was not completed here (Anarchy spawn PvP deaths). Live WS observer still received `presentation.swordBlocking` true/false from the actor.
 
 ## Deferred
 
@@ -112,7 +119,7 @@ Owner visual acceptance; do not merge.
 
 ## Next work
 
-Two-client live QA on this branch. Do not merge to main.
+Owner photo of remote third-person blocking pose. Do not merge to main.
 
 ## Git
 
