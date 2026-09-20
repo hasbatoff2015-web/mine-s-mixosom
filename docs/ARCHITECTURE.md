@@ -2,7 +2,7 @@
 
 ## Always-run / crouch / KeyC camera — 2026-09-20
 
-Ground locomotion still lives in `PlayerController.updateHorizontalVelocity`. Default WASD uses `PLAYER_MOVE_SPEED = WALK_SPEED × 1.25`. Crouch uses `SNEAK_SPEED = SNEAK_SPEED_REFERENCE × 1.25` when `this.sneaking`. Wish is hypot-normalized before scaling, so W+A cannot exceed the axis speed. Jump does not check sneak. `WALK_SPEED` remains the Java 1.9 walk constant for minecarts (`MINECART_MAX_SPEED = WALK_SPEED × 1.5`).
+Ground locomotion still lives in `PlayerController.updateHorizontalVelocity`. Default WASD uses literal `PLAYER_MOVE_SPEED = 7`. Crouch uses literal `SNEAK_SPEED = 2` when `this.sneaking`. Wish is hypot-normalized before scaling, so W+A cannot exceed the axis speed. Jump does not check sneak. `WALK_SPEED` remains the Java 1.9 walk constant for minecarts (`MINECART_MAX_SPEED = WALK_SPEED × 1.5`).
 
 Desktop input: `DESKTOP_SNEAK_CODES = ShiftLeft/ShiftRight` (also fly descend). `movement.sprint` is touch-only. Camera cycle is `shouldCyclePerspectiveOnKey` on `DESKTOP_CAMERA_TOGGLE_CODE = KeyC` (`event.code`, not `event.key`). F5 is not bound. Minecart dismount rising-edge uses sneak on both client (`Game.updateMinecartRiding`) and server (`WorldInstance` → `updateRiding(player, lastInput.sneak)`).
 

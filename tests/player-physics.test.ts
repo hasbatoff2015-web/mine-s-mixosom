@@ -3,13 +3,12 @@ import { BlockId, getBlockDefinition } from '../src/blocks';
 import {
   PLAYER_HEIGHT,
   PLAYER_MOVE_SPEED,
-  PLAYER_MOVE_SPEED_MULTIPLIER,
   PLAYER_SNEAK_EYE_HEIGHT,
   PLAYER_SNEAK_HEIGHT,
   SNEAK_SPEED,
-  SNEAK_SPEED_REFERENCE,
   WALK_SPEED,
 } from '../src/core/constants';
+import { MINECART_MAX_SPEED } from '../src/entities/MinecartManager';
 import type { MoveInput } from '../src/input/InputManager';
 import { PlayerController, type PlayerInputSource } from '../src/player';
 import type { VoxelWorld } from '../src/world/World';
@@ -204,14 +203,12 @@ describe('PlayerController always-run / crouch speeds', () => {
     return player;
   }
 
-  it('derives the new ground speeds from the previous walk/sneak values × 1.25', () => {
-    expect(PLAYER_MOVE_SPEED_MULTIPLIER).toBe(1.25);
+  it('uses fixed always-run 7 and crouch 2 without changing minecart walk cap', () => {
+    expect(PLAYER_MOVE_SPEED).toBe(7);
+    expect(SNEAK_SPEED).toBe(2);
     expect(WALK_SPEED).toBe(4.317);
-    expect(SNEAK_SPEED_REFERENCE).toBe(1.295);
-    expect(PLAYER_MOVE_SPEED).toBe(WALK_SPEED * 1.25);
-    expect(SNEAK_SPEED).toBe(SNEAK_SPEED_REFERENCE * 1.25);
-    expect(PLAYER_MOVE_SPEED).toBeCloseTo(5.39625, 8);
-    expect(SNEAK_SPEED).toBeCloseTo(1.61875, 8);
+    expect(MINECART_MAX_SPEED).toBeCloseTo(WALK_SPEED * 1.5);
+    expect(PLAYER_MOVE_SPEED).not.toBe(WALK_SPEED);
   });
 
   it('uses always-run speed without sneak and does not need a sprint flag', () => {
@@ -221,8 +218,9 @@ describe('PlayerController always-run / crouch speeds', () => {
     expect(running.sneaking).toBe(false);
     expect(running.sprinting).toBe(false);
     expect(running.height).toBe(PLAYER_HEIGHT);
+    expect(horizontalSpeed(running)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(sprintFlag)).toBeCloseTo(7, 3);
     expect(horizontalSpeed(running)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
-    expect(horizontalSpeed(sprintFlag)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
   });
 
   it('uses the new crouch speed while Shift/sneak keeps the existing stance', () => {
@@ -232,6 +230,7 @@ describe('PlayerController always-run / crouch speeds', () => {
     expect(crouched.sprinting).toBe(false);
     expect(crouched.height).toBe(PLAYER_SNEAK_HEIGHT);
     expect(crouched.eyeHeight).toBe(PLAYER_SNEAK_EYE_HEIGHT);
+    expect(horizontalSpeed(crouched)).toBeCloseTo(2, 3);
     expect(horizontalSpeed(crouched)).toBeCloseTo(SNEAK_SPEED, 3);
     expect(horizontalSpeed(crouched)).toBeLessThan(PLAYER_MOVE_SPEED * 0.5);
   });
@@ -256,9 +255,9 @@ describe('PlayerController always-run / crouch speeds', () => {
     const forward = settle({ forward: 1 });
     const strafe = settle({ right: 1 });
     const diagonal = settle({ forward: 1, right: 1 });
-    expect(horizontalSpeed(forward)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
-    expect(horizontalSpeed(strafe)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
-    expect(horizontalSpeed(diagonal)).toBeCloseTo(PLAYER_MOVE_SPEED, 3);
+    expect(horizontalSpeed(forward)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(strafe)).toBeCloseTo(7, 3);
+    expect(horizontalSpeed(diagonal)).toBeCloseTo(7, 3);
     expect(horizontalSpeed(diagonal)).toBeCloseTo(horizontalSpeed(forward), 3);
   });
 });

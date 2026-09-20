@@ -1,9 +1,17 @@
 # Состояние проекта
 
+## Последний проход: Always-run 7 / crouch 2 — 2026-09-20
+
+- Фиксированные горизонтальные скорости: `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2`. Multiplier `×1.25` убран.
+- WASD без Shift по-прежнему всегда бег; Shift — существующий crouch (высота/камера/hitbox/pose/edge/прыжок не трогались).
+- `WALK_SPEED = 4.317` и minecart cap `×1.5` без изменений. KeyC/F5 без изменений.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-move-speed-7-crouch-2.md`.
+
 ## Последний проход: Always-run WASD, Shift=crouch, KeyC camera — 2026-09-20
 
-- Обычная ходьба убрана: WASD без Shift всегда использует `PLAYER_MOVE_SPEED = WALK_SPEED × 1.25` (4.317 → 5.39625). Источник истины — `src/core/constants.ts`, тот же `PlayerController` на клиенте и сервере.
-- Shift — существующий crouch/sneak (высота 1.5, глаз 1.27, pose, edge protection). Скорость приседа `SNEAK_SPEED = 1.295 × 1.25` (1.61875). Прыжок из crouch по-прежнему разрешён. Диагональ нормализуется `hypot`.
+- Обычная ходьба убрана: WASD без Shift всегда использует `PLAYER_MOVE_SPEED` (теперь фиксированные 7 после follow-up). Источник истины — `src/core/constants.ts`, тот же `PlayerController` на клиенте и сервере.
+- Shift — существующий crouch/sneak (высота 1.5, глаз 1.27, pose, edge protection). Скорость приседа теперь фиксированные 2. Прыжок из crouch по-прежнему разрешён. Диагональ нормализуется `hypot`.
 - Камера 1P↔3P: физическая `event.code === 'KeyC'` (`DESKTOP_CAMERA_TOGGLE_CODE`). F5 больше не переключает камеру и не получает новое действие.
 - Desktop sprint key убран; touch sprint и `movement.sprint` остаются для mobile pose/FOV. Minecart dismount — rising edge Shift/sneak, не KeyC.
 - `WALK_SPEED = 4.317` сохранён для minecart cap (`×1.5`). Не мержить без ревью владельца.

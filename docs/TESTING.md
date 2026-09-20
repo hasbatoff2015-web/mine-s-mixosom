@@ -1,5 +1,15 @@
 # Тестирование
 
+## 2026-09-20 Fixed always-run 7 / crouch 2
+
+Report: `reports/2026-09-20_player-move-speed-7-crouch-2.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/minecart-controls.test.ts tests/creative-flight.test.ts --maxWorkers=2
+```
+
+Contracts: `PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, Shift crouch + jump, hypot diagonal, minecart still `WALK_SPEED×1.5`.
+
 ## 2026-09-20 Always-run / crouch ×1.25 / KeyC camera
 
 Report: `reports/2026-09-20_player-run-crouch-camera.md`.

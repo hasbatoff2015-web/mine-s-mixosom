@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-20: Fixed always-run 7 / crouch 2
+
+- [x] `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2` as literal constants (no ×1.25 multiplier).
+- [x] WASD still always-run; Shift still existing crouch; minecart still `WALK_SPEED`.
+- [ ] Owner live speed feel QA.
+
 ## 2026-09-20: Always-run movement, Shift crouch, KeyC camera
 
 - [x] Default WASD ground speed = previous walk `4.317 × 1.25` (`PLAYER_MOVE_SPEED`); no separate walk mode.
