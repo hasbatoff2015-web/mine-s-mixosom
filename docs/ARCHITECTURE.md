@@ -1,5 +1,9 @@
 # Архитектура
 
+## Pet entity_use rewind / budgets — 2026-09-20
+
+Online pet interaction samples `networkRenderPose` (`raycastRendered`) and sends `targetRenderTick` as a hint. Server `entity_use` waits for `combatPoseForCommand` (same pending FIFO as melee), then rays with that boundary eye/yaw/pitch against a bounded `MobEntity.poseHistory` rewind (`MOB_POSE_HISTORY_TICKS = 16`, `MAX_MOB_REWIND_TICKS = 5`). Client yaw/pitch are not authority. Wild `maxMobs` counts only untamed mobs; `maxTamedPets` is a restore-safe global ceiling and does not replace `pets.limit.N`.
+
 ## Merge latest main into entity-special-visual-fixes — 2026-09-20
 
 Production third-person held items stay on latest main `thirdPersonHeldItem.ts` (sword/tool/axe group poses and `/moveitems`). Feature seated pose, player fire overlay, special-block QA harnesses, minecart occupancy/controls, and visual interpolation remain.

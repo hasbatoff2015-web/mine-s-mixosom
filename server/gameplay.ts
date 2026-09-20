@@ -222,6 +222,7 @@ export class ServerGameplay {
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
     private readonly worldSpawn?: () => readonly [number, number, number],
     private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
+    options?: { readonly maxTamedPets?: number },
   ) {
     this.fireworks = new FireworkManager(world);
     world.deferredLighting = false;
@@ -245,6 +246,7 @@ export class ServerGameplay {
     this.falling = new FallingBlockManager(host, world);
     this.mobs = new MobManager(host, world, {
       random: this.random,
+      ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
@@ -884,26 +886,34 @@ export class ServerGameplay {
     action: EntityUseAction,
     selectedSlot: number,
     petLimit: number,
+    look: {
+      readonly eyeX: number;
+      readonly eyeY: number;
+      readonly eyeZ: number;
+      readonly yaw: number;
+      readonly pitch: number;
+      readonly currentTick: number;
+    },
   ):
     | { ok: true; kind: 'tame' | 'sit' | 'stand' | 'tame_failed'; mobKind: 'wolf' | 'cat'; consume: boolean }
     | { ok: false; reason: string; ownedCount?: number; petLimit?: number; consume?: boolean } {
     if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
     const mob = this.mobs.get(action.targetId);
     if (!mob || !mob.alive || !isPetKind(mob.kind)) return { ok: false, reason: 'invalid' };
-    const eye = this.intentEye(player, action.commandSeq);
-    if (!eye.ok) return { ok: false, reason: eye.reason };
-    const yaw = action.yaw ?? player.controller.yaw;
-    const pitch = action.pitch ?? player.controller.pitch;
-    const direction = viewDirectionFromLook(yaw, pitch, this.tmpDir);
-    const origin = this.tmpEye.set(eye.value.x, eye.value.y, eye.value.z);
+    const direction = viewDirectionFromLook(look.yaw, look.pitch, this.tmpDir);
+    const origin = this.tmpEye.set(look.eyeX, look.eyeY, look.eyeZ);
+    const pose = action.targetRenderTick === undefined
+      ? { x: mob.position.x, y: mob.position.y, z: mob.position.z }
+      : this.mobs.rewindPose(action.targetId, action.targetRenderTick, look.currentTick);
+    if (!pose) return { ok: false, reason: 'stale' };
     const halfWidth = mob.definition.width * 0.5;
     const hit = rayAabbDistance(origin, direction, {
-      minX: mob.position.x - halfWidth,
-      minY: mob.position.y,
-      minZ: mob.position.z - halfWidth,
-      maxX: mob.position.x + halfWidth,
-      maxY: mob.position.y + mob.definition.height,
-      maxZ: mob.position.z + halfWidth,
+      minX: pose.x - halfWidth,
+      minY: pose.y,
+      minZ: pose.z - halfWidth,
+      maxX: pose.x + halfWidth,
+      maxY: pose.y + mob.definition.height,
+      maxZ: pose.z + halfWidth,
     });
     if (!hit || hit.distance < 0 || hit.distance > PET_INTERACT_REACH) {
       return { ok: false, reason: 'reach' };

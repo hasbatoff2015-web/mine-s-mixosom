@@ -51,7 +51,8 @@ function ingestPose(
 /**
  * Applies server entity interest snapshots onto existing client visual managers.
  * Does not run AI, fluids, combat, or pickup. Pose history goes into the interpolator;
- * simulation `position` stores the latest accepted snapshot for targeting.
+ * simulation `position` stores the latest accepted snapshot. Interaction raycasts
+ * use interpolated `networkRenderPose` so the hitbox matches the visible model.
  */
 export function applyEntitySnapshots(
   session: EntitySnapshotTarget,
@@ -260,7 +261,7 @@ export function applyInterpolatedEntityVisuals(
 ): void {
   for (const mob of session.mobs.entities) {
     const pose = interpolator.sample(mob.id, now);
-    if (pose) session.mobs.setNetworkRenderPose(mob.id, pose.x, pose.y, pose.z, pose.yaw);
+    if (pose) session.mobs.setNetworkRenderPose(mob.id, pose.x, pose.y, pose.z, pose.yaw, pose.resolvedTick);
     else if (!session.mobs.shouldKeepRemoteDeath(mob.id)) {
       session.mobs.setNetworkRenderPose(mob.id, undefined);
     }

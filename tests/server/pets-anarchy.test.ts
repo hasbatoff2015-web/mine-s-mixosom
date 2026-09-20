@@ -11,6 +11,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import type { EntityUseAction } from '../../shared/playerActions';
 import { parseClientMessage, type ClientInputMessage } from '../../shared/protocol';
+import { MAX_MOB_REWIND_TICKS } from '../../src/entities';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-pets-anarchy-'));
@@ -97,6 +98,7 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
     targetId: string,
     look: { yaw: number; pitch: number },
     selectedSlot = 0,
+    targetRenderTick?: number,
   ): EntityUseAction {
     return {
       kind: 'entity_use',
@@ -106,6 +108,7 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
       targetId,
       yaw: look.yaw,
       pitch: look.pitch,
+      ...(targetRenderTick !== undefined ? { targetRenderTick } : {}),
     };
   }
 
@@ -130,7 +133,7 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
         x: wolf.position.x, y: wolf.position.y + 0.4, z: wolf.position.z,
       }, attempt);
       const result = world.handleSequencedEntityUse(owner, useAction(attempt, attempt, wolf.id, look));
-      if (result.ok && wolf.ownerId === owner.id) tamed = true;
+      if (result?.ok && wolf.ownerId === owner.id) tamed = true;
     }
     expect(tamed).toBe(true);
     expect(wolf.sitting).toBe(true);
@@ -185,7 +188,11 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
       ok: false, reason: 'stale',
     });
     const first = world.handleSequencedEntityUse(owner, useAction(5, 3, near.id, open));
-    expect(first.ok || first.reason === 'reach' || first.reason === 'invalid').toBe(true);
+    expect(first).toBeDefined();
+    const firstOk = first !== undefined && (first.ok || (!first.ok && (
+      first.reason === 'reach' || first.reason === 'invalid'
+    )));
+    expect(firstOk).toBe(true);
     expect(world.handleSequencedEntityUse(owner, useAction(5, 3, near.id, open))).toEqual({
       ok: false, reason: 'duplicate',
     });
@@ -207,5 +214,50 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
     });
     expect(owner.inventory.getSlot(0)?.count).toBe(3);
     expect(wild.ownerId).toBeUndefined();
+  });
+
+  it('rejects a forged client look that does not match the command-boundary yaw', async () => {
+    const { world, owner } = await boot();
+    const pet = world.gameplay.mobs.spawn('wolf', new Vec3(22.5, 100, 20.5), { force: true })!;
+    world.world.setBlock(22, 99, 20, BlockId.Stone);
+    owner.inventory.setSlot(0, createItemStack(ItemId.Bone, 4));
+    const north = prepareLook(world, owner, { x: 20.5, y: 100, z: 18.5 }, 1);
+    expect(north.yaw).toBeCloseTo(0, 5);
+    const east = lookAt(owner, { x: pet.position.x, y: pet.position.y + 0.4, z: pet.position.z });
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, pet.id, east))).toEqual({
+      ok: false, reason: 'reach',
+    });
+    expect(pet.ownerId).toBeUndefined();
+  });
+
+  it('accepts a moving pet at the rendered tick and rejects stale or future ticks', async () => {
+    const { world, owner } = await boot();
+    const pet = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22.2), {
+      force: true, ownerId: owner.id, sitting: false,
+    })!;
+    world.world.setBlock(24, 99, 20, BlockId.Stone);
+    const look = prepareLook(world, owner, {
+      x: pet.position.x, y: pet.position.y + 0.4, z: pet.position.z,
+    }, 1);
+    const renderTick = world.tickNumber;
+    pet.position.set(24.5, 100, 20.5);
+    pet.previousPosition.copy(pet.position);
+    world.tick();
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, pet.id, look))).toEqual({
+      ok: false, reason: 'reach',
+    });
+    expect(world.handleSequencedEntityUse(
+      owner,
+      useAction(2, 1, pet.id, look, 0, renderTick - MAX_MOB_REWIND_TICKS - 1),
+    )).toEqual({ ok: false, reason: 'stale' });
+    expect(world.handleSequencedEntityUse(
+      owner,
+      useAction(3, 1, pet.id, look, 0, world.tickNumber + 4),
+    )).toEqual({ ok: false, reason: 'stale' });
+    expect(world.handleSequencedEntityUse(
+      owner,
+      useAction(4, 1, pet.id, look, 0, renderTick),
+    )).toEqual({ ok: true });
+    expect(pet.sitting).toBe(true);
   });
 });

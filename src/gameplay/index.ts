@@ -63,11 +63,16 @@ export {
   slowsMovementWhileUsing,
 } from './useMovement';
 export {
+  DEFAULT_MAX_TAMED_PETS,
   DEFAULT_PET_LIMIT,
   MAX_PET_LIMIT,
+  MAX_TAMED_PET_SAFETY_CAP,
+  MIN_TAMED_PET_SAFETY_CAP,
   PET_LIMIT_PERMISSION_PREFIX,
   parsePetLimitNode,
+  petCapacityReachedMessage,
   petLimitReachedMessage,
+  resolveMaxTamedPets,
   resolvePetLimitFromPermissions,
   tameSuccessMessage,
 } from './petLimit';

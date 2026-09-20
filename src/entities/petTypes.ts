@@ -24,3 +24,11 @@ export function isTameableMobKind(kind: MobKind): kind is PetKind {
 export function fallbackCatVariant(value: string | undefined): CatVariant {
   return isCatVariant(value) ? value : 'black';
 }
+
+/** Owned pets of the same player never auto-target each other. */
+export function samePetOwner(
+  a: { readonly ownerId?: string },
+  b: { readonly ownerId?: string },
+): boolean {
+  return Boolean(a.ownerId && b.ownerId && a.ownerId === b.ownerId);
+}

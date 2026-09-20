@@ -7,8 +7,11 @@ import { Vec3 } from '../src/math/vec3';
 import {
   CAT_FEAR_DISTANCE,
   LOCAL_PLAYER_FOCUS_ID,
+  MAX_MOB_REWIND_TICKS,
+  MAX_SEPARATION_PAIR_CHECKS,
   MobManager,
   PET_FOLLOW_STOP_DISTANCE,
+  PET_INTERACT_REACH,
   PET_TELEPORT_COOLDOWN_SECONDS,
   PET_TELEPORT_DISTANCE,
   PET_TELEPORT_OFFSETS,
@@ -21,10 +24,14 @@ import {
   resolvePetInteract,
 } from '../src/entities';
 import {
+  DEFAULT_MAX_TAMED_PETS,
   DEFAULT_PET_LIMIT,
   MAX_PET_LIMIT,
+  MAX_TAMED_PET_SAFETY_CAP,
   parsePetLimitNode,
+  petCapacityReachedMessage,
   petLimitReachedMessage,
+  resolveMaxTamedPets,
   resolvePetLimitFromPermissions,
   tameSuccessMessage,
 } from '../src/gameplay/petLimit';
@@ -32,6 +39,7 @@ import { VoxelWorld } from '../src/world/World';
 import { PermissionService } from '../server/services/permissions';
 import { JsonFileStore } from '../server/services/jsonStore';
 import { resolvePetLimit } from '../server/services/playerLimits';
+import { captureEntityUse } from '../src/net/actionIntent';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -39,7 +47,12 @@ import { join } from 'node:path';
 const cleanup: Array<() => void> = [];
 afterEach(() => { cleanup.splice(0).forEach((dispose) => dispose()); vi.restoreAllMocks(); });
 
-function arena(options: { random?: () => number; maxMobs?: number; passiveCap?: number } = {}) {
+function arena(options: {
+  random?: () => number;
+  maxMobs?: number;
+  passiveCap?: number;
+  maxTamedPets?: number;
+} = {}) {
   const world = new VoxelWorld('pets');
   vi.spyOn(world, 'getBlock').mockImplementation((_x, y, _z, generate) => {
     expect(generate === false || generate === undefined || generate === true).toBe(true);
@@ -50,6 +63,7 @@ function arena(options: { random?: () => number; maxMobs?: number; passiveCap?: 
     random: options.random ?? (() => 0),
     maxMobs: options.maxMobs ?? 48,
     passiveCap: options.passiveCap ?? 20,
+    ...(options.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
   });
   cleanup.push(() => manager.dispose());
   return { world, manager };
@@ -232,6 +246,23 @@ describe('follow, teleport, despawn and capacity', () => {
     expect(pet.ownerId).toBe('owner-a');
   });
 
+  it('captures a new idle home at the latest owner-loss point', () => {
+    const { manager } = arena();
+    const pet = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: false,
+    })!;
+    manager.update(0.05, { players: [] });
+    expect(pet.petHomeX).toBeCloseTo(0.5, 5);
+    const homeA = pet.petHomeX!;
+    manager.update(0.05, { players: [ownerFocus(0.5 + PET_TELEPORT_DISTANCE + 8, 0.5)] });
+    expect(pet.petHomeX).toBeUndefined();
+    expect(pet.position.x).toBeGreaterThan(homeA + 8);
+    manager.update(0.05, { players: [] });
+    expect(pet.petHomeX).toBeDefined();
+    expect(Math.abs((pet.petHomeX ?? 0) - homeA)).toBeGreaterThan(8);
+    expect(pet.petHomeX).toBeCloseTo(pet.position.x, 1);
+  });
+
   it('attempts a bounded safe teleport when far from the owner', () => {
     const world = new VoxelWorld('pet-teleport');
     const getBlock = vi.spyOn(world, 'getBlock');
@@ -322,8 +353,63 @@ describe('follow, teleport, despawn and capacity', () => {
       petEntry,
     ]);
     expect(manager.get(pet.id)?.ownerId).toBe('owner-a');
-    expect(manager.count).toBeLessThanOrEqual(2);
+    expect(manager.countWildMobs()).toBeLessThanOrEqual(2);
+    expect(manager.countTamedPets()).toBe(1);
     expect(manager.get(pet.id)).toBeDefined();
+  });
+
+  it('lets several owners keep pets without zeroing the wild budget', () => {
+    const { manager } = arena({ maxMobs: 4, passiveCap: 4 });
+    for (let index = 0; index < 3; index += 1) {
+      manager.spawn('wolf', new THREE.Vector3(index * 2 + 0.5, 71, 0.5), {
+        force: true, ownerId: `owner-${index}`, sitting: true,
+      });
+      manager.spawn('cat', new THREE.Vector3(index * 2 + 0.5, 71, 2.5), {
+        force: true, ownerId: `owner-${index}`, sitting: true,
+      });
+    }
+    expect(manager.countTamedPets()).toBe(6);
+    expect(manager.spawn('cow', new THREE.Vector3(20.5, 71, 0.5))).toBeDefined();
+    expect(manager.spawn('pig', new THREE.Vector3(22.5, 71, 0.5))).toBeDefined();
+    expect(manager.countWildMobs()).toBeGreaterThan(0);
+    expect(manager.countWildMobs()).toBeLessThanOrEqual(4);
+  });
+
+  it('restores every tamed pet even when the safety ceiling is lower', () => {
+    const { manager } = arena({ maxMobs: 2, maxTamedPets: 2 });
+    manager.restore([
+      { id: 'pet-a', kind: 'wolf', position: [1, 71, 1], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0, ownerId: 'a', sitting: true },
+      { id: 'pet-b', kind: 'cat', position: [2, 71, 1], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0, ownerId: 'b', sitting: true },
+      { id: 'pet-c', kind: 'wolf', position: [3, 71, 1], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0, ownerId: 'c', sitting: true },
+      { id: 'cow-a', kind: 'cow', position: [20, 71, 20], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0 },
+      { id: 'cow-b', kind: 'cow', position: [21, 71, 20], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0 },
+      { id: 'cow-c', kind: 'cow', position: [22, 71, 20], velocity: [0, 0, 0], health: 8, state: 'idle', ageSeconds: 0, fuseSeconds: 0 },
+    ]);
+    expect(manager.get('pet-a')).toBeDefined();
+    expect(manager.get('pet-b')).toBeDefined();
+    expect(manager.get('pet-c')).toBeDefined();
+    expect(manager.countTamedPets()).toBe(3);
+    expect(manager.countWildMobs()).toBe(2);
+  });
+
+  it('rejects a new tame at the global safety ceiling without despawning pets', () => {
+    const { manager } = arena({ random: () => 0, maxTamedPets: 2 });
+    manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: true,
+    });
+    manager.spawn('cat', new THREE.Vector3(2.5, 71, 0.5), {
+      force: true, ownerId: 'owner-b', sitting: true,
+    });
+    const wild = manager.spawn('wolf', new THREE.Vector3(4.5, 71, 0.5), { force: true })!;
+    const result = manager.tryPetInteract(wild, {
+      playerId: 'owner-c',
+      heldItemId: ItemId.Bone,
+      gamemode: 'survival',
+      petLimit: 2,
+    });
+    expect(result).toEqual({ ok: false, reason: 'pet_capacity', consume: false });
+    expect(wild.ownerId).toBeUndefined();
+    expect(manager.countTamedPets()).toBe(2);
   });
 });
 
@@ -370,6 +456,53 @@ describe('cat fear and wolf combat', () => {
     expect(cat.combatTargetId).toBeUndefined();
   });
 
+  it('does not make owned wolves attack the owner\'s other pets', () => {
+    const { manager } = arena();
+    const wolfA = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: false,
+    })!;
+    const wolfB = manager.spawn('wolf', new THREE.Vector3(2.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: false,
+    })!;
+    const cat = manager.spawn('cat', new THREE.Vector3(4.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: false,
+    })!;
+    expect(manager.damage(cat, 1, {
+      source: 'player', attackerId: 'owner-a', attackerPosition: new Vec3(-2, 71, 0),
+    })).toBe(true);
+    expect(wolfA.combatTargetId).not.toBe(cat.id);
+    expect(wolfB.combatTargetId).not.toBe(cat.id);
+    expect(manager.damage(wolfB, 1, {
+      source: 'player', attackerId: 'owner-a', attackerPosition: new Vec3(-2, 71, 0),
+    })).toBe(true);
+    expect(wolfA.combatTargetId).not.toBe(wolfB.id);
+    wolfA.combatTargetId = cat.id;
+    wolfA.combatTargetKind = 'mob';
+    manager.update(0.05, { players: [ownerFocus(1, 0)] });
+    expect(wolfA.combatTargetId).toBeUndefined();
+  });
+
+  it('still assists against hostiles and other owners\' pets', () => {
+    const { manager } = arena();
+    const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), {
+      force: true, ownerId: 'owner-a', sitting: false,
+    })!;
+    const zombie = manager.spawn('zombie', new THREE.Vector3(3.5, 71, 0.5), { force: true })!;
+    const rival = manager.spawn('wolf', new THREE.Vector3(5.5, 71, 0.5), {
+      force: true, ownerId: 'owner-b', sitting: false,
+    })!;
+    expect(manager.damage(zombie, 1, {
+      source: 'player', attackerId: 'owner-a', attackerPosition: new Vec3(-2, 71, 0),
+    })).toBe(true);
+    expect(wolf.combatTargetId).toBe(zombie.id);
+    wolf.combatTargetId = undefined;
+    wolf.combatTargetKind = undefined;
+    expect(manager.damage(rival, 1, {
+      source: 'player', attackerId: 'owner-a', attackerPosition: new Vec3(-2, 71, 0),
+    })).toBe(true);
+    expect(wolf.combatTargetId).toBe(rival.id);
+  });
+
   it('clears a dead combat target and returns when the owner is too far', () => {
     const { manager } = arena();
     const wolf = manager.spawn('wolf', new THREE.Vector3(0.5, 71, 0.5), {
@@ -385,6 +518,36 @@ describe('cat fear and wolf combat', () => {
     manager.assignOwnedWolfTarget('owner-a', far.id, 'mob', 'assist');
     manager.update(0.05, { players: [ownerFocus(40, 0)] });
     expect(wolf.combatTargetId).toBeUndefined();
+  });
+});
+
+describe('rendered interaction raycast', () => {
+  it('hits the visible pose instead of the latest simulation pose', () => {
+    const { manager } = arena();
+    const cat = manager.spawn('cat', new THREE.Vector3(4.5, 71, 0.5), { force: true })!;
+    manager.setNetworkRenderPose(cat.id, 0.5, 71, 0.5, 0, 12);
+    const origin = new Vec3(0.5, 71.4, -2);
+    const direction = new Vec3(0, 0, 1);
+    expect(manager.raycast(origin, direction, PET_INTERACT_REACH)).toBeUndefined();
+    const rendered = manager.raycastRendered(origin, direction, PET_INTERACT_REACH);
+    expect(rendered?.mob.id).toBe(cat.id);
+    expect(rendered?.renderTick).toBe(12);
+    const action = captureEntityUse(
+      { actionSeq: 0, inputSeq: 4, selectedSlot: 0 },
+      cat.id,
+      { yaw: 0, pitch: 0 },
+      rendered?.renderTick,
+    );
+    expect(action.targetRenderTick).toBe(12);
+  });
+
+  it('keeps a bounded rewind window and a separate pet safety ceiling', () => {
+    expect(MAX_MOB_REWIND_TICKS).toBe(5);
+    expect(MAX_SEPARATION_PAIR_CHECKS).toBe(1024);
+    expect(resolveMaxTamedPets(8)).toBe(80);
+    expect(resolveMaxTamedPets(300)).toBe(MAX_TAMED_PET_SAFETY_CAP);
+    expect(DEFAULT_MAX_TAMED_PETS).toBe(80);
+    expect(petCapacityReachedMessage()).toContain('сервера');
   });
 });
 

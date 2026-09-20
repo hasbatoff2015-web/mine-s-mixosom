@@ -579,7 +579,7 @@ export class AnarchyServer {
       if (!message.targetId) {
         result = { ok: false, reason: 'invalid' };
       } else {
-        result = this.world.handleSequencedEntityUse(player, {
+        const entityUse = this.world.handleSequencedEntityUse(player, {
           kind: 'entity_use',
           actionSeq: message.actionSeq,
           commandSeq: message.commandSeq,
@@ -589,6 +589,8 @@ export class AnarchyServer {
           ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
           ...(message.targetRenderTick !== undefined ? { targetRenderTick: message.targetRenderTick } : {}),
         });
+        if (entityUse === undefined) return;
+        result = entityUse;
       }
     } else {
       this.world.handleSequencedAttack(player, {

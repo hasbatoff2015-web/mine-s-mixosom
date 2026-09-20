@@ -1,6 +1,19 @@
 # Roadmap
 
+## 2026-09-20: pet interaction / ownership hardening
+
+- [x] Online `entity_use` raycasts the interpolated render pose and rewinds a bounded mob pose history.
+- [x] Server uses command-boundary look, not client yaw/pitch.
+- [x] Offline `petHome` recaptures at the latest owner-loss point.
+- [x] Same-owner pets never auto-target each other; wild budget is separate from a tamed safety ceiling.
+
 ## 2026-09-20: tameable wolves and cats
+
+- [x] `wolf` / `cat` kinds, biome-weighted passive spawn, legacy models + original 128×64 PNG.
+- [x] Server-authoritative `entity_use` taming / sit-stand, `ownerId`, follow, bounded teleport.
+- [x] Wild cat fear, tamed wolf combat through existing damage/PvP/claims, pet limit `pets.limit.N`.
+- [x] Tamed pets excluded from wild cap / distance despawn; persistence + snapshots.
+- [ ] Owner live two-client QA: tame, follow, teleport snap, guest cannot sit/stand.
 
 - [x] `wolf` / `cat` kinds, biome-weighted passive spawn, legacy models + original 128×64 PNG.
 - [x] Server-authoritative `entity_use` taming / sit-stand, `ownerId`, follow, bounded teleport.

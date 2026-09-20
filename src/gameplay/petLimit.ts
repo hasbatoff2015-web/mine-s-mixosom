@@ -28,6 +28,26 @@ export function petLimitReachedMessage(ownedCount: number, petLimit: number): st
   return `Достигнут лимит питомцев: ${ownedCount}/${petLimit}.`;
 }
 
+export function petCapacityReachedMessage(): string {
+  return 'Достигнут лимит питомцев сервера.';
+}
+
+/** Floor so a tiny server still has headroom; ceiling is a performance safety guard. */
+export const MIN_TAMED_PET_SAFETY_CAP = 64;
+export const MAX_TAMED_PET_SAFETY_CAP = 160;
+/** Default when a MobManager is constructed without a player-count hint (≈ 8 × max role). */
+export const DEFAULT_MAX_TAMED_PETS = 80;
+
+/**
+ * Global tamed-pet safety ceiling. Per-player `pets.limit.N` remains the user limit.
+ * Sized so `maxPlayers × MAX_PET_LIMIT` does not trip early on typical Anarchy sizes.
+ */
+export function resolveMaxTamedPets(maxPlayers: number): number {
+  const players = Math.max(1, Math.floor(maxPlayers));
+  const projected = players * MAX_PET_LIMIT;
+  return Math.min(MAX_TAMED_PET_SAFETY_CAP, Math.max(MIN_TAMED_PET_SAFETY_CAP, projected));
+}
+
 export function tameSuccessMessage(kind: 'wolf' | 'cat'): string {
   return kind === 'wolf' ? 'Волк приручён.' : 'Кот приручён.';
 }

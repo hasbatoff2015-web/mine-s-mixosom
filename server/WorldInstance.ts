@@ -133,8 +133,10 @@ import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import {
   formatGameplayKernelTrace,
   movementDuringItemUse,
+  petCapacityReachedMessage,
   petLimitReachedMessage,
   playerCanReachHologram,
+  resolveMaxTamedPets,
   tameSuccessMessage,
 } from '../src/gameplay';
 import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
@@ -175,6 +177,11 @@ export interface PendingMeleeAttack {
     readonly requestedRenderTick: number;
     readonly pose: RewoundCombatPose;
   };
+}
+
+export interface PendingEntityUse {
+  readonly action: EntityUseAction;
+  readonly receivedServerTick: number;
 }
 
 export interface PendingBowRelease {
@@ -224,6 +231,7 @@ export class ServerPlayer implements GameplayPlayer {
   readonly combatPoseHistory: CombatPoseSample[] = [];
   readonly pendingAttacks: PendingMeleeAttack[] = [];
   readonly pendingBowReleases: PendingBowRelease[] = [];
+  readonly pendingEntityUses: PendingEntityUse[] = [];
   readonly bowReleaseCommandStates = new Map<number, ReceivedBowReleaseState>();
   bowReleaseBoundaryThisTick?: ReceivedBowReleaseState;
   appliedCommandBoundaryThisTick = false;
@@ -583,6 +591,8 @@ export class WorldInstance {
         const target = player.miningTarget;
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
+    }, {
+      maxTamedPets: resolveMaxTamedPets(config.maxPlayers),
     });
     this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
     this.gameplay.listPlayers = () => this.players.values();
@@ -2553,21 +2563,48 @@ export class WorldInstance {
   handleSequencedEntityUse(
     player: ServerPlayer,
     action: EntityUseAction,
-  ): { ok: true } | { ok: false; reason: string } {
+  ): { ok: true } | { ok: false; reason: string } | undefined {
     if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
     if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
     if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
       || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
       || (action.yaw !== undefined && !Number.isFinite(action.yaw))
       || (action.pitch !== undefined && !Number.isFinite(action.pitch))
+      || (action.targetRenderTick !== undefined && !Number.isFinite(action.targetRenderTick))
       || !action.targetId) {
       return { ok: false, reason: 'invalid' };
     }
-    const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
-    if (!slot.ok) return slot;
-    this.commitActionSelectedSlot(player, slot.value, action.commandSeq);
+    const pending: PendingEntityUse = { action, receivedServerTick: this.tickNumber };
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) return this.resolveSequencedEntityUse(player, pending, pose);
+    if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+      if (player.pendingEntityUses.length >= MAX_PENDING_MELEE_ACTIONS) {
+        return { ok: false, reason: 'stale' };
+      }
+      player.pendingEntityUses.push(pending);
+      return undefined;
+    }
+    return { ok: false, reason: 'stale' };
+  }
+
+  private resolveSequencedEntityUse(
+    player: ServerPlayer,
+    pending: PendingEntityUse,
+    pose: CombatPoseSample,
+  ): { ok: true } | { ok: false; reason: string } {
+    const { action } = pending;
+    if (pose.dead) return { ok: false, reason: 'dead' };
+    if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
+    this.commitActionSelectedSlot(player, pose.selectedSlot, action.commandSeq);
     const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
-    const result = this.gameplay.useEntity(player, action, slot.value, petLimit);
+    const result = this.gameplay.useEntity(player, action, pose.selectedSlot, petLimit, {
+      eyeX: pose.eyeX,
+      eyeY: pose.eyeY,
+      eyeZ: pose.eyeZ,
+      yaw: pose.yaw,
+      pitch: pose.pitch,
+      currentTick: this.tickNumber,
+    });
     this.flushPlayerInventory(player);
     if (result.ok && result.kind === 'tame') {
       this.dirty = true;
@@ -2588,10 +2625,59 @@ export class WorldInstance {
         text: petLimitReachedMessage(result.ownedCount ?? 0, result.petLimit ?? petLimit),
         kind: 'system',
       });
+    } else if (!result.ok && result.reason === 'pet_capacity') {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: petCapacityReachedMessage(),
+        kind: 'system',
+      });
     } else if (result.ok && result.kind === 'tame_failed' && result.consume) {
       this.dirty = true;
     }
     return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+  }
+
+  private processPendingEntityUses(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingEntityUses.length === 0) continue;
+      const keep: PendingEntityUse[] = [];
+      for (const pending of player.pendingEntityUses) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_MELEE_TICKS) {
+          this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' });
+          continue;
+        }
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          this.sendEntityUseActionResult(player, action, this.resolveSequencedEntityUse(player, pending, pose));
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+          keep.push(pending);
+          continue;
+        }
+        this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' });
+      }
+      player.pendingEntityUses.length = 0;
+      player.pendingEntityUses.push(...keep);
+    }
+  }
+
+  private sendEntityUseActionResult(
+    player: ServerPlayer,
+    action: EntityUseAction,
+    result: { ok: true } | { ok: false; reason: string },
+  ): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'entity_use',
+      ok: result.ok,
+      ...(result.ok ? {} : { reason: result.reason }),
+    });
   }
 
   interact(
@@ -3057,8 +3143,10 @@ export class WorldInstance {
       this.gameplay.updateRiding(player, player.lastInput.sprint);
     }
     this.recordCombatPoses();
+    this.gameplay.mobs.recordPoseHistory(this.tickNumber);
     this.processPendingBowReleases();
     this.processPendingAttacks();
+    this.processPendingEntityUses();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
@@ -3315,6 +3403,7 @@ export class WorldInstance {
     player.combatPoseHistory.length = 0;
     player.pendingAttacks.length = 0;
     player.pendingBowReleases.length = 0;
+    player.pendingEntityUses.length = 0;
     player.bowReleaseCommandStates.clear();
     player.bowReleaseBoundaryThisTick = undefined;
     clearMiningLock(player);

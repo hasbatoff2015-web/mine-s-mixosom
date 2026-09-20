@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: pet interaction / ownership hardening — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Online ПКМ по питомцу использует `networkRenderPose` + `targetRenderTick`; сервер проверяет `entity_use` по command-boundary look и bounded mob pose history (`MAX_MOB_REWIND_TICKS = 5`). `petHome` сбрасывается в follow и заново ставится при потере owner. Волки одного хозяина не ассистят по его другим питомцам. Wild `maxMobs` больше не включает tamed pets; отдельный `maxTamedPets` safety ceiling.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets-hardening.md`.
+
 ## Последний проход: tameable wolves and cats — 2026-09-20
 
 - Ветка `codex/wolves-cats-pets` (без merge в `main`). `wolf` / `cat` — обычные server-authoritative mobs в `MobManager`, не вторая симуляция. Natural spawn через weighted passive selection (лес/равнины/снег; пустыня без cat/wolf). Приручение `entity_use` (CLIENT OWNS INTENT / SERVER OWNS RESULT). `ownerId` = стабильный `player.id`. Sit/stand, follow, bounded teleport (24 кандидата, `getBlock(..., false)`), wild cat fear, tamed wolf combat через существующий damage/PvP/claims. Default pet limit 2, роли `pets.limit.N` (hard max 10). Tamed pets не distance-despawn и не занимают wild `passiveCap`.

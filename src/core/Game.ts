@@ -2264,14 +2264,18 @@ export class Game {
     });
   }
 
-  private petUseTarget(session: GameSession): { id: string; distance: number } | undefined {
+  private petUseTarget(session: GameSession): { id: string; distance: number; renderTick?: number } | undefined {
     const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
-    const mobHit = session.mobs.raycast(aim.origin, aim.direction, PET_INTERACT_REACH);
+    const mobHit = session.mobs.raycastRendered(aim.origin, aim.direction, PET_INTERACT_REACH);
     if (!mobHit || !mobHit.mob.alive || !isPetKind(mobHit.mob.kind)) return undefined;
     if (session.target && session.target.distance < mobHit.distance) return undefined;
     const cartHit = session.minecarts.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
     if (cartHit && cartHit.distance < mobHit.distance) return undefined;
-    return { id: mobHit.mob.id, distance: mobHit.distance };
+    return {
+      id: mobHit.mob.id,
+      distance: mobHit.distance,
+      ...(mobHit.renderTick !== undefined ? { renderTick: mobHit.renderTick } : {}),
+    };
   }
 
   private trySendOnlinePetUse(
@@ -2283,7 +2287,12 @@ export class Game {
     const target = this.petUseTarget(session);
     if (!target) return false;
     const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
-    const action = captureEntityUse(source, target.id, { yaw: aim.yaw, pitch: aim.pitch });
+    const action = captureEntityUse(
+      source,
+      target.id,
+      { yaw: aim.yaw, pitch: aim.pitch },
+      target.renderTick,
+    );
     this.commitOnlineActionSeq(session, source);
     online.client.send(entityUseMessage(action));
     return true;

@@ -8,6 +8,7 @@ export type PetInteractFailReason =
   | 'item'
   | 'not_owner'
   | 'pet_limit'
+  | 'pet_capacity'
   | 'tame_failed';
 
 export interface PetInteractMob {

@@ -158,6 +158,7 @@ export type ActionRejectReason =
   | 'vehicle_occupied'
   | 'already_riding'
   | 'pet_limit'
+  | 'pet_capacity'
   | 'not_owner';
 
 export interface ActionResult {
