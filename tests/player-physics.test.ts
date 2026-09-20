@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
 import {
-  JUMP_VELOCITY,
   PLAYER_HEIGHT,
   PLAYER_MOVE_SPEED,
   PLAYER_MOVE_SPEED_MULTIPLIER,
@@ -57,9 +56,12 @@ function flatWorld(): TestWorld {
 
 describe('PlayerController voxel physics', () => {
   it('stands on a floor and slides without entering a wall', () => {
-    const world = flatWorld();
+    const world = new TestWorld();
+    for (let z = -24; z <= 24; z += 1) {
+      for (let x = -4; x <= 4; x += 1) world.set(x, 0, z, BlockId.Stone);
+    }
     for (let y = 1; y <= 3; y += 1) {
-      for (let z = -4; z <= 4; z += 1) world.set(1, y, z, BlockId.Stone);
+      for (let z = -24; z <= 24; z += 1) world.set(1, y, z, BlockId.Stone);
     }
     const player = new PlayerController({ position: [0.5, 1, 0.5] });
     for (let tick = 0; tick < 30; tick += 1) {
@@ -236,14 +238,18 @@ describe('PlayerController always-run / crouch speeds', () => {
 
   it('allows a jump while sneaking without changing jump velocity', () => {
     const world = wideFlatWorld();
-    const player = new PlayerController({ position: [0.5, 1, 0.5] });
-    player.tick(world as unknown as VoxelWorld, input({ sneak: true }), 0.05);
-    expect(player.sneaking).toBe(true);
-    expect(player.onGround).toBe(true);
-    const result = player.tick(world as unknown as VoxelWorld, input({ sneak: true, jump: true }), 0.05);
-    expect(result.jumped).toBe(true);
-    expect(player.sneaking).toBe(true);
-    expect(player.velocity.y).toBeCloseTo(JUMP_VELOCITY, 6);
+    const standing = new PlayerController({ position: [0.5, 1, 0.5] });
+    const crouched = new PlayerController({ position: [0.5, 1, 0.5] });
+    crouched.tick(world as unknown as VoxelWorld, input({ sneak: true }), 0.05);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.onGround).toBe(true);
+    const standingJump = standing.tick(world as unknown as VoxelWorld, input({ jump: true }), 0.05);
+    const crouchedJump = crouched.tick(world as unknown as VoxelWorld, input({ sneak: true, jump: true }), 0.05);
+    expect(standingJump.jumped).toBe(true);
+    expect(crouchedJump.jumped).toBe(true);
+    expect(crouched.sneaking).toBe(true);
+    expect(crouched.velocity.y).toBeGreaterThan(0);
+    expect(crouched.velocity.y).toBeCloseTo(standing.velocity.y, 6);
   });
 
   it('normalizes diagonal wish so W+A matches single-axis always-run speed', () => {

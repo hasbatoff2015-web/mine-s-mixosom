@@ -9,7 +9,7 @@ npx vitest run tests/player-physics.test.ts tests/lighting-physics-interaction.t
 npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "binds dismount" --maxWorkers=1
 ```
 
-Contracts: `PLAYER_MOVE_SPEED = 4.317×1.25`, `SNEAK_SPEED = 1.295×1.25`, Shift crouch + jump, hypot diagonal, `KeyC` camera, F5 unbound, remaining WASD/Space/E keybinds, minecart Shift/sneak dismount. Minecart cap still `WALK_SPEED×1.5`.
+Contracts: `PLAYER_MOVE_SPEED = 4.317×1.25`, `SNEAK_SPEED = 1.295×1.25`, Shift crouch + jump, hypot diagonal, `KeyC` camera, F5 unbound, remaining WASD/Space/E keybinds, minecart Shift/sneak dismount. Minecart cap still `WALK_SPEED×1.5`. Focused **93/93 PASS** (`player-physics` 14, lighting 8, camera 10, player-main 4, menu 3, prediction/diag/hidden-tab/pipeline 44, creative-flight 9, minecart dismount 1). `typecheck` PASS. `build` PASS.
 
 ## 2026-09-19 Clan invitations + leader announcement
 

@@ -43,14 +43,27 @@ Done in code. Speeds are derived from the previous constants, not invented. Clie
 
 ## Tests
 
-Focused set (recorded after the run):
+Focused:
 
 ```text
 npx vitest run tests/player-physics.test.ts tests/lighting-physics-interaction.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/menu-model.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/creative-flight.test.ts --maxWorkers=2
 npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "binds dismount" --maxWorkers=1
-npm run typecheck
-npm run build
 ```
+
+- player-physics **14/14**
+- lighting-physics-interaction **8/8**
+- third-person-camera **10/10**
+- player-main-integration **4/4**
+- menu-model **3/3**
+- prediction-timeline **8/8**
+- pred-isolation-matrix **9/9**
+- local-motion-pipeline **8/8**
+- correction-diag-dump **10/10**
+- hidden-tab-motion **9/9**
+- creative-flight **9/9**
+- fire-contact Shift dismount **1/1** (38 skipped)
+
+`npm run typecheck` PASS. `npm run build` PASS (300 modules, `dist/assets/index-DHvExRU8.js`).
 
 ## Visual QA
 

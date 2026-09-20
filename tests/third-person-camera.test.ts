@@ -53,7 +53,7 @@ describe('third-person camera', () => {
         root: { position: new THREE.Vector3() },
         setArmor: vi.fn(), setOffhandItem: vi.fn(),
         setVisible: (value: boolean) => visible.push(value),
-        update: vi.fn(), applyWorldLight: vi.fn(),
+        update: vi.fn(() => ({ bodyYaw: 0 })), applyWorldLight: vi.fn(),
       },
       player: { velocity: { x: 0, y: 0, z: 0 }, eyeHeight: 1.62,
         onGround: true, sneaking: false, sprinting: false },
@@ -63,7 +63,7 @@ describe('third-person camera', () => {
     };
     Object.assign(game, {
       cameraPerspective: 'firstPerson', session, lifecycle: { state: 'PLAYING' },
-      ui: { isInventoryOpen: () => false }, input: { yaw: 0, pitch: 0, mining: false },
+      ui: { isInventoryOpen: () => false, isBlockingOverlay: () => false }, input: { yaw: 0, pitch: 0, mining: false },
       firstPersonFrameState: {}, firstPerson: { update: (_delta: number, state: { visible: boolean }) => hands.push(state.visible) },
       camera: new THREE.PerspectiveCamera(), cameraPivot: new THREE.Vector3(),
       cameraTravelDirection: new THREE.Vector3(), thirdPersonCameraDistance: THIRD_PERSON_CAMERA_DISTANCE,
