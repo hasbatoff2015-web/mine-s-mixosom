@@ -108,4 +108,6 @@ Owner visual acceptance; do not merge without review.
 
 ## Git
 
-Branch `cursor/sword-blocking-animation-7e91`. Do not merge to main. Do not touch PR #96.
+Branch `cursor/sword-blocking-animation-7e91`. Commit `8d021446e8db5ba8620c8e0925870b611eb63c4f`. Do not merge to main. Do not touch PR #96.
+
+`npm run typecheck` PASS. `npm run build` PASS (301 modules, JS 1524.82 kB / gzip 434.93 kB).
