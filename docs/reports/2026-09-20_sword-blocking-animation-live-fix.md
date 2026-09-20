@@ -123,4 +123,4 @@ Owner photo of remote third-person blocking pose. Do not merge to main.
 
 ## Git
 
-Branch `cursor/sword-blocking-animation-7e91`. Commit `d506b360c21b842fad5ce177e33a66b2486a5bdb`. Do not merge.
+Branch `cursor/sword-blocking-animation-7e91`. Fix `d506b360c21b842fad5ce177e33a66b2486a5bdb`. HEAD pending. Do not merge.
