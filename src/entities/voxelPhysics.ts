@@ -2,6 +2,7 @@ import { Vec3, type Vec3Like } from '../math/vec3';
 import { getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
 import { blockCollisionBoxes, collisionCandidateCellRange } from '../world/collision';
+import { clipAabbAxisToWorldBorder, WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../world/worldBorder';
 
 const COLLISION_EPSILON = 1e-5;
 
@@ -90,9 +91,17 @@ function resolveAxis(
   amount: number,
 ): boolean {
   if (amount === 0) return false;
+  const requested = amount;
+  if (axis === 'x' || axis === 'z') {
+    const body = bodyAabb(position, shape);
+    amount = axis === 'x'
+      ? clipAabbAxisToWorldBorder(body.minX, body.maxX, amount, WORLD_BORDER_MIN, WORLD_BORDER_MAX)
+      : clipAabbAxisToWorldBorder(body.minZ, body.maxZ, amount, WORLD_BORDER_MIN, WORLD_BORDER_MAX);
+    if (amount === 0) return true;
+  }
   position[axis] += amount;
   const collisions = collidingBoxes(world, position, shape);
-  if (collisions.length === 0) return false;
+  if (collisions.length === 0) return requested !== amount;
 
   const halfWidth = shape.width * 0.5;
   if (axis === 'x') {

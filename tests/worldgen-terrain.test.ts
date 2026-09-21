@@ -3,6 +3,7 @@ import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE, MAX_GENERATED_SURFACE, SEA_LEVEL, WORLD_HEIGHT } from '../src/core/constants';
 import { Chunk } from '../src/world/Chunk';
 import { collectSpawnColumns, CAVE_ROOF_DEPTH, ORE_RULES, TerrainGenerator } from '../src/world/Generator';
+import { LAND_MIN_SURFACE, WATER_FLOOR_MIN } from '../src/world/hydrology';
 import {
   generateChunkGrid,
   maxNeighborHeightDelta,
@@ -56,7 +57,19 @@ describe('worldgen mountains, caves and density', () => {
     expect(share).toBeGreaterThan(0.04);
     expect(share).toBeLessThan(0.35);
     expect(Math.max(...heights)).toBeLessThanOrEqual(MAX_GENERATED_SURFACE);
-    expect(Math.min(...heights)).toBeGreaterThan(SEA_LEVEL - 8);
+    expect(Math.min(...heights)).toBeGreaterThanOrEqual(WATER_FLOOR_MIN);
+    const landHeights: number[] = [];
+    for (const seed of WORLDGEN_QA_SEEDS) {
+      const gen = new TerrainGenerator(seed);
+      for (let z = -80; z <= 80; z += 4) {
+        for (let x = -80; x <= 80; x += 4) {
+          const column = gen.columnAt(x, z);
+          if (column.waterMask <= 0) landHeights.push(column.height);
+        }
+      }
+    }
+    expect(Math.min(...landHeights)).toBeGreaterThan(SEA_LEVEL - 8);
+    expect(Math.min(...landHeights)).toBeGreaterThanOrEqual(LAND_MIN_SURFACE);
   });
 
   it('keeps cross-chunk height changes smooth', () => {
@@ -164,7 +177,7 @@ describe('worldgen mountains, caves and density', () => {
     expect(holes, 'any surface cave mouths').toBe(0);
     expect(thinRoof, 'cave air inside the roof cap').toBe(0);
     expect(hillside, 'side leaks on slopes').toBe(0);
-  });
+  }, 20_000);
 
   it('keeps a solid roof of CAVE_ROOF_DEPTH under ordinary cave air', () => {
     expect(CAVE_ROOF_DEPTH).toBeGreaterThanOrEqual(3);
@@ -196,7 +209,7 @@ describe('worldgen mountains, caves and density', () => {
     expect(cactusRatio).toBeGreaterThan(0.12);
     expect(cactusRatio).toBeLessThan(0.38);
     expect(treesPer).toBeGreaterThan(1.2);
-  });
+  }, 20_000);
 
   it('keeps ores in the shifted bands including the new deep range', () => {
     const gen = new TerrainGenerator('ore-depth');

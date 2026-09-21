@@ -1,5 +1,39 @@
 # Тестирование
 
+## 2026-09-21 Merge origin/main into Worldgen V3
+
+Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99). Docs conflicts kept both sides. `Game.ts` auto-merged with both `syncLocalCombatUse` and Worldgen V3 border helpers.
+
+## 2026-09-21 Wild gourd density 0.25
+
+`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434). OWNER MANUAL QA: Worldgen V3 generation and this density were checked in-game; owner reports the result looks good. Other manual scenarios are not claimed.
+
+## 2026-09-21 Worldgen V3 audit harden
+
+Report: `reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+```text
+npx vitest run tests/world-border-interactions.test.ts tests/minecart-world-border.test.ts tests/server/world-border-authority.test.ts tests/server/world-events-v3-migration.test.ts tests/worldgen-v3.test.ts tests/world-border.test.ts --maxWorkers=2
+npx vitest run tests/worldgen-v2.test.ts tests/worldgen-terrain.test.ts tests/generation-stages.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npx vite-node scripts/benchmark-worldgen-compare.ts
+npx vite-node scripts/benchmark-worldgen-phases.ts
+```
+
+Contracts: outside-border use does not mutate scenery; minecart dismount/enter keep the player AABB inside; placing-journal rebase is the recovery authority; generator migration is one-shot; `waterBiome` is never lake/ocean on a dry column; `oceanWater+lakeWater+legacyWater === physicalWater`. GitHub CI was empty at this pass — do not treat local green as CI PASS.
+
+## 2026-09-21 Worldgen V3 / world border
+
+Report: `reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+```text
+npx vitest run tests/worldgen-v3.test.ts tests/world-border.test.ts tests/worldgen-terrain.test.ts tests/worldgen-v2.test.ts tests/generation-stages.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npm run benchmark:worldgen
+```
+
+Contracts: `WORLDGEN_VERSION === 3`, V2 snapshot overlays on V3 terrain, hydrology lakes/oceans, gourd salts, playable `-10000 <= x,z < 10000`, opacity 0 at ≥50, max alpha ≤ 0.28.
+
 ## 2026-09-21 Merge origin/main into sword-blocking
 
 Semantic merge of current `main` (`cd8ecf3`). Docs conflicts kept both sides. Code auto-merged.

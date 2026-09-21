@@ -43,6 +43,12 @@ export interface BucketContext {
   readonly selectedSlot: number;
   readonly mode: 'survival' | 'creative';
   readonly onDrop: (stack: ItemStack) => void;
+  /**
+   * Optional mutation guard for the resolved fluid cell.
+   * Omitted in generic tests: pickup/place stay unrestricted.
+   * Shared SP/server use-path always passes the playable-world rule.
+   */
+  canMutateBlock?(x: number, z: number): boolean;
 }
 
 function storeOrDrop(context: Pick<BucketContext, 'inventory' | 'onDrop'>, stack: ItemStack): void {
@@ -78,6 +84,7 @@ export function pickupFluidSource(
   if (stack?.itemId !== ItemId.Bucket) return undefined;
   const hit = world.raycast(origin, direction, reach, { stopOnLiquids: true });
   if (!hit || !isFluidSource(world, hit.x, hit.y, hit.z)) return undefined;
+  if (context.canMutateBlock && !context.canMutateBlock(hit.x, hit.z)) return undefined;
   const filled = createItemStack(hit.block === BlockId.Water ? ItemId.WaterBucket : ItemId.LavaBucket);
   const result = world.applyBlockBatch([{ x: hit.x, y: hit.y, z: hit.z, block: BlockId.Air }], {
     deferLighting: true,
@@ -107,6 +114,7 @@ export function placeBucketFluid(context: BucketContext, hit: VoxelHit | undefin
   const z = replaceHit ? hit.z : hit.z + hit.normal.z;
   const existing = world.getBlock(x, y, z);
   if (existing !== BlockId.Air && !getBlockDefinition(existing).replaceable) return undefined;
+  if (context.canMutateBlock && !context.canMutateBlock(x, z)) return undefined;
   const block = stack.itemId === ItemId.WaterBucket ? BlockId.Water : BlockId.Lava;
   if (existing === block && isFluidSource(world, x, y, z)) return undefined;
   const result = world.applyBlockBatch([{ x, y, z, block }], { deferLighting: true, lightOrigin: 'edit' });

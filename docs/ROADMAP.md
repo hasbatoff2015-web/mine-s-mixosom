@@ -1,5 +1,23 @@
 # Roadmap
 
+## 2026-09-21: Merge origin/main into Worldgen V3
+
+- [x] Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99) into `cursor/worldgen-v3-water-gourds-border-74e7`.
+- [x] Keep Worldgen V3 hydrology/border/gourds and current-main `syncLocalCombatUse` / sword-blocking visuals.
+
+## 2026-09-21: Worldgen V3 — hydrology, gourds, playable border
+
+- [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
+- [x] Keep climate biomes; `hydrologyRegion` is the mask label; `waterBiome` is wet-only none/lake/ocean.
+- [x] Wild pumpkin/melon patches with separate RNG salts; no stems/farmland.
+- [x] Gourd patch acceptance scaled to 25% of the original frequency (`GOURD_PATCH_DENSITY = 0.25`); 32-block lattice and patch size unchanged.
+- [x] Migration A: V2 snapshots use V3 generator; modifications preserved; next save writes `WORLDGEN_VERSION = 3`.
+- [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
+- [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.
+- [x] Audit harden: bucket/flint/farming/legacy use, mining, signs, minecart AABB enter/dismount, event journal one-shot rebase, seabed materials.
+- [x] Owner live QA of Worldgen V3 generation and reduced wild gourd density (0.25); owner reports the result looks good.
+- [ ] Owner live QA of underwater floors and border fade/collision on Anarchy (not claimed).
+
 ## 2026-09-21: Merge origin/main into sword-blocking
 
 - [x] Semantic merge of current `main` (`cd8ecf3`) into `cursor/sword-blocking-animation-7e91`.

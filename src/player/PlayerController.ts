@@ -20,6 +20,7 @@ import {
   WATER_SPEED,
   clamp,
 } from '../core/constants';
+import { clipAabbAxisToWorldBorder, WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../world/worldBorder';
 import type { MoveInput } from '../input/MoveInput';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -741,6 +742,12 @@ export class PlayerController {
           }
         }
       }
+    }
+
+    if (axis === 'x') {
+      allowed = clipAabbAxisToWorldBorder(player.minX, player.maxX, allowed, WORLD_BORDER_MIN, WORLD_BORDER_MAX);
+    } else if (axis === 'z') {
+      allowed = clipAabbAxisToWorldBorder(player.minZ, player.maxZ, allowed, WORLD_BORDER_MIN, WORLD_BORDER_MAX);
     }
 
     this.position[axis] += allowed;

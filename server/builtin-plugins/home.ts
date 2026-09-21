@@ -10,6 +10,11 @@ import {
   HOME_MISSING_ERROR,
   validateHomeName,
 } from '../../shared/homes';
+import {
+  WORLD_BORDER_HOME_SET_ERROR,
+  WORLD_BORDER_HOME_TELEPORT_ERROR,
+  isPlayerCenterInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 
 const HELP = {
   name: 'home',
@@ -86,6 +91,9 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           const name = args[0] ?? 'home';
           const dest = ctx.homes.get(sender.name, name);
           if (!dest) return fail(`Home '${name}' not found.`);
+          if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
+            return fail(WORLD_BORDER_HOME_TELEPORT_ERROR);
+          }
           const result = ctx.teleports.schedule(sender.playerId, {
             x: dest.x,
             y: dest.y,
@@ -113,6 +121,9 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           const parsed = validateHomeName(args[0] ?? 'home');
           if (!parsed.ok) return fail(parsed.error);
           const pos = player.position();
+          if (!isPlayerCenterInsidePlayableWorld(pos.x, pos.z)) {
+            return fail(WORLD_BORDER_HOME_SET_ERROR);
+          }
           const result = ctx.homes.set(sender.name, parsed.name, {
             worldId: api.getWorld().worldId,
             x: pos.x,

@@ -26,6 +26,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
   clearDoorBlocks,
   daylightFactor,
@@ -708,6 +709,7 @@ export class ServerGameplay {
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
@@ -767,6 +769,7 @@ export class ServerGameplay {
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!intent && !this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     let hit: VoxelHit | undefined;
     if (intent) {
@@ -880,6 +883,7 @@ export class ServerGameplay {
     if (definition.breakable === false || definition.hardness < 0) {
       return { ok: false, reason: 'unbreakable' };
     }
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return { ok: false, reason: 'bounds' };
     if (
       !player.miningTarget
       || player.miningTarget.x !== hit.x
@@ -1230,6 +1234,10 @@ export class ServerGameplay {
     this.lastVehicleEnterReject = undefined;
     const cart = this.minecarts.get(entityId);
     if (!cart || !this.minecarts.isRideable(cart)) return false;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) {
+      this.rejectVehicleEnter('bounds');
+      return false;
+    }
     if (player.ridingCartId === entityId) return true;
     if (player.ridingCartId) {
       this.rejectVehicleEnter('already_riding');
@@ -1283,7 +1291,7 @@ export class ServerGameplay {
     player.controller.velocity.set(0, 0, 0);
   }
 
-  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding'): void {
+  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding' | 'bounds'): void {
     this.lastVehicleEnterReject = reason;
     this.pendingUseReject = reason;
   }

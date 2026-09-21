@@ -3,6 +3,7 @@ import { CHUNK_SIZE, SEA_LEVEL, chunkKey, floorDiv } from '../core/constants';
 import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import { Chunk } from '../world/Chunk';
 import type { CommittedBlockChange, VoxelWorld } from '../world/World';
+import { gameplayMayMutateBlock } from '../world/worldBorder';
 import { canSugarCaneStandAt } from '../world/placement';
 import {
   FARMING_BLOCKS,
@@ -84,6 +85,7 @@ export class FarmingSystem {
     // Hydration is a distinct phase so crops observe the current pulse even if
     // restored modification insertion order placed a crop before its farmland.
     if (hydrationPulse) for (const { position, block } of active) {
+      if (!gameplayMayMutateBlock(position.x, position.z)) continue;
       if (block !== BlockId.Farmland) continue;
       const hydrated = this.hasNearbyWater(position.x, position.y, position.z);
       if ((this.world.getBlockState(position.x, position.y, position.z)?.hydrated === true) !== hydrated) {
@@ -92,6 +94,7 @@ export class FarmingSystem {
       }
     }
     if (growthPulse) for (const { position, block } of active) {
+      if (!gameplayMayMutateBlock(position.x, position.z)) continue;
       if (block === BlockId.SugarCane) {
         const { x, y, z } = position;
         if (this.world.getBlock(x, y + 1, z, false) !== BlockId.Air) continue;
@@ -242,6 +245,9 @@ export class FarmingSystem {
     });
     if (valid.length === 0) return false;
     const direction = valid[Math.min(valid.length - 1, Math.floor(this.random() * valid.length))]!;
-    return this.world.setBlock(position.x + direction.dx, position.y, position.z + direction.dz, fruit);
+    const fruitX = position.x + direction.dx;
+    const fruitZ = position.z + direction.dz;
+    if (!gameplayMayMutateBlock(fruitX, fruitZ)) return false;
+    return this.world.setBlock(fruitX, position.y, fruitZ, fruit);
   }
 }

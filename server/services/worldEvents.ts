@@ -1,9 +1,10 @@
 import { BlockId, getBlockDefinition, isKnownBlockId, type BlockRenderState } from '../../src/blocks';
-import { CHUNK_SIZE, chunkKey, floorDiv, isValidWorldY, MAX_WORLD_Y, MIN_WORLD_Y, blockKey, positiveMod } from '../../src/core/constants';
+import { CHUNK_SIZE, chunkKey, floorDiv, isValidWorldY, MAX_WORLD_Y, MIN_WORLD_Y, WORLDGEN_VERSION, blockKey, positiveMod } from '../../src/core/constants';
 import { cloneStack, createItemStack, isSharedWorldChestBlock, type ItemStack } from '../../src/inventory';
 import { Chunk } from '../../src/world/Chunk';
 import type { FurnaceState, VoxelWorld } from '../../src/world/World';
 import { sanitizeSignLines, type SignLines } from '../../src/world/sign';
+import { isInsidePlayableBlock, isVolumeInsidePlayableWorld, WORLD_BORDER_MAX } from '../../src/world/worldBorder';
 import { isDangerousBlock } from './rtp';
 import { volumeContains, type BlockPos, type SelectionVolume } from './selection';
 import {
@@ -64,6 +65,7 @@ export interface WorldEventsConfig {
   durationMinutes: number;
   spawnMinDistance: number;
   spawnMaxDistance: number;
+  /** Exclusive playable |coord| bound; canonical value is WORLD_BORDER_MAX. */
   worldBorder: number;
   templateName: string;
   announceCoordinates: boolean;
@@ -82,7 +84,7 @@ export const DEFAULT_WORLD_EVENTS_CONFIG: WorldEventsConfig = {
   durationMinutes: 120,
   spawnMinDistance: 3000,
   spawnMaxDistance: 5000,
-  worldBorder: 10_000,
+  worldBorder: WORLD_BORDER_MAX,
   templateName: DEFAULT_EVENT_TEMPLATE_NAME,
   announceCoordinates: true,
   playerAvoidRadius: 64,
@@ -241,6 +243,8 @@ export interface WorldEventsHost {
   broadcast(text: string): void;
   send(playerId: string, text: string): void;
   log(message: string): void;
+  loadedWorldgenVersion?(): number | undefined;
+  acknowledgeWorldgenMigration?(): void;
 }
 
 export type ForceSpawnResult =
@@ -487,6 +491,7 @@ export class WorldEventsManager {
   private store: WorldEventsStore = { templates: [] };
   private search: SearchJob | undefined;
   private searchRetryAt = 0;
+  private generatorMigrationHandled = false;
 
   constructor(private readonly host: WorldEventsHost) {}
 
@@ -502,11 +507,58 @@ export class WorldEventsManager {
       this.store.templates.unshift(createDefaultChestShrineTemplate());
     }
     this.persist();
+    this.rebaseTransientEventIfGeneratorMigrated();
     this.recover(this.host.now());
   }
 
   persist(): void {
     this.host.saveStore(this.store);
+  }
+
+  /**
+   * V2→V3 migration A: never restore a V2 event snapshot onto V3 terrain.
+   * Recapture the current generated+persistent volume before overlay re-apply.
+   * One-shot per manager instance so plugin disable→load→enable cannot rebase twice.
+   *
+   * When a placing journal exists, that event is the recovery authority.
+   */
+  private rebaseTransientEventIfGeneratorMigrated(): void {
+    // Hosts that do not track save worldgen (unit tests) must not rebase every load.
+    // A missing numeric version on a real save (V1) still migrates.
+    if (!this.host.loadedWorldgenVersion) return;
+    const loaded = this.host.loadedWorldgenVersion();
+    if (loaded !== undefined && loaded >= WORLDGEN_VERSION) return;
+    if (this.generatorMigrationHandled) return;
+    this.generatorMigrationHandled = true;
+    const journal = this.store.journal;
+    if (journal?.phase === 'cleaning') {
+      this.store.journal = undefined;
+      this.store.active = undefined;
+      this.persist();
+      this.host.log('world-events: skipped V2 snapshot restore during V3 terrain migration');
+      this.finishGeneratorMigration();
+      return;
+    }
+    const placing = journal?.phase === 'placing' ? journal.event : undefined;
+    const source = placing ?? this.store.active;
+    if (!source?.volume) {
+      this.finishGeneratorMigration();
+      return;
+    }
+    if (source.phase !== 'spawned_locked' && source.phase !== 'active_unlocked' && !placing) {
+      this.finishGeneratorMigration();
+      return;
+    }
+    source.snapshot = snapshotVolumeDetailed(this.host.world, source.volume);
+    if (placing) this.store.active = placing;
+    this.persist();
+    this.host.log('world-events: rebased event snapshot onto Worldgen V3 terrain');
+    this.finishGeneratorMigration();
+  }
+
+  private finishGeneratorMigration(): void {
+    this.host.acknowledgeWorldgenMigration?.();
+    this.host.persistWorld?.();
   }
 
   setConfig(config: WorldEventsConfig): void {
@@ -990,7 +1042,7 @@ export class WorldEventsManager {
       const radius = minR + this.host.random() * (maxR - minR);
       const x = Math.round(spawn[0] + Math.cos(angle) * radius);
       const z = Math.round(spawn[2] + Math.sin(angle) * radius);
-      if (Math.abs(x) > border || Math.abs(z) > border) continue;
+      if (!isInsidePlayableBlock(x, z) || Math.abs(x) >= border || Math.abs(z) >= border) continue;
       const dist = Math.hypot(x - spawn[0], z - spawn[2]);
       if (dist < minR || dist > maxR) continue;
       return { x, z };
@@ -1007,7 +1059,7 @@ export class WorldEventsManager {
     const volume = placedVolume(template, chest, yaw);
     if (!isValidWorldY(volume.minY) || !isValidWorldY(volume.maxY)) return false;
     if (volume.maxY > MAX_WORLD_Y || volume.minY < MIN_WORLD_Y) return false;
-    if (Math.abs(chest.x) > this.config.worldBorder || Math.abs(chest.z) > this.config.worldBorder) return false;
+    if (!isVolumeInsidePlayableWorld(volume) || !isInsidePlayableBlock(chest.x, chest.z)) return false;
     const originSurface = this.host.world.surfaceY(chest.x, chest.z);
     if (chest.y !== originSurface + 1) return false;
     const ground = this.host.world.getBlock(chest.x, originSurface, chest.z);
@@ -1020,7 +1072,7 @@ export class WorldEventsManager {
     if (volumeHasPersistentRecords(this.host.world, volume)) return false;
     for (let z = volume.minZ; z <= volume.maxZ; z += 1) {
       for (let x = volume.minX; x <= volume.maxX; x += 1) {
-        if (Math.abs(x) > this.config.worldBorder || Math.abs(z) > this.config.worldBorder) return false;
+        if (!isInsidePlayableBlock(x, z)) return false;
         const surface = this.host.world.surfaceY(x, z);
         if (Math.abs(surface - originSurface) > 2) return false;
         const top = this.host.world.getBlock(x, surface, z);

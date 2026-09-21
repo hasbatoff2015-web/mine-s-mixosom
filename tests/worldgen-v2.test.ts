@@ -145,7 +145,10 @@ describe('Worldgen V2 snowy regions, mixed forest and cave deposits', () => {
     const wz = positiveMod(water.z, CHUNK_SIZE);
     expect(waterChunk.get(wx, SEA_LEVEL, wz)).toBe(BlockId.Ice);
     expect(waterChunk.get(wx, SEA_LEVEL - 1, wz)).toBe(BlockId.Water);
-    expect(waterChunk.get(wx, water.column.height, wz)).toBe(BlockId.SnowBlock);
+    const floor = waterChunk.get(wx, water.column.height, wz);
+    expect(floor).not.toBe(BlockId.SnowBlock);
+    expect(floor).not.toBe(BlockId.GrassBlock);
+    expect([BlockId.Dirt, BlockId.Gravel, BlockId.Stone]).toContain(floor);
   });
 
   it('mixes all forest trees, keeps snowy spruce sparse, and preserves plains oak', () => {
@@ -224,6 +227,8 @@ describe('Worldgen V2 snowy regions, mixed forest and cave deposits', () => {
             if (block !== BlockId.Gravel && block !== BlockId.Clay) continue;
             const worldX = chunk.x * CHUNK_SIZE + x;
             const worldZ = chunk.z * CHUNK_SIZE + z;
+            const columnHeight = generator.columnAt(worldX, worldZ).height;
+            if (y >= columnHeight) continue;
             if (block === BlockId.Gravel) { gravel += 1; hasGravel = true; }
             else { clay += 1; hasClay = true; }
             expect(y).toBeGreaterThan(3);
@@ -248,7 +253,9 @@ describe('Worldgen V2 snowy regions, mixed forest and cave deposits', () => {
         for (let z = 0; z < CHUNK_SIZE; z += 1) for (let x = 0; x < CHUNK_SIZE; x += 1) {
           expect([BlockId.Gravel, BlockId.Clay]).not.toContain(chunk.get(x, 3, z));
           const surface = chunk.surfaceHeights[z * CHUNK_SIZE + x]!;
-          expect([BlockId.Gravel, BlockId.Clay]).not.toContain(chunk.get(x, surface, z));
+          if (surface >= SEA_LEVEL) {
+            expect([BlockId.Gravel, BlockId.Clay]).not.toContain(chunk.get(x, surface, z));
+          }
         }
       }
     }

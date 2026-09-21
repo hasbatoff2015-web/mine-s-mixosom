@@ -1,5 +1,35 @@
 # Состояние проекта
 
+## Последний проход: Merge origin/main into Worldgen V3 — 2026-09-21
+
+- Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.
+- `Game.ts` слился автоматически: сохранены и `syncLocalCombatUse` / `combat.swordBlocking`, и `WorldBorderRenderer` / `gameplayMayMutateBlock` / `relocateStandingPoseInsidePlayableWorld`.
+- Restore of an already-inside schematic/Anarchy spawn keeps the saved Y; outside poses still relocate. AutoMine 15³ remesh fixture flattens the sea-level Y band so V3 water faces do not inflate the existing 40 ms bound.
+- Конфликты только в docs: сохранены оба прохода (Worldgen V3 + sword blocking).
+- OWNER MANUAL QA (до этого sync, владелец): Worldgen V3 generation и финальная density `GOURD_PATCH_DENSITY = 0.25` проверены в игре; результат хороший. Two-client border QA и прочие edge cases не утверждаются.
+- Подробности: `docs/reports/2026-09-21_merge-main-into-worldgen-v3.md`.
+
+## Последний проход: Wild gourd density 0.25 — 2026-09-21
+
+- Owner manual QA found wild pumpkin/melon patches too dense. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (including melon near-water bonus). Lattice stays 32, salts and fruitCount unchanged. Surviving patches are a deterministic subset of the old set.
+- Sampler 8×2048: pumpkin 7582→1896 patches, melon 2434→610; avg size still ~2. `WORLDGEN_VERSION` stays 3.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+## Последний проход: Worldgen V3 audit harden — border / minecart / migration — 2026-09-21
+
+- Follow-up before merge of Worldgen V3. Gameplay use (bucket, flint, farming, legacy blocks, mining, signs) cannot mutate scenery outside ±10000. Minecart enter/dismount keeps the full player AABB inside the playable volume.
+- World-event V2→V3 rebase uses the placing journal as recovery authority, is one-shot per manager instance, and marks the world dirty so `worldgenVersion` persists as 3 after rebase.
+- `hydrologyRegion` is the mask label (dry coasts allowed). `waterBiome` is wet-only. Submerged floors no longer use GrassBlock/SnowBlock.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+## Последний проход: Worldgen V3 — hydrology, gourds, world border — 2026-09-21
+
+- `WORLDGEN_VERSION = 3`. Migration A: V2 saves keep player modifications and rematerialize natural terrain with the V3 generator; the next save writes `worldgenVersion: 3`. There is no retained V2 generator.
+- Hydrology is a negative-only, seed+XZ deterministic layer (`src/world/hydrology.ts`). Land biomes stay plains/forest/desert/snowy_plains; `ColumnInfo.hydrologyRegion` is the mask label; `ColumnInfo.waterBiome` is wet-only `none|lake|ocean`.
+- Wild Pumpkin/Melon use existing block IDs and separate decoration salts. Staged `generate` matches monolithic.
+- Playable world is `-10000 <= x,z < 10000` (`src/world/worldBorder.ts`). Shared AABB collision on client prediction and server. `WorldBorderRenderer` draws four translucent red planes; scenery chunks beyond the plane still stream with normal view distance.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
 ## Последний проход: Merge origin/main into sword-blocking — 2026-09-21
 
 - Semantic merge актуального `origin/main` (`cd8ecf3`, world events + always-run/KeyC) в `cursor/sword-blocking-animation-7e91`.

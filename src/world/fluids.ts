@@ -2,6 +2,7 @@ import { BlockId, getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, FLUID_JOB_BUDGET_MS, WORLD_HEIGHT, floorDiv } from '../core/constants';
 import type { Chunk } from './Chunk';
 import type { VoxelWorld } from './World';
+import { gameplayMayMutateBlock } from './worldBorder';
 
 export const FLUID_SOURCE_LEVEL = 8;
 export const WATER_TICK_DELAY = 5;
@@ -341,6 +342,7 @@ export function applyFluidWrites(world: VoxelWorld, writes: readonly FluidWrite[
   const states: FluidWrite[] = [];
   for (const write of writes) {
     if (!chunkLoaded(world, write.x, write.z)) continue;
+    if (!gameplayMayMutateBlock(write.x, write.z)) continue;
     if (write.y < 0 || write.y >= WORLD_HEIGHT) continue;
     const current = world.getBlock(write.x, write.y, write.z, false);
     if (write.block === BlockId.Air) {

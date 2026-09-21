@@ -78,6 +78,11 @@ import {
   createClanBaseClaim,
   resolveClanBaseAnchor,
 } from './clanBase';
+import {
+  WORLD_BORDER_CLAN_BASE_ERROR,
+  isPlayerCenterInsidePlayableWorld,
+  isVolumeInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 
 export { CLAN_PLUGIN_NAME, CLAN_CREATE_COST, CLAN_MAX_MEMBERS, CLAN_PAGE_SIZE };
 
@@ -981,6 +986,10 @@ export class ClanService {
         return { ok: false, error: CLAN_BASE_ALREADY_HERE_ERROR, clan };
       }
       const volume = createClanBaseClaim(clan.clanId, clan.name, worldId, anchor).volume;
+      if (!isVolumeInsidePlayableWorld(volume)) {
+        session.message = WORLD_BORDER_CLAN_BASE_ERROR;
+        return { ok: false, error: WORLD_BORDER_CLAN_BASE_ERROR, clan };
+      }
       const store = this.runtime.loadClaims();
       const overlapping = overlappingClaims(
         [...store.claims, ...(this.runtime.extraClaims?.() ?? [])],
@@ -1048,6 +1057,10 @@ export class ClanService {
         return { ok: false, error: CLAN_BASE_MISSING_ERROR, clan };
       }
       const dest = clanBaseTeleportDest(clan.base);
+      if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
+        session.message = WORLD_BORDER_CLAN_BASE_ERROR;
+        return { ok: false, error: WORLD_BORDER_CLAN_BASE_ERROR, clan };
+      }
       const result = this.runtime.teleportNow(playerId, dest);
       if (!result.ok) {
         session.message = result.error ?? CLAN_BASE_POSITION_ERROR;
