@@ -75,14 +75,20 @@ Existing `BlockId.Pumpkin` / `BlockId.Melon`. No new IDs. No wild stems or farml
 
 World-space cells of 32 with salts `PUMPKIN_DECORATION_SALT = 81427` and `MELON_DECORATION_SALT = 91541`. Placement only on GrassBlock/Dirt, air above, above sea, not in hydrology water, not desert/snowy.
 
-| | Pumpkin | Melon |
-|---|---|---|
-| Biomes | plains, rarer forest | forest, humid plains, plains near deterministic water |
-| Planned patches (8×2048) | 7582 | 2434 |
-| Avg planned size | 1.968 | 2.035 |
-| ~patches / suitable chunk | 0.085 (≈1/12) | forest-primary, rarer than pumpkin |
-| Placed in 13×13×4-seed grid | 75 (69 plains / 6 forest) | 43 (12 plains / 31 forest) |
-| Underwater | 0 | 0 |
+Owner manual QA found the original frequency too high. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (pumpkin biome chance, and melon biome chance **plus** the +0.10 near-water bonus). The 32-block lattice, salts, jitter, `fruitCount`, and fruit offsets are unchanged. Surviving patches are a deterministic subset of the old population. `WORLDGEN_VERSION` stays 3; already-generated chunks keep stored gourds.
+
+Sampler `npm run sample:worldgen-v3` (8 seeds × 2048, same window):
+
+| | Pumpkin before | Pumpkin after | Melon before | Melon after |
+|---|---:|---:|---:|---:|
+| Planned patches | 7582 | 1896 | 2434 | 610 |
+| Planned fruits | 14925 | 3718 | 4954 | 1248 |
+| Avg planned size | 1.968 | 1.961 | 2.035 | 2.046 |
+| ~patches / suitable chunk | 0.0851 | 0.0213 | 0.0273 | 0.0069 |
+| Placed in 13×13×4-seed grid | 75 (69 plains / 6 forest) | 12 (11 plains / 1 forest) | 43 (12 plains / 31 forest) | 18 (4 plains / 14 forest) |
+| Underwater | 0 | 0 | 0 | 0 |
+
+Patch-count reduction: pumpkin 7582/1896 ≈ **4.00×**, melon 2434/610 ≈ **3.99×**. Biome mix stays plains-heavy pumpkins and forest-leaning melons.
 
 Decorator runs after sugar cane. Tree/plant/ore RNG namespaces are unchanged. Staged `beginGenerate`/`advanceGenerate` matches `generate()`.
 

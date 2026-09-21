@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: Wild gourd density 0.25 — 2026-09-21
+
+- Owner manual QA found wild pumpkin/melon patches too dense. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (including melon near-water bonus). Lattice stays 32, salts and fruitCount unchanged. Surviving patches are a deterministic subset of the old set.
+- Sampler 8×2048: pumpkin 7582→1896 patches, melon 2434→610; avg size still ~2. `WORLDGEN_VERSION` stays 3.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
 ## Последний проход: Worldgen V3 audit harden — border / minecart / migration — 2026-09-21
 
 - Follow-up before merge of Worldgen V3. Gameplay use (bucket, flint, farming, legacy blocks, mining, signs) cannot mutate scenery outside ±10000. Minecart enter/dismount keeps the full player AABB inside the playable volume.

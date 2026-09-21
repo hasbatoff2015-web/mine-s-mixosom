@@ -1,5 +1,9 @@
 # Тестирование
 
+## 2026-09-21 Wild gourd density 0.25
+
+`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434).
+
 ## 2026-09-21 Worldgen V3 audit harden
 
 Report: `reports/2026-09-21_worldgen-v3-border-migration-harden.md`.

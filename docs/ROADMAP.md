@@ -5,6 +5,7 @@
 - [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
 - [x] Keep climate biomes; `hydrologyRegion` is the mask label; `waterBiome` is wet-only none/lake/ocean.
 - [x] Wild pumpkin/melon patches with separate RNG salts; no stems/farmland.
+- [x] Gourd patch acceptance scaled to 25% of the original frequency (`GOURD_PATCH_DENSITY = 0.25`); 32-block lattice and patch size unchanged.
 - [x] Migration A: V2 snapshots use V3 generator; modifications preserved; next save writes `WORLDGEN_VERSION = 3`.
 - [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
 - [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.

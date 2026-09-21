@@ -5,6 +5,7 @@ import { Chunk } from '../src/world/Chunk';
 import { ORE_RULES, TerrainGenerator } from '../src/world/Generator';
 import {
   GOURD_PATCH_CELL,
+  GOURD_PATCH_DENSITY,
   MELON_DECORATION_SALT,
   PUMPKIN_DECORATION_SALT,
   planGourdPatch,
@@ -405,6 +406,44 @@ describe('Worldgen V3 hydrology, gourds and V2 migration', () => {
     const second = generate(ba, cx, cz);
     expect([...first.blocks]).toEqual([...second.blocks]);
     expect(GOURD_PATCH_CELL).toBe(32);
+  });
+
+  it('accepts a 0.25 subset of unscaled gourd patches without moving survivors', () => {
+    expect(GOURD_PATCH_DENSITY).toBe(0.25);
+    expect(GOURD_PATCH_CELL).toBe(32);
+    expect(PUMPKIN_DECORATION_SALT).toBe(81427);
+    expect(MELON_DECORATION_SALT).toBe(91541);
+    const counts = {
+      pumpkin: { unscaled: 0, scaled: 0 },
+      melon: { unscaled: 0, scaled: 0 },
+    };
+    for (const seed of SEEDS) {
+      const generator = new TerrainGenerator(seed);
+      for (let cellZ = -32; cellZ < 32; cellZ += 1) {
+        for (let cellX = -32; cellX < 32; cellX += 1) {
+          for (const [kind, salt] of [
+            ['pumpkin', PUMPKIN_DECORATION_SALT],
+            ['melon', MELON_DECORATION_SALT],
+          ] as const) {
+            const unscaled = planGourdPatch(generator, salt, kind, cellX, cellZ, 1);
+            const scaled = planGourdPatch(generator, salt, kind, cellX, cellZ);
+            if (unscaled) counts[kind].unscaled += 1;
+            if (scaled) {
+              counts[kind].scaled += 1;
+              expect(unscaled).toEqual(scaled);
+            }
+          }
+        }
+      }
+    }
+    expect(counts.pumpkin.unscaled).toBeGreaterThan(100);
+    expect(counts.melon.unscaled).toBeGreaterThan(40);
+    const pumpkinRatio = counts.pumpkin.scaled / counts.pumpkin.unscaled;
+    const melonRatio = counts.melon.scaled / counts.melon.unscaled;
+    expect(pumpkinRatio).toBeGreaterThanOrEqual(0.20);
+    expect(pumpkinRatio).toBeLessThanOrEqual(0.30);
+    expect(melonRatio).toBeGreaterThanOrEqual(0.20);
+    expect(melonRatio).toBeLessThanOrEqual(0.30);
   });
 
   it('migrates a V2 snapshot onto V3 terrain while keeping modifications', () => {

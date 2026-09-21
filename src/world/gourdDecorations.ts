@@ -7,6 +7,8 @@ import { hashCoords, random01 } from './noise';
 export const PUMPKIN_DECORATION_SALT = 81427;
 export const MELON_DECORATION_SALT = 91541;
 export const GOURD_PATCH_CELL = 32;
+/** Owner QA found the original 32-cell lattice too dense. Final spawn chance is scaled by this. */
+export const GOURD_PATCH_DENSITY = 0.25;
 const PATCH_REACH = 6;
 const WATER_SAMPLE_RADIUS = 10;
 const WATER_SAMPLE_STEP = 4;
@@ -71,6 +73,7 @@ export function planGourdPatch(
   kind: GourdKind,
   cellX: number,
   cellZ: number,
+  density = GOURD_PATCH_DENSITY,
 ): GourdPatch | undefined {
   const spawnRoll = random01(generator.numericSeed + salt, cellX, 1, cellZ);
   const jitterX = random01(generator.numericSeed + salt, cellX, 2, cellZ);
@@ -80,9 +83,10 @@ export function planGourdPatch(
   const cz = cellZ * GOURD_PATCH_CELL + 2 + Math.floor(jitterZ * (GOURD_PATCH_CELL - 4));
   const column = generator.columnAt(cx, cz);
   if (column.height <= SEA_LEVEL || column.hydrologyRegion !== 'none') return undefined;
-  const chance = kind === 'pumpkin'
+  const baseChance = kind === 'pumpkin'
     ? pumpkinChance(column.biome)
     : melonChance(column, nearDeterministicWater(generator, cx, cz));
+  const chance = baseChance * density;
   if (chance <= 0 || spawnRoll >= chance) return undefined;
   const count = fruitCount(countRoll);
   const seeds: number[] = [];
