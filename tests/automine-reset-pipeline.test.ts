@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { BlockId } from '../src/blocks';
-import { chunkKey, MESH_SECTION_HEIGHT } from '../src/core/constants';
+import { CHUNK_SIZE, chunkKey, MESH_SECTION_HEIGHT } from '../src/core/constants';
 import { WorldRenderer } from '../src/rendering/WorldRenderer';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { ChunkMesher } from '../src/rendering/ChunkMesher';
@@ -52,6 +52,34 @@ function markLit(world: VoxelWorld, minCx: number, maxCx: number, minCz: number,
   for (let cz = minCz; cz <= maxCz; cz += 1) {
     for (let cx = minCx; cx <= maxCx; cx += 1) {
       const chunk = world.getChunk(cx, cz)!;
+      chunk.skyReady = true;
+      chunk.skyLateralReady = true;
+      chunk.blockLightReady = true;
+      chunk.dirty = true;
+    }
+  }
+}
+
+/** Replace V3 hydrology water in a Y band so remesh timing measures AutoMine, not ocean faces. */
+function flattenSectionBand(
+  world: VoxelWorld,
+  minCx: number,
+  maxCx: number,
+  minCz: number,
+  maxCz: number,
+  minY: number,
+  maxY: number,
+): void {
+  for (let cz = minCz; cz <= maxCz; cz += 1) {
+    for (let cx = minCx; cx <= maxCx; cx += 1) {
+      const chunk = world.getChunk(cx, cz)!;
+      for (let z = 0; z < CHUNK_SIZE; z += 1) {
+        for (let x = 0; x < CHUNK_SIZE; x += 1) {
+          for (let y = minY; y <= maxY; y += 1) {
+            chunk.set(x, y, z, BlockId.Stone);
+          }
+        }
+      }
       chunk.skyReady = true;
       chunk.skyLateralReady = true;
       chunk.blockLightReady = true;
@@ -115,6 +143,7 @@ describe('AutoMine reset pipeline', () => {
     const client = new VoxelWorld('automine-pipeline-15-client');
     client.deferredLighting = true;
     markLit(client, -1, 2, -1, 2);
+    flattenSectionBand(client, -1, 2, -1, 2, 48, 79);
     const renderer = new WorldRenderer(client, atlasStub);
     renderer.rebuildDirty(16, 80, 16, 16, { requireNeighborLight: false, allowPendingLighting: true });
 

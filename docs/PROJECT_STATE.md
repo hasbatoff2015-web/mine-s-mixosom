@@ -4,6 +4,7 @@
 
 - Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.
 - `Game.ts` слился автоматически: сохранены и `syncLocalCombatUse` / `combat.swordBlocking`, и `WorldBorderRenderer` / `gameplayMayMutateBlock` / `relocateStandingPoseInsidePlayableWorld`.
+- Restore of an already-inside schematic/Anarchy spawn keeps the saved Y; outside poses still relocate. AutoMine 15³ remesh fixture flattens the sea-level Y band so V3 water faces do not inflate the existing 40 ms bound.
 - Конфликты только в docs: сохранены оба прохода (Worldgen V3 + sword blocking).
 - OWNER MANUAL QA (до этого sync, владелец): Worldgen V3 generation и финальная density `GOURD_PATCH_DENSITY = 0.25` проверены в игре; результат хороший. Two-client border QA и прочие edge cases не утверждаются.
 - Подробности: `docs/reports/2026-09-21_merge-main-into-worldgen-v3.md`.

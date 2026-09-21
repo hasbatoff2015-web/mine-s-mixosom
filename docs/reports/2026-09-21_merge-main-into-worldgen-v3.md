@@ -38,7 +38,14 @@ This is a merge, not a refactor. Client still owns intent; server still owns res
 
 ## Tests
 
-Targeted worldgen/border and sword/combat suites, then the full merge gate. Results are recorded in the merge-task report after the commands run.
+Targeted worldgen/border: PASS (115). Targeted sword/combat: PASS (73).
+
+After merging main, two feature-vs-main failures were real integration issues (not pre-existing on `d2d45e6`):
+
+- `import-schematic`: restore kept calling `relocateStandingPoseInsidePlayableWorld` on an already-inside schematic spawn, which generated V3 terrain and lifted Y 65→69. Restore now keeps canonical saved spawn when XZ is already inside the playable AABB; outside poses still relocate. Stored players still relocate on login.
+- `automine-reset-pipeline`: 15³ remesh at Y 50–64 included V3 ocean faces and exceeded the existing 40 ms bound. The test now flattens that Y band with `chunk.set` (same isolation as fire-contact V3 water lighting) without raising the bound.
+
+Other full-suite failures that also fail on current `origin/main` (arrow-visual geometry reuse, fence jump, PIL menu icon, lighting settle, SFX count 27 vs 26, anarchy-plugins listenerCount) are pre-existing host/main baseline, not introduced by this merge.
 
 ## Visual QA
 

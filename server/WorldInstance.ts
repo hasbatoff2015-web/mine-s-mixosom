@@ -907,7 +907,11 @@ export class WorldInstance {
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
-      this.spawn = this.relocatePose(spawn[0], spawn[1], spawn[2]);
+      // Canonical saved spawn stays put when already inside the playable AABB.
+      // Relocate would generate V3 terrain and lift Y out of schematic solids.
+      this.spawn = isPlayerCenterInsidePlayableWorld(spawn[0], spawn[2])
+        ? [spawn[0], spawn[1], spawn[2]]
+        : this.relocatePose(spawn[0], spawn[1], spawn[2]);
       this.storedPlayers = existing.players ?? {};
       for (const stored of Object.values(this.storedPlayers)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
