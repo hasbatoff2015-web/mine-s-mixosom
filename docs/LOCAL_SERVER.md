@@ -22,6 +22,8 @@ npm install
 npm run dev:server
 ```
 
+`npm run dev:server` with no extra env is Anarchy: `SERVER_MODE=anarchy`, world `anarchy`, port **2567**.
+
 Default bind: `ws://127.0.0.1:2567` (Vite client stays on **4173**).
 
 Console should include:
@@ -29,6 +31,7 @@ Console should include:
 ```
 [server] started
 Frontier Cubes Server listening on ws://127.0.0.1:2567
+[server] mode: anarchy
 [server] world loaded: anarchy
 Anarchy server ready
 ```
@@ -39,20 +42,67 @@ Configurable env (never bake a machine-specific path or public hostname into gam
 | --- | --- | --- |
 | `HOST` / `FC_HOST` | `127.0.0.1` | Bind address |
 | `PORT` / `FC_PORT` | `2567` | Bind port |
-| `WORLD` / `FC_WORLD` | `anarchy` | World id |
-| `WORLD_PATH` / `FC_WORLD_PATH` | `server/data/worlds` | Relative directory for worlds |
+| `SERVER_MODE` / `FC_SERVER_MODE` | `anarchy` | `anarchy`, `survival`, or `peaceful`. Blank stays Anarchy. Any other value refuses to boot |
+| `WORLD` / `FC_WORLD` | same as `SERVER_MODE` | World id. Unset follows the mode so the three processes do not share a folder |
+| `WORLD_PATH` / `FC_WORLD_PATH` | `server/data/worlds` | Parent directory for worlds |
 | `WORLD_SEED` | `anarchy-spawn-v1` | Used only when creating a **new** world |
 | `TICK_RATE` | `20` | Simulation ticks per second |
 | `CHUNK_VIEW_RADIUS` | `4` | Chunk interest radius |
 | `MAX_PLAYERS` | `300` | Join cap |
-| `SERVER_NAME` | `Frontier Cubes Anarchy` | Status name |
+| `SERVER_NAME` | mode name (`Frontier Cubes Anarchy` / `Survival` / `Peaceful`) | Status name |
 | `PERSIST_INTERVAL_MS` | `30000` | Periodic save |
 | `FC_PLUGIN_DIR` / `PLUGIN_DIR` | `server/plugins` | Live plugin directory (`npm run dev:server`) |
 | `FC_EXAMPLE_PLUGIN` | unset | `1` / `true` loads bundled `/hello` without copying |
 | `FC_DEBUG_TICK` | unset | `1` appends kernel order to the 200-tick log |
 | `FC_DEBUG_TICK_MS` | unset | `1` warns when a tick's wall time ≥ 16 ms (DEV hitch log, not a profiler) |
 
-HTTP `GET http://127.0.0.1:2567/status` returns `{ ready, online, maxPlayers, world, name }`.
+HTTP `GET http://127.0.0.1:2567/status` returns `{ name, world, mode, ready, online, maxPlayers, tickRate }`.
+
+## Three local servers
+
+The same `server/` process runs every mode. Start each in its own terminal. The scripts set mode, port, and world together and work in Windows PowerShell and Unix shells:
+
+```bash
+npm run dev:server:anarchy
+npm run dev:server:survival
+npm run dev:server:peaceful
+```
+
+| Script | Mode | Port | World directory |
+| --- | --- | --- | --- |
+| `dev:server` / `dev:server:anarchy` | anarchy | 2567 | `server/data/worlds/anarchy/` |
+| `dev:server:survival` | survival | 2568 | `server/data/worlds/survival/` |
+| `dev:server:peaceful` | peaceful | 2569 | `server/data/worlds/peaceful/` |
+
+Rules:
+
+| Mode | PvP | Explosions |
+| --- | --- | --- |
+| anarchy | allowed | allowed (current TNT, powerful TNT, destructive TNT, TNT minecart, creeper) |
+| survival | allowed | blast cancelled before the world changes |
+| peaceful | player → player denied | blast cancelled before the world changes |
+
+Mob hits, fall, lava, and the rest of the simulation stay. The client is not the authority for these rules. Builtin plugins are the same set on every mode. Their JSON lives in that world's `plugin-data/`.
+
+One process owns one world directory. `initialize` creates `server/data/worlds/<worldId>/.instance.lock`. A second process that opens the same directory stops before it reads or writes the JSON store. Stop removes the lock. A lock whose pid is already dead is taken over on the next start.
+
+Client (Vite still on **4173**):
+
+```text
+http://localhost:4173/?server=anarchy
+http://localhost:4173/?server=survival
+http://localhost:4173/?server=peaceful
+```
+
+`?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still override that preset. The menu button **Анархия PvP** uses the same resolver, so `?server=survival` points that connect button at Survival. There is no server browser. The session token for the default Anarchy URL stays `fc.anarchy.sessionToken`. Any other URL uses `fc.session.<ws-url>`, so a Survival tab does not resume an Anarchy player.
+
+Equivalent env, if you are not using the npm scripts:
+
+```text
+SERVER_MODE=anarchy PORT=2567 WORLD=anarchy
+SERVER_MODE=survival PORT=2568 WORLD=survival
+SERVER_MODE=peaceful PORT=2569 WORLD=peaceful
+```
 
 The server process must compile and boot **without Three.js, DOM, or the Vite client**. Authoritative typecheck: `npm run typecheck:server`. Headless acceptance: `npm run smoke:server`. Import scan: `npm run check:boundaries` (server must not import `src/rendering/**`, `src/core/Game`, `three`).
 
@@ -76,9 +126,7 @@ npm run dev:anarchy
 2. **Играть онлайн** → **Анархия PvP** → **Подключиться**.
 3. If the server is down, the menu stays up and shows **Сервер недоступен**. There is no silent IndexedDB fallback.
 
-**Выживание PvP** remains unavailable.
-
-Query overrides: `?anarchyUrl=ws://127.0.0.1:2567` or `?anarchyHost=` / `?anarchyPort=`.
+Query overrides: `?server=anarchy|survival|peaceful`, `?anarchyUrl=ws://127.0.0.1:2567`, or `?anarchyHost=` / `?anarchyPort=`.
 
 `PROTOCOL_VERSION` is **3**. Older clients (v1/v2) fail join (`unsupported protocol`). Rebuild both processes after pulling this branch. World files in `server/data/worlds/anarchy/` are unchanged. Targeted Online actions require `targetBlockId`.
 
@@ -98,10 +146,14 @@ Runtime files (gitignored):
 
 ```
 server/data/worlds/anarchy/
+  .instance.lock # pid of the one process that owns this directory
   meta.json      # seed, spawn, timestamps
   world.json     # modifications, blockStates, chests, furnaces, droppedItems, mobs, minecarts, fallingBlocks, redstone
   players.json   # last known player snapshots (inventory, survival, cursor)
+  plugin-data/   # permissions, claims, economy, auction, … for this world only
 ```
+
+Survival and Peaceful use `server/data/worlds/survival/` and `server/data/worlds/peaceful/` with the same files. Anarchy JSON is not shared with them.
 
 Logical gameplay state is `WorldSnapshot` (`src/save/types.ts`). `FsWorldStore` maps that snapshot onto the three files. Do not treat `WorldDiskState` as a second independent format.
 
@@ -125,7 +177,7 @@ CLIENT MUST NOT: write authoritative voxels, decide loot/craft/damage/death/expl
 
 Local player: input is sent and **applied locally immediately** at 20 TPS. Server still runs the real `PlayerController`. `player_state` carries `tick` (authoritative simulation checkpoint), `physicsTicks` (latest-input ticks in this flush), and `inputSeq` (latest movement **state**, not a tick id). The client compares the snapshot to last accepted pose + `simTicks` of that latest input. If xz/y match, the live player is not touched. Only a real pose mismatch restores the snapshot and replays remaining predicted ticks. Do not treat `history[inputSeq]` as the checkpoint: the client may predict two seqs while the server simulates one latest-input tick. The server outer loop uses an absolute 50 ms slot so localhost stays ~20 snapshots/s. Apply happens at the next 20 TPS tick, not in the WebSocket callback. Camera look stays on `InputManager`; snapshots do not overwrite yaw/pitch. Hard snap only if the correction ≥ 6 blocks. Combat/use/mining holds are `input.mining` / `input.use`; break/place remain explicit requests that the server re-validates (reach, look, mining progress).
 
-**One tab.** The session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
+**One tab.** The default Anarchy session token lives in `sessionStorage` (`fc.anarchy.sessionToken`). Another server URL stores `fc.session.<ws-url>`. Duplicating a tab copies it and resumes the same player. Resume now kicks the old socket (`session_taken`). Movement diagnostics are invalid if a second tab with the same token is still connected. F3 `sess socks=` must be `1`.
 
 Positional correction dump: `http://localhost:4173/?corrDiag=1`. The first rewind logs `[corrDiag:first]`. PHYSICS now prints `lastAckedServerTick`, `simTicks`, `extraAssignSite`, `pendingSlotOverwrites`, and APPLIED INPUT TIMELINE (per server physics tick). `extra` is `simTicks`, not `seqGap`. In-game `/predsim` prints lockstep xyz at 1/2/3/10/20 ticks.
 
@@ -210,9 +262,17 @@ Restart the server after import. Do not commit `.schem` or `server/data/worlds/*
 
 This Cloud checkout already ran that bake: spawn `53.5, 68.01, 70.5`, 63 chunks / 361576 modified cells. Other machines still need the local `.schem` + the same CLI if their `server/data/worlds/anarchy` is empty or procedural.
 
-## Future VPS migration
+## Future production layout (not deployed here)
 
-Take the same Node process. Change `HOST`/`PORT`/`WORLD_PATH` (and later TLS/reverse proxy). Do not rewrite world simulation. There is no Docker requirement in this pass.
+The local scheme is the production shape later: three processes of this same server, each with its own world directory.
+
+| Mode | Port |
+| --- | --- |
+| Anarchy | 2567 |
+| Survival | 2568 |
+| Peaceful | 2569 |
+
+That can be one machine or several. This pass does not add Docker, Nginx, Caddy, TLS, WSS, a domain, systemd, PM2, Redis, or PostgreSQL. Take the same Node process and change `HOST` / `PORT` / `WORLD` / `WORLD_PATH` when that deployment work starts. Do not rewrite world simulation.
 
 ## Gameplay on the server
 

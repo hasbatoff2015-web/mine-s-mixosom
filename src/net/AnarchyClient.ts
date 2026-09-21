@@ -1,9 +1,11 @@
 import {
   DEFAULT_SERVER_HOST,
   DEFAULT_SERVER_PORT,
+  LOCAL_SERVER_PRESETS,
   PROTOCOL_VERSION,
   defaultStatusUrl,
   defaultWsUrl,
+  type LocalServerName,
 } from '../../shared/config';
 import {
   decodeJson,
@@ -20,23 +22,46 @@ import { sanitizePlayerName } from '../../shared/playerName';
 
 const SESSION_KEY = 'fc.anarchy.sessionToken';
 
-export function anarchyClientUrl(): string {
-  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
-  const override = params?.get('anarchyUrl')
-    ?? (typeof import.meta !== 'undefined' ? import.meta.env?.VITE_ANARCHY_URL as string | undefined : undefined);
-  if (override) return override;
-  const host = params?.get('anarchyHost') ?? DEFAULT_SERVER_HOST;
-  const port = Number(params?.get('anarchyPort') ?? DEFAULT_SERVER_PORT);
-  return defaultWsUrl(host, Number.isFinite(port) ? port : DEFAULT_SERVER_PORT);
+function readConnectParams(search?: string): URLSearchParams | null {
+  if (search !== undefined) return new URLSearchParams(search);
+  if (typeof location === 'undefined') return null;
+  return new URLSearchParams(location.search);
 }
 
-export function anarchyStatusUrl(): string {
-  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
+function endpointFromParams(params: URLSearchParams | null): { host: string; port: number } {
+  const named = params?.get('server')?.trim().toLowerCase();
+  const presetPort = named && named in LOCAL_SERVER_PRESETS
+    ? LOCAL_SERVER_PRESETS[named as LocalServerName].port
+    : undefined;
+  const host = params?.get('anarchyHost') ?? DEFAULT_SERVER_HOST;
+  const portRaw = params?.get('anarchyPort');
+  const parsed = portRaw == null || portRaw === '' ? undefined : Number(portRaw);
+  const port = parsed !== undefined && Number.isFinite(parsed) ? parsed : (presetPort ?? DEFAULT_SERVER_PORT);
+  return { host, port };
+}
+
+export function anarchyClientUrl(search?: string): string {
+  const params = readConnectParams(search);
+  const override = params?.get('anarchyUrl')
+    ?? (search === undefined && typeof import.meta !== 'undefined'
+      ? import.meta.env?.VITE_ANARCHY_URL as string | undefined
+      : undefined);
+  if (override) return override;
+  const endpoint = endpointFromParams(params);
+  return defaultWsUrl(endpoint.host, endpoint.port);
+}
+
+export function anarchyStatusUrl(search?: string): string {
+  const params = readConnectParams(search);
   const override = params?.get('anarchyStatus');
   if (override) return override;
-  const host = params?.get('anarchyHost') ?? DEFAULT_SERVER_HOST;
-  const port = Number(params?.get('anarchyPort') ?? DEFAULT_SERVER_PORT);
-  return defaultStatusUrl(host, Number.isFinite(port) ? port : DEFAULT_SERVER_PORT);
+  const endpoint = endpointFromParams(params);
+  return defaultStatusUrl(endpoint.host, endpoint.port);
+}
+
+function sessionStorageKey(): string {
+  const url = anarchyClientUrl();
+  return url === defaultWsUrl() ? SESSION_KEY : `fc.session.${url}`;
 }
 
 export type AnarchyMessageHandler = (message: ServerMessage) => void;
@@ -86,7 +111,7 @@ export class AnarchyClient {
       };
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
-        const sessionToken = sessionStorage.getItem(SESSION_KEY) ?? undefined;
+        const sessionToken = sessionStorage.getItem(sessionStorageKey()) ?? undefined;
         this.send(buildAnarchyJoinMessage(name, sessionToken, appearance));
       });
       socket.addEventListener('message', (event) => {
@@ -110,7 +135,7 @@ export class AnarchyClient {
           window.clearTimeout(timeout);
           this.lastWelcome = payload;
           this.state = 'connected';
-          sessionStorage.setItem(SESSION_KEY, payload.sessionToken);
+          sessionStorage.setItem(sessionStorageKey(), payload.sessionToken);
           this.startPing();
           if (typeof console !== 'undefined') {
             console.info(

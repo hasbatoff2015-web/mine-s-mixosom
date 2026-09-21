@@ -83,6 +83,7 @@ import {
   type ActionEye,
 } from '../src/gameplay/actionValidation';
 import type { EventBus } from './events';
+import { explosionsAllowed, pvpAllowed, type ServerMode } from './config';
 import { bowDebug } from './log';
 import type { WorldSnapshot } from '../src/save/types';
 import { combatPoseAtTick, type CombatPoseSample, type RewoundCombatPose } from './combatPoseHistory';
@@ -197,6 +198,8 @@ export class ServerGameplay {
   readonly farming: FarmingSystem;
   readonly explosions = new ExplosionQueue();
   readonly random = systemRandomFn;
+  /** Authoritative rules for this process. Default keeps existing Anarchy behavior. */
+  serverMode: ServerMode = 'anarchy';
   /** Regular /claim volumes; block-claims are filtered by TNT profile instead. */
   loadRegularClaimVolumes?: () => readonly SelectionVolume[];
   /** Extra per-voxel explosion deny (active world-event area). */
@@ -1595,6 +1598,7 @@ export class ServerGameplay {
     x: number, y: number, z: number, radius: number, power: number, blockId?: number,
   ): void {
     const event = this.events.createExplosion(x, y, z, radius, power);
+    if (!explosionsAllowed(this.serverMode)) event.cancel();
     this.events.emit('explosion', event);
     if (event.cancelled) return;
     const profile = getTntProfile(blockId);
@@ -1770,6 +1774,7 @@ export class ServerGameplay {
   ): 'hit' | 'immune' | 'blocked' {
     if (victim.gamemode !== 'survival' || victim.survival.dead) return 'immune';
     const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
+    if (extras.attackerId && !pvpAllowed(this.serverMode)) event.cancel();
     this.events.emit('playerDamage', event);
     if (event.cancelled) return 'blocked';
     const result = victim.survival.damage(amount, cause, {

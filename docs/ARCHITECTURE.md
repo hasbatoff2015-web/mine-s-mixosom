@@ -1,5 +1,13 @@
 # Архитектура
 
+## Local server modes — 2026-09-21
+
+One codebase, one Node process, one world directory. `loadServerConfig` reads `SERVER_MODE` / `FC_SERVER_MODE` into `ServerConfig.serverMode` (`anarchy` | `survival` | `peaceful`). Unset stays `anarchy`. An unknown non-blank value throws. `WORLD` still selects the directory; when it is unset the world id is the mode, so three processes do not share `server/data/worlds/anarchy`.
+
+`WorldInstance.serverMode` and `ServerGameplay.serverMode` are the only gameplay reads. `hurtPlayerResult` cancels player-vs-player damage when `pvpAllowed` is false (Peaceful). Mob hits and fall/lava stay on their existing paths. `enqueueExplosion` cancels the blast when `explosionsAllowed` is false (Survival, Peaceful) before `ExplosionQueue` edits voxels. Claims and world-event listeners still see the same `explosion` / `playerDamage` events. Builtin plugins are not forked per mode. `plugin-data` remains `dataDir/<worldId>/plugin-data`.
+
+`acquireWorldDirectoryLock` writes `<worldDir>/.instance.lock` during `initialize` and removes it in `stop`. A live pid that already owns that directory fails the second `initialize`. HTTP `/status` adds `mode`. Local presets (`shared/config.ts` `LOCAL_SERVER_PRESETS`) are 2567 / 2568 / 2569 for the client query `?server=`. `PORT` on the process is still the bind. Production reverse proxy, TLS, and process supervision are not part of this layout.
+
 ## Always-run / crouch / KeyC camera — 2026-09-20
 
 Ground locomotion still lives in `PlayerController.updateHorizontalVelocity`. Default WASD uses literal `PLAYER_MOVE_SPEED = 7`. Crouch uses literal `SNEAK_SPEED = 2` when `this.sneaking`. Wish is hypot-normalized before scaling, so W+A cannot exceed the axis speed. Jump does not check sneak. `WALK_SPEED` remains the Java 1.9 walk constant for minecarts (`MINECART_MAX_SPEED = WALK_SPEED × 1.5`).
