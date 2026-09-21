@@ -4366,6 +4366,21 @@ export class Game {
     return performance.now();
   }
 
+  /**
+   * Shared SP / Anarchy local combat use. Anarchy used to skip this: movement
+   * already slowed from `input.using`, but `combat.swordBlocking` stayed false
+   * so first- and third-person blocking overlays never ran.
+   */
+  private syncLocalCombatUse(
+    session: GameSession,
+    selectedItemId: string | undefined,
+    gameplayAllowed: boolean,
+  ): void {
+    session.combat.setHeldItem(selectedItemId);
+    session.combat.setOffhand(session.inventory.offhand?.itemId);
+    session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
+  }
+
   private tickOnline(session: GameSession): void {
     const online = session.online;
     if (!online) return;
@@ -4441,7 +4456,7 @@ export class Game {
         session.player.position.z - prevZ,
       ));
     }
-    session.combat.setHeldItem(selected?.itemId);
+    this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
     if (gameplayAllowed) this.updateTargetAndActions();
@@ -4545,12 +4560,9 @@ export class Game {
           exitedRest = true;
         }
         const selected = this.selectedStack();
-        session.combat.setHeldItem(selected?.itemId);
-        session.combat.setOffhand(session.inventory.offhand?.itemId);
+        this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
         this.firstPerson?.setHeldItems(selected?.itemId);
         simMark = this.addSimPart('combat', simMark);
-
-        session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
         const drawingBow = session.bowUseTicks > 0;
         const movement = movementDuringItemUse(
           movementBefore,

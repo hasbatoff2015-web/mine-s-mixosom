@@ -145,8 +145,14 @@ describe('player visual animator', () => {
     const attack = animator.advance(0.12, idle);
     expect(attack.swingProgress).toBeLessThan(1);
     expect(attack.rightArmX).toBeGreaterThan(0.5);
-    const block = animator.advance(1 / 60, { ...idle, swordBlocking: true });
+    const raising = animator.advance(0.05, { ...idle, swordBlocking: true });
+    expect(raising.blockingProgress).toBeCloseTo(0.5);
+    expect(raising.rightArmY).toBeGreaterThan(-0.62);
+    expect(raising.rightArmY).toBeLessThan(0);
+    const block = animator.advance(0.1, { ...idle, swordBlocking: true });
+    expect(block.blockingProgress).toBe(1);
     expect(block.rightArmY).toBeCloseTo(-0.62);
+    animator.advance(0.1, idle);
     const eat = animator.advance(1 / 60, { ...idle, foodUseProgress: 0.5 });
     expect(eat.rightArmX).toBeGreaterThan(1);
     const bow = animator.advance(1 / 60, { ...idle, bowCharge: 0.8, viewPitch: 0.2 });

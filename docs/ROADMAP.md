@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-21: Merge origin/main into Worldgen V3
+
+- [x] Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99) into `cursor/worldgen-v3-water-gourds-border-74e7`.
+- [x] Keep Worldgen V3 hydrology/border/gourds and current-main `syncLocalCombatUse` / sword-blocking visuals.
+
 ## 2026-09-21: Worldgen V3 — hydrology, gourds, playable border
 
 - [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
@@ -10,7 +15,22 @@
 - [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
 - [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.
 - [x] Audit harden: bucket/flint/farming/legacy use, mining, signs, minecart AABB enter/dismount, event journal one-shot rebase, seabed materials.
-- [ ] Owner live QA of large seas, gourd patches, underwater floors, and border fade/collision on Anarchy.
+- [x] Owner live QA of Worldgen V3 generation and reduced wild gourd density (0.25); owner reports the result looks good.
+- [ ] Owner live QA of underwater floors and border fade/collision on Anarchy (not claimed).
+
+## 2026-09-21: Merge origin/main into sword-blocking
+
+- [x] Semantic merge of current `main` (`cd8ecf3`) into `cursor/sword-blocking-animation-7e91`.
+- [x] Keep sword-use visual animation and main world-events / always-run / KeyC camera.
+
+## 2026-09-20: Sword blocking animation
+
+- [x] Reuse existing `CombatSystem.swordBlocking` / RMB use-item for first- and third-person blocking poses.
+- [x] Interpolate idle → block → idle (0.1 s) as an overlay on `/moveitems` and first-person idle calibration.
+- [x] Replicate blocking to remote players via existing `presentation.swordBlocking`.
+- [x] Anarchy `tickOnline` calls the same `syncLocalCombatUse` as SP so local FP/TP `swordBlocking` is actually true while RMB is held.
+- [x] Live QA: first-person and local third-person blocking pose visible; live two-client `presentation.swordBlocking` true/false on the running Anarchy server.
+- [x] Third-person RMB uses the same arm-child held-item attachment as LMB swing (`/moveitems` local pose unchanged).
 
 ## 2026-09-20: Merge origin/main into always-run / KeyC
 

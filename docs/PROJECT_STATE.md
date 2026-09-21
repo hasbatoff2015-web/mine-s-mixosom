@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Merge origin/main into Worldgen V3 — 2026-09-21
+
+- Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.
+- `Game.ts` слился автоматически: сохранены и `syncLocalCombatUse` / `combat.swordBlocking`, и `WorldBorderRenderer` / `gameplayMayMutateBlock` / `relocateStandingPoseInsidePlayableWorld`.
+- Конфликты только в docs: сохранены оба прохода (Worldgen V3 + sword blocking).
+- OWNER MANUAL QA (до этого sync, владелец): Worldgen V3 generation и финальная density `GOURD_PATCH_DENSITY = 0.25` проверены в игре; результат хороший. Two-client border QA и прочие edge cases не утверждаются.
+- Подробности: `docs/reports/2026-09-21_merge-main-into-worldgen-v3.md`.
+
 ## Последний проход: Wild gourd density 0.25 — 2026-09-21
 
 - Owner manual QA found wild pumpkin/melon patches too dense. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (including melon near-water bonus). Lattice stays 32, salts and fruitCount unchanged. Surviving patches are a deterministic subset of the old set.
@@ -20,6 +28,34 @@
 - Wild Pumpkin/Melon use existing block IDs and separate decoration salts. Staged `generate` matches monolithic.
 - Playable world is `-10000 <= x,z < 10000` (`src/world/worldBorder.ts`). Shared AABB collision on client prediction and server. `WorldBorderRenderer` draws four translucent red planes; scenery chunks beyond the plane still stream with normal view distance.
 - Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+## Последний проход: Merge origin/main into sword-blocking — 2026-09-21
+
+- Semantic merge актуального `origin/main` (`cd8ecf3`, world events + always-run/KeyC) в `cursor/sword-blocking-animation-7e91`.
+- Код (`Game.ts`, `PlayerVisual`, InputManager) слился автоматически. Конфликты только в docs: сохранены оба прохода.
+- Sword-use остаётся render-only; `PLAYER_MOVE_SPEED = 7` / Shift crouch / KeyC camera из main не трогались.
+
+## Последний проход: Sword blocking — меч следует за рукой — 2026-09-20
+
+- Third-person ПКМ больше не задаёт отдельный local/world TRS меча. Как при ЛКМ swing: меч остаётся child `rightArm` → `heldItem` с `/moveitems` калибровкой; поднимается только рука.
+- `THIRD_PERSON_HELD_ITEM_DEFAULTS.sword` не менялся. First-person overlay на viewmodel сохранён (рука в FP скрыта).
+- Live QA: `?qaPlayer=1` + Anarchy FP/TP-front — меч следует за поднятой рукой; два WS-клиента синхронизируют `swordBlocking`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+## Последний проход: Sword blocking animation live fix — 2026-09-20
+
+- Живой Anarchy: замедление ПКМ работало, а поза меча не менялась. Причина: `tickOnline` слал `use` и тормозил из `input.using`, но не вызывал `combat.updateUse`, поэтому локальный `swordBlocking` оставался `false`. Overlay в `FirstPersonRenderer` / `PlayerVisual` не запускался.
+- И SP, и Anarchy теперь синхронизируют held/use через `Game.syncLocalCombatUse` до `setHeldItems`. Transform overlay (base calibration + extra TRS) не переписывался — он просто не получал `swordBlocking === true`.
+- Live QA: first-person и local third-person поза видна. Два WS-клиента на том же Anarchy-сервере: observer видит `presentation.swordBlocking` true/false. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+## Последний проход: Sword blocking animation (1.5.2-style) — 2026-09-20
+
+- Удержание ПКМ с мечом по-прежнему берёт существующий `CombatSystem.swordBlocking` / `input.using` / `input.use`. Скорость движения ×0.2 не менялась.
+- First-person и third-person (локальный и remote) плавно поднимают меч в blocking pose за 0.1 с поверх `/moveitems` / `FIRST_PERSON_SPRITE_POSE`. Калибровка idle не перезаписывается.
+- Сервер уже публиковал `presentation.swordBlocking`; `RemotePlayerView` → `PlayerVisual` теперь применяет тот же overlay, что и локальный third-person.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation.md`.
 
 ## Последний проход: Merge origin/main into always-run / KeyC — 2026-09-20
 

@@ -197,17 +197,25 @@ Validation actually run:
 
 ## Visual QA
 
-Automated column/chunk tests cover lakes, oceans, ice surface, gourd biomes, and border opacity/planes. Live browser walkthrough of seas, pumpkin patches, and the red wall was **not** completed in this cloud pass (no interactive gameplay session). Anarchy two-client prediction at the wall was **not** live-tested.
+OWNER MANUAL QA (owner, before main-sync merge of PR #100):
+
+- Worldgen V3 world generation checked in-game;
+- latest reduced pumpkin/melon density (`GOURD_PATCH_DENSITY = 0.25`) checked in-game;
+- owner reports the result looks good.
+
+Not claimed: two-client Anarchy border QA, underwater-floor camera pass, fade curve at 100/50/30/10/1, corner two-walls, or other border edge cases.
+
+Automated column/chunk tests cover lakes, oceans, ice surface, gourd biomes, and border opacity/planes.
 
 ## Known issues / deferred
 
 - Per-seed water share varies (alpha ~6%, hotel ~31%) because oceans are rare and large.
-- Live owner QA of fade curve, corner two-walls, and running along the wall on Anarchy.
+- Live owner QA of fade curve, corner two-walls, and running along the wall on Anarchy is still open.
 - Pets branch not present on main; shared border helpers are ready for later pet teleport.
 
 ## Next work
 
-Owner live QA. Optional visual gourd/water screenshot pass. Do not merge other feature branches into this one.
+Optional visual gourd/water screenshot pass. Border fade/collision Anarchy QA remains unclaimed.
 
 ## Git
 

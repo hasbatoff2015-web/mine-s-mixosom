@@ -1,8 +1,12 @@
 # Тестирование
 
+## 2026-09-21 Merge origin/main into Worldgen V3
+
+Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99). Docs conflicts kept both sides. `Game.ts` auto-merged with both `syncLocalCombatUse` and Worldgen V3 border helpers.
+
 ## 2026-09-21 Wild gourd density 0.25
 
-`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434).
+`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434). OWNER MANUAL QA: Worldgen V3 generation and this density were checked in-game; owner reports the result looks good. Other manual scenarios are not claimed.
 
 ## 2026-09-21 Worldgen V3 audit harden
 
@@ -29,6 +33,40 @@ npm run benchmark:worldgen
 ```
 
 Contracts: `WORLDGEN_VERSION === 3`, V2 snapshot overlays on V3 terrain, hydrology lakes/oceans, gourd salts, playable `-10000 <= x,z < 10000`, opacity 0 at ≥50, max alpha ≤ 0.28.
+
+## 2026-09-21 Merge origin/main into sword-blocking
+
+Semantic merge of current `main` (`cd8ecf3`). Docs conflicts kept both sides. Code auto-merged.
+
+## 2026-09-20 Sword blocking hand follow
+
+Report: `reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: LMB swing and RMB block keep the sword parented to `rightArm`/`heldItem`; local `/moveitems` transform is unchanged while arm pose and world position change; grip distance to the hand attachment stays constant; release restores idle world pose. First-person overlay still differs from idle. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking live Anarchy fix
+
+Report: `reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: Anarchy `tickOnline` and SP `tickPlayers` share `syncLocalCombatUse`; skipping `updateUse` while `using=true` leaves the idle first-person matrix; after `updateUse` the held-sword transform differs from idle (`distance > 0.2`). Overlay offsets are non-zero. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking animation
+
+Report: `reports/2026-09-20_sword-blocking-animation.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts --maxWorkers=2
+```
+
+Contracts: sword + RMB uses existing `CombatSystem.swordBlocking`; tools do not block; 0.1 s lerp overlay on first-person and third-person held transforms; production `/moveitems` defaults unchanged; remote `presentation.swordBlocking` drives `PlayerVisual`. Focused **7 files / 125 tests PASS**.
 
 ## 2026-09-20 Merge origin/main into always-run / KeyC
 

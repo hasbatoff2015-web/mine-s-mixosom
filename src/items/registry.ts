@@ -343,6 +343,13 @@ export function tryGetItemDefinition(id: string): ItemDefinition | undefined {
   return ITEM_REGISTRY.get(id);
 }
 
+/** Swords only (`kind: 'weapon'` + `weapon: 'sword'`). Tools/axes/bows are not swords. */
+export function isSwordItem(itemOrId: string | ItemDefinition | null | undefined): boolean {
+  if (itemOrId == null) return false;
+  const item = typeof itemOrId === 'string' ? tryGetItemDefinition(itemOrId) : itemOrId;
+  return item?.kind === 'weapon' && item.weapon === 'sword';
+}
+
 export function isKnownItemId(id: string): boolean {
   return ITEM_REGISTRY.has(id);
 }
