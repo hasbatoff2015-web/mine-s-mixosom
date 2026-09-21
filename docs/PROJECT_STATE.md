@@ -4,7 +4,7 @@
 
 - Один серверный код (`AnarchyServer` / `WorldInstance` / builtin plugins). Режим — `SERVER_MODE`: `anarchy` (по умолчанию), `survival`, `peaceful`.
 - Anarchy: PvP и взрывы как раньше. Survival: PvP есть, взрыв не меняет мир. Peaceful: PvP от игрока запрещён, взрыв не меняет мир. Урон от мобов и окружения остаётся.
-- `WORLD` по умолчанию равен режиму. Каталоги: `server/data/worlds/<worldId>/` плюс `plugin-data/`. Файл `.instance.lock` не даёт второму процессу открыть тот же каталог.
+- `WORLD` по умолчанию равен режиму. Каталоги: `server/data/worlds/<worldId>/` плюс `plugin-data/`. Файл `.instance.lock` не даёт второму процессу открыть тот же каталог. `SIGINT` / `SIGTERM` / `SIGHUP` — один shutdown, lock снимается после сохранения.
 - Локальный запуск: `npm run dev:server` (Anarchy :2567), `dev:server:anarchy` / `:survival` / `:peaceful` (:2567 / :2568 / :2569). Клиент: `?server=anarchy|survival|peaceful`.
 - Подробности: `docs/reports/2026-09-21_local-server-modes.md`, `docs/LOCAL_SERVER.md`.
 

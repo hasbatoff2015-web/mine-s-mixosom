@@ -84,7 +84,7 @@ Rules:
 
 Mob hits, fall, lava, and the rest of the simulation stay. The client is not the authority for these rules. Builtin plugins are the same set on every mode. Their JSON lives in that world's `plugin-data/`.
 
-One process owns one world directory. `initialize` creates `server/data/worlds/<worldId>/.instance.lock`. A second process that opens the same directory stops before it reads or writes the JSON store. Stop removes the lock. A lock whose pid is already dead is taken over on the next start.
+One process owns one world directory. `initialize` creates `server/data/worlds/<worldId>/.instance.lock`. A second process that opens the same directory stops before it reads or writes the JSON store. `SIGINT`, `SIGTERM`, and `SIGHUP` share one shutdown: save, then remove the lock. A lock whose pid is already dead is taken over on the next start.
 
 Client (Vite still on **4173**):
 
