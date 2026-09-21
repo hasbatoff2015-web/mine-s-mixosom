@@ -19,7 +19,9 @@ export function mobTargetBounds(kind: MobKind): CollisionBox {
     return { minX: -0.3125, minY: 0, minZ: -0.75, maxX: 0.1875, maxY: 0.875, maxZ: 0.5625 };
   }
   if (kind === 'cat') {
-    return { minX: -0.1563, minY: 0, minZ: -0.75, maxX: 0.1563, maxY: 0.9, maxZ: 0.62 };
+    // Standing visual core after body origin Z=-8: muzzle reaches z=-0.8125,
+    // torso to ~0.56, legs under the sausage. Tail is not required.
+    return { minX: -0.1563, minY: 0, minZ: -0.85, maxX: 0.1563, maxY: 0.9, maxZ: 0.62 };
   }
   const definition = getMobDefinition(kind);
   const halfWidth = definition.width * 0.5;

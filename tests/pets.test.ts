@@ -23,6 +23,7 @@ import {
   pickPassiveSpawnKind,
   raycastMobTarget,
   resetPetTeleportSearchStats,
+  resolvePetUseTarget,
 } from '../src/entities';
 import {
   DEFAULT_MAX_TAMED_PETS,
@@ -198,6 +199,11 @@ describe('pet taming', () => {
     expect(results.map((entry) => entry.consume)).toEqual([false, false, false]);
     expect(results[2]).toEqual({ ok: true, kind: 'tame', consume: false });
     expect(wolf.ownerId).toBe('owner-a');
+    const cat = manager.spawn('cat', new THREE.Vector3(2.5, 71, 0.5), { force: true })!;
+    const catResults = feedTimes(manager, cat, ItemId.Beef, 3, { gamemode: 'creative' });
+    expect(catResults.map((entry) => entry.consume)).toEqual([false, false, false]);
+    expect(cat.ownerId).toBe('owner-a');
+    expect(cat.sitting).toBe(true);
   });
 
   it('does not retame an owned pet and only the owner toggles sit', () => {
@@ -617,6 +623,63 @@ describe('rendered interaction raycast', () => {
     expect(raycastMobTarget(origin, direction, rewound, 'cat')?.distance).toBeCloseTo(rendered.distance, 5);
   });
 
+  it('covers the visible cat muzzle, body and legs, including after yaw', () => {
+    const bounds = mobTargetBounds('cat');
+    expect(bounds.minZ).toBeLessThanOrEqual(-0.8125);
+    expect(bounds.maxZ).toBeLessThan(1.2);
+    const pose = { x: 8, y: 71, z: 8, yaw: 0 };
+    const samples: readonly { label: string; origin: Vec3; direction: Vec3 }[] = [
+      { label: 'muzzle', origin: new Vec3(8, 71.45, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'head', origin: new Vec3(8, 71.55, 6.7), direction: new Vec3(0, 0, 1) },
+      { label: 'torso-front', origin: new Vec3(8, 71.4, 7.2), direction: new Vec3(0, 0, 1) },
+      { label: 'torso-middle', origin: new Vec3(8, 71.4, 7.6), direction: new Vec3(0, 0, 1) },
+      { label: 'rear-body', origin: new Vec3(8, 71.4, 9.6), direction: new Vec3(0, 0, -1) },
+      { label: 'front-leg', origin: new Vec3(8, 71.18, 6.8), direction: new Vec3(0, 0, 1) },
+      { label: 'rear-leg', origin: new Vec3(8, 71.18, 9.4), direction: new Vec3(0, 0, -1) },
+    ];
+    for (const sample of samples) {
+      expect(raycastMobTarget(sample.origin, sample.direction, pose, 'cat'), sample.label).toBeDefined();
+    }
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const local = { x: 0, y: 0.45, z: -2 };
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      const origin = new Vec3(8 + local.x * cos + local.z * sin, 71.45, 8 + -local.x * sin + local.z * cos);
+      const direction = new Vec3(-local.x * cos - local.z * sin, 0, local.x * sin - local.z * cos);
+      expect(
+        raycastMobTarget(origin, direction, { x: 8, y: 71, z: 8, yaw }, 'cat'),
+        `yaw ${yaw}`,
+      ).toBeDefined();
+    }
+  });
+
+  it('keeps wolf muzzle, mane and torso inside the targeting volume', () => {
+    const pose = { x: 8, y: 71, z: 8, yaw: 0 };
+    const samples: readonly { label: string; origin: Vec3; direction: Vec3 }[] = [
+      { label: 'muzzle', origin: new Vec3(8, 71.5, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'head', origin: new Vec3(8, 71.55, 6.8), direction: new Vec3(0, 0, 1) },
+      { label: 'mane', origin: new Vec3(8, 71.6, 7.4), direction: new Vec3(0, 0, 1) },
+      { label: 'body', origin: new Vec3(8, 71.5, 7.9), direction: new Vec3(0, 0, 1) },
+    ];
+    for (const sample of samples) {
+      expect(raycastMobTarget(sample.origin, sample.direction, pose, 'wolf'), sample.label).toBeDefined();
+    }
+    expect(mobTargetBounds('wolf').minZ).toBeLessThanOrEqual(-0.75);
+  });
+
+  it('prefers a visible pet over ordinary food use and yields to a closer block', () => {
+    const cat = { id: 'cat-1', distance: 1.4, renderTick: 22, kind: 'cat', alive: true };
+    expect(resolvePetUseTarget({ petHit: cat })).toEqual({
+      id: 'cat-1', distance: 1.4, renderTick: 22,
+    });
+    expect(resolvePetUseTarget({ petHit: cat, blockDistance: 2.5 })).toMatchObject({ id: 'cat-1' });
+    expect(resolvePetUseTarget({ petHit: cat, blockDistance: 1.1 })).toBeUndefined();
+    expect(resolvePetUseTarget({ petHit: cat, cartDistance: 0.8 })).toBeUndefined();
+    expect(resolvePetUseTarget({ petHit: { ...cat, kind: 'cow' } })).toBeUndefined();
+    expect(resolvePetUseTarget({ petHit: { ...cat, alive: false } })).toBeUndefined();
+    expect(resolvePetUseTarget({})).toBeUndefined();
+  });
+
   it('keeps a bounded rewind window and a separate pet safety ceiling', () => {
     expect(MAX_MOB_REWIND_TICKS).toBe(5);
     expect(MAX_SEPARATION_PAIR_CHECKS).toBe(1024);
@@ -684,6 +747,19 @@ describe('spawn weights and persistence', () => {
     }])).toBe(1);
     expect(manager.get('wolf-owned')?.tameProgress).toBe(0);
     expect(manager.get('wolf-owned')?.tameProgressPlayerId).toBeUndefined();
+
+    const { manager: cats } = arena();
+    const cat = cats.spawn('cat', new THREE.Vector3(2.5, 71, 2.5), { force: true })!;
+    expect(interact(cats, cat, { heldItemId: ItemId.Beef })).toMatchObject({ ok: true, kind: 'feed', progress: 1 });
+    expect(interact(cats, cat, { heldItemId: ItemId.CookedChicken })).toMatchObject({
+      ok: true, kind: 'feed', progress: 2,
+    });
+    const catSaved = cats.serialize();
+    expect(catSaved[0]).toMatchObject({ tameProgress: 2, tameProgressPlayerId: 'owner-a' });
+    cats.clear();
+    expect(cats.restore(catSaved)).toBe(1);
+    expect(cats.get(cat.id)?.tameProgress).toBe(2);
+    expect(cats.get(cat.id)?.tameProgressPlayerId).toBe('owner-a');
   });
 });
 

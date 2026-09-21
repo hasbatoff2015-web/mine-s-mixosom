@@ -1,12 +1,20 @@
 # Архитектура
 
+## Pet geometry / cat targeting — 2026-09-22
+
+Wolf standing body stores vanilla `rotation = [π/2, 0, 0]`. The previous follow-up negated that angle so the torso reached the head while the mane/collar stayed at Z=+2 (body centre). Standing mane and collar now use pivot `[-1, 14, -3]`, matching sitting neck Z. The empty body-top UV remap `(30,14)` is unchanged. `legacyRotationToThree` is not modified.
+
+Cat body addBox origin is vanilla `[-2, 3, -8]`. A local Z=+4 raise through `Rx(-π/2)` lifted the sausage ~0.25 block. Walk swing still goes through `legacyRotationToThree`; sitting hind legs stay `+π/2` legacy.
+
+`mobTargetBounds('cat')` covers the standing visual core including muzzle z≈-0.8125 (`minZ = -0.85`). Targeting is yaw-aware AABB only; physics `width/height` stay 0.6×0.7. Client RMB `sendOnlineUse` still tries `trySendOnlinePetUse` before food; `resolvePetUseTarget` is a pure helper for that priority (closer block/cart still win). Server `entity_use` / melee keep command-boundary look, bounded rewind, reach and LOS.
+
 ## Pet models / 3-step taming / mob melee rewind — 2026-09-20
 
 Taming is server-authoritative `entity_use` with `PET_TAME_REQUIRED_FEEDS = 3` and no RNG. Wild pets store `tameProgress` 0..2 plus `tameProgressPlayerId`; a different feeder resets to 1/3. Third accepted feed assigns `ownerId`, sits, and clears progress. `pets.limit.N` and `maxTamedPets` are checked before any feed; failure does not consume. SP uses toasts, Anarchy uses system chat (`tameProgressMessage` / `tameSuccessMessage`). Partial progress is optional on existing `SerializedMob`.
 
 Online melee reuses the RMB rewind window. Client `refreshLocalCrosshair` rays `mobs.raycastRendered` and, when `attack.kind === 'mob'`, sends `targetId` + `targetRenderTick`. `WorldInstance` resolves a live player first, else a live mob `rewindPose`, else stale. `ServerGameplay.attack` takes `SequencedMeleeTarget` `player | mob`. Mob hits test the frozen pose with `raycastMobTarget`, then `meleeMob` damages the current entity. Reach 3, current-world LOS, cooldown/damage stay in `CombatSystem`. `MAX_MOB_REWIND_TICKS` remains 5.
 
-`mobTargetBounds(kind)` is targeting-only (wolf/cat visual core, other kinds keep definition width/height). Physics collision still uses `MobDefinition.width/height`. Wolf body rest rotation is a local `[-π/2,0,0]` compensation for the shared Y-down adapter; the adapter itself is unchanged.
+`mobTargetBounds(kind)` is targeting-only (wolf/cat visual core, other kinds keep definition width/height). Physics collision still uses `MobDefinition.width/height`. Wolf body rest rotation is vanilla `[π/2,0,0]`; standing mane/collar pivot is `[-1,14,-3]`. The shared Y-down adapter is unchanged.
 
 ## Pet entity_use rewind / budgets — 2026-09-20
 

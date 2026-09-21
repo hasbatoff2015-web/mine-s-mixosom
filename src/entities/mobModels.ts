@@ -164,16 +164,15 @@ export const WOLF_MODEL: LegacyModelDefinition = {
       box([1, -5, 0], [2, 2, 1], [16, 14]),
       box([-1.5, 0, -5], [3, 3, 4], [0, 10]),
     ]),
-    // Vanilla body rotateAngleX is +π/2. The shared Y-down adapter reflects that
-    // to −π/2, which extrudes this asymmetric addBox toward +Z (tail) and leaves a
-    // neck gap. Store the negated angle so the adapter applies +π/2 and the torso
-    // reaches the head. Mane keeps vanilla +π/2 so the collar stays on the shoulders.
-    // This pack also leaves the vanilla top island (24,14) empty; remap that end-cap
+    // Vanilla body/mane rotateAngleX is +π/2. The previous follow-up negated body
+    // rotation so the torso reached the head while the mane/collar stayed at Z=+2
+    // (body centre). Sitting already uses mane pivot Z=-3; standing must match.
+    // This pack leaves the vanilla top island (24,14) empty; remap that end-cap
     // to the painted underside so alphaTest does not punch a hole in the abdomen.
     modelPart('body', [0, 14, 2], [box([-4, -2, -3], [6, 9, 6], [18, 14], {
       faceUvRects: { top: { u: 30, v: 14, width: 6, height: 6 } },
-    })], [-Math.PI / 2, 0, 0]),
-    modelPart('mane', [-1, 14, 2], [box([-4, -3, -3], [8, 6, 7], [21, 0])], [Math.PI / 2, 0, 0]),
+    })], [Math.PI / 2, 0, 0]),
+    modelPart('mane', [-1, 14, -3], [box([-4, -3, -3], [8, 6, 7], [21, 0])], [Math.PI / 2, 0, 0]),
     modelPart('leg1', [-2.5, 16, 7], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
     modelPart('leg2', [0.5, 16, 7], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
     modelPart('leg3', [-2.5, 16, -4], [box([-1, 0, -1], [2, 8, 2], [0, 18])]),
@@ -185,7 +184,7 @@ export const WOLF_MODEL: LegacyModelDefinition = {
 export const WOLF_COLLAR_MODEL: LegacyModelDefinition = {
   texturePath: 'entity/wolf/wolf_collar', logicalTextureSize: [64, 32],
   parts: [
-    modelPart('mane', [-1, 14, 2], [
+    modelPart('mane', [-1, 14, -3], [
       box([-4, -3, -3], [8, 6, 7], [21, 0], { inflate: 0.35, layer: 'collar', alphaTest: 0.1 }),
     ], [Math.PI / 2, 0, 0]),
   ],
@@ -200,11 +199,9 @@ export const CAT_MODEL: LegacyModelDefinition = {
       box([-2, -3, 0], [1, 1, 2], [0, 10]),
       box([1, -3, 0], [1, 1, 2], [6, 10]),
     ]),
-    // Vanilla addBox Z=-8 is Y-up ModelRenderer: after OpenGL +Rx the 6px depth
-    // becomes +Y. Our Rx(-π/2) maps that same -Z into -Y, so the sausage sat
-    // under the shoulder pivots and walk swing stabbed through the spine.
-    // Z=-4 keeps length/UVs and puts the torso on the chest instead of the belly.
-    modelPart('body', [0, 12, -10], [box([-2, 3, -4], [4, 16, 6], [20, 0])], [Math.PI / 2, 0, 0]),
+    // Vanilla addBox Z=-8. Local Z=+4 through Rx(-π/2) raised the sausage 0.25
+    // and left a gap between rear legs and the torso underside.
+    modelPart('body', [0, 12, -10], [box([-2, 3, -8], [4, 16, 6], [20, 0])], [Math.PI / 2, 0, 0]),
     modelPart('tail1', [0, 15, 8], [box([-0.5, 0, 0], [1, 8, 1], [0, 15])], [0.9, 0, 0]),
     modelPart('tail2', [0, 20, 14], [box([-0.5, 0, 0], [1, 8, 1], [4, 15])], [0.9, 0, 0]),
     modelPart('backLeftLeg', [1.1, 18, 5], [box([-1, 0, 1], [2, 6, 2], [8, 13])]),

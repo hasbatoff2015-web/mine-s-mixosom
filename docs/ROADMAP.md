@@ -1,9 +1,17 @@
 # Roadmap
 
+## 2026-09-22: pet geometry / cat targeting
+
+- [x] Wolf mane/collar at neck Z=-3; body rest Rx restored to `+π/2`; keep body-top UV remap.
+- [x] Cat torso origin Z restored to `-8`; keep adapter-aware walk/sit.
+- [x] Cat targeting AABB covers visible muzzle; pet RMB wins over food use.
+- [x] Anarchy wild-cat 3-meat `entity_use` and moving-cat melee rewind.
+- [ ] Owner live two-client Anarchy QA: cat meats + moving LMB/RMB.
+
 ## 2026-09-20: pet models, 3-step taming, rendered melee
 
-- [x] Wolf torso continuity (local body Rx compensation + empty top UV remap). Mane/collar stay vanilla Rx.
-- [x] Cat legs under torso (body origin Z, sitting hind `+π/2` legacy, adapter-aware walk swing).
+- [x] Wolf torso continuity (body Rx `+π/2`, mane/collar neck pivot, empty top UV remap).
+- [x] Cat legs under torso (body origin Z `-8`, sitting hind `+π/2` legacy, adapter-aware walk swing).
 - [x] Deterministic 3-feed taming, candidate reset, persist, limit/capacity, chat/toast 1/3 2/3.
 - [x] Online mob melee: rendered capture + server player|mob rewind; targeting-only AABB.
 - [ ] Owner live two-client QA: 3-click tame feedback and moving-pet LMB.

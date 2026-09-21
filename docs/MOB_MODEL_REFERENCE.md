@@ -114,8 +114,8 @@ Logical texture `64×32`. Physical runtime sheets are `128×64` (`entity/wolf/wo
 | Part | Pivot | Boxes (`origin; size; UV`) | Статус |
 |---|---|---|---|
 | Head | `(-1,13.5,-7)` | main `(-3,-3,-2); 6×6×4; 0,0`; ears `(-3,-5,0)` / `(1,-5,0); 2×2×1; 16,14`; muzzle `(-1.5,0,-5); 3×3×4; 0,10` | Legacy match |
-| Body | `(0,14,2)`, `rx=π/2` | `(-4,-2,-3); 6×9×6; 18,14` | Legacy match |
-| Mane | `(-1,14,2)`, `rx=π/2` | `(-4,-3,-3); 8×6×7; 21,0` | Legacy match |
+| Body | `(0,14,2)`, `rx=π/2` | `(-4,-2,-3); 6×9×6; 18,14`; this pack remaps empty top `(24,14)` → painted `(30,14)` | Legacy match + local UV |
+| Mane | `(-1,14,-3)`, `rx=π/2` | `(-4,-3,-3); 8×6×7; 21,0` | Standing neck Z matches sitting `(-1,16,-3)` |
 | Legs 1–4 | `(-2.5,16,7)`, `(0.5,16,7)`, `(-2.5,16,-4)`, `(0.5,16,-4)` | `(-1,0,-1); 2×8×2; 0,18` | Legacy match |
 | Tail | `(-1,12,8)` | `(-1,0,-1); 2×8×2; 9,18` | Legacy match |
 
@@ -138,7 +138,7 @@ Geometry is legacy `ModelOcelot`.
 | Back legs | `(1.1,18,5)`, `(-1.1,18,5)` | `(-1,0,1); 2×6×2; 8,13` | Legacy match |
 | Front legs | `(1.2,13.8,-5)`, `(-1.2,13.8,-5)` | `(-1,0,0); 2×10×2; 40,0` | Legacy match |
 
-Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`; head `Y-3.3, Z+1`; tail1 `Y+8, Z-2`, `rx=1.7278761`; tail2 `Y+2, Z-0.8`, `rx=2.670354`; front legs `y=15.8, z=-7`, `rx=-0.157`; back legs `y=21, z=1`, `rx=-π/2`. Converted through the project adapter each frame from base transforms — no accumulated offsets. Walk uses separate front/back legs and a light tail motion. **Alpha approximation**.
+Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`; head `Y-3.3, Z+1`; tail1 `Y+8, Z-2`, `rx=1.7278761`; tail2 `Y+2, Z-0.8`, `rx=2.670354`; front legs `y=15.8, z=-7`, `rx=-0.157`; back legs `y=21, z=1`, `rx=+π/2` (legacy; the adapter reflects X). Converted through the project adapter each frame from base transforms — no accumulated offsets. Walk uses separate front/back legs, `legacyRotationToThree` for swing, and a light tail motion. **Alpha approximation**.
 
 ## Animation contract
 

@@ -101,6 +101,7 @@ import {
   LOCAL_PLAYER_FOCUS_ID,
   PET_INTERACT_REACH,
   isPetKind,
+  resolvePetUseTarget,
   type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -2271,15 +2272,18 @@ export class Game {
     const aim = this.lastLocalAim ?? (session.player ? this.sampleLocalAim(session) : undefined);
     if (!aim) return undefined;
     const mobHit = session.mobs.raycastRendered(aim.origin, aim.direction, PET_INTERACT_REACH);
-    if (!mobHit || !mobHit.mob.alive || !isPetKind(mobHit.mob.kind)) return undefined;
-    if (session.target && session.target.distance < mobHit.distance) return undefined;
     const cartHit = session.minecarts?.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
-    if (cartHit && cartHit.distance < mobHit.distance) return undefined;
-    return {
-      id: mobHit.mob.id,
-      distance: mobHit.distance,
-      ...(mobHit.renderTick !== undefined ? { renderTick: mobHit.renderTick } : {}),
-    };
+    return resolvePetUseTarget({
+      petHit: mobHit ? {
+        id: mobHit.mob.id,
+        distance: mobHit.distance,
+        kind: mobHit.mob.kind,
+        alive: mobHit.mob.alive,
+        ...(mobHit.renderTick !== undefined ? { renderTick: mobHit.renderTick } : {}),
+      } : undefined,
+      blockDistance: session.target?.distance,
+      cartDistance: cartHit?.distance,
+    });
   }
 
   private trySendOnlinePetUse(

@@ -288,6 +288,75 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
     expect(guest.inventory.getSlot(0)?.count).toBe(7);
   });
 
+  it('tames a wild cat with three mixed meats and shows the snapshot to another player', async () => {
+    const { world, owner, guest, aSink } = await boot();
+    const cat = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 22.5), { force: true })!;
+    owner.inventory.clear();
+    owner.inventory.setSlot(0, createItemStack(ItemId.Beef, 2));
+    owner.inventory.setSlot(1, createItemStack(ItemId.CookedChicken, 2));
+    owner.inventory.setSlot(2, createItemStack(ItemId.Porkchop, 2));
+    const chatOf = () => aSink.payloads.filter((payload) => (
+      typeof payload === 'object' && payload !== null && (payload as { type?: string }).type === 'chat'
+    )).map((payload) => (payload as { text?: string }).text);
+    const lookAtCat = (seq: number) => prepareLook(world, owner, {
+      x: cat.position.x, y: cat.position.y + 0.35, z: cat.position.z,
+    }, seq);
+
+    owner.selectedSlot = 0;
+    const look1 = lookAtCat(1);
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, cat.id, look1, 0))).toEqual({ ok: true });
+    expect(cat.ownerId).toBeUndefined();
+    expect(cat.tameProgress).toBe(1);
+    expect(cat.tameProgressPlayerId).toBe(owner.id);
+    expect(owner.inventory.getSlot(0)?.count).toBe(1);
+    expect(chatOf()).toContain('Кот: приручение 1/3');
+
+    owner.selectedSlot = 1;
+    const look2 = lookAtCat(2);
+    expect(world.handleSequencedEntityUse(owner, useAction(2, 2, cat.id, look2, 1))).toEqual({ ok: true });
+    expect(cat.ownerId).toBeUndefined();
+    expect(cat.tameProgress).toBe(2);
+    expect(owner.inventory.getSlot(1)?.count).toBe(1);
+    expect(chatOf()).toContain('Кот: приручение 2/3');
+
+    owner.selectedSlot = 2;
+    const look3 = lookAtCat(3);
+    expect(world.handleSequencedEntityUse(owner, useAction(3, 3, cat.id, look3, 2))).toEqual({ ok: true });
+    expect(cat.ownerId).toBe(owner.id);
+    expect(cat.sitting).toBe(true);
+    expect(cat.tameProgress).toBe(0);
+    expect(cat.tameProgressPlayerId).toBeUndefined();
+    expect(owner.inventory.getSlot(2)?.count).toBe(1);
+    expect(chatOf()).toContain('Кот приручён.');
+    const snapshots = world.gameplay.snapshotsNear(guest.controller.position);
+    expect(snapshots.find((entry) => entry.id === cat.id)).toMatchObject({
+      ownerId: owner.id, sitting: true, mobKind: 'cat',
+    });
+  });
+
+  it('accepts a moving cat at the rendered tick for entity_use', async () => {
+    const { world, owner } = await boot();
+    const cat = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 22.2), { force: true })!;
+    owner.inventory.setSlot(0, createItemStack(ItemId.Beef, 4));
+    const look = prepareLook(world, owner, {
+      x: cat.position.x, y: cat.position.y + 0.35, z: cat.position.z - 0.4,
+    }, 1);
+    const renderTick = world.tickNumber;
+    cat.position.set(24.5, 100, 20.5);
+    cat.previousPosition.copy(cat.position);
+    world.tick();
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, cat.id, look))).toEqual({
+      ok: false, reason: 'reach',
+    });
+    expect(world.handleSequencedEntityUse(
+      owner,
+      useAction(2, 1, cat.id, look, 0, renderTick),
+    )).toEqual({ ok: true });
+    expect(cat.tameProgress).toBe(1);
+    expect(cat.tameProgressPlayerId).toBe(owner.id);
+    expect(owner.inventory.getSlot(0)?.count).toBe(3);
+  });
+
   it('hits a moving pet at the rendered pose and rejects stale, future, occluded and over-reach attacks', async () => {
     const { world, owner, aSink } = await boot();
     const wolf = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22.2), { force: true })!;
@@ -367,6 +436,90 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
       kind: 'attack', actionSeq: 7, commandSeq: 6, selectedSlot: 0,
       yaw: wallLook.yaw, pitch: wallLook.pitch,
       targetId: cat.id, targetRenderTick: catTick,
+    });
+    expect(attackResult(aSink, 7).reason ?? attackResult(aSink, 7).combat?.result).toMatch(/stale/);
+  });
+
+  it('hits a moving cat at the rendered pose and rejects miss, stale, future, occluded, over-reach and dead attacks', async () => {
+    const { world, owner, aSink } = await boot();
+    const cat = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 22.2), { force: true })!;
+    owner.inventory.setSlot(0, createItemStack(ItemId.DiamondSword));
+    const look = prepareLook(world, owner, {
+      x: cat.position.x, y: cat.position.y + 0.35, z: cat.position.z - 0.4,
+    }, 1);
+    const renderTick = world.tickNumber;
+    const before = cat.health;
+    cat.position.set(40.5, 100, 20.5);
+    cat.previousPosition.copy(cat.position);
+    world.tick();
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 1, commandSeq: 1, selectedSlot: 0,
+      yaw: look.yaw, pitch: look.pitch,
+    });
+    expect(cat.health).toBe(before);
+    expect(attackResult(aSink, 1).combat?.result).toBe('miss');
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 2, commandSeq: 1, selectedSlot: 0,
+      yaw: look.yaw, pitch: look.pitch,
+      targetId: cat.id, targetRenderTick: renderTick,
+    });
+    expect(cat.health).toBeLessThan(before);
+    expect(attackResult(aSink, 2).combat).toMatchObject({
+      result: 'hit', targetId: cat.id, requestedRenderTick: renderTick, resolvedRenderTick: renderTick,
+    });
+    expect(cat.position.x).toBeGreaterThan(39);
+    expect(cat.position.z).toBeGreaterThan(19.5);
+    expect(cat.position.z).toBeLessThan(21.5);
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 3, commandSeq: 1, selectedSlot: 0,
+      yaw: look.yaw, pitch: look.pitch,
+      targetId: cat.id, targetRenderTick: renderTick - MAX_MOB_REWIND_TICKS - 1,
+    });
+    expect(attackResult(aSink, 3).reason ?? attackResult(aSink, 3).combat?.result).toMatch(/stale/);
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 4, commandSeq: 1, selectedSlot: 0,
+      yaw: look.yaw, pitch: look.pitch,
+      targetId: cat.id, targetRenderTick: world.tickNumber + 3,
+    });
+    expect(attackResult(aSink, 4).reason ?? attackResult(aSink, 4).combat?.result).toMatch(/stale/);
+
+    const far = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 28.5), { force: true })!;
+    const farLook = prepareLook(world, owner, {
+      x: far.position.x, y: far.position.y + 0.3, z: far.position.z,
+    }, 4);
+    const farTick = world.tickNumber;
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 5, commandSeq: 4, selectedSlot: 0,
+      yaw: farLook.yaw, pitch: farLook.pitch,
+      targetId: far.id, targetRenderTick: farTick,
+    });
+    expect(attackResult(aSink, 5).combat?.result).toBe('out_of_reach');
+
+    const blocked = world.gameplay.mobs.spawn('cat', new Vec3(20.5, 100, 22.4), { force: true })!;
+    const wallLook = prepareLook(world, owner, {
+      x: blocked.position.x, y: blocked.position.y + 0.3, z: blocked.position.z,
+    }, 6);
+    const blockedTick = world.tickNumber;
+    world.world.setBlock(20, 101, 21, BlockId.Stone);
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 6, commandSeq: 6, selectedSlot: 0,
+      yaw: wallLook.yaw, pitch: wallLook.pitch,
+      targetId: blocked.id, targetRenderTick: blockedTick,
+    });
+    expect(attackResult(aSink, 6).combat?.result).toBe('occluded');
+    world.world.setBlock(20, 101, 21, BlockId.Air);
+    blocked.health = 0;
+    blocked.state = 'die';
+    aSink.payloads.length = 0;
+    world.handleSequencedAttack(owner, {
+      kind: 'attack', actionSeq: 7, commandSeq: 6, selectedSlot: 0,
+      yaw: wallLook.yaw, pitch: wallLook.pitch,
+      targetId: blocked.id, targetRenderTick: blockedTick,
     });
     expect(attackResult(aSink, 7).reason ?? attackResult(aSink, 7).combat?.result).toMatch(/stale/);
   });

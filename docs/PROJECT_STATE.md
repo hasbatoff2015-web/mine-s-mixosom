@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: pet geometry / cat targeting — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Wolf body rest rotation restored to vanilla `+π/2`; standing mane/collar pivot moved to `[-1,14,-3]` (neck, same Z as sitting). Empty body-top UV remap kept. Cat body origin restored to `[-2,3,-8]`. Cat targeting `minZ` `-0.75 → -0.85` so the visible muzzle is inside the interact volume. Shared 3-feed taming unchanged; client `resolvePetUseTarget` keeps a visible pet ahead of ordinary food use.
+- Подробности: `docs/reports/2026-09-22_pet-geometry-cat-targeting.md`.
+
 ## Последний проход: pet models / deterministic taming / rendered melee — 2026-09-20
 
 - Ветка `codex/wolves-cats-pets`. Wolf body uses a local negated rest X rotation so the torso reaches the head; empty body-top UV remapped. Cat body origin Z `-4`, sitting hind legs `+π/2` legacy, walk swing through the adapter. Taming is three deterministic feeds (`tameProgress` + candidate player id), persist on `SerializedMob`, chat/toast `1/3` `2/3`. Online melee captures rendered mob `targetId`/`targetRenderTick`; server pending target is player|mob rewind for hit-test only. Shared `mobTargetBounds` for ray hits; physics `width/height` unchanged.

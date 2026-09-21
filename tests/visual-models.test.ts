@@ -11,6 +11,7 @@ import {
   SHEEP_WOOL_MODEL,
   SPIDER_MODEL,
   WOLF_MODEL,
+  WOLF_COLLAR_MODEL,
   CAT_MODEL,
   ZOMBIE_MODEL,
 } from '../src/entities/mobModels';
@@ -199,7 +200,7 @@ describe('legacy textured mob models', () => {
     expect(WOLF_MODEL.parts.find((part) => part.name === 'head')?.rotationPoint).toEqual([-1, 13.5, -7]);
     expect(WOLF_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
       rotationPoint: [0, 14, 2],
-      rotation: [-Math.PI / 2, 0, 0],
+      rotation: [Math.PI / 2, 0, 0],
       boxes: [{
         origin: [-4, -2, -3],
         size: [6, 9, 6],
@@ -207,6 +208,8 @@ describe('legacy textured mob models', () => {
         faceUvRects: { top: { u: 30, v: 14, width: 6, height: 6 } },
       }],
     });
+    expect(WOLF_MODEL.parts.find((part) => part.name === 'mane')?.rotationPoint).toEqual([-1, 14, -3]);
+    expect(WOLF_COLLAR_MODEL.parts[0]?.rotationPoint).toEqual([-1, 14, -3]);
     expect(WOLF_MODEL.parts.find((part) => part.name === 'mane')?.boxes[0]).toMatchObject({
       origin: [-4, -3, -3], size: [8, 6, 7], textureOffset: [21, 0],
     });
@@ -238,7 +241,7 @@ describe('legacy textured mob models', () => {
     expect(CAT_MODEL.parts.find((part) => part.name === 'body')).toMatchObject({
       rotationPoint: [0, 12, -10],
       rotation: [Math.PI / 2, 0, 0],
-      boxes: [{ origin: [-2, 3, -4], size: [4, 16, 6], textureOffset: [20, 0] }],
+      boxes: [{ origin: [-2, 3, -8], size: [4, 16, 6], textureOffset: [20, 0] }],
     });
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'cat');
@@ -280,25 +283,46 @@ describe('legacy textured mob models', () => {
     visuals.dispose();
   });
 
-  it('keeps wolf body and mane continuous and maps body faces to opaque sheet pixels', async () => {
+  it('places wolf mane and collar at the neck, not the middle of the torso', async () => {
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'wolf');
     const root = asObject3D(model.root)!;
+    root.traverse((object) => {
+      if ((object as { userData?: { petLayer?: string } }).userData?.petLayer === 'collar') {
+        object.visible = true;
+      }
+    });
     root.updateMatrixWorld(true);
     const body = asObject3D(model.parts.get('body')!)!;
     const mane = asObject3D(model.mane ?? model.parts.get('mane')!)!;
     const head = asObject3D(model.head)!;
+    const tail = asObject3D(model.tail ?? model.parts.get('tail')!)!;
     const bodyBox = new THREE.Box3().setFromObject(body);
     const maneBox = new THREE.Box3().setFromObject(mane);
     const headBox = new THREE.Box3().setFromObject(head);
-    expect(bodyBox.max.z + 1e-6).toBeGreaterThanOrEqual(maneBox.min.z);
-    expect(maneBox.max.z + 1e-6).toBeGreaterThanOrEqual(bodyBox.min.z);
-    expect(Math.min(bodyBox.max.z, maneBox.max.z) - Math.max(bodyBox.min.z, maneBox.min.z))
-      .toBeGreaterThan(0.2);
-    const torsoMinZ = Math.min(bodyBox.min.z, maneBox.min.z);
-    const torsoMaxZ = Math.max(bodyBox.max.z, maneBox.max.z);
-    expect(torsoMaxZ - torsoMinZ).toBeGreaterThan(0.45);
-    expect(torsoMinZ - headBox.max.z).toBeLessThan(0.08);
+    const tailBox = new THREE.Box3().setFromObject(tail);
+    const collarBox = new THREE.Box3();
+    let hasCollar = false;
+    mane.traverse((object) => {
+      if ((object as { userData?: { petLayer?: string } }).userData?.petLayer !== 'collar') return;
+      const mesh = object as THREE.Mesh;
+      if (!mesh.geometry) return;
+      hasCollar = true;
+      collarBox.expandByObject(mesh);
+    });
+    expect(hasCollar).toBe(true);
+    const maneCenterZ = (maneBox.min.z + maneBox.max.z) * 0.5;
+    const bodyCenterZ = (bodyBox.min.z + bodyBox.max.z) * 0.5;
+    const collarCenterZ = (collarBox.min.z + collarBox.max.z) * 0.5;
+    expect(maneBox.min.z - headBox.max.z).toBeLessThan(0.08);
+    expect(headBox.max.z + 1e-6).toBeGreaterThanOrEqual(maneBox.min.z - 0.02);
+    expect(bodyBox.min.z - maneBox.max.z).toBeLessThan(0.08);
+    expect(maneCenterZ).toBeLessThan(bodyCenterZ);
+    expect(maneCenterZ).toBeLessThan((headBox.max.z + bodyCenterZ) * 0.5);
+    expect(Math.abs(collarCenterZ - maneCenterZ)).toBeLessThan(0.08);
+    expect(collarCenterZ).toBeLessThan(bodyCenterZ);
+    expect(bodyBox.max.z).toBeGreaterThan(maneBox.max.z + 0.08);
+    expect(tailBox.min.z).toBeGreaterThan(bodyCenterZ);
     visuals.dispose();
 
     const decoded = decodeRgbaPng(await readFile('public/textures/entity/wolf/wolf.png'));
@@ -320,7 +344,7 @@ describe('legacy textured mob models', () => {
     expect(sheetOpaqueRatio(decoded, mapped.right)).toBeGreaterThan(0.9);
   });
 
-  it('keeps cat legs under the torso in stand, walk extremes and sitting', () => {
+  it('keeps cat legs attached under a grounded torso in stand, walk extremes and sitting', () => {
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'cat');
     const root = asObject3D(model.root)!;
@@ -328,20 +352,26 @@ describe('legacy textured mob models', () => {
     const tail1 = asObject3D(model.tail ?? model.parts.get('tail1')!)!;
     const tail2 = asObject3D(model.tail2 ?? model.parts.get('tail2')!)!;
     const legs = model.legs.map((leg) => asObject3D(leg)!);
-    const assertLegsBelowSpine = (epsilon: number): void => {
+    const assertStandingAttachment = (label: string): void => {
       root.updateMatrixWorld(true);
       const torso = new THREE.Box3().setFromObject(body);
-      for (const leg of legs) {
+      expect(torso.min.y, `${label} torso height`).toBeLessThan(0.4);
+      expect(torso.min.y, `${label} torso grounded`).toBeGreaterThan(0.12);
+      for (const [index, leg] of legs.entries()) {
         const box = new THREE.Box3().setFromObject(leg);
-        expect(box.max.y).toBeLessThanOrEqual(torso.max.y + epsilon);
+        const rear = index < 2;
+        expect(torso.min.y - box.max.y, `${label} leg ${index} gap`).toBeLessThan(0.05);
+        expect(box.max.y, `${label} leg ${index} through spine`).toBeLessThanOrEqual(torso.max.y + (rear ? 0.04 : 0.09));
+        expect(box.min.y, `${label} foot`).toBeGreaterThan(-0.08);
+        expect(box.min.y, `${label} foot`).toBeLessThan(0.2);
       }
     };
     applyCatVisualPose(model, false, 0, 0);
-    assertLegsBelowSpine(0.04);
+    assertStandingAttachment('stand');
     applyCatVisualPose(model, false, Math.PI / 2, 4);
-    assertLegsBelowSpine(0.04);
+    assertStandingAttachment('+walk');
     applyCatVisualPose(model, false, (3 * Math.PI) / 2, 4);
-    assertLegsBelowSpine(0.04);
+    assertStandingAttachment('-walk');
     applyCatVisualPose(model, true, 0, 0);
     root.updateMatrixWorld(true);
     const sitting = new THREE.Box3().setFromObject(root);
@@ -352,6 +382,14 @@ describe('legacy textured mob models', () => {
     const sitTail2 = new THREE.Box3().setFromObject(tail2);
     expect(sitTail1.min.z).toBeLessThanOrEqual(sitBody.max.z + 0.08);
     expect(sitTail2.min.z).toBeLessThanOrEqual(sitTail1.max.z + 0.08);
+    for (const [index, leg] of legs.entries()) {
+      const box = new THREE.Box3().setFromObject(leg);
+      expect(box.max.y, `sit leg ${index}`).toBeLessThanOrEqual(sitBody.max.y + 0.06);
+      expect(box.min.y, `sit foot ${index}`).toBeGreaterThan(-0.2);
+      if (index >= 2) {
+        expect(sitBody.min.y - box.max.y, `sit front gap ${index}`).toBeLessThan(0.08);
+      }
+    }
     applyCatVisualPose(model, false, 0, 0);
     visuals.dispose();
   });

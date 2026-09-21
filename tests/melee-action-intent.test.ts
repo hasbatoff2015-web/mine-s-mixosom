@@ -52,4 +52,15 @@ describe('online melee action intent', () => {
     expect(gameSource).toContain('mobTarget.mob.id');
     expect(gameSource).not.toContain("client.send({ type: 'attack' })");
   });
+
+  it('sends entity_use for a visible pet before ordinary food use', () => {
+    const sendOnlineUse = gameSource.slice(
+      gameSource.indexOf('private sendOnlineUse'),
+      gameSource.indexOf('private petUseTarget'),
+    );
+    expect(sendOnlineUse).toContain('trySendOnlinePetUse');
+    expect(sendOnlineUse.indexOf('trySendOnlinePetUse')).toBeLessThan(sendOnlineUse.indexOf('localFoodUse'));
+    expect(gameSource).toContain('resolvePetUseTarget');
+    expect(gameSource).toContain('entityUseMessage(action)');
+  });
 });

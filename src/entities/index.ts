@@ -5,6 +5,7 @@ export * from './mobDefinitions';
 export * from './petTypes';
 export * from './petConstants';
 export * from './petTaming';
+export * from './petUseIntent';
 export * from './petTeleport';
 export * from './petSpawn';
 export * from './petAppearance';
