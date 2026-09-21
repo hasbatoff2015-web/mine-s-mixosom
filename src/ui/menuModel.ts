@@ -1,10 +1,22 @@
+import { LOCAL_SERVER_PRESETS, type LocalServerName } from '../../shared/config';
+
 export interface MenuServerEntry {
-  id: string;
+  id: LocalServerName;
   name: string;
   description: string;
-  online: string;
   signal: number;
-  connectable?: boolean;
+}
+
+export interface MenuServerLiveStatus {
+  reachable: boolean;
+  online: number;
+  maxPlayers: number;
+}
+
+export interface MenuServerRow extends MenuServerEntry {
+  selected: boolean;
+  reachable: boolean;
+  label: string;
 }
 
 export interface ControlBinding {
@@ -18,24 +30,61 @@ export interface ControlSection {
   bindings: readonly ControlBinding[];
 }
 
-export const MENU_SERVER_ENTRIES: readonly MenuServerEntry[] = [
-  {
-    id: 'anarchy-pvp',
+const MENU_SERVER_COPY: Record<LocalServerName, Omit<MenuServerEntry, 'id'>> = {
+  anarchy: {
     name: 'Анархия PvP',
     description: 'Свободное выживание без защиты территорий',
-    online: '0 / 300',
     signal: 4,
-    connectable: true,
   },
-  {
-    id: 'survival-pvp',
+  survival: {
     name: 'Выживание PvP',
     description: 'Классическое выживание и честные сражения',
-    online: '0 / 300',
-    signal: 3,
-    connectable: false,
+    signal: 4,
   },
-] as const;
+  peaceful: {
+    name: 'Мирный',
+    description: 'Выживание без PvP и взрывов',
+    signal: 4,
+  },
+};
+
+/** Display rows for the online menu. Endpoints stay in LOCAL_SERVER_PRESETS. */
+export const MENU_SERVER_ENTRIES: readonly MenuServerEntry[] = (
+  Object.keys(LOCAL_SERVER_PRESETS) as LocalServerName[]
+).map((id) => ({ id, ...MENU_SERVER_COPY[id] }));
+
+export function isMenuServerId(id: string): id is LocalServerName {
+  return Object.prototype.hasOwnProperty.call(LOCAL_SERVER_PRESETS, id);
+}
+
+export function onlineServerRows(
+  statuses: Partial<Record<LocalServerName, MenuServerLiveStatus>> | undefined,
+  selectedId: LocalServerName,
+): readonly MenuServerRow[] {
+  return MENU_SERVER_ENTRIES.map((server) => {
+    const live = statuses?.[server.id];
+    const reachable = live?.reachable === true;
+    return {
+      ...server,
+      selected: server.id === selectedId,
+      reachable,
+      signal: live && !reachable ? 0 : server.signal,
+      label: !live ? '…' : reachable ? `${live.online} / ${live.maxPlayers}` : 'оффлайн',
+    };
+  });
+}
+
+export function renderOnlineServerRows(
+  statuses: Partial<Record<LocalServerName, MenuServerLiveStatus>> | undefined,
+  selectedId: LocalServerName,
+): string {
+  return onlineServerRows(statuses, selectedId).map((server) => `
+      <button class="server-row${server.selected ? ' selected' : ''}${server.label === 'оффлайн' ? ' is-offline' : ''}" data-server-id="${server.id}" aria-pressed="${server.selected}">
+        <span class="server-icon" aria-hidden="true">FC</span>
+        <span class="server-copy"><strong>${server.name}</strong><small>${server.description}</small></span>
+        <span class="server-status"><span class="server-online">${server.label}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
+      </button>`).join('');
+}
 
 export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [
   {

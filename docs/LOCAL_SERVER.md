@@ -94,7 +94,7 @@ http://localhost:4173/?server=survival
 http://localhost:4173/?server=peaceful
 ```
 
-`?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still override that preset. The menu button **Анархия PvP** uses the same resolver, so `?server=survival` points that connect button at Survival. There is no server browser. The session token for the default Anarchy URL stays `fc.anarchy.sessionToken`. Any other URL uses `fc.session.<ws-url>`, so a Survival tab does not resume an Anarchy player.
+`Играть онлайн` lists Anarchy, Survival, and Peaceful. `?server=` preselects that card. **Подключиться** opens the selected card's preset. `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still override the card that the page query addresses. The other cards stay on their presets. Each card reads its own `/status`. The session token for `ws://127.0.0.1:2567` stays `fc.anarchy.sessionToken`. Any other URL uses `fc.session.<ws-url>`.
 
 Equivalent env, if you are not using the npm scripts:
 

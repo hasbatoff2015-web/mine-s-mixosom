@@ -136,8 +136,12 @@ import {
   DESKTOP_CONTROL_SECTIONS,
   formatPlayTime,
   formatSettingValue,
-  MENU_SERVER_ENTRIES,
+  isMenuServerId,
+  renderOnlineServerRows,
+  type MenuServerLiveStatus,
 } from './menuModel';
+import type { LocalServerName } from '../../shared/config';
+import { selectedLocalServer } from '../net/AnarchyClient';
 import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
 import type { PlayerAppearance, PlayerModelVariant } from '../player/appearance/PlayerAppearance';
 import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
@@ -222,12 +226,6 @@ export interface AccountMenuActions {
 export interface OnlineServersActions {
   back(): void;
   connect(id: string): void;
-}
-
-export interface OnlineServerLiveStatus {
-  reachable: boolean;
-  online: number;
-  maxPlayers: number;
 }
 
 export interface PauseActions {
@@ -811,55 +809,40 @@ export class GameUI {
     });
   }
 
-  showOnlineServers(actions: OnlineServersActions, live?: OnlineServerLiveStatus): void {
-    let selectedId = MENU_SERVER_ENTRIES[0]?.id ?? '';
-    const rows = MENU_SERVER_ENTRIES.map((server, index) => {
-      const anarchy = server.id === 'anarchy-pvp';
-      const onlineLabel = anarchy && live
-        ? (live.reachable ? `${live.online} / ${live.maxPlayers}` : 'оффлайн')
-        : server.online;
-      return `
-      <button class="server-row${index === 0 ? ' selected' : ''}" data-server-id="${server.id}" aria-pressed="${index === 0}">
-        <span class="server-icon" aria-hidden="true">FC</span>
-        <span class="server-copy"><strong>${server.name}</strong><small>${server.description}</small></span>
-        <span class="server-status"><span class="server-online">${onlineLabel}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
-      </button>`;
-    }).join('');
-    const connectable = (id: string): boolean => MENU_SERVER_ENTRIES.find((server) => server.id === id)?.connectable === true;
+  showOnlineServers(
+    actions: OnlineServersActions,
+    statuses?: Partial<Record<LocalServerName, MenuServerLiveStatus>>,
+    selectedId = selectedLocalServer(),
+  ): void {
+    let current: LocalServerName = isMenuServerId(selectedId) ? selectedId : 'anarchy';
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
         <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">localhost</span></header>
-        <div class="server-list">${rows}</div>
-        <p class="menu-notice">Анархия PvP подключается к локальному серверу (<code>npm run dev:server</code>). Если процесс не запущен, появится «Сервер недоступен». «Выживание PvP» пока недоступно.</p>
-        <footer class="menu-footer"><button class="game-button primary" data-action="connect"${connectable(selectedId) ? '' : ' disabled'}>Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
+        <div class="server-list">${renderOnlineServerRows(statuses, current)}</div>
+        <footer class="menu-footer"><button class="game-button primary" data-action="connect">Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
       </div></section>`, actions.back);
-    const connectButton = this.screen!.querySelector<HTMLButtonElement>('[data-action="connect"]')!;
-    const syncConnect = (): void => {
-      connectButton.disabled = !connectable(selectedId);
-    };
     this.bindAction('back', actions.back);
     this.bindAction('connect', () => {
-      if (!connectable(selectedId)) {
-        return;
-      }
-      actions.connect(selectedId);
+      actions.connect(current);
     });
     for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
       button.addEventListener('click', () => {
-        selectedId = button.dataset.serverId ?? selectedId;
+        const next = button.dataset.serverId;
+        if (!next || !isMenuServerId(next)) return;
+        current = next;
         for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
           const selected = row === button;
           row.classList.toggle('selected', selected);
           row.setAttribute('aria-pressed', String(selected));
         }
-        syncConnect();
       });
       button.addEventListener('dblclick', () => {
-        selectedId = button.dataset.serverId ?? selectedId;
-        if (connectable(selectedId)) actions.connect(selectedId);
+        const next = button.dataset.serverId;
+        if (!next || !isMenuServerId(next)) return;
+        current = next;
+        actions.connect(current);
       });
     }
-    syncConnect();
   }
 
   showCreateWorld(actions: CreateWorldActions): void {

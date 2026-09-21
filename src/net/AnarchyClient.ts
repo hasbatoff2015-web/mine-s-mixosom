@@ -59,8 +59,40 @@ export function anarchyStatusUrl(search?: string): string {
   return defaultStatusUrl(endpoint.host, endpoint.port);
 }
 
-function sessionStorageKey(): string {
-  const url = anarchyClientUrl();
+export function isLocalServerName(value: string): value is LocalServerName {
+  return Object.prototype.hasOwnProperty.call(LOCAL_SERVER_PRESETS, value);
+}
+
+/** Page `?server=` picks the initial card. Unknown or missing values stay on Anarchy. */
+export function selectedLocalServer(search?: string): LocalServerName {
+  const named = readConnectParams(search)?.get('server')?.trim().toLowerCase();
+  return named && isLocalServerName(named) ? named : 'anarchy';
+}
+
+export function localServerClientUrl(server: LocalServerName): string {
+  return defaultWsUrl(DEFAULT_SERVER_HOST, LOCAL_SERVER_PRESETS[server].port);
+}
+
+export function localServerStatusUrl(server: LocalServerName): string {
+  return defaultStatusUrl(DEFAULT_SERVER_HOST, LOCAL_SERVER_PRESETS[server].port);
+}
+
+/**
+ * Connect URL for one menu card.
+ * `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still override the card
+ * that `?server=` (or the Anarchy default) addresses. The other cards use their preset.
+ */
+export function clientUrlForServer(server: LocalServerName, search?: string): string {
+  if (server === selectedLocalServer(search)) return anarchyClientUrl(search);
+  return localServerClientUrl(server);
+}
+
+export function statusUrlForServer(server: LocalServerName, search?: string): string {
+  if (server === selectedLocalServer(search)) return anarchyStatusUrl(search);
+  return localServerStatusUrl(server);
+}
+
+export function clientSessionStorageKey(url: string): string {
   return url === defaultWsUrl() ? SESSION_KEY : `fc.session.${url}`;
 }
 
@@ -109,9 +141,10 @@ export class AnarchyClient {
         this.state = 'error';
         reject(new Error(message));
       };
+      const sessionKey = clientSessionStorageKey(url);
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
-        const sessionToken = sessionStorage.getItem(sessionStorageKey()) ?? undefined;
+        const sessionToken = sessionStorage.getItem(sessionKey) ?? undefined;
         this.send(buildAnarchyJoinMessage(name, sessionToken, appearance));
       });
       socket.addEventListener('message', (event) => {
@@ -135,7 +168,7 @@ export class AnarchyClient {
           window.clearTimeout(timeout);
           this.lastWelcome = payload;
           this.state = 'connected';
-          sessionStorage.setItem(sessionStorageKey(), payload.sessionToken);
+          sessionStorage.setItem(sessionKey, payload.sessionToken);
           this.startPing();
           if (typeof console !== 'undefined') {
             console.info(
@@ -218,23 +251,43 @@ export function buildAnarchyJoinMessage(
   };
 }
 
-export async function fetchAnarchyStatus(): Promise<{
+export async function fetchStatusAt(url: string): Promise<{
   reachable: boolean;
   online: number;
   maxPlayers: number;
   name?: string;
 }> {
   try {
-    const response = await fetch(anarchyStatusUrl(), { signal: AbortSignal.timeout(1500) });
-    if (!response.ok) return { reachable: false, online: 0, maxPlayers: 300 };
+    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    if (!response.ok) return { reachable: false, online: 0, maxPlayers: 0 };
     const json = await response.json() as { online?: number; maxPlayers?: number; name?: string };
     return {
       reachable: true,
       online: Number(json.online) || 0,
-      maxPlayers: Number(json.maxPlayers) || 300,
+      maxPlayers: Number(json.maxPlayers) || 0,
       name: json.name,
     };
   } catch {
-    return { reachable: false, online: 0, maxPlayers: 300 };
+    return { reachable: false, online: 0, maxPlayers: 0 };
   }
+}
+
+export async function fetchAnarchyStatus(): Promise<{
+  reachable: boolean;
+  online: number;
+  maxPlayers: number;
+  name?: string;
+}> {
+  return fetchStatusAt(anarchyStatusUrl());
+}
+
+export async function fetchLocalServerStatuses(
+  search?: string,
+): Promise<Record<LocalServerName, { reachable: boolean; online: number; maxPlayers: number }>> {
+  const names = Object.keys(LOCAL_SERVER_PRESETS) as LocalServerName[];
+  const pairs = await Promise.all(names.map(async (id) => {
+    const status = await fetchStatusAt(statusUrlForServer(id, search));
+    return [id, { reachable: status.reachable, online: status.online, maxPlayers: status.maxPlayers }] as const;
+  }));
+  return Object.fromEntries(pairs) as Record<LocalServerName, { reachable: boolean; online: number; maxPlayers: number }>;
 }
