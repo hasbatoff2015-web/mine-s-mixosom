@@ -9,7 +9,12 @@ import {
   claimAnchorVolume,
   findClaimByAnchor,
   overlappingAnchorClaims,
+  volumesOverlap,
 } from '../services/claimAnchors';
+import {
+  EVENT_CLAIM_ANCHOR_MESSAGE,
+  EVENT_CLAIM_CREATE_MESSAGE,
+} from '../services/eventProtection';
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
@@ -144,6 +149,13 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const key = claimAnchorKey(event.blockId);
         if (!key) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        const eventClaim = ctx.worldEvents.systemClaim();
+        if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+          event.cancel();
+          player.sendMessage(EVENT_CLAIM_ANCHOR_MESSAGE);
+          ctx.claimBoundaries.show(player.id, eventClaim);
+          return;
+        }
         const overlappingAnchors = overlappingAnchorClaims(load().claims, worldId(), volume);
         if (overlappingAnchors.length === 0) return;
         event.cancel();
@@ -157,6 +169,14 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!player) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
         const store = load();
+        const eventClaim = ctx.worldEvents.systemClaim();
+        if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(EVENT_CLAIM_ANCHOR_MESSAGE);
+          ctx.claimBoundaries.show(player.id, eventClaim);
+          return;
+        }
         const overlappingAnchors = overlappingAnchorClaims(store.claims, worldId(), volume);
         if (overlappingAnchors.length > 0) {
           api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
@@ -275,6 +295,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             }
             if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);
+            }
+            const eventClaim = ctx.worldEvents.systemClaim();
+            if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+              ctx.claimBoundaries.show(sender.playerId, eventClaim);
+              return fail(EVENT_CLAIM_CREATE_MESSAGE);
             }
             store.claims.push({
               id: `${ownerKey}:${name}:${Date.now()}`,

@@ -1,5 +1,6 @@
 /** English names for content whose localized copy is part of the current feature scope. */
 export const EN_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze({
+  event_chest: 'Event Chest',
   ruby_ingot: 'Ruby Ingot',
   ruby_helmet: 'Ruby Helmet',
   ruby_chestplate: 'Ruby Chestplate',

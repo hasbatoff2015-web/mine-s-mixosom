@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import {
   formatTimelineSample,
   ownerWalkGap2Timeline,
@@ -9,7 +9,7 @@ import {
 } from '../src/net/predictionTimeline';
 import { simulationTicksFromServerTick } from '../src/net/localPlayerPrediction';
 
-const STEP = WALK_SPEED * FIXED_DT;
+const STEP = PLAYER_MOVE_SPEED * FIXED_DT;
 
 describe('obsolete latest-input timeline (not the production contract)', () => {
   it('documents why history[latest] false-corrects when two seqs share one tick', () => {

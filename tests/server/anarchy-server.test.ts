@@ -418,8 +418,7 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(a.latest('block_result')).toMatchObject({ ok: false, action: 'break', reason: 'reach' });
 
     a.send({ type: 'chat', text: 'hello anarchy' });
-    await b.waitFor('chat');
-    expect(b.latest('chat')?.text).toBe('hello anarchy');
+    await b.waitForMatch('chat', (message) => message.text === 'hello anarchy');
 
     a.close();
     b.close();

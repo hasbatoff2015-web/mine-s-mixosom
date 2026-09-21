@@ -3,6 +3,8 @@ import type { BuiltinPluginContext } from './context';
 import { createAuctionPlugin } from './auction';
 import { createBuyerPlugin } from './buyer';
 import { createAutoMinePlugin } from './autoMine';
+import { createWandPlugin } from './wand';
+import { createWorldEventsPlugin } from './worldEvents';
 import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
 import { createClanPlugin } from './clan';
@@ -39,6 +41,8 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createClaimsPlugin(ctx),
     createHologramsPlugin(ctx),
     createBuyerPlugin(ctx),
+    createWandPlugin(ctx),
+    createWorldEventsPlugin(ctx),
     createAutoMinePlugin(ctx),
   ];
 }

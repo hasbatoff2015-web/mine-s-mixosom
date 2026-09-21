@@ -64,6 +64,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'spawn.*',
     'back.*',
     'automine.*',
+    'wand.*',
+    'events.*',
     'economy.*',
     'auction.*',
     'clan.*',

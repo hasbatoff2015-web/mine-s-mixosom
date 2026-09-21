@@ -299,4 +299,5 @@ export enum BlockId {
   TntDestructive = 163,
   SugarCane = 164,
   OakSign = 165,
+  EventChest = 166,
 }

@@ -87,7 +87,7 @@ const CART_HIT_AABB = Object.freeze({
 
 export type MinecartVariant = 'normal' | 'tnt';
 
-/** Rising edge of Shift/sprint: one keydown → one dismount. Hold does not repeat. */
+/** Rising edge of Shift/sneak: one keydown → one dismount. Hold does not repeat. */
 export function minecartDismountFromSprint(
   sprintDown: boolean,
   wasHeld: boolean,

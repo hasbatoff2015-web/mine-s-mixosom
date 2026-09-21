@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "assets:event-chest": "node scripts/paint-event-chest.mjs",
     "assets:import": "node scripts/import-assets.mjs",
     "assets:validate-player-skins": "node scripts/validate-player-skin-alpha.mjs",
     "audio:extract-reference": "node scripts/extract-minecraft-reference-sounds.mjs",

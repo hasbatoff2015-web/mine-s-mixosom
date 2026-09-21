@@ -168,7 +168,7 @@ cp server/plugin-examples/hello.ts server/plugins/hello.ts
 
 or `FC_EXAMPLE_PLUGIN=1 npm run dev:server`.
 
-Starter plugins such as kits are **not** implemented in this pass. Homes/TPA/claims/holograms/AutoMine/Economy/Auction load from `server/builtin-plugins/`.
+Starter plugins such as kits are **not** implemented in this pass. Homes/TPA/claims/holograms/wand/world-events/AutoMine/Economy/Auction load from `server/builtin-plugins/`.
 
 ## Commands (server registry)
 

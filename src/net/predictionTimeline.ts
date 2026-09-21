@@ -1,4 +1,4 @@
-import { FIXED_DT, WALK_SPEED } from '../core/constants';
+import { FIXED_DT, PLAYER_MOVE_SPEED } from '../core/constants';
 import type { MoveInput } from '../input/MoveInput';
 import { PlayerController, type PlayerMovementState } from '../player/PlayerController';
 import type { VoxelWorld } from '../world/World';
@@ -20,7 +20,7 @@ const idle: MoveInput = {
 };
 
 export function walkStep(): number {
-  return WALK_SPEED * FIXED_DT;
+  return PLAYER_MOVE_SPEED * FIXED_DT;
 }
 
 export interface TimelineMove {
