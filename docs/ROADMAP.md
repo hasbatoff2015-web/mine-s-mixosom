@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-09-21: Merge origin/main into sword-blocking
+
+- [x] Semantic merge of current `main` (`cd8ecf3`) into `cursor/sword-blocking-animation-7e91`.
+- [x] Keep sword-use visual animation and main world-events / always-run / KeyC camera.
+
+## 2026-09-20: Sword blocking animation
+
+- [x] Reuse existing `CombatSystem.swordBlocking` / RMB use-item for first- and third-person blocking poses.
+- [x] Interpolate idle → block → idle (0.1 s) as an overlay on `/moveitems` and first-person idle calibration.
+- [x] Replicate blocking to remote players via existing `presentation.swordBlocking`.
+- [x] Anarchy `tickOnline` calls the same `syncLocalCombatUse` as SP so local FP/TP `swordBlocking` is actually true while RMB is held.
+- [x] Live QA: first-person and local third-person blocking pose visible; live two-client `presentation.swordBlocking` true/false on the running Anarchy server.
+- [x] Third-person RMB uses the same arm-child held-item attachment as LMB swing (`/moveitems` local pose unchanged).
+
 ## 2026-09-20: Merge origin/main into always-run / KeyC
 
 - [x] Semantic merge of world-events `main` (`6447556`) into `cursor/player-run-crouch-camera-d1a5`.

@@ -1,5 +1,33 @@
 # Состояние проекта
 
+## Последний проход: Merge origin/main into sword-blocking — 2026-09-21
+
+- Semantic merge актуального `origin/main` (`cd8ecf3`, world events + always-run/KeyC) в `cursor/sword-blocking-animation-7e91`.
+- Код (`Game.ts`, `PlayerVisual`, InputManager) слился автоматически. Конфликты только в docs: сохранены оба прохода.
+- Sword-use остаётся render-only; `PLAYER_MOVE_SPEED = 7` / Shift crouch / KeyC camera из main не трогались.
+
+## Последний проход: Sword blocking — меч следует за рукой — 2026-09-20
+
+- Third-person ПКМ больше не задаёт отдельный local/world TRS меча. Как при ЛКМ swing: меч остаётся child `rightArm` → `heldItem` с `/moveitems` калибровкой; поднимается только рука.
+- `THIRD_PERSON_HELD_ITEM_DEFAULTS.sword` не менялся. First-person overlay на viewmodel сохранён (рука в FP скрыта).
+- Live QA: `?qaPlayer=1` + Anarchy FP/TP-front — меч следует за поднятой рукой; два WS-клиента синхронизируют `swordBlocking`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+## Последний проход: Sword blocking animation live fix — 2026-09-20
+
+- Живой Anarchy: замедление ПКМ работало, а поза меча не менялась. Причина: `tickOnline` слал `use` и тормозил из `input.using`, но не вызывал `combat.updateUse`, поэтому локальный `swordBlocking` оставался `false`. Overlay в `FirstPersonRenderer` / `PlayerVisual` не запускался.
+- И SP, и Anarchy теперь синхронизируют held/use через `Game.syncLocalCombatUse` до `setHeldItems`. Transform overlay (base calibration + extra TRS) не переписывался — он просто не получал `swordBlocking === true`.
+- Live QA: first-person и local third-person поза видна. Два WS-клиента на том же Anarchy-сервере: observer видит `presentation.swordBlocking` true/false. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+## Последний проход: Sword blocking animation (1.5.2-style) — 2026-09-20
+
+- Удержание ПКМ с мечом по-прежнему берёт существующий `CombatSystem.swordBlocking` / `input.using` / `input.use`. Скорость движения ×0.2 не менялась.
+- First-person и third-person (локальный и remote) плавно поднимают меч в blocking pose за 0.1 с поверх `/moveitems` / `FIRST_PERSON_SPRITE_POSE`. Калибровка idle не перезаписывается.
+- Сервер уже публиковал `presentation.swordBlocking`; `RemotePlayerView` → `PlayerVisual` теперь применяет тот же overlay, что и локальный third-person.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation.md`.
+
 ## Последний проход: Merge origin/main into always-run / KeyC — 2026-09-20
 
 - Semantic merge `origin/main` (`6447556`, world events + event chest) into `cursor/player-run-crouch-camera-d1a5`.

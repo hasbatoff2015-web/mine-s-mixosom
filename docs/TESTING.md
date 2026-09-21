@@ -1,5 +1,39 @@
 # Тестирование
 
+## 2026-09-21 Merge origin/main into sword-blocking
+
+Semantic merge of current `main` (`cd8ecf3`). Docs conflicts kept both sides. Code auto-merged.
+
+## 2026-09-20 Sword blocking hand follow
+
+Report: `reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: LMB swing and RMB block keep the sword parented to `rightArm`/`heldItem`; local `/moveitems` transform is unchanged while arm pose and world position change; grip distance to the hand attachment stays constant; release restores idle world pose. First-person overlay still differs from idle. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking live Anarchy fix
+
+Report: `reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: Anarchy `tickOnline` and SP `tickPlayers` share `syncLocalCombatUse`; skipping `updateUse` while `using=true` leaves the idle first-person matrix; after `updateUse` the held-sword transform differs from idle (`distance > 0.2`). Overlay offsets are non-zero. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking animation
+
+Report: `reports/2026-09-20_sword-blocking-animation.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts --maxWorkers=2
+```
+
+Contracts: sword + RMB uses existing `CombatSystem.swordBlocking`; tools do not block; 0.1 s lerp overlay on first-person and third-person held transforms; production `/moveitems` defaults unchanged; remote `presentation.swordBlocking` drives `PlayerVisual`. Focused **7 files / 125 tests PASS**.
+
 ## 2026-09-20 Merge origin/main into always-run / KeyC
 
 Semantic merge of world-events `main` (`6447556`). Docs conflicts kept both sides. Code auto-merged.

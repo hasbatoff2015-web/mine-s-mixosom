@@ -1,6 +1,6 @@
 import { TICK_RATE, clamp } from '../core/constants';
 import { systemRandomFn } from '../gameplay/random';
-import { tryGetItemDefinition, type ItemDefinition } from '../items';
+import { isSwordItem, tryGetItemDefinition, type ItemDefinition } from '../items';
 
 export interface AttackProfile {
   readonly itemId?: string;
@@ -174,9 +174,7 @@ export class CombatSystem {
   }
 
   updateUse(using: boolean, gameplayActive: boolean, alive: boolean): void {
-    const held = this.heldItemId ? tryGetItemDefinition(this.heldItemId) : undefined;
-    this.swordBlocking = using && gameplayActive && alive
-      && held?.kind === 'weapon' && held.weapon === 'sword';
+    this.swordBlocking = using && gameplayActive && alive && isSwordItem(this.heldItemId);
   }
 
   performMeleeAttack(

@@ -8,7 +8,17 @@ import { InputManager, type MoveInput } from '../src/input/InputManager';
 import { Inventory, createItemStack } from '../src/inventory';
 import { PlayerController } from '../src/player';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../src/rendering/FirstPersonRenderer';
+import { DEFAULT_PLAYER_APPEARANCE } from '../src/player/appearance/PlayerAppearance';
+import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
+import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
+import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
+import { SWORD_BLOCKING_TRANSITION_SECONDS, THIRD_PERSON_SWORD_BLOCKING_ARM } from '../src/rendering/player/swordBlockingVisual';
+import {
+  defaultThirdPersonHeldItemTransformForItem,
+  thirdPersonHeldTransformsClose,
+} from '../src/rendering/player/thirdPersonHeldItem';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
+import { createPredictionBuffer } from '../src/net/localPlayerPrediction';
 import { SurvivalSystem } from '../src/survival';
 import { VoxelWorld } from '../src/world/World';
 import combatSource from '../src/combat/CombatSystem.ts?raw';
@@ -219,6 +229,121 @@ describe('movement and presentation', () => {
     expect(movement!.forward).toBe(0);
   });
 
+  it('Anarchy tickOnline sets combat.swordBlocking so first- and third-person transforms leave idle', () => {
+    const { game, session, controls } = gameFixture();
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+    const fp = new FirstPersonRenderer(items, { freezeIdleMotion: true });
+    disposals.push(() => {
+      fp.dispose();
+      visual.dispose();
+      geometries.dispose();
+      items.dispose();
+      skins.dispose();
+    });
+    fp.setHeldItems('diamond_sword');
+    visual.setHeldItem('diamond_sword');
+    const tpIdleFrame = {
+      viewYaw: 0, viewPitch: 0, movementSpeed: 0, onGround: true, sneaking: false,
+      sprinting: false, verticalVelocity: 0, mining: false, bowCharge: 0,
+      swordBlocking: false, foodUseProgress: 0, invisible: false, hurtFlash: 0,
+    };
+    visual.update(0.05, tpIdleFrame);
+    const tpArm = visual.root.getObjectByName('player:right-arm-pivot')!;
+    const tpHolder = visual.root.getObjectByName('player:right-hand-item')!;
+    const tpSword = tpHolder.children[0];
+    if (!tpSword) throw new Error('missing held sword');
+    visual.root.updateWorldMatrix(true, true);
+    const tpIdleWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    const tpBase = defaultThirdPersonHeldItemTransformForItem('diamond_sword');
+    const fpIdle: FirstPersonFrameState = {
+      visible: true, movementSpeed: 0, onGround: true, sprinting: false,
+      mining: false, foodUseProgress: 0, bowCharge: 0,
+    };
+    fp.update(0.05, fpIdle);
+    const idleMatrix = fp.captureHeldItemMatrixDebug()!.itemLocal.clone();
+    const idlePos = new THREE.Vector3().setFromMatrixPosition(idleMatrix);
+
+    controls.movement = () => ({
+      forward: 1, right: 0, sprint: false, jump: false, sneak: false, descend: false, flySprint: false,
+    });
+    controls.using = true;
+    Object.assign(session, {
+      online: {
+        inputSeq: 0,
+        ignoreNetworkSend: true,
+        pendingLocalSnapshot: undefined,
+        lastViewKey: '0,0,4',
+        localFoodUse: undefined,
+        prediction: createPredictionBuffer(),
+        client: { send: vi.fn() },
+      },
+      playTicks: 0,
+      ridingCartId: undefined,
+      restingBed: undefined,
+      bowUseTicks: 0,
+      foodUseTicks: 0,
+      playerVisual: visual,
+      worldRenderer: { setTarget: vi.fn(), removeChunks: vi.fn() },
+    });
+    Object.assign(game, {
+      visibilityProbe: { noteTick: vi.fn(), noteInputSent: vi.fn() },
+      profiler: { enabled: false },
+      lifecycle: { state: 'PLAYING' },
+      ui: {
+        isBlockingOverlay: () => false,
+        isInventoryOpen: () => false,
+        refreshOpenInventory: vi.fn(),
+      },
+      settings: { renderDistance: 4 },
+      firstPerson: fp,
+      syncLocalCreativeFlight: vi.fn(),
+      updateFootsteps: vi.fn(),
+      updateTargetAndActions: vi.fn(),
+      refreshHud: vi.fn(),
+    });
+
+    expect(session.combat.swordBlocking).toBe(false);
+    game.tick();
+    expect(session.combat.swordBlocking).toBe(true);
+
+    fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...fpIdle, swordBlocking: session.combat.swordBlocking });
+    expect(fp.swordBlockingProgress).toBe(1);
+    const blockedMatrix = fp.captureHeldItemMatrixDebug()!.itemLocal;
+    expect(blockedMatrix.equals(idleMatrix)).toBe(false);
+    const blockedPos = new THREE.Vector3().setFromMatrixPosition(blockedMatrix);
+    expect(blockedPos.distanceTo(idlePos)).toBeGreaterThan(0.2);
+
+    visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, {
+      ...tpIdleFrame,
+      swordBlocking: session.combat.swordBlocking,
+    });
+    expect(visual.heldItemBlockingProgress).toBe(1);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, tpBase)).toBe(true);
+    expect(tpSword.parent).toBe(tpHolder);
+    expect(tpHolder.parent).toBe(tpArm);
+    expect(tpArm.rotation.x).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.x);
+    expect(tpArm.rotation.y).toBeCloseTo(THIRD_PERSON_SWORD_BLOCKING_ARM.y);
+    visual.root.updateWorldMatrix(true, true);
+    const blockedWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    expect(blockedWorld.distanceTo(tpIdleWorld)).toBeGreaterThan(0.15);
+
+    controls.using = false;
+    game.tick();
+    expect(session.combat.swordBlocking).toBe(false);
+    fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...fpIdle, swordBlocking: session.combat.swordBlocking });
+    expect(fp.swordBlockingProgress).toBe(0);
+    expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idleMatrix)).toBe(true);
+    visual.update(SWORD_BLOCKING_TRANSITION_SECONDS, tpIdleFrame);
+    expect(visual.heldItemBlockingProgress).toBe(0);
+    expect(thirdPersonHeldTransformsClose(visual.readHeldItemTransform()!, tpBase)).toBe(true);
+    visual.root.updateWorldMatrix(true, true);
+    const releasedWorld = new THREE.Vector3().setFromMatrixPosition(tpSword.matrixWorld);
+    expect(releasedWorld.distanceTo(tpIdleWorld)).toBeLessThan(1e-4);
+  });
+
   it('retains skeleton arrow impulse while melee uses the shared velocity transform', () => {
     const { mobs, mob } = arena();
     const events: any[] = [];
@@ -277,12 +402,13 @@ describe('movement and presentation', () => {
     fp.root.traverse((object) => objects.push(object));
     let blocked: THREE.Matrix4 | undefined;
     for (let cycle = 0; cycle < 100; cycle++) {
-      fp.swing(); fp.update(0.01, { ...state, swordBlocking: true });
+      fp.swing();
+      fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, { ...state, swordBlocking: true });
       const matrix = fp.captureHeldItemMatrixDebug()!.itemLocal;
       expect(matrix.equals(idle)).toBe(false);
       if (blocked) expect(matrix.equals(blocked)).toBe(true);
       blocked = matrix.clone();
-      fp.update(0.01, state);
+      fp.update(SWORD_BLOCKING_TRANSITION_SECONDS, state);
       expect(fp.captureHeldItemMatrixDebug()!.itemLocal.equals(idle)).toBe(true);
       expect(fp.objectCount).toBe(count);
     }

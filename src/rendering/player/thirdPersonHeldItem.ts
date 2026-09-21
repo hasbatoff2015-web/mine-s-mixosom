@@ -2,6 +2,7 @@ import { Euler, Quaternion, Vector3, type Object3D } from 'three';
 import {
   classifyItemForRendering,
   getItemDefinition,
+  isSwordItem,
   type ItemDefinition,
   type ItemRenderCategory,
 } from '../../items';
@@ -89,7 +90,7 @@ export const THIRD_PERSON_HELD_ITEM_DEFAULTS: Readonly<Record<ThirdPersonHeldIte
 
 export function isThirdPersonSwordItem(itemOrId: string | ItemDefinition): boolean {
   const item = typeof itemOrId === 'string' ? getItemDefinition(itemOrId) : itemOrId;
-  return item.kind === 'weapon' && item.weapon === 'sword';
+  return isSwordItem(item);
 }
 
 export function isThirdPersonAxeItem(itemOrId: string | ItemDefinition): boolean {
