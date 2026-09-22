@@ -320,6 +320,7 @@ export class PlayerArrowManager {
           source: 'projectile',
           attackerPosition: arrow.position,
           knockback: arrow.critical ? 4.2 : 2.4,
+          ...(arrow.ownerId ? { attackerId: arrow.ownerId } : {}),
           ...(arrow.flaming ? { igniteTicks: FIRE_ARROW_IGNITE_TICKS } : {}),
         });
         this.onMobHit?.(accepted, arrow.position, mobHit.mob, arrow.ownerId);

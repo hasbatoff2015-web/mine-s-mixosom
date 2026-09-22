@@ -8,7 +8,8 @@ export type PlayerActionKind =
   | 'block_break_abort'
   | 'block_break_finish'
   | 'bow_release'
-  | 'attack';
+  | 'attack'
+  | 'entity_use';
 
 export interface BlockTargetIntent {
   readonly targetX: number;
@@ -80,7 +81,7 @@ export interface AttackAction extends SequencedAction {
   readonly kind: 'attack';
   readonly yaw?: number;
   readonly pitch?: number;
-  /** Remote player rendered under the crosshair. Hint only; server proves the hit. */
+  /** Player or mob rendered under the crosshair. Hint only; server proves the hit. */
   readonly targetId?: string;
   /** Server-tick timeline on which targetId was actually rendered. */
   readonly targetRenderTick?: number;
@@ -109,13 +110,61 @@ export interface CombatActionDiagnostics {
   readonly pendingTicks?: number;
 }
 
+export type EntityUseActionResultKind =
+  | 'accepted'
+  | 'stale'
+  | 'future'
+  | 'reach'
+  | 'los'
+  | 'slot'
+  | 'item'
+  | 'dead'
+  | 'invalid'
+  | 'duplicate'
+  | 'pending_timeout'
+  | 'pet_limit'
+  | 'pet_capacity'
+  | 'not_owner';
+
+export interface EntityUseActionDiagnostics {
+  readonly result: EntityUseActionResultKind | string;
+  readonly actionSeq?: number;
+  readonly commandSeq?: number;
+  readonly targetId?: string;
+  readonly requestedRenderTick?: number;
+  readonly receivedServerTick?: number;
+  readonly resolvedRenderTick?: number;
+  readonly rewindTicks?: number;
+  readonly pendingTicks?: number;
+}
+
+/** Click-time look from the action packet; command-boundary look is only the fallback. */
+export function clickLookFromAction(
+  action: { readonly yaw?: number; readonly pitch?: number },
+  fallback: { readonly yaw: number; readonly pitch: number },
+): { yaw: number; pitch: number } {
+  return {
+    yaw: isFiniteNumber(action.yaw) ? action.yaw : fallback.yaw,
+    pitch: isFiniteNumber(action.pitch) ? action.pitch : fallback.pitch,
+  };
+}
+
+export interface EntityUseAction extends SequencedAction {
+  readonly kind: 'entity_use';
+  readonly targetId: string;
+  readonly yaw?: number;
+  readonly pitch?: number;
+  readonly targetRenderTick?: number;
+}
+
 export type PlayerAction =
   | BlockUseAction
   | BlockBreakStartAction
   | BlockBreakAbortAction
   | BlockBreakFinishAction
   | BowReleaseAction
-  | AttackAction;
+  | AttackAction
+  | EntityUseAction;
 
 export type ActionRejectReason =
   | 'dead'
@@ -146,7 +195,10 @@ export type ActionRejectReason =
   | 'look'
   | 'invalid'
   | 'vehicle_occupied'
-  | 'already_riding';
+  | 'already_riding'
+  | 'pet_limit'
+  | 'pet_capacity'
+  | 'not_owner';
 
 export interface ActionResult {
   readonly ok: boolean;
@@ -163,6 +215,7 @@ export interface ActionResult {
   readonly pitch?: number;
   readonly combat?: CombatActionDiagnostics;
   readonly bow?: BowActionDiagnostics;
+  readonly entityUse?: EntityUseActionDiagnostics;
 }
 
 export function isFiniteNumber(value: unknown): value is number {

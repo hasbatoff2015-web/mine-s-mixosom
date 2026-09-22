@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION } from '../shared/config';
 import { parseClientMessage } from '../shared/protocol';
 import { captureAttack } from '../src/net/actionIntent';
+import { clickLookFromAction } from '../shared/playerActions';
 import { attackMessageFromAttack } from '../src/net/onlineActionMessages';
 import gameSource from '../src/core/Game.ts?raw';
 
@@ -23,7 +24,7 @@ describe('online melee action intent', () => {
     });
   });
 
-  it('keeps air/non-player attacks hint-free and protocol-compatible', () => {
+  it('keeps air attacks hint-free and protocol-compatible', () => {
     const action = captureAttack(
       { actionSeq: 0, inputSeq: 4, selectedSlot: 0 },
       { yaw: 0, pitch: 0 },
@@ -48,6 +49,27 @@ describe('online melee action intent', () => {
   it('wires production melee through captureAttack and the sequenced message builder', () => {
     expect(gameSource).toContain('captureAttack(');
     expect(gameSource).toContain('attackMessageFromAttack(action)');
+    expect(gameSource).toContain('raycastRendered');
+    expect(gameSource).toContain('mobTarget.mob.id');
     expect(gameSource).not.toContain("client.send({ type: 'attack' })");
+  });
+
+  it('sends entity_use for a visible pet before ordinary food use', () => {
+    const sendOnlineUse = gameSource.slice(
+      gameSource.indexOf('private sendOnlineUse'),
+      gameSource.indexOf('private petUseTarget'),
+    );
+    expect(sendOnlineUse).toContain('trySendOnlinePetUse');
+    expect(sendOnlineUse.indexOf('trySendOnlinePetUse')).toBeLessThan(sendOnlineUse.indexOf('localFoodUse'));
+    expect(gameSource).toContain('resolvePetUseTarget');
+    expect(gameSource).toContain('entityUseMessage(action)');
+  });
+
+  it('uses captured action look rather than command-boundary look for click rays', () => {
+    expect(clickLookFromAction({ yaw: 1.2, pitch: -0.25 }, { yaw: 0, pitch: 0.1 })).toEqual({
+      yaw: 1.2, pitch: -0.25,
+    });
+    expect(clickLookFromAction({}, { yaw: 0.4, pitch: -0.1 })).toEqual({ yaw: 0.4, pitch: -0.1 });
+    expect(gameSource).toContain('lastEntityUseDiag');
   });
 });

@@ -147,12 +147,17 @@ export class VoxelVisualFactory {
     return material;
   }
 
+  texture(texturePath: string): THREE.Texture {
+    return this.entityTexture(texturePath);
+  }
+
   private entityTexture(texturePath: string): THREE.Texture {
     let texture = this.entityTextures.get(texturePath);
     if (!texture) {
       texture = typeof document === 'undefined'
         ? new THREE.Texture()
         : new THREE.TextureLoader().load(TextureAtlas.url(texturePath));
+      texture.name = texturePath;
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.magFilter = THREE.NearestFilter;
       texture.minFilter = THREE.NearestFilter;

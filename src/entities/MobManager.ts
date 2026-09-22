@@ -41,8 +41,30 @@ import type { EntityHost, EntityVisual, MobModel, MobVisualState } from './Entit
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
 import { rayAabbDistance } from '../world/collision';
-
 import { HUMANOID_DEATH_ANIMATION_SECONDS } from './humanoidDeath';
+import { pickCatVariant, pickPassiveSpawnKind } from './petSpawn';
+import {
+  CAT_FEAR_DISTANCE_SQ,
+  CAT_FEAR_SECONDS,
+  PET_COMBAT_ABANDON_OWNER_DISTANCE_SQ,
+  PET_COMBAT_SPEED_FACTOR,
+  PET_COMBAT_TARGET_TIMEOUT_SECONDS,
+  PET_FLEE_SPEED_FACTOR,
+  PET_FOLLOW_SPEED_FACTOR,
+  PET_FOLLOW_STOP_DISTANCE_SQ,
+  PET_TELEPORT_COOLDOWN_SECONDS,
+  PET_TELEPORT_DISTANCE_SQ,
+  WILD_PET_WANDER_RADIUS_SQ,
+  WILD_WOLF_ANGER_SECONDS,
+  WOLF_ATTACK_DAMAGE,
+} from './petConstants';
+import { fallbackCatVariant, isPetKind, samePetOwner, type CatVariant, type PetCombatPriority, type PetCombatTargetKind } from './petTypes';
+import { petBodyTexturePath } from './petAppearance';
+import { findSafePetTeleport, lastPetTeleportSearchStats, resetPetTeleportSearchStats } from './petTeleport';
+import { isCatFearSuppressed, resolvePetInteract, sanitizeTameProgress, type PetInteractResult } from './petTaming';
+import { recordMobPose, rewindMobPose, type MobPoseSample, type RewoundMobPose } from './mobPoseHistory';
+import { raycastMobTarget } from './mobTargetBounds';
+import { DEFAULT_MAX_TAMED_PETS } from '../gameplay/petLimit';
 
 export const MOB_HURT_FLASH_SECONDS = 0.22;
 /** Client death pose duration. Simulation removal uses the same window. */
@@ -96,12 +118,13 @@ export function mobDeathVisualSeconds(
 }
 
 const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
-const PASSIVE_KINDS: readonly MobKind[] = ['cow', 'pig', 'chicken', 'sheep'];
 const UP = new Vec3(0, 1, 0);
-const MAX_SEPARATION_PAIRS = 1_024;
+/** Soft horizontal steering budget. Pets do not raise this even if the tamed ceiling grows. */
+export const MAX_SEPARATION_PAIR_CHECKS = 1_024;
+const MAX_SEPARATION_PAIRS = MAX_SEPARATION_PAIR_CHECKS;
 
 export type MobRemovalReason = 'death' | 'explosion' | 'despawn' | 'removed' | 'cleared' | 'capacity';
-export type MobDamageSource = 'player' | 'projectile' | 'fire' | 'explosion' | 'environment';
+export type MobDamageSource = 'player' | 'projectile' | 'fire' | 'explosion' | 'environment' | 'mob';
 
 export interface MobSpawnOptions {
   readonly id?: string;
@@ -111,6 +134,12 @@ export interface MobSpawnOptions {
   readonly state?: MobState;
   /** Bypasses population caps; intended for restore and debug commands. */
   readonly force?: boolean;
+  readonly ownerId?: string;
+  readonly sitting?: boolean;
+  readonly catVariant?: CatVariant;
+  readonly angry?: boolean;
+  readonly tameProgress?: number;
+  readonly tameProgressPlayerId?: string;
 }
 
 export interface MobDamageOptions {
@@ -121,6 +150,7 @@ export interface MobDamageOptions {
   /** Existing projectile/explosion impulse only; never used for melee. Blocks/s. */
   readonly knockback?: number;
   readonly igniteTicks?: number;
+  readonly attackerId?: string;
 }
 
 export interface MobPlayerDamageEvent {
@@ -132,6 +162,7 @@ export interface MobPlayerDamageEvent {
   readonly position: Vec3;
   /** Projectile impulse only. Melee uses the canonical full-hurt transform. */
   readonly knockback?: Vec3;
+  readonly attackerPlayerId?: string;
 }
 
 export interface MobExplosionEvent {
@@ -162,6 +193,7 @@ export interface MobPlayerFocus {
   readonly alive?: boolean;
   /** False keeps the player in spawn/despawn interest but disables hostile targeting. */
   readonly targetable?: boolean;
+  readonly heldItemId?: string;
 }
 
 export interface MobUpdateContext {
@@ -171,6 +203,7 @@ export interface MobUpdateContext {
   readonly playerAlive?: boolean;
   /** False keeps spawning/despawning centred on the player but disables hostile targeting. */
   readonly playerTargetable?: boolean;
+  readonly heldItemId?: string;
   /**
    * Multiplayer foci. When present, each mob targets the nearest targetable player
    * and despawn uses the nearest living player. Automatic spawn still runs once per
@@ -189,6 +222,8 @@ export interface MobManagerOptions {
   readonly maxMobs?: number;
   readonly passiveCap?: number;
   readonly hostileCap?: number;
+  /** Protected tamed-pet safety ceiling. Does not replace per-player `pets.limit.N`. */
+  readonly maxTamedPets?: number;
   readonly maxProjectiles?: number;
   readonly automaticSpawning?: boolean;
   readonly spawnIntervalSeconds?: number;
@@ -208,6 +243,7 @@ export interface MobManagerOptions {
   /** Server-authoritative visual events (one entity id). */
   readonly onHurt?: (mob: Readonly<MobEntity>) => void;
   readonly onDeath?: (mob: Readonly<MobEntity>) => void;
+  readonly onPersistentStateChanged?: () => void;
   readonly onProjectileRemove?: (id: string) => void;
   /** Fired once when a skeleton arrow embeds in a collision block. */
   readonly onArrowBlockHit?: (x: number, y: number, z: number) => void;
@@ -222,7 +258,10 @@ export interface MobRaycastHit {
   readonly mob: MobEntity;
   readonly distance: number;
   readonly point: Vec3;
+  readonly renderTick?: number;
 }
+
+export type MobRaycastPose = 'sim' | 'render';
 
 export interface SerializedMob {
   readonly id: string;
@@ -233,6 +272,12 @@ export interface SerializedMob {
   readonly state: MobState;
   readonly ageSeconds: number;
   readonly fuseSeconds: number;
+  readonly ownerId?: string;
+  readonly sitting?: boolean;
+  readonly variant?: string;
+  readonly angry?: boolean;
+  readonly tameProgress?: number;
+  readonly tameProgressPlayerId?: string;
 }
 
 interface MobProjectile {
@@ -339,8 +384,26 @@ export class MobEntity {
   deathDropsEmitted = false;
   /** Last snapshot `hurt` flag; rising edge starts a per-entity flash. */
   networkHurt = false;
-  /** Render pose from snapshot interpolation; hitboxes keep `position`. */
+  /** Render pose from snapshot interpolation; physics keep `position`. */
   networkRenderPose?: { x: number; y: number; z: number; yaw: number };
+  /** Server tick corresponding to `networkRenderPose`. */
+  networkRenderTick?: number;
+  /** Bounded presentation history. Not serialized. */
+  readonly poseHistory: MobPoseSample[] = [];
+  ownerId?: string;
+  sitting = false;
+  tameProgress = 0;
+  tameProgressPlayerId?: string;
+  catVariant?: CatVariant;
+  angry = false;
+  angrySeconds = 0;
+  combatTargetId?: string;
+  combatTargetKind?: PetCombatTargetKind;
+  combatPriority?: PetCombatPriority;
+  combatTargetSeconds = 0;
+  teleportCooldown = 0;
+  petHomeX?: number;
+  petHomeZ?: number;
 
   constructor(
     readonly id: string,
@@ -392,6 +455,7 @@ export class MobManager {
   private readonly maxMobs: number;
   private readonly passiveCap: number;
   private readonly hostileCap: number;
+  private readonly maxTamedPets: number;
   private readonly maxProjectiles: number;
   private readonly automaticSpawning: boolean;
   private readonly spawnIntervalSeconds: number;
@@ -404,6 +468,10 @@ export class MobManager {
   private projectileIdCounter = 0;
   private spawnTimer = 0;
   private disposed = false;
+  private playerById = new Map<string, MobPlayerFocus>();
+  teleportCandidateChecks = 0;
+  teleportSearches = 0;
+  lastSeparationPairChecks = 0;
 
   constructor(
     sceneOrHost: EntityHost | object,
@@ -418,6 +486,7 @@ export class MobManager {
     this.maxMobs = Math.max(1, Math.floor(options.maxMobs ?? 48));
     this.passiveCap = Math.max(0, Math.min(this.maxMobs, Math.floor(options.passiveCap ?? 20)));
     this.hostileCap = Math.max(0, Math.min(this.maxMobs, Math.floor(options.hostileCap ?? 28)));
+    this.maxTamedPets = Math.max(1, Math.floor(options.maxTamedPets ?? DEFAULT_MAX_TAMED_PETS));
     this.maxProjectiles = Math.max(1, Math.floor(options.maxProjectiles ?? 64));
     this.automaticSpawning = options.automaticSpawning ?? true;
     this.spawnIntervalSeconds = Math.max(0.25, options.spawnIntervalSeconds ?? 2);
@@ -501,14 +570,16 @@ export class MobManager {
     return Boolean(mob && mob.state === 'die' && mob.deathSeconds < MOB_DEATH_ANIMATION_SECONDS);
   }
 
-  setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number): void {
+  setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number, tick?: number): void {
     const mob = this.mobsById.get(id);
     if (!mob) return;
     if (x === undefined || y === undefined || z === undefined) {
       mob.networkRenderPose = undefined;
+      mob.networkRenderTick = undefined;
       return;
     }
     mob.networkRenderPose = { x, y, z, yaw: yaw ?? mob.facingYaw };
+    mob.networkRenderTick = tick;
   }
 
   tickRemoteVisuals(delta: number): void {
@@ -518,8 +589,8 @@ export class MobManager {
         this.applyMobLight(mob);
       }
       const speed = Math.hypot(mob.velocity.x, mob.velocity.z);
-      mob.locomotionSpeed = speed;
-      if (speed > 0.05) {
+      mob.locomotionSpeed = mob.sitting ? 0 : speed;
+      if (!mob.sitting && speed > 0.05) {
         mob.previousWalkPhase = mob.walkPhase;
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
       }
@@ -553,9 +624,39 @@ export class MobManager {
   countByDisposition(disposition: MobDisposition): number {
     let count = 0;
     for (const mob of this.mobsById.values()) {
-      if (mob.alive && mob.definition.disposition === disposition) count += 1;
+      if (!mob.alive || mob.definition.disposition !== disposition) continue;
+      if (mob.ownerId) continue;
+      count += 1;
     }
     return count;
+  }
+
+  countOwnedPets(playerId: string): number {
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (mob.alive && mob.ownerId === playerId && isPetKind(mob.kind)) count += 1;
+    }
+    return count;
+  }
+
+  countTamedPets(): number {
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (mob.ownerId) count += 1;
+    }
+    return count;
+  }
+
+  countWildMobs(): number {
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (!mob.ownerId) count += 1;
+    }
+    return count;
+  }
+
+  isTamedPet(mob: MobEntity): boolean {
+    return Boolean(mob.ownerId) && isPetKind(mob.kind);
   }
 
   countByKind(kind: MobKind): number {
@@ -571,7 +672,13 @@ export class MobManager {
   ): MobEntity | undefined {
     this.assertActive();
     const definition = getMobDefinition(kind);
-    if (!spawnOptions.force && !this.hasPopulationRoom(definition.disposition)) return undefined;
+    const tamed = Boolean(spawnOptions.ownerId);
+    if (!spawnOptions.force && tamed && this.countTamedPets() >= this.maxTamedPets) {
+      return undefined;
+    }
+    if (!spawnOptions.force && !tamed && !this.hasPopulationRoom(definition.disposition)) {
+      return undefined;
+    }
     if (!spawnOptions.force && this.options.allowSpawn
       && !this.options.allowSpawn(kind, position.x, position.y, position.z)) {
       return undefined;
@@ -579,11 +686,21 @@ export class MobManager {
     if (!spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
       return undefined;
     }
-    if (this.mobsById.size >= this.maxMobs) {
+    if (!tamed && this.countWildMobs() >= this.maxMobs) {
       if (!spawnOptions.force) return undefined;
       this.evictFarthestOrOldest(position);
+      if (this.countWildMobs() >= this.maxMobs) return undefined;
     }
-    const created = this.host.createMob(kind);
+    const catVariant = kind === 'cat'
+      ? fallbackCatVariant(spawnOptions.catVariant ?? pickCatVariant(this.random))
+      : undefined;
+    const texturePath = petBodyTexturePath({
+      kind,
+      ownerId: spawnOptions.ownerId,
+      angry: spawnOptions.angry,
+      variant: catVariant,
+    });
+    const created = this.host.createMob(kind, texturePath ? { texturePath } : undefined);
     const visual = created?.visual as EntityVisual | undefined;
     const model = created?.model;
     const id = this.allocateMobId(spawnOptions.id);
@@ -610,6 +727,21 @@ export class MobManager {
       model,
       visual,
     );
+    if (spawnOptions.ownerId) mob.ownerId = spawnOptions.ownerId;
+    mob.sitting = spawnOptions.sitting === true;
+    const progress = sanitizeTameProgress(
+      spawnOptions.tameProgress,
+      spawnOptions.tameProgressPlayerId,
+      spawnOptions.ownerId,
+    );
+    mob.tameProgress = progress.progress;
+    mob.tameProgressPlayerId = progress.playerId;
+    if (catVariant) mob.catVariant = catVariant;
+    mob.angry = spawnOptions.angry === true;
+    if (mob.sitting) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+    }
     this.mobsById.set(id, mob);
     this.syncVisual(mob, 0, 1);
     this.applyMobLight(mob);
@@ -622,6 +754,8 @@ export class MobManager {
     const delta = Math.min(deltaSeconds, 0.25);
     const daylight = clamp(context.daylight ?? daylightFactor(this.world.timeOfDay), 0, 1);
     const foci = this.resolvePlayerFoci(context);
+    this.playerById.clear();
+    for (const focus of foci) this.playerById.set(focus.id, focus);
     const spawnCandidates = foci.filter((focus) => focus.alive !== false);
 
     if (this.automaticSpawning && spawnCandidates.length > 0) {
@@ -646,6 +780,15 @@ export class MobManager {
       mob.stateSeconds += delta;
       mob.decisionSeconds -= delta;
       mob.fleeSeconds = Math.max(0, mob.fleeSeconds - delta);
+      mob.teleportCooldown = Math.max(0, mob.teleportCooldown - delta);
+      if (mob.combatTargetSeconds > 0) {
+        mob.combatTargetSeconds = Math.max(0, mob.combatTargetSeconds - delta);
+        if (mob.combatTargetSeconds === 0) this.clearCombatTarget(mob);
+      }
+      if (mob.angrySeconds > 0) {
+        mob.angrySeconds = Math.max(0, mob.angrySeconds - delta);
+        if (mob.angrySeconds === 0) mob.angry = false;
+      }
 
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
@@ -672,7 +815,7 @@ export class MobManager {
         continue;
       }
       this.simulateMobPhysics(mob, delta);
-      const speed = mob.locomotionSpeed;
+      const speed = mob.sitting ? 0 : mob.locomotionSpeed;
       if (speed > 0.05) {
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
       }
@@ -685,7 +828,8 @@ export class MobManager {
   }
 
   /**
-   * Render-only interpolation. Gameplay/AI/hitboxes keep using simulation transforms.
+   * Render-only interpolation. Gameplay/AI/physics keep using simulation transforms.
+   * Interaction raycasts may opt into `networkRenderPose` so the hitbox matches the model.
    */
   interpolateVisuals(alpha: number): void {
     const t = Math.max(0, Math.min(1, alpha));
@@ -736,7 +880,10 @@ export class MobManager {
       if (!first.alive) continue;
       for (const second of this.mobsById.values()) {
         if (second === first) break;
-        if (!second.alive || checked >= MAX_SEPARATION_PAIRS) return;
+        if (!second.alive || checked >= MAX_SEPARATION_PAIRS) {
+          this.lastSeparationPairChecks = checked;
+          return;
+        }
         checked += 1;
         const verticalOverlap = Math.min(
           first.position.y + first.definition.height,
@@ -758,6 +905,7 @@ export class MobManager {
         second.velocity.z -= directionZ * impulse;
       }
     }
+    this.lastSeparationPairChecks = checked;
   }
 
   damage(
@@ -772,7 +920,20 @@ export class MobManager {
     const hurt = mob.hurtResistance.receive(amount);
     if (!hurt.accepted) return false;
     mob.health = Math.max(0, mob.health - hurt.rawDamage);
-    mob.resumeState = mob.definition.disposition === 'hostile' ? 'chase' : 'wander';
+    mob.resumeState = mob.definition.disposition === 'hostile' || (mob.kind === 'wolf' && !mob.ownerId && mob.angry)
+      ? 'chase'
+      : 'wander';
+    if (damageOptions.attackerId && mob.kind === 'wolf' && !mob.ownerId && mob.alive) {
+      mob.angry = true;
+      mob.angrySeconds = WILD_WOLF_ANGER_SECONDS;
+      this.setCombatTarget(mob, damageOptions.attackerId, 'player', 'defend');
+    }
+    if (
+      damageOptions.attackerId
+      && (damageOptions.source === 'player' || damageOptions.source === 'projectile')
+    ) {
+      this.assignOwnedWolfTarget(damageOptions.attackerId, mob.id, 'mob', 'assist');
+    }
     if (damageOptions.attackerPosition) {
       const dx = mob.position.x - damageOptions.attackerPosition.x;
       const dz = mob.position.z - damageOptions.attackerPosition.z;
@@ -791,7 +952,11 @@ export class MobManager {
         }
       }
       mob.wanderDirection.set(nx, 0, nz);
-      mob.fleeSeconds = mob.definition.disposition === 'passive' ? 3 : 0;
+      if (mob.definition.disposition === 'passive' && !isPetKind(mob.kind)) {
+        mob.fleeSeconds = 3;
+      } else if (mob.kind === 'cat' && !mob.ownerId) {
+        mob.fleeSeconds = CAT_FEAR_SECONDS;
+      }
     }
     if (damageOptions.source === 'player') {
       applyExtraKnockback(mob.velocity, damageOptions.attackerYaw ?? 0, damageOptions.extraKnockbackLevel ?? 0);
@@ -831,6 +996,7 @@ export class MobManager {
     origin: Vec3Like,
     direction: Vec3Like,
     maxDistance = 4.5,
+    options?: { readonly pose?: MobRaycastPose },
   ): MobRaycastHit | undefined {
     const normalized = new Vec3(direction.x, direction.y, direction.z);
     if (normalized.lengthSq() <= 1e-8 || maxDistance <= 0) return undefined;
@@ -838,18 +1004,19 @@ export class MobManager {
     const rayOrigin = new Vec3(origin.x, origin.y, origin.z);
     const blockHit = this.world.raycast(rayOrigin, normalized, maxDistance);
     const limit = Math.min(maxDistance, blockHit?.distance ?? maxDistance);
+    const poseMode = options?.pose ?? 'sim';
     let closest: MobRaycastHit | undefined;
     for (const mob of this.mobsById.values()) {
       if (!mob.alive) continue;
-      const halfWidth = mob.definition.width * 0.5;
-      const hit = rayAabbDistance(rayOrigin, normalized, {
-        minX: mob.position.x - halfWidth,
-        minY: mob.position.y,
-        minZ: mob.position.z - halfWidth,
-        maxX: mob.position.x + halfWidth,
-        maxY: mob.position.y + mob.definition.height,
-        maxZ: mob.position.z + halfWidth,
-      });
+      const pose = poseMode === 'render' && mob.networkRenderPose
+        ? mob.networkRenderPose
+        : {
+          x: mob.position.x,
+          y: mob.position.y,
+          z: mob.position.z,
+          yaw: mob.facingYaw,
+        };
+      const hit = raycastMobTarget(rayOrigin, normalized, pose, mob.kind);
       if (!hit || hit.distance < 0) continue;
       const distance = hit.distance;
       if (distance > limit || (closest && distance >= closest.distance)) continue;
@@ -861,9 +1028,144 @@ export class MobManager {
           rayOrigin.y + normalized.y * distance,
           rayOrigin.z + normalized.z * distance,
         ),
+        ...(poseMode === 'render' && mob.networkRenderTick !== undefined
+          ? { renderTick: mob.networkRenderTick }
+          : {}),
       };
     }
     return closest;
+  }
+
+  /** Interaction/crosshair helper that prefers the pose the player actually sees. */
+  raycastRendered(
+    origin: Vec3Like,
+    direction: Vec3Like,
+    maxDistance = 4.5,
+  ): MobRaycastHit | undefined {
+    return this.raycast(origin, direction, maxDistance, { pose: 'render' });
+  }
+
+  recordPoseHistory(serverTick: number): void {
+    if (!Number.isFinite(serverTick)) return;
+    for (const mob of this.mobsById.values()) {
+      recordMobPose(mob.poseHistory, {
+        tick: serverTick,
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+        yaw: mob.facingYaw,
+      });
+    }
+  }
+
+  rewindPose(id: string, requestedTick: number, currentTick: number): RewoundMobPose | undefined {
+    const mob = this.mobsById.get(id);
+    if (!mob) return undefined;
+    return rewindMobPose(mob.poseHistory, requestedTick, currentTick);
+  }
+
+  applyPetNetworkState(
+    mob: MobEntity,
+    state: {
+      readonly ownerId?: string;
+      readonly sitting?: boolean;
+      readonly variant?: string;
+      readonly angry?: boolean;
+    },
+  ): void {
+    mob.ownerId = state.ownerId;
+    mob.sitting = state.sitting === true;
+    if (mob.kind === 'cat') mob.catVariant = fallbackCatVariant(state.variant);
+    mob.angry = state.angry === true;
+    if (mob.sitting) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+    }
+  }
+
+  tryPetInteract(
+    mob: MobEntity,
+    request: {
+      readonly playerId: string;
+      readonly heldItemId?: string;
+      readonly gamemode: 'survival' | 'creative';
+      readonly petLimit: number;
+    },
+  ): PetInteractResult {
+    if (!isPetKind(mob.kind) || !mob.alive) {
+      return { ok: false, reason: 'invalid', consume: false };
+    }
+    const result = resolvePetInteract({
+      kind: mob.kind,
+      alive: mob.alive,
+      ownerId: mob.ownerId,
+      sitting: mob.sitting,
+      tameProgress: mob.tameProgress,
+      tameProgressPlayerId: mob.tameProgressPlayerId,
+    }, {
+      playerId: request.playerId,
+      heldItemId: request.heldItemId,
+      gamemode: request.gamemode,
+      ownedCount: this.countOwnedPets(request.playerId),
+      petLimit: request.petLimit,
+      tamedCount: this.countTamedPets(),
+      maxTamedPets: this.maxTamedPets,
+    });
+    if (!result.ok) return result;
+    if (result.kind === 'feed') {
+      mob.tameProgress = result.progress;
+      mob.tameProgressPlayerId = request.playerId;
+      this.options.onPersistentStateChanged?.();
+    } else if (result.kind === 'tame') {
+      mob.ownerId = request.playerId;
+      mob.sitting = true;
+      mob.tameProgress = 0;
+      mob.tameProgressPlayerId = undefined;
+      mob.angry = false;
+      mob.angrySeconds = 0;
+      this.clearCombatTarget(mob);
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+      this.changeState(mob, 'idle');
+      this.options.onPersistentStateChanged?.();
+    } else if (result.kind === 'sit') {
+      mob.sitting = true;
+      this.clearCombatTarget(mob);
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+      this.changeState(mob, 'idle');
+      this.options.onPersistentStateChanged?.();
+    } else {
+      mob.sitting = false;
+      this.options.onPersistentStateChanged?.();
+    }
+    return result;
+  }
+
+  assignOwnedWolfTarget(
+    ownerId: string,
+    targetId: string,
+    kind: PetCombatTargetKind,
+    priority: PetCombatPriority,
+  ): void {
+    if (!ownerId || ownerId === targetId) return;
+    if (kind === 'mob') {
+      const target = this.mobsById.get(targetId);
+      if (target && target.ownerId === ownerId) return;
+    }
+    for (const mob of this.mobsById.values()) {
+      if (!mob.alive || mob.kind !== 'wolf' || mob.ownerId !== ownerId || mob.sitting) continue;
+      if (mob.id === targetId) continue;
+      if (kind === 'mob') {
+        const target = this.mobsById.get(targetId);
+        if (target && samePetOwner(mob, target)) continue;
+      }
+      if (priority === 'assist' && mob.combatPriority === 'defend' && mob.combatTargetId) continue;
+      this.setCombatTarget(mob, targetId, kind, priority);
+    }
   }
 
   attackTarget(
@@ -895,6 +1197,12 @@ export class MobManager {
       state: mob.state,
       ageSeconds: mob.ageSeconds,
       fuseSeconds: mob.fuseSeconds,
+      ...(mob.ownerId ? { ownerId: mob.ownerId } : {}),
+      ...(mob.sitting ? { sitting: true } : {}),
+      ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
+      ...(mob.angry ? { angry: true } : {}),
+      ...(!mob.ownerId && mob.tameProgress > 0 ? { tameProgress: mob.tameProgress } : {}),
+      ...(!mob.ownerId && mob.tameProgressPlayerId ? { tameProgressPlayerId: mob.tameProgressPlayerId } : {}),
     }));
   }
 
@@ -902,23 +1210,43 @@ export class MobManager {
     this.assertActive();
     if (clearExisting) this.clear();
     let restored = 0;
-    for (const entry of serialized.slice(-this.maxMobs)) {
-      if (!(entry.kind in MOB_DEFINITIONS)) continue;
-      if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) continue;
-      if (!Number.isFinite(entry.health) || entry.health <= 0) continue;
-      const mob = this.spawn(entry.kind, new Vec3(...entry.position), {
-        id: entry.id,
-        velocity: new Vec3(...entry.velocity),
-        health: entry.health,
-        state: entry.state,
-        ageSeconds: entry.ageSeconds,
-        force: true,
-      });
-      if (!mob) continue;
-      mob.fuseSeconds = clamp(entry.fuseSeconds, 0, 1.5);
-      restored += 1;
+    const tamed: SerializedMob[] = [];
+    const wild: SerializedMob[] = [];
+    for (const entry of serialized) {
+      if (entry.ownerId && isPetKind(entry.kind)) tamed.push(entry);
+      else wild.push(entry);
+    }
+    for (const entry of tamed) {
+      if (this.restoreOne(entry, true)) restored += 1;
+    }
+    for (const entry of wild) {
+      if (this.countWildMobs() >= this.maxMobs) break;
+      if (this.restoreOne(entry, true)) restored += 1;
     }
     return restored;
+  }
+
+  private restoreOne(entry: SerializedMob, force: boolean): boolean {
+    if (!(entry.kind in MOB_DEFINITIONS)) return false;
+    if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) return false;
+    if (!Number.isFinite(entry.health) || entry.health <= 0) return false;
+    const mob = this.spawn(entry.kind, new Vec3(...entry.position), {
+      id: entry.id,
+      velocity: new Vec3(...entry.velocity),
+      health: entry.health,
+      state: entry.state,
+      ageSeconds: entry.ageSeconds,
+      force,
+      ownerId: entry.ownerId,
+      sitting: entry.sitting === true,
+      catVariant: entry.kind === 'cat' ? fallbackCatVariant(entry.variant) : undefined,
+      angry: entry.angry === true,
+      tameProgress: entry.tameProgress,
+      tameProgressPlayerId: entry.tameProgressPlayerId,
+    });
+    if (!mob) return false;
+    mob.fuseSeconds = clamp(entry.fuseSeconds ?? 0, 0, 1.5);
+    return true;
   }
 
   getApproximateLight(position: Readonly<Vec3>, daylight = daylightFactor(this.world.timeOfDay)): number {
@@ -972,6 +1300,10 @@ export class MobManager {
     context: MobUpdateContext,
     daylight: number,
   ): void {
+    if (isPetKind(mob.kind)) {
+      this.updatePetAi(mob, delta, target, context);
+      return;
+    }
     if (mob.definition.disposition === 'passive') {
       this.updatePassiveAi(mob, delta);
       return;
@@ -1026,6 +1358,235 @@ export class MobManager {
       return;
     }
     this.updateWander(mob, delta, 0.72);
+  }
+
+  private updatePetAi(
+    mob: MobEntity,
+    delta: number,
+    nearestTargetable: MobPlayerFocus | undefined,
+    context: MobUpdateContext,
+  ): void {
+    void nearestTargetable;
+    if (mob.sitting) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+      this.changeState(mob, 'idle');
+      return;
+    }
+
+    if (mob.ownerId) {
+      const owner = this.playerById.get(mob.ownerId);
+      if (mob.kind === 'wolf' && this.updateOwnedWolfCombat(mob, owner, context)) return;
+      if (owner && owner.alive !== false) {
+        this.updateOwnedFollow(mob, owner);
+        return;
+      }
+      this.updateOwnedIdle(mob, delta);
+      return;
+    }
+
+    if (mob.kind === 'wolf' && mob.angry) {
+      const target = mob.combatTargetId ? this.playerById.get(mob.combatTargetId) : undefined;
+      if (target && target.alive !== false && target.id !== mob.ownerId) {
+        this.chaseAndAttackPlayer(mob, target, context);
+        return;
+      }
+      mob.angry = false;
+    }
+
+    if (mob.kind === 'cat') {
+      const feared = this.nearestFearFocus(mob);
+      if (feared) {
+        const dx = mob.position.x - feared.position.x;
+        const dz = mob.position.z - feared.position.z;
+        if (dx * dx + dz * dz > 1e-8) {
+          mob.wanderDirection.set(dx, 0, dz);
+          mob.fleeSeconds = CAT_FEAR_SECONDS;
+        }
+      }
+    }
+
+    if (mob.fleeSeconds > 0 && mob.wanderDirection.lengthSq() > 0) {
+      this.changeState(mob, 'wander');
+      this.steerToward(mob, mob.wanderDirection, mob.definition.speed * PET_FLEE_SPEED_FACTOR);
+      return;
+    }
+    this.updateWander(mob, delta, 0.72);
+  }
+
+  private updateOwnedFollow(mob: MobEntity, owner: MobPlayerFocus): void {
+    mob.petHomeX = undefined;
+    mob.petHomeZ = undefined;
+    const dx = owner.position.x - mob.position.x;
+    const dz = owner.position.z - mob.position.z;
+    const distanceSquared = dx * dx + dz * dz;
+    if (distanceSquared > PET_TELEPORT_DISTANCE_SQ) {
+      const beforeX = mob.position.x;
+      const beforeZ = mob.position.z;
+      this.tryPetTeleport(mob, owner);
+      if (mob.position.x !== beforeX || mob.position.z !== beforeZ) return;
+    }
+    if (distanceSquared <= PET_FOLLOW_STOP_DISTANCE_SQ) {
+      this.updateWander(mob, 0.05, 0.35);
+      return;
+    }
+    this.changeState(mob, 'wander');
+    this.steerToward(mob, new Vec3(dx, 0, dz), mob.definition.speed * PET_FOLLOW_SPEED_FACTOR);
+  }
+
+  private updateOwnedIdle(mob: MobEntity, delta: number): void {
+    if (mob.petHomeX === undefined) {
+      mob.petHomeX = mob.position.x;
+      mob.petHomeZ = mob.position.z;
+    }
+    const dx = mob.position.x - (mob.petHomeX ?? mob.position.x);
+    const dz = mob.position.z - (mob.petHomeZ ?? mob.position.z);
+    if (dx * dx + dz * dz > WILD_PET_WANDER_RADIUS_SQ) {
+      this.steerToward(mob, new Vec3(-dx, 0, -dz), mob.definition.speed * 0.45);
+      return;
+    }
+    this.updateWander(mob, delta, 0.4);
+  }
+
+  private updateOwnedWolfCombat(
+    mob: MobEntity,
+    owner: MobPlayerFocus | undefined,
+    context: MobUpdateContext,
+  ): boolean {
+    if (!mob.combatTargetId || mob.kind !== 'wolf') return false;
+    if (owner && owner.alive !== false) {
+      const odx = owner.position.x - mob.position.x;
+      const odz = owner.position.z - mob.position.z;
+      if (odx * odx + odz * odz > PET_COMBAT_ABANDON_OWNER_DISTANCE_SQ) {
+        this.clearCombatTarget(mob);
+        return false;
+      }
+    }
+    if (mob.combatTargetKind === 'player') {
+      const target = this.playerById.get(mob.combatTargetId);
+      if (!target || target.alive === false || target.targetable === false || target.id === mob.ownerId) {
+        this.clearCombatTarget(mob);
+        return false;
+      }
+      this.chaseAndAttackPlayer(mob, target, context);
+      return true;
+    }
+    const targetMob = this.mobsById.get(mob.combatTargetId);
+    if (!targetMob || !targetMob.alive || targetMob.id === mob.id || samePetOwner(mob, targetMob)) {
+      this.clearCombatTarget(mob);
+      return false;
+    }
+    this.chaseAndAttackMob(mob, targetMob);
+    return true;
+  }
+
+  private chaseAndAttackPlayer(
+    mob: MobEntity,
+    target: MobPlayerFocus,
+    context: MobUpdateContext,
+  ): void {
+    const playerEye = this.focusEye(target);
+    const horizontal = new Vec3().subVectors(target.position, mob.position);
+    horizontal.y = 0;
+    const distance = mob.eyePosition.distanceTo(playerEye);
+    if (horizontal.lengthSq() > 1e-8) mob.facingYaw = Math.atan2(horizontal.x, horizontal.z) + Math.PI;
+    const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, playerEye);
+    if (distance <= mob.definition.attackRange && lineOfSight) {
+      this.changeState(mob, 'attack');
+      mob.velocity.x *= 0.25;
+      mob.velocity.z *= 0.25;
+      if (mob.attackCooldownSeconds <= 0) {
+        this.emitPlayerDamage(mob, target, WOLF_ATTACK_DAMAGE, 'melee', context);
+        mob.attackCooldownSeconds = mob.definition.attackCooldownSeconds;
+      }
+    } else {
+      this.changeState(mob, 'chase');
+      this.steerToward(mob, horizontal, mob.definition.speed * PET_COMBAT_SPEED_FACTOR);
+    }
+  }
+
+  private chaseAndAttackMob(mob: MobEntity, target: MobEntity): void {
+    const horizontal = new Vec3().subVectors(target.position, mob.position);
+    horizontal.y = 0;
+    const distance = mob.position.distanceTo(target.position);
+    if (horizontal.lengthSq() > 1e-8) mob.facingYaw = Math.atan2(horizontal.x, horizontal.z) + Math.PI;
+    if (distance <= mob.definition.attackRange) {
+      this.changeState(mob, 'attack');
+      mob.velocity.x *= 0.25;
+      mob.velocity.z *= 0.25;
+      if (mob.attackCooldownSeconds <= 0) {
+        this.damage(target, WOLF_ATTACK_DAMAGE, {
+          source: 'mob',
+          attackerPosition: mob.position,
+          attackerId: mob.id,
+        });
+        mob.attackCooldownSeconds = mob.definition.attackCooldownSeconds;
+      }
+    } else {
+      this.changeState(mob, 'chase');
+      this.steerToward(mob, horizontal, mob.definition.speed * PET_COMBAT_SPEED_FACTOR);
+    }
+  }
+
+  private nearestFearFocus(mob: MobEntity): MobPlayerFocus | undefined {
+    let best: MobPlayerFocus | undefined;
+    let bestDistance = CAT_FEAR_DISTANCE_SQ;
+    for (const focus of this.playerById.values()) {
+      if (focus.alive === false) continue;
+      if (isCatFearSuppressed(focus.heldItemId)) continue;
+      const dx = focus.position.x - mob.position.x;
+      const dz = focus.position.z - mob.position.z;
+      const distanceSquared = dx * dx + dz * dz;
+      if (distanceSquared < bestDistance) {
+        bestDistance = distanceSquared;
+        best = focus;
+      }
+    }
+    return best;
+  }
+
+  private tryPetTeleport(mob: MobEntity, owner: MobPlayerFocus): void {
+    if (mob.sitting || mob.teleportCooldown > 0) return;
+    this.teleportSearches += 1;
+    resetPetTeleportSearchStats();
+    const destination = findSafePetTeleport(this.world, owner.position);
+    this.teleportCandidateChecks += lastPetTeleportSearchStats().candidateChecks;
+    mob.teleportCooldown = PET_TELEPORT_COOLDOWN_SECONDS;
+    if (!destination) return;
+    mob.position.set(destination.x, destination.y, destination.z);
+    mob.previousPosition.copy(mob.position);
+    mob.velocity.set(0, 0, 0);
+    this.snapMobRender(mob);
+    this.options.onPersistentStateChanged?.();
+  }
+
+  private setCombatTarget(
+    mob: MobEntity,
+    targetId: string,
+    kind: PetCombatTargetKind,
+    priority: PetCombatPriority,
+  ): void {
+    if (targetId === mob.ownerId || targetId === mob.id) return;
+    if (kind === 'mob') {
+      const target = this.mobsById.get(targetId);
+      if (target && samePetOwner(mob, target)) return;
+    }
+    mob.combatTargetId = targetId;
+    mob.combatTargetKind = kind;
+    mob.combatPriority = priority;
+    mob.combatTargetSeconds = PET_COMBAT_TARGET_TIMEOUT_SECONDS;
+    if (!mob.ownerId && mob.kind === 'wolf') {
+      mob.angry = true;
+      mob.angrySeconds = Math.max(mob.angrySeconds, WILD_WOLF_ANGER_SECONDS);
+    }
+  }
+
+  private clearCombatTarget(mob: MobEntity): void {
+    mob.combatTargetId = undefined;
+    mob.combatTargetKind = undefined;
+    mob.combatPriority = undefined;
+    mob.combatTargetSeconds = 0;
   }
 
   private updateWander(mob: MobEntity, delta: number, movementFraction: number): void {
@@ -1202,6 +1763,11 @@ export class MobManager {
     delta: number,
     playerPosition: Readonly<Vec3> | undefined,
   ): void {
+    if (mob.position.y < -32) {
+      this.removeMob(mob, 'despawn');
+      return;
+    }
+    if (mob.ownerId) return;
     if (!playerPosition) return;
     const distanceSquared = mob.position.distanceToSquared(playerPosition);
     if (distanceSquared > 72 * 72) mob.farSeconds += delta;
@@ -1259,6 +1825,12 @@ export class MobManager {
       width: mob.definition.width,
       height: mob.definition.height,
       hurtFlashSeconds: mob.hurtFlashSeconds,
+      sitting: mob.sitting,
+      ownerId: mob.ownerId,
+      variant: mob.catVariant,
+      angry: mob.angry,
+      health: mob.health,
+      maxHealth: mob.definition.maxHealth,
       fireOverlay: mob.fireOverlay,
     };
     mob.fireOverlay = this.host.syncMob(state) as EntityVisual | undefined;
@@ -1360,14 +1932,15 @@ export class MobManager {
     customLight: MobUpdateContext['lightLevelAt'],
   ): MobEntity | undefined {
     if (!this.hasPopulationRoom('passive')) return undefined;
-    const kind = PASSIVE_KINDS[Math.floor(this.random() * PASSIVE_KINDS.length)] ?? PASSIVE_KINDS[0]!;
-    const definition = getMobDefinition(kind);
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const sample = this.randomSpawnColumn(playerPosition);
       if (!sample) continue;
+      const biome = this.world.biomeAt(sample.x, sample.z);
+      const kind = pickPassiveSpawnKind(biome, this.random);
+      const definition = getMobDefinition(kind);
       const y = sample.surfaceY + 1;
       const position = new Vec3(sample.x + 0.5, y, sample.z + 0.5);
-      if (!this.spawnPositionIsValid(position, definition, 'passive')) continue;
+      if (!this.spawnPositionIsValid(position, definition, 'passive', kind)) continue;
       const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
       if (light < PASSIVE_SPAWN_LIGHT_MIN) continue;
       return this.spawn(kind, position);
@@ -1420,7 +1993,7 @@ export class MobManager {
     if (this.hostileCountNear(position.x, position.z, this.caveHostileDensityRadius) > 0) return false;
     const kind = HOSTILE_KINDS[Math.floor(this.random() * HOSTILE_KINDS.length)] ?? HOSTILE_KINDS[0]!;
     const definition = getMobDefinition(kind);
-    if (!this.spawnPositionIsValid(position, definition, 'hostile')) return false;
+    if (!this.spawnPositionIsValid(position, definition, 'hostile', kind)) return false;
     if (!this.caveSpawnEnvironmentOk(position)) return false;
     const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
     if (light > HOSTILE_SPAWN_LIGHT_MAX) return false;
@@ -1438,7 +2011,7 @@ export class MobManager {
     const kind = HOSTILE_KINDS[Math.floor(this.random() * HOSTILE_KINDS.length)] ?? HOSTILE_KINDS[0]!;
     const definition = getMobDefinition(kind);
     const position = new Vec3(sample.x + 0.5, sample.surfaceY + 1, sample.z + 0.5);
-    if (!this.spawnPositionIsValid(position, definition, 'hostile')) return false;
+    if (!this.spawnPositionIsValid(position, definition, 'hostile', kind)) return false;
     if (this.world.skyLightAt(sample.x, Math.floor(position.y), sample.z) < 8) return false;
     const light = customLight?.(position) ?? this.getApproximateLight(position, daylight);
     if (light > HOSTILE_SPAWN_LIGHT_MAX) return false;
@@ -1484,6 +2057,7 @@ export class MobManager {
     position: Readonly<Vec3>,
     definition: MobDefinition,
     disposition: MobDisposition,
+    kind?: MobKind,
   ): boolean {
     if (!isSpaceClear(this.world, position, definition)) return false;
     if (this.bodyTouchesLiquid(position.x, position.y, position.z, definition.height)) return false;
@@ -1494,7 +2068,11 @@ export class MobManager {
     );
     const belowDefinition = getBlockDefinition(below);
     if (!belowDefinition.solid || belowDefinition.liquid) return false;
-    if (disposition === 'passive' && below !== BlockId.GrassBlock) return false;
+    if (disposition === 'passive') {
+      if (kind === 'wolf') {
+        if (below !== BlockId.GrassBlock && below !== BlockId.SnowBlock) return false;
+      } else if (below !== BlockId.GrassBlock) return false;
+    }
     return true;
   }
 
@@ -1706,6 +2284,7 @@ export class MobManager {
       mobKind: mob.kind,
       position: mob.position.clone(),
       knockback,
+      ...(mob.ownerId ? { attackerPlayerId: mob.ownerId } : {}),
     };
     this.pendingPlayerDamage.push(event);
     context.onPlayerDamage?.(event);
@@ -1773,6 +2352,7 @@ export class MobManager {
 
   private removeMob(mob: MobEntity, reason: MobRemovalReason): void {
     if (!this.mobsById.delete(mob.id)) return;
+    if (mob.ownerId) this.options.onPersistentStateChanged?.();
     if (mob.fireOverlay) this.host.disposeVisual(mob.fireOverlay);
     if (mob.visual) this.host.disposeVisual(mob.visual, { materials: true });
     this.options.onRemove?.(mob, reason);
@@ -1787,7 +2367,7 @@ export class MobManager {
   }
 
   private hasPopulationRoom(disposition: MobDisposition): boolean {
-    if (this.mobsById.size >= this.maxMobs) return false;
+    if (this.countWildMobs() >= this.maxMobs) return false;
     const count = this.countByDisposition(disposition);
     return count < (disposition === 'passive' ? this.passiveCap : this.hostileCap);
   }
@@ -1796,6 +2376,7 @@ export class MobManager {
     let selected: MobEntity | undefined;
     let bestScore = -Infinity;
     for (const mob of this.mobsById.values()) {
+      if (mob.ownerId) continue;
       const score = mob.position.distanceToSquared(reference) + mob.ageSeconds;
       if (score > bestScore) {
         selected = mob;
@@ -1814,6 +2395,7 @@ export class MobManager {
       eyePosition: context.playerEyePosition,
       alive: context.playerAlive,
       targetable: context.playerTargetable,
+      ...(context.heldItemId ? { heldItemId: context.heldItemId } : {}),
     }];
   }
 

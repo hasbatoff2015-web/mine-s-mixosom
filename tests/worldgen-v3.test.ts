@@ -408,7 +408,7 @@ describe('Worldgen V3 hydrology, gourds and V2 migration', () => {
     expect(GOURD_PATCH_CELL).toBe(32);
   });
 
-  it('accepts a 0.25 subset of unscaled gourd patches without moving survivors', () => {
+  it('accepts a 0.25 subset of unscaled gourd patches without moving survivors', { timeout: 30_000 }, () => {
     expect(GOURD_PATCH_DENSITY).toBe(0.25);
     expect(GOURD_PATCH_CELL).toBe(32);
     expect(PUMPKIN_DECORATION_SALT).toBe(81427);

@@ -1,5 +1,37 @@
 # Тестирование
 
+## 2026-09-23 Merge origin/main into wolves-cats-pets
+
+Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Docs conflicts kept both sides. `MobManager.spawn` keeps playable-border spawn and wild-only `maxMobs`. Auto-merged code kept both pet and current-main families.
+
+## 2026-09-22 Pet hit registration / wolf tail / spawnpet
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/visual-models.test.ts tests/entities.test.ts tests/entity-snapshot-interpolation.test.ts tests/melee-action-intent.test.ts tests/mob-pose-history.test.ts tests/server/pets-anarchy.test.ts tests/server/pet-hit-registration.test.ts tests/server/spawnpet-command.test.ts tests/pet-textures.test.mjs --maxWorkers=2
+```
+
+Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
+## 2026-09-20 Pet models / 3-step taming / rendered melee
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/melee-lag-compensation.test.ts tests/melee-action-intent.test.ts tests/use-interaction.test.ts tests/mob-pose-history.test.ts tests/entity-snapshot-interpolation.test.ts tests/combat.test.ts tests/online-consumable-use.test.ts tests/action-pose-history.test.ts tests/server/player-actions.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&view=front|side|rear|three-quarter&petState=wild|tamed|sitting` and `?qaMob=cat&view=side&walkPhase=1.5708|4.7124&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
+## 2026-09-20 Wolves / cats / pets
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/permissions.test.ts tests/server/anarchy-gameplay.test.ts tests/mob-polish.test.ts tests/entity-host.test.ts tests/entity-interpolation.test.ts tests/entity-snapshot-interpolation.test.ts tests/mob-hurt-flash.test.ts tests/mob-projectile-routing.test.ts tests/network-entity-visual-events.test.ts tests/entity-death-animation.test.ts tests/entity-initial-lighting.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&petState=wild|angry|tamed|sitting&view=front|side|rear|three-quarter` and `?qaMob=cat&variant=black|red|siamese&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
 ## 2026-09-21 Merge origin/main into Worldgen V3
 
 Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99). Docs conflicts kept both sides. `Game.ts` auto-merged with both `syncLocalCombatUse` and Worldgen V3 border helpers.

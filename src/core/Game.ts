@@ -20,7 +20,13 @@ import {
   type CommandContext,
 } from '../chat';
 import { AudioManager } from './AudioManager';
-import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
+import {
+  DEFAULT_PET_LIMIT,
+  petCapacityReachedMessage,
+  petLimitReachedMessage,
+  tameProgressMessage,
+  tameSuccessMessage,
+} from '../gameplay/petLimit';
 import {
   advanceFootsteps,
   blockUnderFeet,
@@ -92,6 +98,10 @@ import {
   minecartDismountFromSprint,
   igniteMinecartTntFromFireArrow,
   MobManager,
+  LOCAL_PLAYER_FOCUS_ID,
+  PET_INTERACT_REACH,
+  isPetKind,
+  resolvePetUseTarget,
   type MinecartEntity,
   type MobPlayerDamageEvent,
   type SerializedDroppedItem,
@@ -106,6 +116,7 @@ import {
   shouldShowPointerLockFallback,
   type PointerUnlockReason,
 } from '../input/pointerLock';
+import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
 import {
   Inventory,
   createItemStack,
@@ -230,6 +241,7 @@ import {
   captureBlockUse,
   captureAttack,
   captureBowRelease,
+  captureEntityUse,
   composeOnlineBreakFinish,
   resolveBowReleaseCommandSeq,
   selectBowRenderTick,
@@ -241,6 +253,7 @@ import {
   actionMessageFromBreakStart,
   attackMessageFromAttack,
   bowReleaseMessage,
+  entityUseMessage,
   interactMessageFromUse,
 } from '../net/onlineActionMessages';
 import {
@@ -485,6 +498,17 @@ export interface OnlineAnarchySession {
     rewindTicks?: number;
     distance?: number;
     receivedServerTick?: number;
+    pendingTicks?: number;
+  };
+  lastEntityUseDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    result: string;
+    targetId?: string;
+    requestedRenderTick?: number;
+    receivedServerTick?: number;
+    resolvedRenderTick?: number;
+    rewindTicks?: number;
     pendingTicks?: number;
   };
   miningLocked?: boolean;
@@ -2014,6 +2038,19 @@ export class Game {
       }
       return;
     }
+    if (message.kind === 'entity_use') {
+      const pending = online.lastEntityUseDiag;
+      if (pending?.actionSeq === message.actionSeq) {
+        online.lastEntityUseDiag = {
+          ...pending,
+          result: message.ok
+            ? message.entityUse?.result ?? 'accepted'
+            : `rejected:${message.reason ?? message.entityUse?.result ?? 'unknown'}`,
+          ...(message.entityUse ?? {}),
+        };
+      }
+      return;
+    }
     if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
       this.ui.toast('Кровать занята');
     }
@@ -2228,6 +2265,7 @@ export class Game {
       });
       return;
     }
+    if (this.trySendOnlinePetUse(session, source)) return;
     if (session.target) {
       const action = captureBlockUse(source, session.target);
       this.commitOnlineActionSeq(session, source);
@@ -2268,6 +2306,84 @@ export class Game {
       commandSeq: source.inputSeq,
       selectedSlot: source.selectedSlot,
     });
+  }
+
+  private petUseTarget(session: GameSession): { id: string; distance: number; renderTick?: number } | undefined {
+    if (!session.mobs) return undefined;
+    const aim = this.lastLocalAim ?? (session.player ? this.sampleLocalAim(session) : undefined);
+    if (!aim) return undefined;
+    const mobHit = session.mobs.raycastRendered(aim.origin, aim.direction, PET_INTERACT_REACH);
+    const cartHit = session.minecarts?.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
+    return resolvePetUseTarget({
+      petHit: mobHit ? {
+        id: mobHit.mob.id,
+        distance: mobHit.distance,
+        kind: mobHit.mob.kind,
+        alive: mobHit.mob.alive,
+        ...(mobHit.renderTick !== undefined ? { renderTick: mobHit.renderTick } : {}),
+      } : undefined,
+      blockDistance: session.target?.distance,
+      cartDistance: cartHit?.distance,
+    });
+  }
+
+  private trySendOnlinePetUse(
+    session: GameSession,
+    source: { actionSeq: number; inputSeq: number; selectedSlot: number },
+  ): boolean {
+    const online = session.online;
+    if (!online) return false;
+    const target = this.petUseTarget(session);
+    if (!target) return false;
+    const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
+    const action = captureEntityUse(
+      source,
+      target.id,
+      { yaw: aim.yaw, pitch: aim.pitch },
+      target.renderTick,
+    );
+    this.commitOnlineActionSeq(session, source);
+    online.lastEntityUseDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      result: 'pending',
+      targetId: action.targetId,
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+    };
+    online.client.send(entityUseMessage(action));
+    return true;
+  }
+
+  private tryLocalPetUse(session: GameSession): boolean {
+    const target = this.petUseTarget(session);
+    if (!target) return false;
+    const mob = session.mobs.get(target.id);
+    if (!mob || !isPetKind(mob.kind)) return false;
+    const result = session.mobs.tryPetInteract(mob, {
+      playerId: LOCAL_PLAYER_FOCUS_ID,
+      heldItemId: session.inventory.getSlot(session.selectedSlot)?.itemId,
+      gamemode: session.summary.mode,
+      petLimit: DEFAULT_PET_LIMIT,
+    });
+    if (result.consume) {
+      const stack = session.inventory.getSlot(session.selectedSlot);
+      if (stack) {
+        session.inventory.setSlot(session.selectedSlot, stack.count <= 1 ? null : { ...stack, count: stack.count - 1 });
+      }
+      this.refreshHud();
+    }
+    if (result.ok && result.kind === 'tame') this.ui.toast(tameSuccessMessage(mob.kind));
+    else if (result.ok && result.kind === 'feed') this.ui.toast(tameProgressMessage(mob.kind, result.progress));
+    else if (!result.ok && result.reason === 'pet_limit') {
+      this.ui.toast(petLimitReachedMessage(
+        result.ownedCount ?? session.mobs.countOwnedPets(LOCAL_PLAYER_FOCUS_ID),
+        result.petLimit ?? DEFAULT_PET_LIMIT,
+      ));
+    } else if (!result.ok && result.reason === 'pet_capacity') {
+      this.ui.toast(petCapacityReachedMessage());
+    }
+    if (result.ok) this.firstPerson?.swing();
+    return true;
   }
 
   private tryInteractBuyer(session: GameSession): boolean {
@@ -3095,6 +3211,7 @@ export class Game {
       automaticSpawning: !options?.online,
       random: this.simRandom,
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
+      onPersistentStateChanged: () => { void this.saveSession(); },
     });
     if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
     const combat = new CombatSystem({
@@ -4680,6 +4797,7 @@ export class Game {
           playerEyePosition: session.player.eyePosition(),
           playerAlive: !session.survival.dead,
           playerTargetable: session.summary.mode === 'survival' && !session.survival.invisible,
+          heldItemId: session.inventory.getSlot(session.selectedSlot)?.itemId,
           daylight: daylightFactor(session.world.timeOfDay),
         });
       },
@@ -4747,7 +4865,7 @@ export class Game {
     const direction = aim.direction;
     session.target = session.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = session.minecarts.raycast(origin, direction, PLAYER_REACH, session.ridingCartId);
-    const mobTarget = session.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
+    const mobTarget = session.mobs.raycastRendered(origin, direction, Math.min(3, PLAYER_REACH));
     const remoteHit = session.online
       ? raycastRemotePlayers(session.online.remotes, origin, direction, Math.min(3, PLAYER_REACH))
       : undefined;
@@ -4770,10 +4888,15 @@ export class Game {
     if (session.online && attackPresses > 0) {
       for (let click = 0; click < attackPresses; click += 1) {
         const source = this.onlineActionSource(session);
+        const meleeTarget = remoteTarget
+          ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick }
+          : attack?.kind === 'mob' && mobTarget?.renderTick !== undefined
+            ? { id: mobTarget.mob.id, renderTick: mobTarget.renderTick }
+            : undefined;
         const action = captureAttack(
           source,
           { yaw: aim.yaw, pitch: aim.pitch },
-          remoteTarget ? { id: remoteTarget.id, renderTick: remoteTarget.renderTick } : undefined,
+          meleeTarget,
         );
         this.commitOnlineActionSeq(session, source);
         session.online.lastCombatDiag = {
@@ -4819,6 +4942,7 @@ export class Game {
             attackerPosition: session.player.position,
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
+            attackerId: LOCAL_PLAYER_FOCUS_ID,
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {
@@ -5061,6 +5185,7 @@ export class Game {
       this.sendOnlineUse(session);
       return;
     }
+    if (this.tryLocalPetUse(session)) return;
     performUseHeld(this.singleplayerUseContext());
   }
 
@@ -5233,7 +5358,7 @@ export class Game {
     const spawned = bowSpawnFromAim(aim);
     const flaming = this.lastConsumedArrow === ItemId.FireArrow;
     session.arrows.spawn(spawned.origin, spawned.direction, charge.launchSpeed, charge.baseDamage, charge.critical,
-      flaming, undefined, undefined, undefined, undefined,
+      flaming, undefined, LOCAL_PLAYER_FOCUS_ID, undefined, undefined,
       this.lastConsumedArrow === ItemId.WHArrow ? 'wh' : flaming ? 'fire' : 'normal');
     if (session.summary.mode === 'survival') {
       session.inventory.setSlot(session.selectedSlot, damageItem(stack, 1));
@@ -5336,6 +5461,7 @@ export class Game {
       armor: session.inventory,
     });
     if (!damage.fullHurt) return;
+    session.mobs?.assignOwnedWolfTarget(LOCAL_PLAYER_FOCUS_ID, event.mobId, 'mob', 'defend');
     if (event.source === 'melee') {
       session.player.receiveMeleeKnockback({
         x: session.player.position.x - event.position.x,
@@ -6176,6 +6302,10 @@ export class Game {
           if (session.online.lastCombatDiag) {
             const combat = session.online.lastCombatDiag;
             this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} recv=${combat.receivedServerTick ?? '—'} pending=${combat.pendingTicks ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
+          }
+          if (session.online.lastEntityUseDiag) {
+            const use = session.online.lastEntityUseDiag;
+            this.cachedDebugText += `\nPetUse ${use.result} a=${use.actionSeq} c=${use.commandSeq} target=${use.targetId?.slice(0, 8) ?? '—'} recv=${use.receivedServerTick ?? '—'} pending=${use.pendingTicks ?? '—'} req=${use.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${use.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${use.rewindTicks?.toFixed(2) ?? '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

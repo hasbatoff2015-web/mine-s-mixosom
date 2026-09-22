@@ -1,5 +1,37 @@
 # Архитектура
 
+## Merge origin/main into wolves-cats-pets — 2026-09-23
+
+Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Keep pet hit-registration / taming / models and current-main Worldgen V3, world border, world-events overlays, sword blocking, and always-run/crouch/camera.
+
+## Pet hit registration / wolf tail — 2026-09-22
+
+Instant clicks keep **CLIENT OWNS INTENT / SERVER OWNS RESULT**. Command-boundary pose still owns eye position, movement, selected slot and alive/dead. Captured `action.yaw` / `action.pitch` own the click ray direction for sequenced melee and `entity_use`. The server still raycasts; `targetId` is a hint, not a hit.
+
+`entity_use` freezes the rewound (or current) mob pose at packet receive against `receivedServerTick`, then may wait for `commandSeq`. Resolve uses that frozen pose for the ray, the live entity for taming/damage, command-boundary eye, and current-world LOS. It does not call `rewindPose(..., currentTick)` after the wait.
+
+Mob-only rewind is `MAX_MOB_REWIND_TICKS = 8` (400 ms at 20 TPS). PvP stays `MAX_PVP_REWIND_TICKS = 5`. Targeting AABB is the union of the visual core and ±`width/2`; physics `width/height` are unchanged. Wolf tail keeps pivot `[-1,12,8]` / sitting `[-1,21,6]` and applies Minecraft-like legacy pitch/Y-wag through `legacyRotationToThree`. Operator `/spawnpet <wolf|cat>` is a player-only QA command (`force: true`, wild). DEV F3 shows `PetUse` from `action_result.entityUse`.
+
+## Pet geometry / cat targeting — 2026-09-22
+
+Wolf standing body stores vanilla `rotation = [π/2, 0, 0]`. The previous follow-up negated that angle so the torso reached the head while the mane/collar stayed at Z=+2 (body centre). Standing mane and collar now use pivot `[-1, 14, -3]`, matching sitting neck Z. The empty body-top UV remap `(30,14)` is unchanged. `legacyRotationToThree` is not modified.
+
+Cat body addBox origin is vanilla `[-2, 3, -8]`. A local Z=+4 raise through `Rx(-π/2)` lifted the sausage ~0.25 block. Walk swing still goes through `legacyRotationToThree`; sitting hind legs stay `+π/2` legacy.
+
+`mobTargetBounds('cat')` covers the standing visual core including muzzle z≈-0.8125 (`minZ = -0.85`), then unions ±`width/2`. Targeting is yaw-aware AABB only; physics `width/height` stay 0.6×0.7. Client RMB `sendOnlineUse` still tries `trySendOnlinePetUse` before food; `resolvePetUseTarget` is a pure helper for that priority (closer block/cart still win). Server `entity_use` / melee use command-boundary **eye** and click-time **aim**, receive-time frozen target pose, reach and LOS.
+
+## Pet models / 3-step taming / mob melee rewind — 2026-09-20
+
+Taming is server-authoritative `entity_use` with `PET_TAME_REQUIRED_FEEDS = 3` and no RNG. Wild pets store `tameProgress` 0..2 plus `tameProgressPlayerId`; a different feeder resets to 1/3. Third accepted feed assigns `ownerId`, sits, and clears progress. `pets.limit.N` and `maxTamedPets` are checked before any feed; failure does not consume. SP uses toasts, Anarchy uses system chat (`tameProgressMessage` / `tameSuccessMessage`). Partial progress is optional on existing `SerializedMob`.
+
+Online melee reuses the RMB rewind window. Client `refreshLocalCrosshair` rays `mobs.raycastRendered` and, when `attack.kind === 'mob'`, sends `targetId` + `targetRenderTick`. `WorldInstance` resolves a live player first, else a live mob `rewindPose`, else stale. `ServerGameplay.attack` takes `SequencedMeleeTarget` `player | mob`. Mob hits test the frozen pose with `raycastMobTarget`, then `meleeMob` damages the current entity. Reach 3, current-world LOS, cooldown/damage stay in `CombatSystem`. Sequenced click rays use captured `action.yaw/pitch`; `MAX_MOB_REWIND_TICKS` is 8.
+
+`mobTargetBounds(kind)` is targeting-only (wolf/cat visual core, other kinds keep definition width/height). Physics collision still uses `MobDefinition.width/height`. Wolf body rest rotation is vanilla `[π/2,0,0]`; standing mane/collar pivot is `[-1,14,-3]`. The shared Y-down adapter is unchanged.
+
+## Pet entity_use rewind / budgets — 2026-09-20
+
+Online pet interaction samples `networkRenderPose` (`raycastRendered`) and sends `targetRenderTick` as a hint. Server `entity_use` freezes the target pose at packet receive, waits for `combatPoseForCommand` (same pending FIFO as melee), then rays with command-boundary **eye** plus click-time `action.yaw/pitch` against that frozen pose (`MOB_POSE_HISTORY_TICKS = 16`, `MAX_MOB_REWIND_TICKS = 8`). Client position is not authority. Wild `maxMobs` counts only untamed mobs; `maxTamedPets` is a restore-safe global ceiling and does not replace `pets.limit.N`.
+
 ## Merge origin/main into Worldgen V3 — 2026-09-21
 
 Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99) into this branch. `Game.ts` keeps both families: Worldgen V3 `WorldBorderRenderer` / `gameplayMayMutateBlock` / spawn relocate, and current-main `syncLocalCombatUse` / `combat.swordBlocking` for SP and Anarchy. This is not a gameplay refactor.
@@ -1436,7 +1468,7 @@ Dropped items имеют bounded capacity, pickup delay, despawn timer, simple v
 
 ### MobManager
 
-MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive path unchanged; hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Skeleton projectiles используют те же `ArrowPhysics`, deterministic body/yaw muzzle и exact focus ids. Swept segment сравнивает ближайший living/targetable player AABB с block hit distance; emitted damage несёт выбранный `targetPlayerId`, а сервер не выполняет повторный nearest lookup. Visuals (mob models, attached skeleton bow, skeleton arrows, hurt tint, fire overlay) принадлежат `EntityHost.syncMob` / `createArrow`, не менеджеру. SP шарит Game-owned `ItemVisualFactory` и `ArrowVisualFactory` через `ThreeEntityHost`.
+MobManager владеет mob entities и skeleton projectiles. Definitions задают size, health, speed, ranges, damage, cooldown и loot. Runtime state machine включает idle/wander/chase/attack/hurt/die. Automatic spawn: passive kinds are biome-weighted (`pickPassiveSpawnKind`); `wolf`/`cat` compete for leftover wild slots and never use worldgen placement. Hostile **surface night** uses `SURFACE_NIGHT_HOSTILE_SPAWN_FACTOR = 0.5`; dark cave hostiles are a separate candidate (low sky, solid floor, no liquid) with max one new cave hostile per chunk per event and a 12-block density guard. Tamed pets (`ownerId`) are excluded from wild `passiveCap`, distance despawn and capacity eviction. Skeleton projectiles используют те же `ArrowPhysics`, deterministic body/yaw muzzle и exact focus ids. Swept segment сравнивает ближайший living/targetable player AABB с block hit distance; emitted damage несёт выбранный `targetPlayerId`, а сервер не выполняет повторный nearest lookup. Pet interact is sequenced `entity_use` (hint `targetId`, server reach/LOS/ownership). Wolf combat assigns targets only after accepted damage and goes through `MobManager.damage` / player hurt + claims. Visuals (mob models, attached skeleton bow, skeleton arrows, hurt tint, fire overlay, wolf collar overlay, cat variants) принадлежат `EntityHost.syncMob` / `createArrow`, не менеджеру. SP шарит Game-owned `ItemVisualFactory` и `ArrowVisualFactory` через `ThreeEntityHost`. Pet appearance swaps owned material maps only.
 
 Освещение мобов идёт из voxel `skyLight`/`blockLight`: `sampleEntityLight` усредняет feet/torso/head на simulation tick, `createEntityMaterial` (`MeshBasicMaterial` + wrap ≥ 0.76) умножает на этот RGB. Visual root/yaw/walkPhase считаются в `interpolateVisuals(alpha)` через `entityInterpolation.ts` (lerp + shortest-yaw, snap при ≥ 6 блоков). Online interpolator задаёт `networkRenderPose` (x/y/z/yaw); death `rotation.z` / scale считаются из client `deathVisualElapsed` (render dt), не из 20 TPS `deathSeconds`. Gameplay/AI/hitboxes остаются на simulation transform. Death visual fields не сериализуются.
 

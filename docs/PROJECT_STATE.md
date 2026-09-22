@@ -1,5 +1,39 @@
 # Состояние проекта
 
+## Последний проход: merge origin/main into wolves-cats-pets — 2026-09-23
+
+- Semantic merge текущего `origin/main` (`5d972cfc`) в `codex/wolves-cats-pets`.
+- Конфликты: docs (`ARCHITECTURE`, `PROJECT_STATE`, `ROADMAP`, `TESTING`) и `src/entities/MobManager.ts` (union: playable-border spawn + wild `countWildMobs`).
+- `Game.ts` / `WorldInstance.ts` / `gameplay.ts` / `protocol.ts` / `permissions.ts` / `AnarchyServer.ts` / `PlayerArrowManager.ts` / `main.ts` слились автоматически; сохранены и pets (`resolvePetUseTarget`, receive-time `entity_use` freeze, `/spawnpet`, `pets.limit.N`), и current-main (`WorldBorderRenderer`, `WORLDGEN_VERSION = 3`, `syncLocalCombatUse`, `events.*`).
+- OWNER MANUAL QA (до sync, владелец): hit registration, wolf taming/feeding, pet interaction, latest visual fixes. Cursor post-sync live smoke — в отчёте merge.
+- Подробности: `docs/reports/2026-09-23_merge-main-into-wolves-cats-pets.md`.
+
+## Последний проход: pet hit registration / wolf tail / spawnpet — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Sequenced melee и `entity_use` строят click-ray из `action.yaw/pitch`, глаз остаётся command-boundary. `entity_use` замораживает pose цели в момент receive (`receivedServerTick`), очередь за `commandSeq` больше не старит rewind. `MAX_MOB_REWIND_TICKS = 8` (400 ms), `MAX_PVP_REWIND_TICKS = 5`. Targeting AABB = visual core ∪ ±width/2. Хвост волка: legacy pitch/Y-wag через адаптер. Оператор `/spawnpet <wolf|cat>`. DEV F3 `PetUse`.
+- Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
+## Последний проход: pet geometry / cat targeting — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Wolf body rest rotation restored to vanilla `+π/2`; standing mane/collar pivot moved to `[-1,14,-3]` (neck, same Z as sitting). Empty body-top UV remap kept. Cat body origin restored to `[-2,3,-8]`. Cat targeting `minZ` `-0.75 → -0.85` so the visible muzzle is inside the interact volume. Shared 3-feed taming unchanged; client `resolvePetUseTarget` keeps a visible pet ahead of ordinary food use.
+- Подробности: `docs/reports/2026-09-22_pet-geometry-cat-targeting.md`.
+
+## Последний проход: pet models / deterministic taming / rendered melee — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Wolf body uses a local negated rest X rotation so the torso reaches the head; empty body-top UV remapped. Cat body origin Z `-4`, sitting hind legs `+π/2` legacy, walk swing through the adapter. Taming is three deterministic feeds (`tameProgress` + candidate player id), persist on `SerializedMob`, chat/toast `1/3` `2/3`. Online melee captures rendered mob `targetId`/`targetRenderTick`; server pending target is player|mob rewind for hit-test only. Shared `mobTargetBounds` for ray hits; physics `width/height` unchanged.
+- Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
+## Последний проход: pet interaction / ownership hardening — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Online ПКМ по питомцу использует `networkRenderPose` + `targetRenderTick`; сервер проверяет `entity_use` по command-boundary look и bounded mob pose history (`MAX_MOB_REWIND_TICKS = 5`). `petHome` сбрасывается в follow и заново ставится при потере owner. Волки одного хозяина не ассистят по его другим питомцам. Wild `maxMobs` больше не включает tamed pets; отдельный `maxTamedPets` safety ceiling.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets-hardening.md`.
+
+## Последний проход: tameable wolves and cats — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets` (без merge в `main`). `wolf` / `cat` — обычные server-authoritative mobs в `MobManager`, не вторая симуляция. Natural spawn через weighted passive selection (лес/равнины/снег; пустыня без cat/wolf). Приручение `entity_use` (CLIENT OWNS INTENT / SERVER OWNS RESULT). `ownerId` = стабильный `player.id`. Sit/stand, follow, bounded teleport (24 кандидата, `getBlock(..., false)`), wild cat fear, tamed wolf combat через существующий damage/PvP/claims. Default pet limit 2, роли `pets.limit.N` (hard max 10). Tamed pets не distance-despawn и не занимают wild `passiveCap`.
+- Модели: code-defined legacy ModelWolf / ModelOcelot, PNG 128×64 / logical 64×32, collar overlay без shared-material mutation.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
 ## Последний проход: Merge origin/main into Worldgen V3 — 2026-09-21
 
 - Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.

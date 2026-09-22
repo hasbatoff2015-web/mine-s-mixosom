@@ -7,6 +7,7 @@ import {
   MinecartManager,
   MobManager,
   MOB_DEFINITIONS,
+  fallbackCatVariant,
   type MobKind,
 } from '../entities';
 import { createItemStack } from '../inventory';
@@ -50,7 +51,8 @@ function ingestPose(
 /**
  * Applies server entity interest snapshots onto existing client visual managers.
  * Does not run AI, fluids, combat, or pickup. Pose history goes into the interpolator;
- * simulation `position` stores the latest accepted snapshot for targeting.
+ * simulation `position` stores the latest accepted snapshot. Interaction raycasts
+ * use interpolated `networkRenderPose` so the hitbox matches the visible model.
  */
 export function applyEntitySnapshots(
   session: EntitySnapshotTarget,
@@ -105,9 +107,19 @@ export function applyEntitySnapshots(
             health: snap.health,
             velocity: new THREE.Vector3(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0),
             state: snap.state === 'die' ? 'die' : 'idle',
+            ownerId: snap.ownerId,
+            sitting: snap.sitting,
+            catVariant: snap.mobKind === 'cat' ? fallbackCatVariant(snap.variant) : undefined,
+            angry: snap.angry,
           });
         }
         if (!mob) break;
+        session.mobs.applyPetNetworkState(mob, {
+          ownerId: snap.ownerId,
+          sitting: snap.sitting,
+          variant: snap.variant,
+          angry: snap.angry,
+        });
         mob.position.set(snap.x, snap.y, snap.z);
         if (mob.velocity) mob.velocity.set(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0);
         if (snap.yaw !== undefined) mob.facingYaw = snap.yaw;
@@ -249,7 +261,7 @@ export function applyInterpolatedEntityVisuals(
 ): void {
   for (const mob of session.mobs.entities) {
     const pose = interpolator.sample(mob.id, now);
-    if (pose) session.mobs.setNetworkRenderPose(mob.id, pose.x, pose.y, pose.z, pose.yaw);
+    if (pose) session.mobs.setNetworkRenderPose(mob.id, pose.x, pose.y, pose.z, pose.yaw, pose.resolvedTick);
     else if (!session.mobs.shouldKeepRemoteDeath(mob.id)) {
       session.mobs.setNetworkRenderPose(mob.id, undefined);
     }

@@ -575,6 +575,22 @@ export class AnarchyServer {
         });
         return;
       }
+    } else if (message.kind === 'entity_use') {
+      if (!message.targetId) {
+        result = { ok: false, reason: 'invalid' };
+      } else {
+        this.world.handleSequencedEntityUse(player, {
+          kind: 'entity_use',
+          actionSeq: message.actionSeq,
+          commandSeq: message.commandSeq,
+          selectedSlot: message.selectedSlot ?? -1,
+          targetId: message.targetId,
+          ...(message.yaw !== undefined ? { yaw: message.yaw } : {}),
+          ...(message.pitch !== undefined ? { pitch: message.pitch } : {}),
+          ...(message.targetRenderTick !== undefined ? { targetRenderTick: message.targetRenderTick } : {}),
+        });
+        return;
+      }
     } else {
       this.world.handleSequencedAttack(player, {
         kind: 'attack',
