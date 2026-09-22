@@ -80,10 +80,16 @@ export function wolfTailLegacyRotation(state: WolfTailPoseState): LegacyVector {
     : tamed
       ? (0.55 - (1 - healthRatio) * 0.4) * Math.PI
       : WOLF_TAIL_WILD_PITCH;
+  // The wolf tail cuboid grows along local Y. In this flattened Three.js model,
+  // writing the vanilla wag into Euler Y mostly twists that long axis instead
+  // of moving the tip sideways. Keep the Minecraft-like pitch on X, but map the
+  // *visual* lateral wag onto legacy Z (Three Z after the adapter) and keep it
+  // deliberately subtle for world-space locomotionSpeed.
+  const wagAmplitude = Math.min(0.18, Math.max(0, state.locomotionSpeed) * 0.07);
   const wag = state.angry === true
     ? 0
-    : Math.cos(state.walkPhase * 0.6662) * 1.4 * Math.min(1, Math.max(0, state.locomotionSpeed));
-  return [pitch, wag, 0];
+    : Math.cos(state.walkPhase * 0.6662) * wagAmplitude;
+  return [pitch, 0, wag];
 }
 
 export function applyWolfVisualPose(
@@ -152,8 +158,11 @@ export function applyCatVisualPose(
     if (tail2) offsetLegacyPivot(tail2, [0, 2, -0.8], [2.670354, 0, 0]);
     if (frontLeft) applyLegacyPivot(frontLeft, [1.2, 15.8, -7], [-0.15707964, 0, 0]);
     if (frontRight) applyLegacyPivot(frontRight, [-1.2, 15.8, -7], [-0.15707964, 0, 0]);
-    if (backLeft) applyLegacyPivot(backLeft, [1.1, 21, 1], [Math.PI / 2, 0, 0]);
-    if (backRight) applyLegacyPivot(backRight, [-1.1, 21, 1], [Math.PI / 2, 0, 0]);
+    // Vanilla ModelOcelot uses -PI/2 here. applyLegacyPivot already performs
+    // the Y-down -> Three.js rotation reflection, so pre-flipping this to +PI/2
+    // double-compensates and throws the haunches through/out of the sitting pose.
+    if (backLeft) applyLegacyPivot(backLeft, [1.1, 21, 1], [-Math.PI / 2, 0, 0]);
+    if (backRight) applyLegacyPivot(backRight, [-1.1, 21, 1], [-Math.PI / 2, 0, 0]);
     return;
   }
 
@@ -163,12 +172,16 @@ export function applyCatVisualPose(
     const euler = legacyRotationToThree([swing * sign, 0, 0]);
     leg.rotation.x = numberData(leg, 'baseRotationX', 0) + euler[0];
   });
-  if (tail1) {
-    const wag = Math.sin(walkPhase * 0.7) * Math.min(0.18, locomotionSpeed * 0.1);
-    tail1.rotation.x = numberData(tail1, 'baseRotationX', 0) + wag;
-  }
+  // Vanilla ModelOcelot keeps tail1 at 0.9 and articulates tail2 around
+  // 1.7278761. Moving both segments by nearly the same delta makes the split
+  // tail look like two unrelated parallel rods instead of one two-joint tail.
+  // resetPartToBase() has already restored tail1, so only bend the second joint.
   if (tail2) {
-    const wag = Math.sin(walkPhase * 0.7) * Math.min(0.16, locomotionSpeed * 0.09);
-    tail2.rotation.x = numberData(tail2, 'baseRotationX', 0) + wag;
+    const bend = Math.cos(walkPhase * 0.7) * Math.min(0.16, locomotionSpeed * 0.09);
+    const euler = legacyRotationToThree([1.7278761 + bend, 0, 0]);
+    tail2.rotation.x = euler[0];
+    tail2.rotation.y = euler[1];
+    tail2.rotation.z = euler[2];
   }
+  void tail1;
 }

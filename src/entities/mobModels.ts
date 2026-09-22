@@ -202,8 +202,12 @@ export const CAT_MODEL: LegacyModelDefinition = {
     // Vanilla addBox Z=-8. Local Z=+4 through Rx(-π/2) raised the sausage 0.25
     // and left a gap between rear legs and the torso underside.
     modelPart('body', [0, 12, -10], [box([-2, 3, -8], [4, 16, 6], [20, 0])], [Math.PI / 2, 0, 0]),
+    // Vanilla ModelOcelot keeps the first segment at 0.9 rad and bends the
+    // second around 1.7278761 rad. The pivots are chosen so tail2 starts at
+    // tail1's transformed tip; giving both segments 0.9 makes them read as
+    // two parallel independent sticks.
     modelPart('tail1', [0, 15, 8], [box([-0.5, 0, 0], [1, 8, 1], [0, 15])], [0.9, 0, 0]),
-    modelPart('tail2', [0, 20, 14], [box([-0.5, 0, 0], [1, 8, 1], [4, 15])], [0.9, 0, 0]),
+    modelPart('tail2', [0, 20, 14], [box([-0.5, 0, 0], [1, 8, 1], [4, 15])], [1.7278761, 0, 0]),
     modelPart('backLeftLeg', [1.1, 18, 5], [box([-1, 0, 1], [2, 6, 2], [8, 13])]),
     modelPart('backRightLeg', [-1.1, 18, 5], [box([-1, 0, 1], [2, 6, 2], [8, 13])]),
     modelPart('frontLeftLeg', [1.2, 13.8, -5], [box([-1, 0, 0], [2, 10, 2], [40, 0])]),

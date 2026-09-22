@@ -246,6 +246,12 @@ describe('legacy textured mob models', () => {
       rotation: [Math.PI / 2, 0, 0],
       boxes: [{ origin: [-2, 3, -8], size: [4, 16, 6], textureOffset: [20, 0] }],
     });
+    expect(CAT_MODEL.parts.find((part) => part.name === 'tail1')).toMatchObject({
+      rotationPoint: [0, 15, 8], rotation: [0.9, 0, 0],
+    });
+    expect(CAT_MODEL.parts.find((part) => part.name === 'tail2')).toMatchObject({
+      rotationPoint: [0, 20, 14], rotation: [1.7278761, 0, 0],
+    });
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'cat');
     expect(model.legs).toHaveLength(4);
@@ -256,6 +262,49 @@ describe('legacy textured mob models', () => {
     const bounds = new THREE.Box3().setFromObject(root);
     expect(bounds.min.y).toBeLessThan(0.2);
     expect(bounds.min.y).toBeGreaterThan(-0.3);
+    visuals.dispose();
+  });
+
+  it('keeps cat tail2 joined to tail1 as a bent continuation in stand, walk and sit', () => {
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'cat');
+    const root = asObject3D(model.root)!;
+    const tail1 = asObject3D(model.tail ?? model.parts.get('tail1')!)!;
+    const tail2 = asObject3D(model.tail2 ?? model.parts.get('tail2')!)!;
+
+    const sample = () => {
+      root.updateMatrixWorld(true);
+      const q1 = tail1.getWorldQuaternion(new THREE.Quaternion());
+      const q2 = tail2.getWorldQuaternion(new THREE.Quaternion());
+      const dir1 = new THREE.Vector3(0, -1, 0).applyQuaternion(q1).normalize();
+      const dir2 = new THREE.Vector3(0, -1, 0).applyQuaternion(q2).normalize();
+      const root1 = tail1.getWorldPosition(new THREE.Vector3());
+      const root2 = tail2.getWorldPosition(new THREE.Vector3());
+      const tip1 = root1.clone().addScaledVector(dir1, 8 / 16);
+      return {
+        seam: tip1.distanceTo(root2),
+        bend: dir1.angleTo(dir2),
+      };
+    };
+
+    applyCatVisualPose(model, false, 0, 0);
+    const standing = sample();
+    expect(standing.seam).toBeLessThan(0.08);
+    expect(standing.bend).toBeGreaterThan(0.55);
+    expect(standing.bend).toBeLessThan(1.1);
+
+    applyCatVisualPose(model, false, Math.PI / 2, 2);
+    const walking = sample();
+    expect(walking.seam).toBeLessThan(0.08);
+    expect(walking.bend).toBeGreaterThan(0.45);
+    expect(walking.bend).toBeLessThan(1.2);
+
+    applyCatVisualPose(model, true, 0, 0);
+    const sitting = sample();
+    expect(sitting.seam).toBeLessThan(0.1);
+    expect(sitting.bend).toBeGreaterThan(0.55);
+    expect(sitting.bend).toBeLessThan(1.25);
+
     visuals.dispose();
   });
 
@@ -386,6 +435,9 @@ describe('legacy textured mob models', () => {
     const sitTail2 = new THREE.Box3().setFromObject(tail2);
     expect(sitTail1.min.z).toBeLessThanOrEqual(sitBody.max.z + 0.08);
     expect(sitTail2.min.z).toBeLessThanOrEqual(sitTail1.max.z + 0.08);
+    const vanillaHindThreeX = legacyRotationToThree([-Math.PI / 2, 0, 0])[0];
+    expect(legs[0]!.rotation.x).toBeCloseTo(vanillaHindThreeX, 6);
+    expect(legs[1]!.rotation.x).toBeCloseTo(vanillaHindThreeX, 6);
     for (const [index, leg] of legs.entries()) {
       const box = new THREE.Box3().setFromObject(leg);
       expect(box.max.y, `sit leg ${index}`).toBeLessThanOrEqual(sitBody.max.y + 0.06);
@@ -429,16 +481,21 @@ describe('legacy textured mob models', () => {
     const rearVolume = new THREE.Box3().setFromObject(rearLeft).union(new THREE.Box3().setFromObject(rearRight));
     expect(wild.tip.z).toBeGreaterThan(rearVolume.max.z - 0.05);
 
-    applyWolfVisualPose(model, false, 0.4, 1);
-    const walkA = tail.rotation.y;
+    applyWolfVisualPose(model, false, 0, 2);
+    const walkA = tail.rotation.z;
     const walkAAxis = tailAxis();
-    applyWolfVisualPose(model, false, 0.4 + Math.PI, 1);
-    const walkB = tail.rotation.y;
+    expect(Math.abs(tail.rotation.y)).toBeLessThan(1e-6);
+    applyWolfVisualPose(model, false, Math.PI / 0.6662, 2);
+    const walkB = tail.rotation.z;
     const walkBAxis = tailAxis();
-    expect(Math.abs(walkA - walkB)).toBeGreaterThan(0.5);
+    expect(Math.abs(tail.rotation.y)).toBeLessThan(1e-6);
+    expect(walkA * walkB).toBeLessThan(0);
+    expect(Math.abs(walkA)).toBeLessThanOrEqual(0.181);
+    expect(Math.abs(walkB)).toBeLessThanOrEqual(0.181);
+    expect(Math.abs(walkA - walkB)).toBeGreaterThan(0.2);
+    expect(Math.sign(walkAAxis.dir.x)).not.toBe(Math.sign(walkBAxis.dir.x));
     expect(walkAAxis.dir.z).toBeGreaterThan(0.2);
     expect(walkBAxis.dir.z).toBeGreaterThan(0.2);
-    expect(Math.abs(walkAAxis.dir.y - walkBAxis.dir.y)).toBeLessThan(0.45);
 
     applyWolfVisualPose(model, false, 0.4, 1, { ownerId: 'owner', health: 8, maxHealth: 8 });
     const tamed = tailAxis();
@@ -450,7 +507,9 @@ describe('legacy textured mob models', () => {
     const angryLegacy = wolfTailLegacyRotation({ walkPhase: 0.4, locomotionSpeed: 1, angry: true });
     expect(angryLegacy[0]).toBeCloseTo(WOLF_TAIL_ANGRY_PITCH, 5);
     expect(angryLegacy[1]).toBe(0);
+    expect(angryLegacy[2]).toBe(0);
     expect(Math.abs(tail.rotation.y)).toBeLessThan(1e-6);
+    expect(Math.abs(tail.rotation.z)).toBeLessThan(1e-6);
     expect(angry.dir.z).toBeGreaterThan(0.85);
 
     applyWolfVisualPose(model, true, 0, 0, { ownerId: 'owner', health: 8, maxHealth: 8 });
