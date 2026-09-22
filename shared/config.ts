@@ -6,6 +6,18 @@ export const DEFAULT_CHUNK_VIEW_RADIUS = 4;
 export const DEFAULT_MAX_PLAYERS = 300;
 export const DEFAULT_SERVER_NAME = 'Frontier Cubes Anarchy';
 export const DEFAULT_WORLD_ID = 'anarchy';
+
+/**
+ * Local example bind for the three server modes.
+ * The server process still reads PORT / WORLD from its own environment.
+ */
+export const LOCAL_SERVER_PRESETS = {
+  anarchy: { port: DEFAULT_SERVER_PORT, worldId: DEFAULT_WORLD_ID },
+  survival: { port: 2568, worldId: 'survival' },
+  peaceful: { port: 2569, worldId: 'peaceful' },
+} as const;
+
+export type LocalServerName = keyof typeof LOCAL_SERVER_PRESETS;
 /** v3: required targetBlockId on targeted actions; commandSeq names action pose context. */
 export const PROTOCOL_VERSION = 3;
 

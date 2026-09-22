@@ -238,9 +238,10 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     expect(server.world.readyState).toBe('READY');
     expect(server.world.seed).toBe(ANARCHY_WORLD_SEED);
     const response = await fetch(`http://127.0.0.1:${server.port}/status`);
-    const status = await response.json() as { ready: boolean; world: string; online: number };
+    const status = await response.json() as { ready: boolean; world: string; mode: string; online: number };
     expect(status.ready).toBe(true);
     expect(status.world).toBe('anarchy');
+    expect(status.mode).toBe('anarchy');
     expect(status.online).toBe(0);
   });
 

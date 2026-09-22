@@ -7,11 +7,14 @@ import {
 } from '../src/ui/menuModel';
 
 describe('menu model', () => {
-  it('keeps the requested online mock entries', () => {
-    expect(MENU_SERVER_ENTRIES.map((server) => server.name)).toEqual(['Анархия PvP', 'Выживание PvP']);
-    expect(MENU_SERVER_ENTRIES.every((server) => server.online === '0 / 300')).toBe(true);
-    expect(MENU_SERVER_ENTRIES[0]?.connectable).toBe(true);
-    expect(MENU_SERVER_ENTRIES[1]?.connectable).toBeFalsy();
+  it('lists the three local server modes', () => {
+    expect(MENU_SERVER_ENTRIES.map((server) => server.id)).toEqual(['anarchy', 'survival', 'peaceful']);
+    expect(MENU_SERVER_ENTRIES.map((server) => server.name)).toEqual(['Анархия PvP', 'Выживание PvP', 'Мирный']);
+    expect(MENU_SERVER_ENTRIES.map((server) => server.description)).toEqual([
+      'Свободное выживание без защиты территорий',
+      'Классическое выживание и честные сражения',
+      'Выживание без PvP и взрывов',
+    ]);
   });
 
   it('documents the real desktop bindings including chat', () => {

@@ -4323,6 +4323,10 @@ button {
   box-shadow: inset 2px 2px rgba(255, 255, 255, 0.16), inset -2px -2px rgba(0, 0, 0, 0.42);
 }
 
+.server-row.is-offline .server-online {
+  color: #8d7a7a;
+}
+
 .world-preview {
   position: relative;
   width: 68px;

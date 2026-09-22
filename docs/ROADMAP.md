@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-21: Local multi-server modes
+
+- [x] `SERVER_MODE=anarchy|survival|peaceful` on the existing server process. Default remains Anarchy.
+- [x] One process owns one world directory (`WORLD` defaults to the mode; `.instance.lock` rejects a second opener).
+- [x] Server-side PvP: Anarchy and Survival allowed, Peaceful denied. Mob and environment damage stay.
+- [x] Server-side explosions: Anarchy allowed; Survival and Peaceful cancel the blast before voxels change (TNT, powerful, destructive, TNT minecart, creeper share `enqueueExplosion`).
+- [x] Same builtin plugins. Plugin JSON stays under that world's `plugin-data/`.
+- [x] `/status` includes `mode`. Local scripts `dev:server:anarchy|survival|peaceful`. Client `?server=`.
+- [ ] Owner live QA: three local processes, two browsers, Peaceful sword does no damage, Survival TNT does not break stone, Anarchy still does both.
+
 ## 2026-09-23: Merge origin/main into wolves-cats-pets
 
 - [x] Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`.

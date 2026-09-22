@@ -89,7 +89,8 @@ import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
 import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
-import type { ServerConfig } from './config';
+import type { ServerConfig, ServerMode } from './config';
+import { acquireWorldDirectoryLock, type WorldDirectoryLock } from './worldLock';
 import {
   CommandRegistry,
   createConsoleCommandSender,
@@ -564,6 +565,7 @@ export class WorldInstance {
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
+  private worldLock?: WorldDirectoryLock;
   tickNumber = 0;
   spawn: [number, number, number];
   lastTickMs = 0;
@@ -627,6 +629,7 @@ export class WorldInstance {
     }, {
       maxTamedPets: resolveMaxTamedPets(config.maxPlayers),
     });
+    this.gameplay.serverMode = config.serverMode;
     this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
     this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
@@ -927,11 +930,25 @@ export class WorldInstance {
     return this.config.worldId;
   }
 
+  get serverMode(): ServerMode {
+    return this.config.serverMode;
+  }
+
   get seed(): string {
     return this.world.seed;
   }
 
   async initialize(): Promise<void> {
+    await this.acquireWorldLock();
+    try {
+      await this.loadOrCreateWorld();
+    } catch (error) {
+      await this.releaseWorldLock();
+      throw error;
+    }
+  }
+
+  private async loadOrCreateWorld(): Promise<void> {
     this.readyState = 'INITIALIZING';
     const existing = await this.worldStore.load(this.worldId);
     if (existing) {
@@ -987,9 +1004,28 @@ export class WorldInstance {
     await this.save();
     this.readyState = 'READY';
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
-    serverLog(
-      'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To bake frontier_spawn2.schem: npm run server:import -- --schem --force',
-    );
+    if (this.config.serverMode === 'anarchy') {
+      serverLog(
+        'Fresh procedural Anarchy world. Browser IndexedDB is not imported. To bake frontier_spawn2.schem: npm run server:import -- --schem --force',
+      );
+    } else {
+      serverLog(`Fresh procedural ${this.config.serverMode} world.`);
+    }
+  }
+
+  private async acquireWorldLock(): Promise<void> {
+    if (this.worldLock) return;
+    this.worldLock = await acquireWorldDirectoryLock(this.worldStore.directoryFor(this.worldId), {
+      mode: this.config.serverMode,
+      worldId: this.worldId,
+      port: this.config.port,
+    });
+  }
+
+  private async releaseWorldLock(): Promise<void> {
+    const lock = this.worldLock;
+    this.worldLock = undefined;
+    await lock?.release();
   }
 
   async loadPlugins(): Promise<void> {
@@ -1086,6 +1122,7 @@ export class WorldInstance {
     this.eventLoopDelay = undefined;
     await this.plugins.disableAll();
     await this.save();
+    await this.releaseWorldLock();
   }
 
   async save(): Promise<void> {

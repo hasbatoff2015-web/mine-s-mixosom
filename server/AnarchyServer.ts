@@ -25,6 +25,12 @@ interface SocketBinding {
   superseded: boolean;
 }
 
+function readyLabel(mode: ServerConfig['serverMode']): string {
+  if (mode === 'survival') return 'Survival';
+  if (mode === 'peaceful') return 'Peaceful';
+  return 'Anarchy';
+}
+
 class WsSink implements ConnectedSink {
   constructor(private readonly socket: WebSocket) {}
 
@@ -95,8 +101,9 @@ export class AnarchyServer {
     this.world.startLoops();
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
+    serverLog(`mode: ${this.config.serverMode}`);
     serverLog(`world loaded: ${this.config.worldId}`);
-    console.log('Anarchy server ready');
+    console.log(`${readyLabel(this.config.serverMode)} server ready`);
   }
 
   async stop(): Promise<void> {
@@ -133,6 +140,7 @@ export class AnarchyServer {
       const body = JSON.stringify({
         name: this.config.serverName,
         world: this.config.worldId,
+        mode: this.config.serverMode,
         ready: this.world.readyState === 'READY',
         online: this.world.onlineCount(),
         maxPlayers: this.config.maxPlayers,

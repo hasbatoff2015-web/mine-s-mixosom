@@ -1,5 +1,13 @@
 # Архитектура
 
+## Local server modes — 2026-09-21
+
+One codebase, one Node process, one world directory. `loadServerConfig` reads `SERVER_MODE` / `FC_SERVER_MODE` into `ServerConfig.serverMode` (`anarchy` | `survival` | `peaceful`). Unset stays `anarchy`. An unknown non-blank value throws. `WORLD` still selects the directory; when it is unset the world id is the mode, so three processes do not share `server/data/worlds/anarchy`.
+
+`WorldInstance.serverMode` and `ServerGameplay.serverMode` are the only gameplay reads. `hurtPlayerResult` cancels player-vs-player damage when `pvpAllowed` is false (Peaceful). Mob hits and fall/lava stay on their existing paths. `enqueueExplosion` cancels the blast when `explosionsAllowed` is false (Survival, Peaceful) before `ExplosionQueue` edits voxels. Claims and world-event listeners still see the same `explosion` / `playerDamage` events. Builtin plugins are not forked per mode. `plugin-data` remains `dataDir/<worldId>/plugin-data`.
+
+`acquireWorldDirectoryLock` writes `<worldDir>/.instance.lock` during `initialize` and removes it in `stop`. A live pid that already owns that directory fails the second `initialize`. HTTP `/status` adds `mode`. Local presets (`shared/config.ts` `LOCAL_SERVER_PRESETS`) are 2567 / 2568 / 2569 for the client query `?server=`. `PORT` on the process is still the bind. Production reverse proxy, TLS, and process supervision are not part of this layout.
+
 ## Merge origin/main into wolves-cats-pets — 2026-09-23
 
 Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Keep pet hit-registration / taming / models and current-main Worldgen V3, world border, world-events overlays, sword blocking, and always-run/crouch/camera.

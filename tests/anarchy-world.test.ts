@@ -103,11 +103,10 @@ async function fixtureBytes() {
 }
 
 describe('anarchy local server world', () => {
-  it('lists Anarchy as a connectable server entry and Survival PvP as a mock', () => {
-    expect(MENU_SERVER_ENTRIES.map((server) => server.id)).toEqual(['anarchy-pvp', 'survival-pvp']);
+  it('keeps the anarchy world id separate from the three online menu presets', () => {
+    expect(MENU_SERVER_ENTRIES.map((server) => server.id)).toEqual(['anarchy', 'survival', 'peaceful']);
     expect(isAnarchyServerId(ANARCHY_SERVER_ID)).toBe(true);
-    expect(MENU_SERVER_ENTRIES.find((server) => server.id === 'anarchy-pvp')?.connectable).toBe(true);
-    expect(MENU_SERVER_ENTRIES.find((server) => server.id === 'survival-pvp')?.connectable).toBe(false);
+    expect(ANARCHY_SERVER_ID).toBe('anarchy-pvp');
   });
 
   it('resolves a dedicated anarchy world identity', () => {

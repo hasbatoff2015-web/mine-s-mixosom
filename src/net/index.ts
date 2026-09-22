@@ -1,4 +1,13 @@
-export { AnarchyClient, anarchyClientUrl, anarchyStatusUrl, buildAnarchyJoinMessage, fetchAnarchyStatus } from './AnarchyClient';
+export {
+  AnarchyClient,
+  anarchyClientUrl,
+  anarchyStatusUrl,
+  buildAnarchyJoinMessage,
+  clientUrlForServer,
+  fetchAnarchyStatus,
+  fetchLocalServerStatuses,
+  isLocalServerName,
+} from './AnarchyClient';
 export {
   applyAuthoritativeContainerSlots,
   parseNetworkItemStack,

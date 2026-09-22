@@ -23,15 +23,18 @@ describe('UI visual pass on the authoritative main contracts', () => {
 
   it('keeps live online status and the existing server connect callbacks', () => {
     const onlineUi = sourceSection(gameUiSource, 'showOnlineServers(', 'showCreateWorld(');
-    expect(onlineUi).toContain('live?: OnlineServerLiveStatus');
-    expect(onlineUi).toContain('live.reachable');
-    expect(onlineUi).toContain('actions.connect(selectedId)');
+    expect(onlineUi).toContain('renderOnlineServerRows(statuses, current)');
+    expect(onlineUi).toContain('actions.connect(current)');
+    expect(onlineUi).not.toContain('пока недоступно');
+    expect(onlineUi).not.toContain('menu-notice');
     expect(onlineUi).toContain("button.addEventListener('dblclick'");
 
     const onlineGame = sourceSection(gameSource, 'private async showOnlineServerList(', 'private async startOnlineAnarchy(');
-    expect(onlineGame).toContain('fetchAnarchyStatus()');
+    expect(onlineGame).toContain('fetchLocalServerStatuses()');
     expect(onlineGame).toContain('this.ui.showOnlineServers(');
     expect(onlineGame).toContain('this.connectOnlineServer(id)');
+    expect(onlineGame).toContain('clientUrlForServer(id)');
+    expect(onlineGame).toContain('isLocalServerName(id)');
   });
 
   it('keeps authoritative cursor and inventory action routing alongside Creative UI', () => {

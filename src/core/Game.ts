@@ -223,14 +223,13 @@ import { estimateWorldSpawn } from '../world/spawn';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
-  ANARCHY_SERVER_ID,
   ANARCHY_WORLD_ID,
   createAnarchySummary,
   createCanonicalAnarchyServerWorld,
   isFiniteSpawn,
   resolveAnarchyStartup,
 } from '../world/import';
-import { AnarchyClient, RemotePlayerView, fetchAnarchyStatus } from '../net';
+import { AnarchyClient, RemotePlayerView, clientUrlForServer, fetchLocalServerStatuses, isLocalServerName } from '../net';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
@@ -968,22 +967,22 @@ export class Game {
 
   private async showOnlineServerList(): Promise<void> {
     this.disposeCharacterPreview();
-    const live = await fetchAnarchyStatus();
+    const statuses = await fetchLocalServerStatuses();
     this.ui.showOnlineServers({
       back: () => this.showMainMenu(),
       connect: (id) => void this.connectOnlineServer(id),
-    }, live);
+    }, statuses);
   }
 
   private async connectOnlineServer(id: string): Promise<void> {
-    if (id !== ANARCHY_SERVER_ID) {
+    if (!isLocalServerName(id)) {
       this.ui.toast('Этот сервер пока недоступен');
       return;
     }
     this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect(undefined, loadPlayerNickname(), this.playerAppearance);
+      const welcome = await client.connect(clientUrlForServer(id), loadPlayerNickname(), this.playerAppearance);
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();
