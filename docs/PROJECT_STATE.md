@@ -1,5 +1,10 @@
 # Состояние проекта
 
+## Последний проход: pet hit registration / wolf tail / spawnpet — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Sequenced melee и `entity_use` строят click-ray из `action.yaw/pitch`, глаз остаётся command-boundary. `entity_use` замораживает pose цели в момент receive (`receivedServerTick`), очередь за `commandSeq` больше не старит rewind. `MAX_MOB_REWIND_TICKS = 8` (400 ms), `MAX_PVP_REWIND_TICKS = 5`. Targeting AABB = visual core ∪ ±width/2. Хвост волка: legacy pitch/Y-wag через адаптер. Оператор `/spawnpet <wolf|cat>`. DEV F3 `PetUse`.
+- Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
 ## Последний проход: pet geometry / cat targeting — 2026-09-22
 
 - Ветка `codex/wolves-cats-pets`. Wolf body rest rotation restored to vanilla `+π/2`; standing mane/collar pivot moved to `[-1,14,-3]` (neck, same Z as sitting). Empty body-top UV remap kept. Cat body origin restored to `[-2,3,-8]`. Cat targeting `minZ` `-0.75 → -0.85` so the visible muzzle is inside the interact volume. Shared 3-feed taming unchanged; client `resolvePetUseTarget` keeps a visible pet ahead of ordinary food use.

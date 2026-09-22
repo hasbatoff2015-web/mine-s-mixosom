@@ -73,7 +73,16 @@ import {
   isWithinNearbyChatRange,
   type ChatChannel,
 } from '../shared/chat';
-import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction, EntityUseAction } from '../shared/playerActions';
+import {
+  clickLookFromAction,
+  type ActionResult,
+  type AttackAction,
+  type BlockTargetIntent,
+  type BowActionDiagnostics,
+  type BowReleaseAction,
+  type EntityUseAction,
+  type EntityUseActionDiagnostics,
+} from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -192,6 +201,11 @@ export interface PendingMeleeAttack {
 export interface PendingEntityUse {
   readonly action: EntityUseAction;
   readonly receivedServerTick: number;
+  readonly target: {
+    readonly mobId: string;
+    readonly requestedRenderTick?: number;
+    readonly pose: RewoundMobPose;
+  };
 }
 
 export interface PendingBowRelease {
@@ -2531,6 +2545,7 @@ export class WorldInstance {
       }
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
+        clickLook: clickLookFromAction(action, attackerPose),
         target: {
           kind: 'player',
           player: target,
@@ -2559,6 +2574,7 @@ export class WorldInstance {
       }
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
+        clickLook: clickLookFromAction(action, attackerPose),
         target: {
           kind: 'mob',
           mob,
@@ -2577,6 +2593,7 @@ export class WorldInstance {
     }
     const combat = this.gameplay.attack(player, [...this.players.values()], {
       attackerPose,
+      clickLook: clickLookFromAction(action, attackerPose),
       allowCurrentPlayerTargets: false,
     });
     this.flushBlockChanges();
@@ -2630,27 +2647,74 @@ export class WorldInstance {
     player: ServerPlayer,
     action: EntityUseAction,
   ): { ok: true } | { ok: false; reason: string } | undefined {
-    if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
-    if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
+    const fail = (reason: string, pending?: PendingEntityUse) => {
+      const result = { ok: false as const, reason };
+      this.sendEntityUseActionResult(player, action, result, pending, reason === 'dead' ? 'dead' : reason);
+      return result;
+    };
+    if (!this.acceptActionSeq(player, action.actionSeq)) return fail('duplicate');
+    if (!player.connected || player.survival.dead) return fail('dead');
     if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
       || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
       || (action.yaw !== undefined && !Number.isFinite(action.yaw))
       || (action.pitch !== undefined && !Number.isFinite(action.pitch))
       || (action.targetRenderTick !== undefined && !Number.isFinite(action.targetRenderTick))
       || !action.targetId) {
-      return { ok: false, reason: 'invalid' };
+      return fail('invalid');
     }
-    const pending: PendingEntityUse = { action, receivedServerTick: this.tickNumber };
+    const captured = this.capturePendingEntityUse(action);
+    if (!captured.ok) return fail(captured.reason);
+    const pending = captured.pending;
     const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
-    if (pose) return this.resolveSequencedEntityUse(player, pending, pose);
+    if (pose) {
+      const result = this.resolveSequencedEntityUse(player, pending, pose);
+      this.sendEntityUseActionResult(player, action, result, pending, result.ok ? 'accepted' : result.reason);
+      return result;
+    }
     if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
       if (player.pendingEntityUses.length >= MAX_PENDING_MELEE_ACTIONS) {
-        return { ok: false, reason: 'stale' };
+        return fail('stale', pending);
       }
       player.pendingEntityUses.push(pending);
       return undefined;
     }
-    return { ok: false, reason: 'stale' };
+    return fail('stale', pending);
+  }
+
+  private capturePendingEntityUse(
+    action: EntityUseAction,
+  ): { ok: true; pending: PendingEntityUse } | { ok: false; reason: string } {
+    const receivedServerTick = this.tickNumber;
+    const mob = this.gameplay.mobs.get(action.targetId);
+    if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (action.targetRenderTick !== undefined && action.targetRenderTick > receivedServerTick) {
+      return { ok: false, reason: 'stale' };
+    }
+    const pose = action.targetRenderTick === undefined
+      ? {
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+        yaw: mob.facingYaw,
+        resolvedTick: receivedServerTick,
+        rewindTicks: 0,
+      }
+      : this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, receivedServerTick);
+    if (!pose) return { ok: false, reason: 'stale' };
+    return {
+      ok: true,
+      pending: {
+        action,
+        receivedServerTick,
+        target: {
+          mobId: mob.id,
+          ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+          pose,
+        },
+      },
+    };
   }
 
   private resolveSequencedEntityUse(
@@ -2661,15 +2725,20 @@ export class WorldInstance {
     const { action } = pending;
     if (pose.dead) return { ok: false, reason: 'dead' };
     if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
+    const mob = this.gameplay.mobs.get(pending.target.mobId);
+    if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
+      return { ok: false, reason: 'invalid' };
+    }
     this.commitActionSelectedSlot(player, pose.selectedSlot, action.commandSeq);
     const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
+    const look = clickLookFromAction(action, pose);
     const result = this.gameplay.useEntity(player, action, pose.selectedSlot, petLimit, {
       eyeX: pose.eyeX,
       eyeY: pose.eyeY,
       eyeZ: pose.eyeZ,
-      yaw: pose.yaw,
-      pitch: pose.pitch,
-      currentTick: this.tickNumber,
+      yaw: look.yaw,
+      pitch: look.pitch,
+      targetPose: pending.target.pose,
     });
     this.flushPlayerInventory(player);
     if (result.ok && result.kind === 'tame') {
@@ -2720,29 +2789,58 @@ export class WorldInstance {
         const { action } = pending;
         const pendingTicks = this.tickNumber - pending.receivedServerTick;
         if (pendingTicks > MAX_PENDING_MELEE_TICKS) {
-          this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' });
+          this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' }, pending, 'pending_timeout');
           continue;
         }
         const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
         if (pose) {
-          this.sendEntityUseActionResult(player, action, this.resolveSequencedEntityUse(player, pending, pose));
+          const result = this.resolveSequencedEntityUse(player, pending, pose);
+          this.sendEntityUseActionResult(
+            player,
+            action,
+            result,
+            pending,
+            result.ok ? 'accepted' : result.reason,
+          );
           continue;
         }
         if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
           keep.push(pending);
           continue;
         }
-        this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' });
+        this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' }, pending, 'stale');
       }
       player.pendingEntityUses.length = 0;
       player.pendingEntityUses.push(...keep);
     }
   }
 
+  private entityUseDiagnostics(
+    action: EntityUseAction,
+    result: string,
+    pending?: PendingEntityUse,
+  ): EntityUseActionDiagnostics {
+    return {
+      result,
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      targetId: action.targetId,
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+      receivedServerTick: pending?.receivedServerTick ?? this.tickNumber,
+      pendingTicks: pending ? Math.max(0, this.tickNumber - pending.receivedServerTick) : 0,
+      ...(pending ? {
+        resolvedRenderTick: pending.target.pose.resolvedTick,
+        rewindTicks: pending.target.pose.rewindTicks,
+      } : {}),
+    };
+  }
+
   private sendEntityUseActionResult(
     player: ServerPlayer,
     action: EntityUseAction,
     result: { ok: true } | { ok: false; reason: string },
+    pending?: PendingEntityUse,
+    diagnosticResult?: string,
   ): void {
     this.sendTo(player, {
       type: 'action_result',
@@ -2750,6 +2848,13 @@ export class WorldInstance {
       kind: 'entity_use',
       ok: result.ok,
       ...(result.ok ? {} : { reason: result.reason }),
+      ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+      ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
+      entityUse: this.entityUseDiagnostics(
+        action,
+        diagnosticResult ?? (result.ok ? 'accepted' : result.reason),
+        pending,
+      ),
     });
   }
 
@@ -4207,6 +4312,37 @@ export class WorldInstance {
     });
   }
 
+  private spawnPetForOperator(player: ServerPlayer, kind: 'wolf' | 'cat') {
+    const pos = player.controller.position;
+    const yaw = player.controller.yaw;
+    const forwardX = -Math.sin(yaw);
+    const forwardZ = -Math.cos(yaw);
+    const trySpawn = (x: number, y: number, z: number) => {
+      if (!isValidWorldY(y)) return undefined;
+      const bx = Math.floor(x);
+      const by = Math.floor(y);
+      const bz = Math.floor(z);
+      if (this.world.getBlock(bx, by, bz) !== BlockId.Air) return undefined;
+      if (this.world.getBlock(bx, by + 1, bz) !== BlockId.Air) return undefined;
+      const below = getBlockDefinition(this.world.getBlock(bx, by - 1, bz));
+      if (!below.solid || below.liquid) return undefined;
+      const mob = this.gameplay.mobs.spawn(kind, { x, y, z }, { force: true });
+      if (!mob) return undefined;
+      this.dirty = true;
+      return mob;
+    };
+    for (const dist of [3, 2, 4]) {
+      const bx = Math.floor(pos.x + forwardX * dist);
+      const bz = Math.floor(pos.z + forwardZ * dist);
+      const x = bx + 0.5;
+      const z = bz + 0.5;
+      const spawned = trySpawn(x, this.world.surfaceY(bx, bz) + 1, z)
+        ?? trySpawn(x, Math.floor(pos.y), z);
+      if (spawned) return spawned;
+    }
+    return undefined;
+  }
+
   private registerBuiltinCommands(): void {
     this.commands.register({
       name: 'help',
@@ -4270,6 +4406,27 @@ export class WorldInstance {
         if (given <= 0) return fail('Could not give item: inventory is full.');
         if (leftover > 0) return ok(`Gave ${given} ${itemId} (${leftover} dropped, inventory full)`);
         return ok(`Gave ${given} ${itemId}`);
+      },
+    });
+    this.commands.register({
+      name: 'spawnpet',
+      aliases: ['petspawn'],
+      permission: 'operator',
+      usage: '/spawnpet <wolf|cat>',
+      description: 'Operator QA: spawn a wild wolf or cat in front of you',
+      execute: (args, sender) => {
+        if (isConsoleSender(sender) || sender.kind !== 'player') {
+          return fail('This command can only be used by a player.');
+        }
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('This command can only be used by a player.');
+        const kind = args[0]?.trim().toLowerCase();
+        if (kind !== 'wolf' && kind !== 'cat') return fail('Usage: /spawnpet <wolf|cat>');
+        const spawned = this.spawnPetForOperator(player, kind);
+        if (!spawned) return fail('Could not spawn pet in front of you.');
+        return ok(
+          `Spawned ${kind} at ${spawned.position.x.toFixed(1)}, ${spawned.position.y.toFixed(1)}, ${spawned.position.z.toFixed(1)} id=${spawned.id}`,
+        );
       },
     });
     this.commands.register({

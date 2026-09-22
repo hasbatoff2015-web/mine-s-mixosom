@@ -12,17 +12,35 @@ export interface MobPoseLike {
  * Targeting/interact volume in model space (feet origin, +Z = legacy back).
  * Physics collision keeps `MobDefinition.width/height`; this is ray hits only.
  *
- * Wolf/cat values are standing visual core (muzzle/head through rump), not the tail.
+ * Wolf/cat start from the standing visual core (muzzle/head through rump, not
+ * the tail), then union a minimum ±width/2 footprint so a 0.6 body is not a
+ * 0.31-wide click target.
  */
+const WOLF_VISUAL_TARGET: CollisionBox = {
+  minX: -0.3125, minY: 0, minZ: -0.75, maxX: 0.1875, maxY: 0.875, maxZ: 0.5625,
+};
+const CAT_VISUAL_TARGET: CollisionBox = {
+  // Standing visual core after body origin Z=-8: muzzle reaches z=-0.8125,
+  // torso to ~0.56, legs under the sausage. Tail is not required.
+  minX: -0.1563, minY: 0, minZ: -0.85, maxX: 0.1563, maxY: 0.9, maxZ: 0.62,
+};
+
+function unionVisualAndPhysical(visual: CollisionBox, kind: MobKind): CollisionBox {
+  const definition = getMobDefinition(kind);
+  const halfWidth = definition.width * 0.5;
+  return {
+    minX: Math.min(visual.minX, -halfWidth),
+    maxX: Math.max(visual.maxX, halfWidth),
+    minY: visual.minY,
+    maxY: Math.max(visual.maxY, definition.height),
+    minZ: Math.min(visual.minZ, -halfWidth),
+    maxZ: Math.max(visual.maxZ, halfWidth),
+  };
+}
+
 export function mobTargetBounds(kind: MobKind): CollisionBox {
-  if (kind === 'wolf') {
-    return { minX: -0.3125, minY: 0, minZ: -0.75, maxX: 0.1875, maxY: 0.875, maxZ: 0.5625 };
-  }
-  if (kind === 'cat') {
-    // Standing visual core after body origin Z=-8: muzzle reaches z=-0.8125,
-    // torso to ~0.56, legs under the sausage. Tail is not required.
-    return { minX: -0.1563, minY: 0, minZ: -0.85, maxX: 0.1563, maxY: 0.9, maxZ: 0.62 };
-  }
+  if (kind === 'wolf') return unionVisualAndPhysical(WOLF_VISUAL_TARGET, kind);
+  if (kind === 'cat') return unionVisualAndPhysical(CAT_VISUAL_TARGET, kind);
   const definition = getMobDefinition(kind);
   const halfWidth = definition.width * 0.5;
   return {

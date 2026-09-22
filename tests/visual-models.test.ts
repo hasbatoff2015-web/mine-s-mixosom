@@ -18,6 +18,9 @@ import {
 import {
   applyCatVisualPose,
   applyWolfVisualPose,
+  wolfTailLegacyRotation,
+  WOLF_TAIL_ANGRY_PITCH,
+  WOLF_TAIL_WILD_PITCH,
 } from '../src/entities/petPoses';
 import {
   legacyBoxCenterToLocal,
@@ -265,21 +268,22 @@ describe('legacy textured mob models', () => {
       x: part.position.x, y: part.position.y, z: part.position.z,
       rx: part.rotation.x, ry: part.rotation.y, rz: part.rotation.z,
     }));
-    const wolfBase = snapshot(wolf);
+    applyWolfVisualPose(wolf, false, 0, 0);
+    const wolfIdle = snapshot(wolf);
     const catBase = snapshot(cat);
     applyWolfVisualPose(wolf, true, 12, 2);
     applyCatVisualPose(cat, true, 12, 2);
-    expect(snapshot(wolf)).not.toEqual(wolfBase);
+    expect(snapshot(wolf)).not.toEqual(wolfIdle);
     expect(snapshot(cat)).not.toEqual(catBase);
     applyWolfVisualPose(wolf, false, 0, 0);
     applyCatVisualPose(cat, false, 0, 0);
-    expect(snapshot(wolf)).toEqual(wolfBase);
+    expect(snapshot(wolf)).toEqual(wolfIdle);
     expect(snapshot(cat)).toEqual(catBase);
     applyWolfVisualPose(wolf, true, 4, 1);
     applyWolfVisualPose(wolf, false, 0, 0);
     applyWolfVisualPose(wolf, true, 9, 3);
     applyWolfVisualPose(wolf, false, 0, 0);
-    expect(snapshot(wolf)).toEqual(wolfBase);
+    expect(snapshot(wolf)).toEqual(wolfIdle);
     visuals.dispose();
   });
 
@@ -391,6 +395,71 @@ describe('legacy textured mob models', () => {
       }
     }
     applyCatVisualPose(model, false, 0, 0);
+    visuals.dispose();
+  });
+
+  it('poses the wolf tail behind the rump instead of hanging between the rear legs', () => {
+    const visuals = new VoxelVisualFactory();
+    const model = createMobModel(visuals, 'wolf');
+    const root = asObject3D(model.root)!;
+    const body = asObject3D(model.parts.get('body')!)!;
+    const tail = asObject3D(model.tail ?? model.parts.get('tail')!)!;
+    const rearLeft = asObject3D(model.legs[0]!)!;
+    const rearRight = asObject3D(model.legs[1]!)!;
+    const tailAxis = () => {
+      root.updateMatrixWorld(true);
+      const dir = new THREE.Vector3(0, -1, 0).applyQuaternion(tail.getWorldQuaternion(new THREE.Quaternion()));
+      const origin = new THREE.Vector3();
+      tail.getWorldPosition(origin);
+      return { origin, dir, tip: origin.clone().addScaledVector(dir, 0.5) };
+    };
+
+    const wildLegacy = wolfTailLegacyRotation({ walkPhase: 0, locomotionSpeed: 0 });
+    expect(wildLegacy[0]).toBeCloseTo(WOLF_TAIL_WILD_PITCH, 5);
+    applyWolfVisualPose(model, false, 0, 0);
+    const wildThree = legacyRotationToThree(wildLegacy);
+    expect(tail.rotation.x).toBeCloseTo(wildThree[0], 5);
+    expect(tail.rotation.y).toBeCloseTo(wildThree[1], 5);
+    const wild = tailAxis();
+    const bodyBox = new THREE.Box3().setFromObject(body);
+    const bodyCenterZ = (bodyBox.min.z + bodyBox.max.z) * 0.5;
+    expect(wild.origin.z).toBeGreaterThan(bodyCenterZ);
+    expect(wild.tip.z).toBeGreaterThan(wild.origin.z);
+    expect(wild.dir.z).toBeGreaterThan(0.35);
+    const rearVolume = new THREE.Box3().setFromObject(rearLeft).union(new THREE.Box3().setFromObject(rearRight));
+    expect(wild.tip.z).toBeGreaterThan(rearVolume.max.z - 0.05);
+
+    applyWolfVisualPose(model, false, 0.4, 1);
+    const walkA = tail.rotation.y;
+    const walkAAxis = tailAxis();
+    applyWolfVisualPose(model, false, 0.4 + Math.PI, 1);
+    const walkB = tail.rotation.y;
+    const walkBAxis = tailAxis();
+    expect(Math.abs(walkA - walkB)).toBeGreaterThan(0.5);
+    expect(walkAAxis.dir.z).toBeGreaterThan(0.2);
+    expect(walkBAxis.dir.z).toBeGreaterThan(0.2);
+    expect(Math.abs(walkAAxis.dir.y - walkBAxis.dir.y)).toBeLessThan(0.45);
+
+    applyWolfVisualPose(model, false, 0.4, 1, { ownerId: 'owner', health: 8, maxHealth: 8 });
+    const tamed = tailAxis();
+    expect(tamed.dir.y).toBeGreaterThan(wild.dir.y);
+    expect(tamed.dir.z).toBeGreaterThan(0.4);
+
+    applyWolfVisualPose(model, false, 0.4, 1, { angry: true });
+    const angry = tailAxis();
+    const angryLegacy = wolfTailLegacyRotation({ walkPhase: 0.4, locomotionSpeed: 1, angry: true });
+    expect(angryLegacy[0]).toBeCloseTo(WOLF_TAIL_ANGRY_PITCH, 5);
+    expect(angryLegacy[1]).toBe(0);
+    expect(Math.abs(tail.rotation.y)).toBeLessThan(1e-6);
+    expect(angry.dir.z).toBeGreaterThan(0.85);
+
+    applyWolfVisualPose(model, true, 0, 0, { ownerId: 'owner', health: 8, maxHealth: 8 });
+    const sitting = tailAxis();
+    root.updateMatrixWorld(true);
+    const sitRear = new THREE.Box3().setFromObject(rearLeft).union(new THREE.Box3().setFromObject(rearRight));
+    const sitBody = new THREE.Box3().setFromObject(body);
+    expect(sitting.tip.z).toBeGreaterThan(sitBody.min.z);
+    expect(sitting.origin.distanceTo(sitRear.getCenter(new THREE.Vector3()))).toBeGreaterThan(0.12);
     visuals.dispose();
   });
 });

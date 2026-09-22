@@ -49,22 +49,69 @@ function offsetLegacyPivot(part: EntityVisual, offset: LegacyVector, rotation?: 
   }
 }
 
+/** Vanilla ModelWolf wild tail pitch. Keeps the 8px tail behind the rump. */
+export const WOLF_TAIL_WILD_PITCH = Math.PI / 5;
+/** Vanilla ModelWolf angry tail pitch; lateral wag is suppressed. */
+export const WOLF_TAIL_ANGRY_PITCH = 1.5393804;
+export const WOLF_TAIL_STANDING_PIVOT: LegacyVector = [-1, 12, 8];
+export const WOLF_TAIL_SITTING_PIVOT: LegacyVector = [-1, 21, 6];
+
+export interface WolfTailPoseState {
+  readonly sitting?: boolean;
+  readonly angry?: boolean;
+  readonly ownerId?: string;
+  readonly health?: number;
+  readonly maxHealth?: number;
+  readonly walkPhase: number;
+  readonly locomotionSpeed: number;
+}
+
+/**
+ * Minecraft-like tail rotation in legacy Y-down space.
+ * Convert with `legacyRotationToThree` before writing Three.js euler.
+ */
+export function wolfTailLegacyRotation(state: WolfTailPoseState): LegacyVector {
+  const tamed = Boolean(state.ownerId);
+  const maxHealth = state.maxHealth && state.maxHealth > 0 ? state.maxHealth : 1;
+  const health = state.health ?? maxHealth;
+  const healthRatio = Math.max(0, Math.min(1, health / maxHealth));
+  const pitch = state.angry === true
+    ? WOLF_TAIL_ANGRY_PITCH
+    : tamed
+      ? (0.55 - (1 - healthRatio) * 0.4) * Math.PI
+      : WOLF_TAIL_WILD_PITCH;
+  const wag = state.angry === true
+    ? 0
+    : Math.cos(state.walkPhase * 0.6662) * 1.4 * Math.min(1, Math.max(0, state.locomotionSpeed));
+  return [pitch, wag, 0];
+}
+
 export function applyWolfVisualPose(
   model: MobModel,
   sitting: boolean,
   walkPhase: number,
   locomotionSpeed: number,
+  state: Omit<WolfTailPoseState, 'sitting' | 'walkPhase' | 'locomotionSpeed'> = {},
 ): void {
   const body = model.parts.get('body');
   const mane = model.mane ?? model.parts.get('mane');
   const tail = model.tail ?? model.parts.get('tail');
   const head = model.head;
   for (const part of model.parts.values()) resetPartToBase(part);
+  const tailRotation = wolfTailLegacyRotation({
+    sitting,
+    walkPhase,
+    locomotionSpeed,
+    angry: state.angry,
+    ownerId: state.ownerId,
+    health: state.health,
+    maxHealth: state.maxHealth,
+  });
 
   if (sitting) {
     if (mane) applyLegacyPivot(mane, [-1, 16, -3], [(Math.PI * 2) / 5, 0, 0]);
     if (body) applyLegacyPivot(body, [0, 18, 0], [Math.PI / 4, 0, 0]);
-    if (tail) applyLegacyPivot(tail, [-1, 21, 6], [0, 0, 0]);
+    if (tail) applyLegacyPivot(tail, WOLF_TAIL_SITTING_PIVOT, tailRotation);
     const legs = model.legs;
     if (legs[0]) applyLegacyPivot(legs[0], [-2.5, 22, 2], [(Math.PI * 3) / 2, 0, 0]);
     if (legs[1]) applyLegacyPivot(legs[1], [0.5, 22, 2], [(Math.PI * 3) / 2, 0, 0]);
@@ -78,11 +125,7 @@ export function applyWolfVisualPose(
     leg.rotation.x = numberData(leg, 'baseRotationX', 0)
       + swing * (model.legSwingSigns[index] ?? (index % 2 === 0 ? 1 : -1));
   });
-  if (tail) {
-    const wag = Math.sin(walkPhase * 0.85) * Math.min(0.22, locomotionSpeed * 0.12);
-    tail.rotation.x = numberData(tail, 'baseRotationX', 0) + wag;
-    tail.rotation.z = numberData(tail, 'baseRotationZ', 0) + Math.sin(walkPhase * 0.6) * wag * 0.35;
-  }
+  if (tail) applyLegacyPivot(tail, WOLF_TAIL_STANDING_PIVOT, tailRotation);
   void head;
 }
 

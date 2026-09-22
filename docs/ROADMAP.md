@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-09-22: pet hit registration / wolf tail / spawnpet
+
+- [x] Click-time `action.yaw/pitch` for sequenced melee and `entity_use` rays; command-boundary eye/slot stay server-owned.
+- [x] Receive-time `entity_use` target freeze (mirror pending melee); do not rewind against the later resolve tick.
+- [x] `MAX_MOB_REWIND_TICKS = 8` (400 ms); `MAX_PVP_REWIND_TICKS` unchanged at 5.
+- [x] Targeting AABB unions visual core with ±`MobDefinition.width/2`; physics width/height unchanged.
+- [x] Wolf tail Minecraft-like pose via `legacyRotationToThree` (wild/angry/tamed/sit, Y wag).
+- [x] Operator `/spawnpet <wolf|cat>` (`/petspawn` alias); no spawn eggs; natural weights unchanged.
+- [ ] Owner live Anarchy QA: Bones/meats, moving hits, latency, wolf tail.
+
 ## 2026-09-22: pet geometry / cat targeting
 
 - [x] Wolf mane/collar at neck Z=-3; body rest Rx restored to `+π/2`; keep body-top UV remap.
@@ -19,7 +29,7 @@
 ## 2026-09-20: pet interaction / ownership hardening
 
 - [x] Online `entity_use` raycasts the interpolated render pose and rewinds a bounded mob pose history.
-- [x] Server uses command-boundary look, not client yaw/pitch.
+- [x] Server uses command-boundary **eye** plus click-time `action.yaw/pitch`; it does not trust `targetId` alone.
 - [x] Offline `petHome` recaptures at the latest owner-loss point.
 - [x] Same-owner pets never auto-target each other; wild budget is separate from a tamed safety ceiling.
 

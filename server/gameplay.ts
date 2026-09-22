@@ -196,6 +196,11 @@ export interface SequencedMeleeOptions {
   readonly target?: SequencedMeleeTarget;
   /** Missing player hint preserves mob/minecart/block attacks, without target fallback. */
   readonly allowCurrentPlayerTargets?: boolean;
+  /**
+   * Click-time look from the action packet. Eye position stays on attackerPose.
+   * Omit to use the command-boundary look (legacy / non-sequenced path).
+   */
+  readonly clickLook?: { readonly yaw: number; readonly pitch: number };
 }
 
 export class ServerGameplay {
@@ -903,7 +908,7 @@ export class ServerGameplay {
       readonly eyeZ: number;
       readonly yaw: number;
       readonly pitch: number;
-      readonly currentTick: number;
+      readonly targetPose: RewoundMobPose;
     },
   ):
     | { ok: true; kind: 'feed' | 'tame' | 'sit' | 'stand'; mobKind: 'wolf' | 'cat'; consume: boolean; progress?: 1 | 2 }
@@ -913,10 +918,7 @@ export class ServerGameplay {
     if (!mob || !mob.alive || !isPetKind(mob.kind)) return { ok: false, reason: 'invalid' };
     const direction = viewDirectionFromLook(look.yaw, look.pitch, this.tmpDir);
     const origin = this.tmpEye.set(look.eyeX, look.eyeY, look.eyeZ);
-    const pose = action.targetRenderTick === undefined
-      ? { x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw }
-      : this.mobs.rewindPose(action.targetId, action.targetRenderTick, look.currentTick);
-    if (!pose) return { ok: false, reason: 'stale' };
+    const pose = look.targetPose;
     const hit = raycastMobTarget(origin, direction, pose, mob.kind);
     if (!hit || hit.distance < 0 || hit.distance > PET_INTERACT_REACH) {
       return { ok: false, reason: 'reach' };
@@ -1109,8 +1111,11 @@ export class ServerGameplay {
     const origin = options
       ? this.tmpEye.set(options.attackerPose.eyeX, options.attackerPose.eyeY, options.attackerPose.eyeZ)
       : player.controller.eyePosition(this.tmpEye);
-    const direction = options
-      ? viewDirectionFromLook(options.attackerPose.yaw, options.attackerPose.pitch, this.tmpDir)
+    const clickLook = options
+      ? (options.clickLook ?? { yaw: options.attackerPose.yaw, pitch: options.attackerPose.pitch })
+      : undefined;
+    const direction = clickLook
+      ? viewDirectionFromLook(clickLook.yaw, clickLook.pitch, this.tmpDir)
       : player.controller.viewDirection(this.tmpDir);
 
     if (options?.target?.kind === 'player') {

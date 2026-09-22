@@ -66,6 +66,8 @@ export interface MobVisualState {
   readonly ownerId?: string;
   readonly variant?: string;
   readonly angry?: boolean;
+  readonly health?: number;
+  readonly maxHealth?: number;
   fireOverlay?: EntityVisual;
 }
 

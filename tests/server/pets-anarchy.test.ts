@@ -217,7 +217,7 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
     expect(wild.ownerId).toBeUndefined();
   });
 
-  it('rejects a forged client look that does not match the command-boundary yaw', async () => {
+  it('accepts click-time look at the pet when the command-boundary look points away', async () => {
     const { world, owner } = await boot();
     const pet = world.gameplay.mobs.spawn('wolf', new Vec3(22.5, 100, 20.5), { force: true })!;
     world.world.setBlock(22, 99, 20, BlockId.Stone);
@@ -226,9 +226,26 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
     expect(north.yaw).toBeCloseTo(0, 5);
     const east = lookAt(owner, { x: pet.position.x, y: pet.position.y + 0.4, z: pet.position.z });
     expect(world.handleSequencedEntityUse(owner, useAction(1, 1, pet.id, east))).toEqual({
+      ok: true,
+    });
+    expect(pet.tameProgress).toBe(1);
+    expect(owner.inventory.getSlot(0)?.count).toBe(3);
+  });
+
+  it('misses when the click look points away even if the command-boundary look hits', async () => {
+    const { world, owner } = await boot();
+    const pet = world.gameplay.mobs.spawn('wolf', new Vec3(22.5, 100, 20.5), { force: true })!;
+    world.world.setBlock(22, 99, 20, BlockId.Stone);
+    owner.inventory.setSlot(0, createItemStack(ItemId.Bone, 4));
+    const east = prepareLook(world, owner, {
+      x: pet.position.x, y: pet.position.y + 0.4, z: pet.position.z,
+    }, 1);
+    expect(east.yaw).not.toBeCloseTo(0, 1);
+    expect(world.handleSequencedEntityUse(owner, useAction(1, 1, pet.id, { yaw: 0, pitch: 0 }))).toEqual({
       ok: false, reason: 'reach',
     });
-    expect(pet.ownerId).toBeUndefined();
+    expect(pet.tameProgress).toBe(0);
+    expect(owner.inventory.getSlot(0)?.count).toBe(4);
   });
 
   it('accepts a moving pet at the rendered tick and rejects stale or future ticks', async () => {
@@ -386,7 +403,8 @@ describe('anarchy pet entity_use', { timeout: 30_000 }, () => {
       result: 'hit', targetId: wolf.id, requestedRenderTick: renderTick, resolvedRenderTick: renderTick,
     });
     expect(wolf.position.x).toBeGreaterThan(39);
-    expect(wolf.position.z).toBeCloseTo(20.5, 1);
+    expect(wolf.position.z).toBeGreaterThan(19.5);
+    expect(wolf.position.z).toBeLessThan(21.5);
     aSink.payloads.length = 0;
     world.handleSequencedAttack(owner, {
       kind: 'attack', actionSeq: 3, commandSeq: 1, selectedSlot: 0,

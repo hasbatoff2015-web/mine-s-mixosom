@@ -259,7 +259,12 @@ export class ThreeEntityHost implements EntityHost {
     visual.rotation.y = state.yaw;
     this.applyPetAppearance(state);
     if (state.kind === 'wolf') {
-      applyWolfVisualPose(model, state.sitting === true, walkPhase, speed);
+      applyWolfVisualPose(model, state.sitting === true, walkPhase, speed, {
+        angry: state.angry,
+        ownerId: state.ownerId,
+        health: state.health,
+        maxHealth: state.maxHealth,
+      });
     } else if (state.kind === 'cat') {
       applyCatVisualPose(model, state.sitting === true, walkPhase, speed);
     } else if (state.kind === 'spider') {

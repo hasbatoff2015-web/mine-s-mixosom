@@ -3,7 +3,7 @@ import { isChatChannel, type ChatChannel } from './chat';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
-import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, PlayerActionKind } from './playerActions';
+import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, EntityUseActionDiagnostics, PlayerActionKind } from './playerActions';
 import type { PlayerPresentationState } from './playerPresentation';
 import {
   parseNetworkAppearance,
@@ -24,7 +24,7 @@ export type { PlayerAppearance };
 
 export type { AppliedMovementStep } from './playerCommand';
 export type { ActionRejectReason, PlayerActionKind } from './playerActions';
-export type { CombatActionDiagnostics } from './playerActions';
+export type { CombatActionDiagnostics, EntityUseActionDiagnostics } from './playerActions';
 export type { BowActionDiagnostics } from './playerActions';
 
 export type GameMode = 'survival' | 'creative';
@@ -802,6 +802,7 @@ export interface ServerActionResultMessage {
   readonly pitch?: number;
   readonly combat?: CombatActionDiagnostics;
   readonly bow?: BowActionDiagnostics;
+  readonly entityUse?: EntityUseActionDiagnostics;
 }
 
 export interface ServerChunkMessage {

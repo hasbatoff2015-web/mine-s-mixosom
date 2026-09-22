@@ -110,6 +110,45 @@ export interface CombatActionDiagnostics {
   readonly pendingTicks?: number;
 }
 
+export type EntityUseActionResultKind =
+  | 'accepted'
+  | 'stale'
+  | 'future'
+  | 'reach'
+  | 'los'
+  | 'slot'
+  | 'item'
+  | 'dead'
+  | 'invalid'
+  | 'duplicate'
+  | 'pending_timeout'
+  | 'pet_limit'
+  | 'pet_capacity'
+  | 'not_owner';
+
+export interface EntityUseActionDiagnostics {
+  readonly result: EntityUseActionResultKind | string;
+  readonly actionSeq?: number;
+  readonly commandSeq?: number;
+  readonly targetId?: string;
+  readonly requestedRenderTick?: number;
+  readonly receivedServerTick?: number;
+  readonly resolvedRenderTick?: number;
+  readonly rewindTicks?: number;
+  readonly pendingTicks?: number;
+}
+
+/** Click-time look from the action packet; command-boundary look is only the fallback. */
+export function clickLookFromAction(
+  action: { readonly yaw?: number; readonly pitch?: number },
+  fallback: { readonly yaw: number; readonly pitch: number },
+): { yaw: number; pitch: number } {
+  return {
+    yaw: isFiniteNumber(action.yaw) ? action.yaw : fallback.yaw,
+    pitch: isFiniteNumber(action.pitch) ? action.pitch : fallback.pitch,
+  };
+}
+
 export interface EntityUseAction extends SequencedAction {
   readonly kind: 'entity_use';
   readonly targetId: string;
@@ -176,6 +215,7 @@ export interface ActionResult {
   readonly pitch?: number;
   readonly combat?: CombatActionDiagnostics;
   readonly bow?: BowActionDiagnostics;
+  readonly entityUse?: EntityUseActionDiagnostics;
 }
 
 export function isFiniteNumber(value: unknown): value is number {

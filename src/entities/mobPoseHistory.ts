@@ -1,7 +1,12 @@
 /** Longer than the accepted rewind so 80 ms interpolation still has both samples. */
 export const MOB_POSE_HISTORY_TICKS = 16;
-/** Same 250 ms window as remote-player combat rewind. */
-export const MAX_MOB_REWIND_TICKS = 5;
+/**
+ * Mob-only pose rewind. 8 ticks = 400 ms at 20 TPS.
+ * Independent of PvP (`MAX_PVP_REWIND_TICKS` stays 5). The client already
+ * renders about `ENTITY_INTERP_DELAY_MS` (80 ms) behind the newest snapshot,
+ * so 5 ticks left too little budget for click latency + jitter.
+ */
+export const MAX_MOB_REWIND_TICKS = 8;
 
 export interface MobPoseSample {
   readonly tick: number;

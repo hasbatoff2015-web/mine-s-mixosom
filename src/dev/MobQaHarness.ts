@@ -114,6 +114,8 @@ export function startMobQaHarness(
       ownerId,
       variant,
       angry,
+      health: kind === 'wolf' || kind === 'cat' ? 8 : 20,
+      maxHealth: kind === 'wolf' || kind === 'cat' ? 8 : 20,
     });
     renderer.render(scene, camera);
     frame = requestAnimationFrame(render);

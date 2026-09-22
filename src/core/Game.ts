@@ -497,6 +497,17 @@ export interface OnlineAnarchySession {
     receivedServerTick?: number;
     pendingTicks?: number;
   };
+  lastEntityUseDiag?: {
+    actionSeq: number;
+    commandSeq: number;
+    result: string;
+    targetId?: string;
+    requestedRenderTick?: number;
+    receivedServerTick?: number;
+    resolvedRenderTick?: number;
+    rewindTicks?: number;
+    pendingTicks?: number;
+  };
   miningLocked?: boolean;
   /**
    * True after every `block_break_start` until that start is acked.
@@ -2010,6 +2021,19 @@ export class Game {
       }
       return;
     }
+    if (message.kind === 'entity_use') {
+      const pending = online.lastEntityUseDiag;
+      if (pending?.actionSeq === message.actionSeq) {
+        online.lastEntityUseDiag = {
+          ...pending,
+          result: message.ok
+            ? message.entityUse?.result ?? 'accepted'
+            : `rejected:${message.reason ?? message.entityUse?.result ?? 'unknown'}`,
+          ...(message.entityUse ?? {}),
+        };
+      }
+      return;
+    }
     if (message.kind === 'block_use' && !message.ok && message.reason === 'occupied') {
       this.ui.toast('Кровать занята');
     }
@@ -2302,6 +2326,13 @@ export class Game {
       target.renderTick,
     );
     this.commitOnlineActionSeq(session, source);
+    online.lastEntityUseDiag = {
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      result: 'pending',
+      targetId: action.targetId,
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+    };
     online.client.send(entityUseMessage(action));
     return true;
   }
@@ -6247,6 +6278,10 @@ export class Game {
           if (session.online.lastCombatDiag) {
             const combat = session.online.lastCombatDiag;
             this.cachedDebugText += `\nMelee ${combat.result} a=${combat.actionSeq} c=${combat.commandSeq} target=${combat.targetId?.slice(0, 8) ?? '—'} recv=${combat.receivedServerTick ?? '—'} pending=${combat.pendingTicks ?? '—'} req=${combat.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${combat.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${combat.rewindTicks?.toFixed(2) ?? '—'} dist=${combat.distance?.toFixed(3) ?? '—'}`;
+          }
+          if (session.online.lastEntityUseDiag) {
+            const use = session.online.lastEntityUseDiag;
+            this.cachedDebugText += `\nPetUse ${use.result} a=${use.actionSeq} c=${use.commandSeq} target=${use.targetId?.slice(0, 8) ?? '—'} recv=${use.receivedServerTick ?? '—'} pending=${use.pendingTicks ?? '—'} req=${use.requestedRenderTick?.toFixed(2) ?? '—'} resolved=${use.resolvedRenderTick?.toFixed(2) ?? '—'} rewind=${use.rewindTicks?.toFixed(2) ?? '—'}`;
           }
           const remoteHud = this.formatRemoteInterpDebug(session);
           if (remoteHud) this.cachedDebugText += `\n${remoteHud}`;

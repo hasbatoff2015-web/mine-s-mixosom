@@ -25,6 +25,7 @@ import {
   resetPetTeleportSearchStats,
   resolvePetUseTarget,
 } from '../src/entities';
+import { getMobDefinition } from '../src/entities/mobDefinitions';
 import {
   DEFAULT_MAX_TAMED_PETS,
   DEFAULT_PET_LIMIT,
@@ -667,6 +668,45 @@ describe('rendered interaction raycast', () => {
     expect(mobTargetBounds('wolf').minZ).toBeLessThanOrEqual(-0.75);
   });
 
+  it('unions targeting bounds with the physical body width without swallowing the tail', () => {
+    expect(getMobDefinition('wolf').width).toBe(0.6);
+    expect(getMobDefinition('wolf').height).toBe(0.85);
+    expect(getMobDefinition('cat').width).toBe(0.6);
+    expect(getMobDefinition('cat').height).toBe(0.7);
+    const wolf = mobTargetBounds('wolf');
+    const cat = mobTargetBounds('cat');
+    expect(wolf.minX).toBeLessThanOrEqual(-0.3);
+    expect(wolf.maxX).toBeGreaterThanOrEqual(0.3);
+    expect(cat.minX).toBeLessThanOrEqual(-0.3);
+    expect(cat.maxX).toBeGreaterThanOrEqual(0.3);
+    expect(cat.minZ).toBeLessThanOrEqual(-0.85);
+    expect(wolf.maxZ).toBeLessThan(0.9);
+    expect(cat.maxZ).toBeLessThan(0.9);
+    const pose = { x: 8, y: 71, z: 8, yaw: 0 };
+    const samples: readonly { label: string; kind: 'wolf' | 'cat'; origin: Vec3; direction: Vec3 }[] = [
+      { label: 'wolf-left', kind: 'wolf', origin: new Vec3(8 - 0.29, 71.45, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'wolf-right', kind: 'wolf', origin: new Vec3(8 + 0.29, 71.45, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'wolf-front', kind: 'wolf', origin: new Vec3(8, 71.45, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'wolf-rear', kind: 'wolf', origin: new Vec3(8, 71.45, 9.4), direction: new Vec3(0, 0, -1) },
+      { label: 'cat-left', kind: 'cat', origin: new Vec3(8 - 0.29, 71.4, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'cat-right', kind: 'cat', origin: new Vec3(8 + 0.29, 71.4, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'cat-muzzle', kind: 'cat', origin: new Vec3(8, 71.45, 6.5), direction: new Vec3(0, 0, 1) },
+      { label: 'cat-rear', kind: 'cat', origin: new Vec3(8, 71.4, 9.5), direction: new Vec3(0, 0, -1) },
+    ];
+    for (const sample of samples) {
+      expect(raycastMobTarget(sample.origin, sample.direction, pose, sample.kind), sample.label).toBeDefined();
+    }
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+      const local = { x: 0.29, y: 0.45, z: -2 };
+      const cos = Math.cos(yaw);
+      const sin = Math.sin(yaw);
+      const origin = new Vec3(8 + local.x * cos + local.z * sin, 71.45, 8 + -local.x * sin + local.z * cos);
+      const direction = new Vec3(-local.x * cos - local.z * sin, 0, local.x * sin - local.z * cos);
+      expect(raycastMobTarget(origin, direction, { x: 8, y: 71, z: 8, yaw }, 'wolf'), `wolf yaw ${yaw}`).toBeDefined();
+      expect(raycastMobTarget(origin, direction, { x: 8, y: 71, z: 8, yaw }, 'cat'), `cat yaw ${yaw}`).toBeDefined();
+    }
+  });
+
   it('prefers a visible pet over ordinary food use and yields to a closer block', () => {
     const cat = { id: 'cat-1', distance: 1.4, renderTick: 22, kind: 'cat', alive: true };
     expect(resolvePetUseTarget({ petHit: cat })).toEqual({
@@ -681,7 +721,7 @@ describe('rendered interaction raycast', () => {
   });
 
   it('keeps a bounded rewind window and a separate pet safety ceiling', () => {
-    expect(MAX_MOB_REWIND_TICKS).toBe(5);
+    expect(MAX_MOB_REWIND_TICKS).toBe(8);
     expect(MAX_SEPARATION_PAIR_CHECKS).toBe(1024);
     expect(resolveMaxTamedPets(8)).toBe(80);
     expect(resolveMaxTamedPets(300)).toBe(MAX_TAMED_PET_SAFETY_CAP);

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { PROTOCOL_VERSION } from '../shared/config';
 import { parseClientMessage } from '../shared/protocol';
 import { captureAttack } from '../src/net/actionIntent';
+import { clickLookFromAction } from '../shared/playerActions';
 import { attackMessageFromAttack } from '../src/net/onlineActionMessages';
 import gameSource from '../src/core/Game.ts?raw';
 
@@ -62,5 +63,13 @@ describe('online melee action intent', () => {
     expect(sendOnlineUse.indexOf('trySendOnlinePetUse')).toBeLessThan(sendOnlineUse.indexOf('localFoodUse'));
     expect(gameSource).toContain('resolvePetUseTarget');
     expect(gameSource).toContain('entityUseMessage(action)');
+  });
+
+  it('uses captured action look rather than command-boundary look for click rays', () => {
+    expect(clickLookFromAction({ yaw: 1.2, pitch: -0.25 }, { yaw: 0, pitch: 0.1 })).toEqual({
+      yaw: 1.2, pitch: -0.25,
+    });
+    expect(clickLookFromAction({}, { yaw: 0.4, pitch: -0.1 })).toEqual({ yaw: 0.4, pitch: -0.1 });
+    expect(gameSource).toContain('lastEntityUseDiag');
   });
 });

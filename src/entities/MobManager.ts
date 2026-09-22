@@ -1825,6 +1825,8 @@ export class MobManager {
       ownerId: mob.ownerId,
       variant: mob.catVariant,
       angry: mob.angry,
+      health: mob.health,
+      maxHealth: mob.definition.maxHealth,
       fireOverlay: mob.fireOverlay,
     };
     mob.fireOverlay = this.host.syncMob(state) as EntityVisual | undefined;

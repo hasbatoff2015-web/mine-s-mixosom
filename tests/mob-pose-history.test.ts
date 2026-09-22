@@ -21,4 +21,11 @@ describe('mob pose rewind history', () => {
     expect(rewindMobPose(history, current - MAX_MOB_REWIND_TICKS - 0.01, current)).toBeUndefined();
     expect(rewindMobPose(history, current + 0.01, current)).toBeUndefined();
   });
+
+  it('keeps PvP rewind on a separate smaller bound', async () => {
+    const { MAX_PVP_REWIND_TICKS } = await import('../server/combatPoseHistory');
+    expect(MAX_MOB_REWIND_TICKS).toBe(8);
+    expect(MAX_PVP_REWIND_TICKS).toBe(5);
+    expect(MOB_POSE_HISTORY_TICKS).toBe(16);
+  });
 });
