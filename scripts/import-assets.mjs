@@ -179,6 +179,14 @@ for (const [target, source] of Object.entries(entities)) copies.push([join('enti
 copies.push([join('entity', 'chest', 'normal.png'), join('entity', 'chest', 'normal.png')]);
 copies.push([join('entity', 'bed', 'white.png'), join('entity', 'bed', 'white.png')]);
 copies.push([join('entity', 'sign.png'), join('entity', 'sign.png')]);
+copies.push([join('entity', 'wolf', 'wolf.png'), join('entity', 'wolf', 'wolf.png')]);
+copies.push([join('entity', 'wolf', 'wolf_angry.png'), join('entity', 'wolf', 'wolf_angry.png')]);
+copies.push([join('entity', 'wolf', 'wolf_tame.png'), join('entity', 'wolf', 'wolf_tame.png')]);
+copies.push([join('entity', 'wolf', 'wolf_collar.png'), join('entity', 'wolf', 'wolf_collar.png')]);
+copies.push([join('entity', 'cat', 'black.png'), join('entity', 'cat', 'black.png')]);
+copies.push([join('entity', 'cat', 'red.png'), join('entity', 'cat', 'red.png')]);
+copies.push([join('entity', 'cat', 'siamese.png'), join('entity', 'cat', 'siamese.png')]);
+copies.push([join('entity', 'cat', 'ocelot.png'), join('entity', 'cat', 'ocelot.png')]);
 // Portal chest uses an authored Frontier texture (`entity/chest/portal.png`), not a Minecraft Ender Chest sheet.
 copies.push([join('environment', 'sun.png'), join('environment', 'sun.png')]);
 copies.push([join('environment', 'moon_phases.png'), join('environment', 'moon.png')]);

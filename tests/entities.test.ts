@@ -61,15 +61,15 @@ describe('MobManager', () => {
   it('builds every alpha mob as a bounded voxel entity', () => {
     const scene = new THREE.Scene();
     const world = new VoxelWorld('mob-models');
-    const manager = new MobManager(scene, world, { automaticSpawning: false, maxMobs: 8 });
+    const manager = new MobManager(scene, world, { automaticSpawning: false, maxMobs: 12 });
     const kinds: readonly MobKind[] = [
-      'cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider',
+      'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider',
     ];
     kinds.forEach((kind, index) => {
       expect(manager.spawn(kind, new THREE.Vector3(index * 2, 72, 0), { force: true })).toBeDefined();
     });
-    expect(manager.count).toBe(8);
-    expect(scene.children).toHaveLength(8);
+    expect(manager.count).toBe(10);
+    expect(scene.children).toHaveLength(10);
     manager.dispose();
     expect(scene.children).toHaveLength(0);
   });

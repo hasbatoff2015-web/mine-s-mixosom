@@ -26,6 +26,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
   clearDoorBlocks,
   daylightFactor,
@@ -50,6 +51,12 @@ import {
   findMinecartPassenger,
   minecartDismountFromSprint,
   igniteMinecartTntFromFireArrow,
+  PET_INTERACT_REACH,
+  fallbackCatVariant,
+  isPetKind,
+  raycastMobTarget,
+  type MobEntity,
+  type RewoundMobPose,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
@@ -74,7 +81,7 @@ import type { VoxelHit, VoxelWorld } from '../src/world/World';
 import { bedRestPosition, clearBedBlocks, findBedOccupant, resolveBedRest, type BedRestState } from '../src/world/bed';
 import { rayAabbDistance } from '../src/world/collision';
 import type { ClientInputMessage, ClientInventoryActionMessage, EntitySnapshot, GameMode, NetworkEntityEvent, WorldSoundEvent } from '../shared/protocol';
-import type { BlockTargetIntent, CombatActionDiagnostics } from '../shared/playerActions';
+import type { BlockTargetIntent, CombatActionDiagnostics, EntityUseAction } from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { resolveActionEye } from '../shared/actionPoseHistory';
 import { viewDirectionFromLook } from '../src/player/localAim';
@@ -172,17 +179,30 @@ export interface GameplayMetrics {
   blockChanges: number;
 }
 
-export interface SequencedMeleeTarget {
-  readonly player: GameplayPlayer;
-  readonly pose: RewoundCombatPose;
-  readonly requestedRenderTick: number;
-}
+export type SequencedMeleeTarget =
+  | {
+    readonly kind: 'player';
+    readonly player: GameplayPlayer;
+    readonly pose: RewoundCombatPose;
+    readonly requestedRenderTick: number;
+  }
+  | {
+    readonly kind: 'mob';
+    readonly mob: MobEntity;
+    readonly pose: RewoundMobPose;
+    readonly requestedRenderTick: number;
+  };
 
 export interface SequencedMeleeOptions {
   readonly attackerPose: CombatPoseSample;
   readonly target?: SequencedMeleeTarget;
   /** Missing player hint preserves mob/minecart/block attacks, without target fallback. */
   readonly allowCurrentPlayerTargets?: boolean;
+  /**
+   * Click-time look from the action packet. Eye position stays on attackerPose.
+   * Omit to use the command-boundary look (legacy / non-sequenced path).
+   */
+  readonly clickLook?: { readonly yaw: number; readonly pitch: number };
 }
 
 export class ServerGameplay {
@@ -207,6 +227,7 @@ export class ServerGameplay {
   /** Live authoritative players; occupancy is derived from `restingBed` / `ridingCartId`. */
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
+  onPersistentStateChanged?: () => void;
   private pendingUseReject: string | undefined;
   private lastVehicleEnterReject: string | undefined;
   maxTickMs = 0;
@@ -223,6 +244,7 @@ export class ServerGameplay {
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
     private readonly worldSpawn?: () => readonly [number, number, number],
     private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
+    options?: { readonly maxTamedPets?: number },
   ) {
     this.fireworks = new FireworkManager(world);
     world.deferredLighting = false;
@@ -246,10 +268,12 @@ export class ServerGameplay {
     this.falling = new FallingBlockManager(host, world);
     this.mobs = new MobManager(host, world, {
       random: this.random,
+      ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
       onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
+      onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
       allowSpawn: (kind, x, y, z) => {
         const event = this.events.createMobSpawn(kind, x, y, z);
         this.events.emit('mobSpawn', event);
@@ -425,6 +449,7 @@ export class ServerGameplay {
             eyePosition: player.controller.eyePosition(),
             alive: !player.survival.dead,
             targetable: player.gamemode === 'survival' && !player.survival.invisible,
+            heldItemId: player.inventory.getSlot(player.selectedSlot)?.itemId,
           })),
           daylight: daylightFactor(this.world.timeOfDay),
         });
@@ -436,7 +461,12 @@ export class ServerGameplay {
         for (const event of this.mobs.consumePlayerDamage()) {
           const victim = connected.find((player) => player.id === event.targetPlayerId);
           if (!victim || victim.gamemode !== 'survival' || victim.survival.dead) continue;
-          const damageEvent = this.events.createPlayerDamage(victim.id, event.amount, event.source);
+          const damageEvent = this.events.createPlayerDamage(
+            victim.id,
+            event.amount,
+            event.source,
+            event.attackerPlayerId,
+          );
           this.events.emit('playerDamage', damageEvent);
           if (damageEvent.cancelled) continue;
           const result = victim.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
@@ -445,6 +475,9 @@ export class ServerGameplay {
           this.events.emit('playerDamaged', { playerId: victim.id, amount: event.amount, cause: event.source });
           if (victim.survival.dead) {
             this.events.emit('entityDeath', { entityId: victim.id, cause: event.source, playerId: victim.id });
+          }
+          if (result.fullHurt) {
+            this.mobs.assignOwnedWolfTarget(victim.id, event.mobId, 'mob', 'defend');
           }
           if (result.fullHurt && event.source === 'melee') {
             victim.controller.receiveMeleeKnockback({
@@ -634,6 +667,10 @@ export class ServerGameplay {
         vx: mob.velocity.x, vy: mob.velocity.y, vz: mob.velocity.z,
         mobKind: mob.kind, health: mob.health, maxHealth: mob.definition.maxHealth,
         onFire: mob.isOnFire, hurt: mob.hurtFlashSeconds > 0, state: mob.state,
+        ...(mob.ownerId ? { ownerId: mob.ownerId } : {}),
+        ...(mob.sitting ? { sitting: true } : {}),
+        ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
+        ...(mob.angry ? { angry: true } : {}),
       });
     }
     const items: EntitySnapshot[] = [];
@@ -711,6 +748,7 @@ export class ServerGameplay {
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
@@ -770,6 +808,7 @@ export class ServerGameplay {
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!intent && !this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     let hit: VoxelHit | undefined;
     if (intent) {
@@ -866,6 +905,64 @@ export class ServerGameplay {
     return { ok: true };
   }
 
+  useEntity(
+    player: GameplayPlayer,
+    action: EntityUseAction,
+    selectedSlot: number,
+    petLimit: number,
+    look: {
+      readonly eyeX: number;
+      readonly eyeY: number;
+      readonly eyeZ: number;
+      readonly yaw: number;
+      readonly pitch: number;
+      readonly targetPose: RewoundMobPose;
+    },
+  ):
+    | { ok: true; kind: 'feed' | 'tame' | 'sit' | 'stand'; mobKind: 'wolf' | 'cat'; consume: boolean; progress?: 1 | 2 }
+    | { ok: false; reason: string; ownedCount?: number; petLimit?: number; consume?: boolean } {
+    if (!player.connected || player.survival.dead) return { ok: false, reason: 'dead' };
+    const mob = this.mobs.get(action.targetId);
+    if (!mob || !mob.alive || !isPetKind(mob.kind)) return { ok: false, reason: 'invalid' };
+    const direction = viewDirectionFromLook(look.yaw, look.pitch, this.tmpDir);
+    const origin = this.tmpEye.set(look.eyeX, look.eyeY, look.eyeZ);
+    const pose = look.targetPose;
+    const hit = raycastMobTarget(origin, direction, pose, mob.kind);
+    if (!hit || hit.distance < 0 || hit.distance > PET_INTERACT_REACH) {
+      return { ok: false, reason: 'reach' };
+    }
+    const blockHit = this.world.raycast(origin, direction, hit.distance);
+    if (blockHit && blockHit.distance + 1e-7 < hit.distance) return { ok: false, reason: 'los' };
+    const held = player.inventory.getSlot(selectedSlot);
+    const result = this.mobs.tryPetInteract(mob, {
+      playerId: player.id,
+      heldItemId: held?.itemId,
+      gamemode: player.gamemode,
+      petLimit,
+    });
+    if (result.consume && held) {
+      player.inventory.setSlot(selectedSlot, held.count <= 1 ? null : { ...held, count: held.count - 1 });
+      player.inventoryDirty = true;
+    }
+    if (result.ok) {
+      player.presentSwing?.();
+      return {
+        ok: true,
+        kind: result.kind,
+        mobKind: mob.kind,
+        consume: result.consume,
+        ...(result.kind === 'feed' ? { progress: result.progress } : {}),
+      };
+    }
+    return {
+      ok: false,
+      reason: result.reason,
+      consume: result.consume,
+      ...(result.ownedCount !== undefined ? { ownedCount: result.ownedCount } : {}),
+      ...(result.petLimit !== undefined ? { petLimit: result.petLimit } : {}),
+    };
+  }
+
   beginMining(
     player: GameplayPlayer,
     intent: BlockTargetIntent,
@@ -883,6 +980,7 @@ export class ServerGameplay {
     if (definition.breakable === false || definition.hardness < 0) {
       return { ok: false, reason: 'unbreakable' };
     }
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return { ok: false, reason: 'bounds' };
     if (
       !player.miningTarget
       || player.miningTarget.x !== hit.x
@@ -1001,7 +1099,11 @@ export class ServerGameplay {
     others: readonly GameplayPlayer[] = [],
     options?: SequencedMeleeOptions,
   ): CombatActionDiagnostics {
-    const hintedTargetId = options?.target?.player.id;
+    const hintedTargetId = options?.target?.kind === 'player'
+      ? options.target.player.id
+      : options?.target?.kind === 'mob'
+        ? options.target.mob.id
+        : undefined;
     const timeline = options?.target
       ? {
         targetId: hintedTargetId,
@@ -1018,11 +1120,14 @@ export class ServerGameplay {
     const origin = options
       ? this.tmpEye.set(options.attackerPose.eyeX, options.attackerPose.eyeY, options.attackerPose.eyeZ)
       : player.controller.eyePosition(this.tmpEye);
-    const direction = options
-      ? viewDirectionFromLook(options.attackerPose.yaw, options.attackerPose.pitch, this.tmpDir)
+    const clickLook = options
+      ? (options.clickLook ?? { yaw: options.attackerPose.yaw, pitch: options.attackerPose.pitch })
+      : undefined;
+    const direction = clickLook
+      ? viewDirectionFromLook(clickLook.yaw, clickLook.pitch, this.tmpDir)
       : player.controller.viewDirection(this.tmpDir);
 
-    if (options?.target) {
+    if (options?.target?.kind === 'player') {
       const target = options.target.player;
       if (target.id === player.id || !target.connected || target.survival.dead
         || target.gamemode !== 'survival' || options.target.pose.dead) {
@@ -1040,6 +1145,20 @@ export class ServerGameplay {
       return { result, distance, ...timeline };
     }
 
+    if (options?.target?.kind === 'mob') {
+      const targetMob = options.target.mob;
+      if (!targetMob.alive) return { result: 'stale', ...timeline };
+      const mobHit = raycastMobTarget(origin, direction, options.target.pose, targetMob.kind);
+      if (!mobHit || mobHit.distance < 0) return { result: 'miss', ...timeline };
+      const distance = mobHit.distance;
+      if (distance > 3) return { result: 'out_of_reach', distance, ...timeline };
+      const blockHit = this.world.raycast(origin, direction, distance);
+      if (blockHit && blockHit.distance + 1e-7 < distance) {
+        return { result: 'occluded', distance, ...timeline };
+      }
+      return { result: this.meleeMob(player, targetMob, options.attackerPose), distance, ...timeline };
+    }
+
     const blockHit = this.world.raycast(origin, direction, PLAYER_REACH);
     const cartHit = this.minecarts.raycast(origin, direction, PLAYER_REACH, player.ridingCartId);
     const mobHit = this.mobs.raycast(origin, direction, Math.min(3, PLAYER_REACH));
@@ -1055,56 +1174,7 @@ export class ServerGameplay {
     }
     const attack = resolvePlayerAttackTarget(blockHit, cartHit, mobHit, player.ridingCartId);
     if (attack?.kind === 'mob' && mobHit) {
-      const selectedSlot = options?.attackerPose.selectedSlot ?? player.selectedSlot;
-      const stack = player.inventory.getSlot(selectedSlot);
-      const result = player.combat.performMeleeAttack(stack?.itemId ?? null, {
-        critical: {
-          fallDistance: options?.attackerPose.fallDistance ?? player.controller.fallDistance,
-          onGround: options?.attackerPose.onGround ?? player.controller.onGround,
-          sprinting: options?.attackerPose.sprinting ?? player.controller.sprinting,
-          inWater: options?.attackerPose.inWater ?? player.controller.inWater,
-          onLadder: options?.attackerPose.onLadder ?? player.controller.onLadder,
-          riding: options?.attackerPose.riding ?? Boolean(player.ridingCartId),
-        },
-        attackerSprinting: options?.attackerPose.sprinting ?? player.controller.sprinting,
-        attackerYaw: options?.attackerPose.yaw ?? player.controller.yaw,
-      });
-      const damageEvent = this.events.createEntityDamage(mobHit.mob.id, result.damage, 'melee');
-      this.events.emit('entityDamage', damageEvent);
-      if (damageEvent.cancelled) return { result: 'blocked', distance: mobHit.distance };
-      const attackerPosition = options
-        ? new Vec3(options.attackerPose.positionX, options.attackerPose.positionY, options.attackerPose.positionZ)
-        : player.controller.position;
-      const accepted = this.mobs.damage(mobHit.mob, result.damage, {
-        source: 'player',
-        attackerPosition,
-        attackerYaw: result.attackerYaw,
-        extraKnockbackLevel: result.extraKnockbackLevel,
-      });
-      if (accepted) {
-        this.events.emit('entityDamaged', { entityId: mobHit.mob.id, amount: result.damage, cause: 'melee' });
-      }
-      completeMeleeAttack(result, accepted, player.controller);
-      if (accepted) {
-        this.emitWorldSound('combat.hit', mobHit.mob.position.x, mobHit.mob.position.y + 0.9, mobHit.mob.position.z);
-      }
-      if (accepted && player.gamemode === 'survival') {
-        if (stack && result.profile.durabilityCost > 0) {
-          player.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));
-          player.inventoryDirty = true;
-        }
-        player.survival.recordAttack();
-      }
-      if (!mobHit.mob.alive) {
-        this.events.emit('entityDeath', {
-          entityId: mobHit.mob.id,
-          cause: 'melee',
-          playerId: player.id,
-          attackerId: player.id,
-          mobKind: mobHit.mob.kind,
-        });
-      }
-      return { result: accepted ? 'hit' : 'immune', distance: mobHit.distance };
+      return { result: this.meleeMob(player, mobHit.mob, options?.attackerPose), distance: mobHit.distance };
     }
     if (attack?.kind === 'minecart') {
       const cartId = attack.cart.id;
@@ -1233,6 +1303,10 @@ export class ServerGameplay {
     this.lastVehicleEnterReject = undefined;
     const cart = this.minecarts.get(entityId);
     if (!cart || !this.minecarts.isRideable(cart)) return false;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) {
+      this.rejectVehicleEnter('bounds');
+      return false;
+    }
     if (player.ridingCartId === entityId) return true;
     if (player.ridingCartId) {
       this.rejectVehicleEnter('already_riding');
@@ -1286,7 +1360,7 @@ export class ServerGameplay {
     player.controller.velocity.set(0, 0, 0);
   }
 
-  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding'): void {
+  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding' | 'bounds'): void {
     this.lastVehicleEnterReject = reason;
     this.pendingUseReject = reason;
   }
@@ -1700,6 +1774,64 @@ export class ServerGameplay {
     return closest;
   }
 
+  private meleeMob(
+    attacker: GameplayPlayer,
+    mob: MobEntity,
+    pose?: CombatPoseSample,
+  ): 'hit' | 'immune' | 'blocked' {
+    const selectedSlot = pose?.selectedSlot ?? attacker.selectedSlot;
+    const stack = attacker.inventory.getSlot(selectedSlot);
+    const result = attacker.combat.performMeleeAttack(stack?.itemId ?? null, {
+      critical: {
+        fallDistance: pose?.fallDistance ?? attacker.controller.fallDistance,
+        onGround: pose?.onGround ?? attacker.controller.onGround,
+        sprinting: pose?.sprinting ?? attacker.controller.sprinting,
+        inWater: pose?.inWater ?? attacker.controller.inWater,
+        onLadder: pose?.onLadder ?? attacker.controller.onLadder,
+        riding: pose?.riding ?? Boolean(attacker.ridingCartId),
+      },
+      attackerSprinting: pose?.sprinting ?? attacker.controller.sprinting,
+      attackerYaw: pose?.yaw ?? attacker.controller.yaw,
+    });
+    const damageEvent = this.events.createEntityDamage(mob.id, result.damage, 'melee');
+    this.events.emit('entityDamage', damageEvent);
+    if (damageEvent.cancelled) return 'blocked';
+    const attackerPosition = pose
+      ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
+      : attacker.controller.position;
+    const accepted = this.mobs.damage(mob, result.damage, {
+      source: 'player',
+      attackerPosition,
+      attackerYaw: result.attackerYaw,
+      extraKnockbackLevel: result.extraKnockbackLevel,
+      attackerId: attacker.id,
+    });
+    if (accepted) {
+      this.events.emit('entityDamaged', { entityId: mob.id, amount: result.damage, cause: 'melee' });
+    }
+    completeMeleeAttack(result, accepted, attacker.controller);
+    if (accepted) {
+      this.emitWorldSound('combat.hit', mob.position.x, mob.position.y + 0.9, mob.position.z);
+    }
+    if (accepted && attacker.gamemode === 'survival') {
+      if (stack && result.profile.durabilityCost > 0) {
+        attacker.inventory.setSlot(selectedSlot, damageItem(stack, result.profile.durabilityCost));
+        attacker.inventoryDirty = true;
+      }
+      attacker.survival.recordAttack();
+    }
+    if (accepted && !mob.alive) {
+      this.events.emit('entityDeath', {
+        entityId: mob.id,
+        cause: 'melee',
+        playerId: attacker.id,
+        attackerId: attacker.id,
+        mobKind: mob.kind,
+      });
+    }
+    return accepted ? 'hit' : 'immune';
+  }
+
   private meleePlayer(
     attacker: GameplayPlayer,
     victim: GameplayPlayer,
@@ -1798,6 +1930,10 @@ export class ServerGameplay {
     }
     if (extras.ignite) victim.survival.igniteFromArrow();
     if (result.fullHurt) {
+      if (extras.attackerId && extras.attackerId !== victim.id) {
+        this.mobs.assignOwnedWolfTarget(extras.attackerId, victim.id, 'player', 'assist');
+        this.mobs.assignOwnedWolfTarget(victim.id, extras.attackerId, 'player', 'defend');
+      }
       if (cause === 'melee') {
         victim.controller.receiveMeleeKnockback({
           x: victim.controller.position.x - from.x,

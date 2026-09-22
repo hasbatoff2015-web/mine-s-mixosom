@@ -3,6 +3,7 @@ import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -73,7 +74,16 @@ import {
   isWithinNearbyChatRange,
   type ChatChannel,
 } from '../shared/chat';
-import type { ActionResult, AttackAction, BlockTargetIntent, BowActionDiagnostics, BowReleaseAction } from '../shared/playerActions';
+import {
+  clickLookFromAction,
+  type ActionResult,
+  type AttackAction,
+  type BlockTargetIntent,
+  type BowActionDiagnostics,
+  type BowReleaseAction,
+  type EntityUseAction,
+  type EntityUseActionDiagnostics,
+} from '../shared/playerActions';
 import type { ActionPoseSample } from '../shared/actionPoseHistory';
 import { recordActionPose } from '../shared/actionPoseHistory';
 import type { PlayerCommand } from '../shared/playerCommand';
@@ -97,6 +107,7 @@ import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityVi
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
+import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
 import { AutoMineManager, mineVolume } from './services/autoMine';
@@ -133,7 +144,16 @@ import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
-import { formatGameplayKernelTrace, movementDuringItemUse, playerCanReachHologram } from '../src/gameplay';
+import {
+  formatGameplayKernelTrace,
+  movementDuringItemUse,
+  petCapacityReachedMessage,
+  petLimitReachedMessage,
+  playerCanReachHologram,
+  resolveMaxTamedPets,
+  tameProgressMessage,
+  tameSuccessMessage,
+} from '../src/gameplay';
 import { isBuyerHologramName, playerCanReachBuyer } from '../shared/buyers';
 import { FsWorldStore } from './FsWorldStore';
 import type { WorldReadyState } from './persistence';
@@ -156,6 +176,7 @@ import {
   type CombatPoseSample,
   type RewoundCombatPose,
 } from './combatPoseHistory';
+import type { RewoundMobPose } from '../src/entities/mobPoseHistory';
 
 /** New terrain columns generated inside one `syncChunksFor`. Already-known columns still stream. */
 const MAX_NEW_CHUNK_GENERATES_PER_SYNC = 2;
@@ -167,10 +188,28 @@ export interface ConnectedSink {
 export interface PendingMeleeAttack {
   readonly action: AttackAction;
   readonly receivedServerTick: number;
-  readonly target?: {
-    readonly playerId: string;
-    readonly requestedRenderTick: number;
-    readonly pose: RewoundCombatPose;
+  readonly target?:
+    | {
+      readonly kind: 'player';
+      readonly playerId: string;
+      readonly requestedRenderTick: number;
+      readonly pose: RewoundCombatPose;
+    }
+    | {
+      readonly kind: 'mob';
+      readonly mobId: string;
+      readonly requestedRenderTick: number;
+      readonly pose: RewoundMobPose;
+    };
+}
+
+export interface PendingEntityUse {
+  readonly action: EntityUseAction;
+  readonly receivedServerTick: number;
+  readonly target: {
+    readonly mobId: string;
+    readonly requestedRenderTick?: number;
+    readonly pose: RewoundMobPose;
   };
 }
 
@@ -221,6 +260,7 @@ export class ServerPlayer implements GameplayPlayer {
   readonly combatPoseHistory: CombatPoseSample[] = [];
   readonly pendingAttacks: PendingMeleeAttack[] = [];
   readonly pendingBowReleases: PendingBowRelease[] = [];
+  readonly pendingEntityUses: PendingEntityUse[] = [];
   readonly bowReleaseCommandStates = new Map<number, ReceivedBowReleaseState>();
   bowReleaseBoundaryThisTick?: ReceivedBowReleaseState;
   appliedCommandBoundaryThisTick = false;
@@ -534,6 +574,7 @@ export class WorldInstance {
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
+  private loadedWorldgenVersion?: number;
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private saveGeneration = 0;
@@ -585,8 +626,11 @@ export class WorldInstance {
         const target = player.miningTarget;
         if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
       }
+    }, {
+      maxTamedPets: resolveMaxTamedPets(config.maxPlayers),
     });
     this.gameplay.serverMode = config.serverMode;
+    this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
     this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
@@ -719,6 +763,7 @@ export class WorldInstance {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
           player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
@@ -855,6 +900,11 @@ export class WorldInstance {
         });
       },
       log: (message) => serverLog(`plugin world-events ${message}`),
+      loadedWorldgenVersion: () => this.loadedWorldgenVersion,
+      acknowledgeWorldgenMigration: () => {
+        this.loadedWorldgenVersion = WORLDGEN_VERSION;
+        this.dirty = true;
+      },
     });
     this.gameplay.isExplosionProtected = (x, y, z) => this.worldEvents.isProtected(x, y, z);
     this.holograms = new HologramNetwork((list) => {
@@ -903,6 +953,10 @@ export class WorldInstance {
     const existing = await this.worldStore.load(this.worldId);
     if (existing) {
       this.createdAt = existing.summary.createdAt;
+      this.loadedWorldgenVersion = existing.worldgenVersion;
+      if (this.loadedWorldgenVersion === undefined || this.loadedWorldgenVersion < WORLDGEN_VERSION) {
+        this.dirty = true;
+      }
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
@@ -912,7 +966,11 @@ export class WorldInstance {
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
-      this.spawn = [spawn[0], spawn[1], spawn[2]];
+      // Canonical saved spawn stays put when already inside the playable AABB.
+      // Relocate would generate V3 terrain and lift Y out of schematic solids.
+      this.spawn = isPlayerCenterInsidePlayableWorld(spawn[0], spawn[2])
+        ? [spawn[0], spawn[1], spawn[2]]
+        : this.relocatePose(spawn[0], spawn[1], spawn[2]);
       this.storedPlayers = existing.players ?? {};
       for (const stored of Object.values(this.storedPlayers)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
@@ -931,7 +989,7 @@ export class WorldInstance {
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
-    this.spawn = estimateWorldSpawn(this.world);
+    this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
     this.createdAt = Date.now();
     this.permissions.load();
     this.economy.load();
@@ -2621,12 +2679,38 @@ export class WorldInstance {
       receivedServerTick: this.tickNumber,
     };
     if (action.targetId === undefined || action.targetRenderTick === undefined) return pending;
-    const target = this.players.get(action.targetId);
-    const pose = target
-      ? rewindCombatPose(target.combatPoseHistory, action.targetRenderTick, pending.receivedServerTick)
+    const playerTarget = this.players.get(action.targetId);
+    if (playerTarget) {
+      const pose = rewindCombatPose(
+        playerTarget.combatPoseHistory,
+        action.targetRenderTick,
+        pending.receivedServerTick,
+      );
+      if (playerTarget.id === player.id || !playerTarget.connected || playerTarget.survival.dead
+        || playerTarget.gamemode !== 'survival' || !pose || pose.dead) {
+        return {
+          ok: false,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          reason: 'stale',
+          combat: this.combatStatus(pending, 'stale'),
+        };
+      }
+      return {
+        ...pending,
+        target: {
+          kind: 'player',
+          playerId: playerTarget.id,
+          requestedRenderTick: action.targetRenderTick,
+          pose,
+        },
+      };
+    }
+    const mob = this.gameplay.mobs.get(action.targetId);
+    const mobPose = mob?.alive
+      ? this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, pending.receivedServerTick)
       : undefined;
-    if (!target || target.id === player.id || !target.connected || target.survival.dead
-      || target.gamemode !== 'survival' || !pose || pose.dead) {
+    if (!mob || !mob.alive || !mobPose) {
       return {
         ok: false,
         actionSeq: action.actionSeq,
@@ -2638,9 +2722,10 @@ export class WorldInstance {
     return {
       ...pending,
       target: {
-        playerId: target.id,
+        kind: 'mob',
+        mobId: mob.id,
         requestedRenderTick: action.targetRenderTick,
-        pose,
+        pose: mobPose,
       },
     };
   }
@@ -2660,7 +2745,7 @@ export class WorldInstance {
         combat: this.combatStatus(pending, 'stale'),
       };
     }
-    if (pending.target) {
+    if (pending.target?.kind === 'player') {
       const target = this.players.get(pending.target.playerId);
       if (!target || target.id === player.id || !target.connected || target.survival.dead
         || target.gamemode !== 'survival') {
@@ -2673,8 +2758,39 @@ export class WorldInstance {
       }
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
+        clickLook: clickLookFromAction(action, attackerPose),
         target: {
+          kind: 'player',
           player: target,
+          pose: pending.target.pose,
+          requestedRenderTick: pending.target.requestedRenderTick,
+        },
+      });
+      this.flushBlockChanges();
+      this.flushPlayerInventory(player);
+      return {
+        ok: true,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        combat: { ...combat, ...this.combatTiming(pending) },
+      };
+    }
+    if (pending.target?.kind === 'mob') {
+      const mob = this.gameplay.mobs.get(pending.target.mobId);
+      if (!mob || !mob.alive) {
+        return {
+          ok: true,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          combat: this.combatStatus(pending, 'stale'),
+        };
+      }
+      const combat = this.gameplay.attack(player, [...this.players.values()], {
+        attackerPose,
+        clickLook: clickLookFromAction(action, attackerPose),
+        target: {
+          kind: 'mob',
+          mob,
           pose: pending.target.pose,
           requestedRenderTick: pending.target.requestedRenderTick,
         },
@@ -2690,6 +2806,7 @@ export class WorldInstance {
     }
     const combat = this.gameplay.attack(player, [...this.players.values()], {
       attackerPose,
+      clickLook: clickLookFromAction(action, attackerPose),
       allowCurrentPlayerTargets: false,
     });
     this.flushBlockChanges();
@@ -2736,6 +2853,221 @@ export class WorldInstance {
       ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
       ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
       ...(result.combat ? { combat: result.combat } : {}),
+    });
+  }
+
+  handleSequencedEntityUse(
+    player: ServerPlayer,
+    action: EntityUseAction,
+  ): { ok: true } | { ok: false; reason: string } | undefined {
+    const fail = (reason: string, pending?: PendingEntityUse) => {
+      const result = { ok: false as const, reason };
+      this.sendEntityUseActionResult(player, action, result, pending, reason === 'dead' ? 'dead' : reason);
+      return result;
+    };
+    if (!this.acceptActionSeq(player, action.actionSeq)) return fail('duplicate');
+    if (!player.connected || player.survival.dead) return fail('dead');
+    if (!Number.isInteger(action.commandSeq) || action.commandSeq < 0
+      || !Number.isInteger(action.selectedSlot) || action.selectedSlot < 0 || action.selectedSlot >= Inventory.HOTBAR_SIZE
+      || (action.yaw !== undefined && !Number.isFinite(action.yaw))
+      || (action.pitch !== undefined && !Number.isFinite(action.pitch))
+      || (action.targetRenderTick !== undefined && !Number.isFinite(action.targetRenderTick))
+      || !action.targetId) {
+      return fail('invalid');
+    }
+    const captured = this.capturePendingEntityUse(action);
+    if (!captured.ok) return fail(captured.reason);
+    const pending = captured.pending;
+    const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+    if (pose) {
+      const result = this.resolveSequencedEntityUse(player, pending, pose);
+      this.sendEntityUseActionResult(player, action, result, pending, result.ok ? 'accepted' : result.reason);
+      return result;
+    }
+    if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+      if (player.pendingEntityUses.length >= MAX_PENDING_MELEE_ACTIONS) {
+        return fail('stale', pending);
+      }
+      player.pendingEntityUses.push(pending);
+      return undefined;
+    }
+    return fail('stale', pending);
+  }
+
+  private capturePendingEntityUse(
+    action: EntityUseAction,
+  ): { ok: true; pending: PendingEntityUse } | { ok: false; reason: string } {
+    const receivedServerTick = this.tickNumber;
+    const mob = this.gameplay.mobs.get(action.targetId);
+    if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
+      return { ok: false, reason: 'invalid' };
+    }
+    if (action.targetRenderTick !== undefined && action.targetRenderTick > receivedServerTick) {
+      return { ok: false, reason: 'stale' };
+    }
+    const pose = action.targetRenderTick === undefined
+      ? {
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+        yaw: mob.facingYaw,
+        resolvedTick: receivedServerTick,
+        rewindTicks: 0,
+      }
+      : this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, receivedServerTick);
+    if (!pose) return { ok: false, reason: 'stale' };
+    return {
+      ok: true,
+      pending: {
+        action,
+        receivedServerTick,
+        target: {
+          mobId: mob.id,
+          ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+          pose,
+        },
+      },
+    };
+  }
+
+  private resolveSequencedEntityUse(
+    player: ServerPlayer,
+    pending: PendingEntityUse,
+    pose: CombatPoseSample,
+  ): { ok: true } | { ok: false; reason: string } {
+    const { action } = pending;
+    if (pose.dead) return { ok: false, reason: 'dead' };
+    if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
+    const mob = this.gameplay.mobs.get(pending.target.mobId);
+    if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
+      return { ok: false, reason: 'invalid' };
+    }
+    this.commitActionSelectedSlot(player, pose.selectedSlot, action.commandSeq);
+    const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
+    const look = clickLookFromAction(action, pose);
+    const result = this.gameplay.useEntity(player, action, pose.selectedSlot, petLimit, {
+      eyeX: pose.eyeX,
+      eyeY: pose.eyeY,
+      eyeZ: pose.eyeZ,
+      yaw: look.yaw,
+      pitch: look.pitch,
+      targetPose: pending.target.pose,
+    });
+    this.flushPlayerInventory(player);
+    if (result.ok && result.kind === 'tame') {
+      this.dirty = true;
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: tameSuccessMessage(result.mobKind),
+        kind: 'system',
+      });
+    } else if (result.ok && result.kind === 'feed' && result.progress) {
+      this.dirty = true;
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: tameProgressMessage(result.mobKind, result.progress),
+        kind: 'system',
+      });
+    } else if (result.ok && (result.kind === 'sit' || result.kind === 'stand')) {
+      this.dirty = true;
+    } else if (!result.ok && result.reason === 'pet_limit') {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: petLimitReachedMessage(result.ownedCount ?? 0, result.petLimit ?? petLimit),
+        kind: 'system',
+      });
+    } else if (!result.ok && result.reason === 'pet_capacity') {
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: petCapacityReachedMessage(),
+        kind: 'system',
+      });
+    }
+    return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+  }
+
+  private processPendingEntityUses(): void {
+    for (const player of this.players.values()) {
+      if (player.pendingEntityUses.length === 0) continue;
+      const keep: PendingEntityUse[] = [];
+      for (const pending of player.pendingEntityUses) {
+        const { action } = pending;
+        const pendingTicks = this.tickNumber - pending.receivedServerTick;
+        if (pendingTicks > MAX_PENDING_MELEE_TICKS) {
+          this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' }, pending, 'pending_timeout');
+          continue;
+        }
+        const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
+        if (pose) {
+          const result = this.resolveSequencedEntityUse(player, pending, pose);
+          this.sendEntityUseActionResult(
+            player,
+            action,
+            result,
+            pending,
+            result.ok ? 'accepted' : result.reason,
+          );
+          continue;
+        }
+        if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
+          keep.push(pending);
+          continue;
+        }
+        this.sendEntityUseActionResult(player, action, { ok: false, reason: 'stale' }, pending, 'stale');
+      }
+      player.pendingEntityUses.length = 0;
+      player.pendingEntityUses.push(...keep);
+    }
+  }
+
+  private entityUseDiagnostics(
+    action: EntityUseAction,
+    result: string,
+    pending?: PendingEntityUse,
+  ): EntityUseActionDiagnostics {
+    return {
+      result,
+      actionSeq: action.actionSeq,
+      commandSeq: action.commandSeq,
+      targetId: action.targetId,
+      ...(action.targetRenderTick !== undefined ? { requestedRenderTick: action.targetRenderTick } : {}),
+      receivedServerTick: pending?.receivedServerTick ?? this.tickNumber,
+      pendingTicks: pending ? Math.max(0, this.tickNumber - pending.receivedServerTick) : 0,
+      ...(pending ? {
+        resolvedRenderTick: pending.target.pose.resolvedTick,
+        rewindTicks: pending.target.pose.rewindTicks,
+      } : {}),
+    };
+  }
+
+  private sendEntityUseActionResult(
+    player: ServerPlayer,
+    action: EntityUseAction,
+    result: { ok: true } | { ok: false; reason: string },
+    pending?: PendingEntityUse,
+    diagnosticResult?: string,
+  ): void {
+    this.sendTo(player, {
+      type: 'action_result',
+      actionSeq: action.actionSeq,
+      kind: 'entity_use',
+      ok: result.ok,
+      ...(result.ok ? {} : { reason: result.reason }),
+      ...(action.yaw !== undefined ? { yaw: action.yaw } : {}),
+      ...(action.pitch !== undefined ? { pitch: action.pitch } : {}),
+      entityUse: this.entityUseDiagnostics(
+        action,
+        diagnosticResult ?? (result.ok ? 'accepted' : result.reason),
+        pending,
+      ),
     });
   }
 
@@ -2795,6 +3127,7 @@ export class WorldInstance {
     const eye = player.controller.eyePosition();
     const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
     if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || !gameplayMayMutateBlock(x, z)
       || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
       this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
       return;
@@ -3222,8 +3555,10 @@ export class WorldInstance {
       this.gameplay.updateRiding(player, player.lastInput.sneak);
     }
     this.recordCombatPoses();
+    this.gameplay.mobs.recordPoseHistory(this.tickNumber);
     this.processPendingBowReleases();
     this.processPendingAttacks();
+    this.processPendingEntityUses();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
@@ -3481,6 +3816,7 @@ export class WorldInstance {
     player.combatPoseHistory.length = 0;
     player.pendingAttacks.length = 0;
     player.pendingBowReleases.length = 0;
+    player.pendingEntityUses.length = 0;
     player.bowReleaseCommandStates.clear();
     player.bowReleaseBoundaryThisTick = undefined;
     clearMiningLock(player);
@@ -3886,6 +4222,11 @@ export class WorldInstance {
     }
   }
 
+  private relocatePose(x: number, y: number, z: number): [number, number, number] {
+    const pose = relocateStandingPoseInsidePlayableWorld(this.world, x, y, z);
+    return [pose.x, pose.y, pose.z];
+  }
+
   private preloadSpawnChunks(): void {
     const cx = floorDiv(Math.floor(this.spawn[0]), 16);
     const cz = floorDiv(Math.floor(this.spawn[2]), 16);
@@ -3959,6 +4300,7 @@ export class WorldInstance {
       spawn: (): [number, number, number] => instance.spawn,
       setSpawn: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         instance.spawn = [x, y, z];
         instance.dirty = true;
         return true;
@@ -3969,6 +4311,7 @@ export class WorldInstance {
         if (!isKnownBlockId(blockId) || !isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) {
           return false;
         }
+        if (!gameplayMayMutateBlock(x, z)) return false;
         if (!instance.world.setBlock(x, y, z, blockId)) return false;
         instance.dirty = true;
         instance.flushBlockChanges();
@@ -4009,8 +4352,9 @@ export class WorldInstance {
         pitch: player.controller.pitch,
       }),
       snapshot: () => player.snapshot(),
-      teleport: (x: number, y: number, z: number) => {
+        teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
@@ -4101,7 +4445,7 @@ export class WorldInstance {
 
   private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
     const controller = new PlayerController({
-      position: [stored.x, stored.y, stored.z],
+      position: this.relocatePose(stored.x, stored.y, stored.z),
       yaw: stored.yaw,
       pitch: stored.pitch,
     });
@@ -4212,6 +4556,37 @@ export class WorldInstance {
     });
   }
 
+  private spawnPetForOperator(player: ServerPlayer, kind: 'wolf' | 'cat') {
+    const pos = player.controller.position;
+    const yaw = player.controller.yaw;
+    const forwardX = -Math.sin(yaw);
+    const forwardZ = -Math.cos(yaw);
+    const trySpawn = (x: number, y: number, z: number) => {
+      if (!isValidWorldY(y)) return undefined;
+      const bx = Math.floor(x);
+      const by = Math.floor(y);
+      const bz = Math.floor(z);
+      if (this.world.getBlock(bx, by, bz) !== BlockId.Air) return undefined;
+      if (this.world.getBlock(bx, by + 1, bz) !== BlockId.Air) return undefined;
+      const below = getBlockDefinition(this.world.getBlock(bx, by - 1, bz));
+      if (!below.solid || below.liquid) return undefined;
+      const mob = this.gameplay.mobs.spawn(kind, { x, y, z }, { force: true });
+      if (!mob) return undefined;
+      this.dirty = true;
+      return mob;
+    };
+    for (const dist of [3, 2, 4]) {
+      const bx = Math.floor(pos.x + forwardX * dist);
+      const bz = Math.floor(pos.z + forwardZ * dist);
+      const x = bx + 0.5;
+      const z = bz + 0.5;
+      const spawned = trySpawn(x, this.world.surfaceY(bx, bz) + 1, z)
+        ?? trySpawn(x, Math.floor(pos.y), z);
+      if (spawned) return spawned;
+    }
+    return undefined;
+  }
+
   private registerBuiltinCommands(): void {
     this.commands.register({
       name: 'help',
@@ -4275,6 +4650,27 @@ export class WorldInstance {
         if (given <= 0) return fail('Could not give item: inventory is full.');
         if (leftover > 0) return ok(`Gave ${given} ${itemId} (${leftover} dropped, inventory full)`);
         return ok(`Gave ${given} ${itemId}`);
+      },
+    });
+    this.commands.register({
+      name: 'spawnpet',
+      aliases: ['petspawn'],
+      permission: 'operator',
+      usage: '/spawnpet <wolf|cat>',
+      description: 'Operator QA: spawn a wild wolf or cat in front of you',
+      execute: (args, sender) => {
+        if (isConsoleSender(sender) || sender.kind !== 'player') {
+          return fail('This command can only be used by a player.');
+        }
+        const player = this.players.get(sender.playerId);
+        if (!player) return fail('This command can only be used by a player.');
+        const kind = args[0]?.trim().toLowerCase();
+        if (kind !== 'wolf' && kind !== 'cat') return fail('Usage: /spawnpet <wolf|cat>');
+        const spawned = this.spawnPetForOperator(player, kind);
+        if (!spawned) return fail('Could not spawn pet in front of you.');
+        return ok(
+          `Spawned ${kind} at ${spawned.position.x.toFixed(1)}, ${spawned.position.y.toFixed(1)}, ${spawned.position.z.toFixed(1)} id=${spawned.id}`,
+        );
       },
     });
     this.commands.register({

@@ -37,7 +37,9 @@ if (import.meta.env.DEV) {
   const qaSign = search.get('qaSign') === '1';
   const qaAudio = search.get('qaAudio') === '1';
   const requestedView = search.get('view');
-  const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider']);
+  const petState = search.get('petState');
+  const petVariant = search.get('variant');
+  const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider', 'wolf', 'cat']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
   if (moveItems) {
     runningDevHarness = true;
@@ -130,7 +132,11 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     const view = qaViews.has(requestedView as MobQaView) ? requestedView as MobQaView : 'three-quarter';
     void import('./dev/MobQaHarness').then(({ startMobQaHarness }) => {
-      disposeApplication = startMobQaHarness(canvas, uiRoot, qaMob as MobKind, view);
+      disposeApplication = startMobQaHarness(canvas, uiRoot, qaMob as MobKind, view, {
+        petState,
+        variant: petVariant,
+        walkPhase: search.get('walkPhase'),
+      });
     });
   }
 }

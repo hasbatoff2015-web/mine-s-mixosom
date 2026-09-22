@@ -1,6 +1,7 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { clampRtpBounds, type RtpSearchOptions } from '../services/rtp';
+import { WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../../src/world/worldBorder';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
 
@@ -31,10 +32,10 @@ const SCHEMA = {
 
 export function rtpOptionsFromConfig(get: (key: string, fallback: number) => number): RtpSearchOptions {
   const bounds = clampRtpBounds({
-    minX: get('minX', -10_000),
-    maxX: get('maxX', 10_000),
-    minZ: get('minZ', -10_000),
-    maxZ: get('maxZ', 10_000),
+    minX: get('minX', WORLD_BORDER_MIN),
+    maxX: get('maxX', WORLD_BORDER_MAX - 1),
+    minZ: get('minZ', WORLD_BORDER_MIN),
+    maxZ: get('maxZ', WORLD_BORDER_MAX - 1),
   });
   return {
     ...bounds,
@@ -51,10 +52,10 @@ export function createRtpPlugin(ctx: BuiltinPluginContext): Plugin {
     apiVersion: 1,
     onEnable(api) {
       const config = api.loadConfig({
-        minX: -10_000,
-        maxX: 10_000,
-        minZ: -10_000,
-        maxZ: 10_000,
+        minX: WORLD_BORDER_MIN,
+        maxX: WORLD_BORDER_MAX - 1,
+        minZ: WORLD_BORDER_MIN,
+        maxZ: WORLD_BORDER_MAX - 1,
         cooldownSeconds: 15,
         warmupSeconds: 0,
         attemptsPerTick: 2,

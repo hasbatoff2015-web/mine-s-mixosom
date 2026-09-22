@@ -3,6 +3,7 @@ import { lerp } from '../core/constants';
 import { BlockId, getBlockDefinition } from '../blocks';
 import type { VoxelWorld } from '../world/World';
 import { moveVoxelBody } from './voxelPhysics';
+import { gameplayMayMutateBlock } from '../world/worldBorder';
 import type { EntityHost, EntityVisual } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
@@ -179,6 +180,7 @@ export class FallingBlockManager {
     const x = Math.floor(entity.position.x);
     const y = Math.max(0, Math.round(entity.position.y));
     const z = Math.floor(entity.position.z);
+    if (!gameplayMayMutateBlock(x, z)) return;
     const target = this.world.getBlock(x, y, z, false);
     const targetDefinition = getBlockDefinition(target);
     if (target === BlockId.Air || targetDefinition.replaceable || targetDefinition.liquid) {

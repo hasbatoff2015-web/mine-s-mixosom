@@ -728,11 +728,12 @@ describe('Anarchy builtin plugins', () => {
   it('does not register claims blockBreak twice after reload or a second enableAll', async () => {
     const world = await boot();
     const before = world.events.listenerCount('blockBreak');
-    expect(before).toBe(2);
+    // claims + autoMine + wand + world-events
+    expect(before).toBe(4);
     const reloaded = await world.plugins.reload('claims');
     expect(reloaded.ok).toBe(true);
     expect(world.events.listenerCount('blockBreak')).toBe(before);
-    expect(world.events.listenerCount('blockPlace')).toBe(1);
+    expect(world.events.listenerCount('blockPlace')).toBe(2);
     expect(world.events.listenerCount('blockPlaced')).toBe(2);
     expect(world.events.listenerCount('blockBroken')).toBe(2);
     await world.plugins.enableAll();
@@ -810,7 +811,7 @@ describe('Anarchy builtin plugins', () => {
       },
     });
     await world.plugins.enableAll();
-    expect(world.events.listenerCount('blockBreak')).toBe(3);
+    expect(world.events.listenerCount('blockBreak')).toBe(5);
     expect(world.tryBreak(ada.player, x, y, z)).toEqual({ ok: false, reason: 'cancelled' });
     expect(world.world.getBlock(x, y, z)).toBe(BlockId.Dirt);
   });

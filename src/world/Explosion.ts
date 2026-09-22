@@ -3,6 +3,7 @@ import { isBlockClaimAnchorId, isTntBlock } from '../blocks/tnt';
 import { WORLD_HEIGHT } from '../core/constants';
 import { systemRandomFn, type RandomFn } from '../gameplay/random';
 import type { VoxelWorld, BlockMutation } from './World';
+import { gameplayMayMutateBlock } from './worldBorder';
 import { ORDINARY_TNT_PROFILE, type TntProfile } from './tnt';
 
 export interface ExplosionJob {
@@ -138,6 +139,7 @@ export function resolveExplosion(
     for (let z = centerZ - radius; z <= centerZ + radius; z += 1) {
       for (let x = centerX - radius; x <= centerX + radius; x += 1) {
         scanned += 1;
+        if (!gameplayMayMutateBlock(x, z)) continue;
         if (ignore?.has(`${x},${y},${z}`)) continue;
         const dx = x + 0.5 - job.x;
         const dy = y + 0.5 - job.y;

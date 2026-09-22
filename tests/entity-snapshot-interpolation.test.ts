@@ -19,6 +19,7 @@ describe('remote entity snapshot interpolation', () => {
     expect(mid!.x).toBeCloseTo(1, 5);
     expect(mid!.spawned).toBe(false);
     expect(mid!.snapped).toBe(false);
+    expect(mid!.resolvedTick).toBeCloseTo(1.5, 5);
   });
 
   it('does not change the sampled pose when sampled more often (FPS-independent)', () => {

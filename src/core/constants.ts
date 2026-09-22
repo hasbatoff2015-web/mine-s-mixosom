@@ -23,7 +23,7 @@ export const CHUNK_SIZE = 16;
 /** Vertical mesh section. Live voxel edits remesh only dirty Y bands, not the full 16×256×16 column. */
 export const MESH_SECTION_HEIGHT = 16;
 /** Natural terrain recipe. Additive save metadata; independent of save schema/protocol. */
-export const WORLDGEN_VERSION = 2;
+export const WORLDGEN_VERSION = 3;
 /**
  * Vertical world size in blocks (Y in `0 .. WORLD_HEIGHT-1`).
  * Raised 96 → 256 so imported structures can occupy build space up to Y=255.

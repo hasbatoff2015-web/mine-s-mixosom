@@ -35,6 +35,10 @@ import {
 import { findClaimByName, parseClaimFlagArgs, parseClaimMemberArgs } from '../services/claimCommands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
+import {
+  WORLD_BORDER_CLAIM_ERROR,
+  isVolumeInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 
 const HELP = {
   name: 'claim',
@@ -149,6 +153,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const key = claimAnchorKey(event.blockId);
         if (!key) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        if (!isVolumeInsidePlayableWorld(volume)) {
+          event.cancel();
+          player.sendMessage(WORLD_BORDER_CLAIM_ERROR);
+          return;
+        }
         const eventClaim = ctx.worldEvents.systemClaim();
         if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
           event.cancel();
@@ -168,6 +177,12 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        if (!isVolumeInsidePlayableWorld(volume)) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(WORLD_BORDER_CLAIM_ERROR);
+          return;
+        }
         const store = load();
         const eventClaim = ctx.worldEvents.systemClaim();
         if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
@@ -288,6 +303,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!name) return usageError('/claim create <name>');
             const volume = ctx.selection.volume(sender.playerId);
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
+            if (!isVolumeInsidePlayableWorld(volume)) return fail(WORLD_BORDER_CLAIM_ERROR);
             const store = load();
             if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
               && !bypass(sender.playerId, sender.name)) {

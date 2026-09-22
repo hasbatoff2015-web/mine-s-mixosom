@@ -80,11 +80,13 @@ function findValidPlusXColumn(seed: string, minX: number, maxX: number): { x: nu
   const manager = new WorldEventsManager(memoryHost(world));
   manager.load();
   const template = manager.getTemplate('chest_shrine')!;
-  for (let x = minX; x <= maxX; x += 1) {
+  const xLimit = Math.max(maxX, 512);
+  for (let x = minX; x <= xLimit; x += 1) {
+    if (world.generator.columnAt(x, 0).height <= 63) continue;
     const y = world.surfaceY(x, 0) + 1;
     if (manager.validateCandidate(template, { x, y, z: 0 }, 0)) return { x, y, z: 0 };
   }
-  throw new Error(`no valid +X shrine column in ${seed} for ${minX}..${maxX}`);
+  throw new Error(`no valid +X shrine column in ${seed} for ${minX}..${xLimit}`);
 }
 
 describe('event chest loot', () => {

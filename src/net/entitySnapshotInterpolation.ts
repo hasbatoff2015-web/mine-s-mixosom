@@ -31,6 +31,8 @@ export interface SampledEntityPose {
   readonly vz: number;
   readonly snapped: boolean;
   readonly spawned: boolean;
+  /** Server tick visually displayed for this sample (may be fractional between snapshots). */
+  readonly resolvedTick: number;
 }
 
 interface EntityTrack {
@@ -47,18 +49,18 @@ export function sampleEntityPose(
   if (samples.length === 0) return undefined;
   if (samples.length === 1) {
     const only = samples[0]!;
-    return { ...only, snapped: false, spawned: true };
+    return { ...only, snapped: false, spawned: true, resolvedTick: only.tick };
   }
   const renderAt = now - delayMs;
   let index = 0;
   while (index < samples.length && samples[index]!.at < renderAt) index += 1;
   if (index === 0) {
     const first = samples[0]!;
-    return { ...first, snapped: false, spawned: false };
+    return { ...first, snapped: false, spawned: false, resolvedTick: first.tick };
   }
   if (index >= samples.length) {
     const last = samples[samples.length - 1]!;
-    return { ...last, snapped: false, spawned: false };
+    return { ...last, snapped: false, spawned: false, resolvedTick: last.tick };
   }
   const previous = samples[index - 1]!;
   const next = samples[index]!;
@@ -66,7 +68,7 @@ export function sampleEntityPose(
   const dy = next.y - previous.y;
   const dz = next.z - previous.z;
   if (dx * dx + dy * dy + dz * dz >= TELEPORT_DISTANCE_SQ) {
-    return { ...next, snapped: true, spawned: false };
+    return { ...next, snapped: true, spawned: false, resolvedTick: next.tick };
   }
   const span = Math.max(1, next.at - previous.at);
   const t = Math.max(0, Math.min(1, (renderAt - previous.at) / span));
@@ -81,6 +83,7 @@ export function sampleEntityPose(
     vz: previous.vz + (next.vz - previous.vz) * t,
     snapped: false,
     spawned: false,
+    resolvedTick: previous.tick + t * (next.tick - previous.tick),
   };
 }
 

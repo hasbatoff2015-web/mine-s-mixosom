@@ -8,6 +8,70 @@
 - Локальный запуск: `npm run dev:server` (Anarchy :2567), `dev:server:anarchy` / `:survival` / `:peaceful` (:2567 / :2568 / :2569). Клиент: `?server=anarchy|survival|peaceful`. Экран «Играть онлайн» показывает эти три карточки и берёт `online / maxPlayers` с их `/status`.
 - Подробности: `docs/reports/2026-09-21_local-server-modes.md`, `docs/reports/2026-09-21_online-server-menu.md`, `docs/LOCAL_SERVER.md`.
 
+## Последний проход: merge origin/main into wolves-cats-pets — 2026-09-23
+
+- Semantic merge текущего `origin/main` (`5d972cfc`) в `codex/wolves-cats-pets`.
+- Конфликты: docs (`ARCHITECTURE`, `PROJECT_STATE`, `ROADMAP`, `TESTING`) и `src/entities/MobManager.ts` (union: playable-border spawn + wild `countWildMobs`).
+- `Game.ts` / `WorldInstance.ts` / `gameplay.ts` / `protocol.ts` / `permissions.ts` / `AnarchyServer.ts` / `PlayerArrowManager.ts` / `main.ts` слились автоматически; сохранены и pets (`resolvePetUseTarget`, receive-time `entity_use` freeze, `/spawnpet`, `pets.limit.N`), и current-main (`WorldBorderRenderer`, `WORLDGEN_VERSION = 3`, `syncLocalCombatUse`, `events.*`).
+- OWNER MANUAL QA (до sync, владелец): hit registration, wolf taming/feeding, pet interaction, latest visual fixes. Cursor post-sync live smoke — в отчёте merge.
+- Подробности: `docs/reports/2026-09-23_merge-main-into-wolves-cats-pets.md`.
+
+## Последний проход: pet hit registration / wolf tail / spawnpet — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Sequenced melee и `entity_use` строят click-ray из `action.yaw/pitch`, глаз остаётся command-boundary. `entity_use` замораживает pose цели в момент receive (`receivedServerTick`), очередь за `commandSeq` больше не старит rewind. `MAX_MOB_REWIND_TICKS = 8` (400 ms), `MAX_PVP_REWIND_TICKS = 5`. Targeting AABB = visual core ∪ ±width/2. Хвост волка: legacy pitch/Y-wag через адаптер. Оператор `/spawnpet <wolf|cat>`. DEV F3 `PetUse`.
+- Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
+## Последний проход: pet geometry / cat targeting — 2026-09-22
+
+- Ветка `codex/wolves-cats-pets`. Wolf body rest rotation restored to vanilla `+π/2`; standing mane/collar pivot moved to `[-1,14,-3]` (neck, same Z as sitting). Empty body-top UV remap kept. Cat body origin restored to `[-2,3,-8]`. Cat targeting `minZ` `-0.75 → -0.85` so the visible muzzle is inside the interact volume. Shared 3-feed taming unchanged; client `resolvePetUseTarget` keeps a visible pet ahead of ordinary food use.
+- Подробности: `docs/reports/2026-09-22_pet-geometry-cat-targeting.md`.
+
+## Последний проход: pet models / deterministic taming / rendered melee — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Wolf body uses a local negated rest X rotation so the torso reaches the head; empty body-top UV remapped. Cat body origin Z `-4`, sitting hind legs `+π/2` legacy, walk swing through the adapter. Taming is three deterministic feeds (`tameProgress` + candidate player id), persist on `SerializedMob`, chat/toast `1/3` `2/3`. Online melee captures rendered mob `targetId`/`targetRenderTick`; server pending target is player|mob rewind for hit-test only. Shared `mobTargetBounds` for ray hits; physics `width/height` unchanged.
+- Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
+## Последний проход: pet interaction / ownership hardening — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets`. Online ПКМ по питомцу использует `networkRenderPose` + `targetRenderTick`; сервер проверяет `entity_use` по command-boundary look и bounded mob pose history (`MAX_MOB_REWIND_TICKS = 5`). `petHome` сбрасывается в follow и заново ставится при потере owner. Волки одного хозяина не ассистят по его другим питомцам. Wild `maxMobs` больше не включает tamed pets; отдельный `maxTamedPets` safety ceiling.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets-hardening.md`.
+
+## Последний проход: tameable wolves and cats — 2026-09-20
+
+- Ветка `codex/wolves-cats-pets` (без merge в `main`). `wolf` / `cat` — обычные server-authoritative mobs в `MobManager`, не вторая симуляция. Natural spawn через weighted passive selection (лес/равнины/снег; пустыня без cat/wolf). Приручение `entity_use` (CLIENT OWNS INTENT / SERVER OWNS RESULT). `ownerId` = стабильный `player.id`. Sit/stand, follow, bounded teleport (24 кандидата, `getBlock(..., false)`), wild cat fear, tamed wolf combat через существующий damage/PvP/claims. Default pet limit 2, роли `pets.limit.N` (hard max 10). Tamed pets не distance-despawn и не занимают wild `passiveCap`.
+- Модели: code-defined legacy ModelWolf / ModelOcelot, PNG 128×64 / logical 64×32, collar overlay без shared-material mutation.
+- Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
+## Последний проход: Merge origin/main into Worldgen V3 — 2026-09-21
+
+- Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.
+- `Game.ts` слился автоматически: сохранены и `syncLocalCombatUse` / `combat.swordBlocking`, и `WorldBorderRenderer` / `gameplayMayMutateBlock` / `relocateStandingPoseInsidePlayableWorld`.
+- Restore of an already-inside schematic/Anarchy spawn keeps the saved Y; outside poses still relocate. AutoMine 15³ remesh fixture flattens the sea-level Y band so V3 water faces do not inflate the existing 40 ms bound.
+- Конфликты только в docs: сохранены оба прохода (Worldgen V3 + sword blocking).
+- OWNER MANUAL QA (до этого sync, владелец): Worldgen V3 generation и финальная density `GOURD_PATCH_DENSITY = 0.25` проверены в игре; результат хороший. Two-client border QA и прочие edge cases не утверждаются.
+- Подробности: `docs/reports/2026-09-21_merge-main-into-worldgen-v3.md`.
+
+## Последний проход: Wild gourd density 0.25 — 2026-09-21
+
+- Owner manual QA found wild pumpkin/melon patches too dense. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (including melon near-water bonus). Lattice stays 32, salts and fruitCount unchanged. Surviving patches are a deterministic subset of the old set.
+- Sampler 8×2048: pumpkin 7582→1896 patches, melon 2434→610; avg size still ~2. `WORLDGEN_VERSION` stays 3.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+## Последний проход: Worldgen V3 audit harden — border / minecart / migration — 2026-09-21
+
+- Follow-up before merge of Worldgen V3. Gameplay use (bucket, flint, farming, legacy blocks, mining, signs) cannot mutate scenery outside ±10000. Minecart enter/dismount keeps the full player AABB inside the playable volume.
+- World-event V2→V3 rebase uses the placing journal as recovery authority, is one-shot per manager instance, and marks the world dirty so `worldgenVersion` persists as 3 after rebase.
+- `hydrologyRegion` is the mask label (dry coasts allowed). `waterBiome` is wet-only. Submerged floors no longer use GrassBlock/SnowBlock.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+## Последний проход: Worldgen V3 — hydrology, gourds, world border — 2026-09-21
+
+- `WORLDGEN_VERSION = 3`. Migration A: V2 saves keep player modifications and rematerialize natural terrain with the V3 generator; the next save writes `worldgenVersion: 3`. There is no retained V2 generator.
+- Hydrology is a negative-only, seed+XZ deterministic layer (`src/world/hydrology.ts`). Land biomes stay plains/forest/desert/snowy_plains; `ColumnInfo.hydrologyRegion` is the mask label; `ColumnInfo.waterBiome` is wet-only `none|lake|ocean`.
+- Wild Pumpkin/Melon use existing block IDs and separate decoration salts. Staged `generate` matches monolithic.
+- Playable world is `-10000 <= x,z < 10000` (`src/world/worldBorder.ts`). Shared AABB collision on client prediction and server. `WorldBorderRenderer` draws four translucent red planes; scenery chunks beyond the plane still stream with normal view distance.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
 ## Последний проход: Merge origin/main into sword-blocking — 2026-09-21
 
 - Semantic merge актуального `origin/main` (`cd8ecf3`, world events + always-run/KeyC) в `cursor/sword-blocking-animation-7e91`.

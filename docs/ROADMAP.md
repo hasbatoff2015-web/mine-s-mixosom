@@ -10,6 +10,70 @@
 - [x] `/status` includes `mode`. Local scripts `dev:server:anarchy|survival|peaceful`. Client `?server=`.
 - [ ] Owner live QA: three local processes, two browsers, Peaceful sword does no damage, Survival TNT does not break stone, Anarchy still does both.
 
+## 2026-09-23: Merge origin/main into wolves-cats-pets
+
+- [x] Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`.
+- [x] Keep pets (taming, ownership, hit registration, models) and current-main Worldgen V3 / border / world-events / sword blocking / run-crouch-camera.
+
+## 2026-09-22: pet hit registration / wolf tail / spawnpet
+
+- [x] Click-time `action.yaw/pitch` for sequenced melee and `entity_use` rays; command-boundary eye/slot stay server-owned.
+- [x] Receive-time `entity_use` target freeze (mirror pending melee); do not rewind against the later resolve tick.
+- [x] `MAX_MOB_REWIND_TICKS = 8` (400 ms); `MAX_PVP_REWIND_TICKS` unchanged at 5.
+- [x] Targeting AABB unions visual core with ±`MobDefinition.width/2`; physics width/height unchanged.
+- [x] Wolf tail Minecraft-like pose via `legacyRotationToThree` (wild/angry/tamed/sit, Y wag).
+- [x] Operator `/spawnpet <wolf|cat>` (`/petspawn` alias); no spawn eggs; natural weights unchanged.
+- [x] Owner live Anarchy QA: Bones/meats, moving hits, wolf tail (owner confirmed after latest fixes; latency not separately claimed).
+
+## 2026-09-22: pet geometry / cat targeting
+
+- [x] Wolf mane/collar at neck Z=-3; body rest Rx restored to `+π/2`; keep body-top UV remap.
+- [x] Cat torso origin Z restored to `-8`; keep adapter-aware walk/sit.
+- [x] Cat targeting AABB covers visible muzzle; pet RMB wins over food use.
+- [x] Anarchy wild-cat 3-meat `entity_use` and moving-cat melee rewind.
+- [ ] Owner live two-client Anarchy QA: cat meats + moving LMB/RMB.
+
+## 2026-09-20: pet models, 3-step taming, rendered melee
+
+- [x] Wolf torso continuity (body Rx `+π/2`, mane/collar neck pivot, empty top UV remap).
+- [x] Cat legs under torso (body origin Z `-8`, sitting hind `+π/2` legacy, adapter-aware walk swing).
+- [x] Deterministic 3-feed taming, candidate reset, persist, limit/capacity, chat/toast 1/3 2/3.
+- [x] Online mob melee: rendered capture + server player|mob rewind; targeting-only AABB.
+- [ ] Owner live two-client QA: 3-click tame feedback and moving-pet LMB.
+
+## 2026-09-20: pet interaction / ownership hardening
+
+- [x] Online `entity_use` raycasts the interpolated render pose and rewinds a bounded mob pose history.
+- [x] Server uses command-boundary **eye** plus click-time `action.yaw/pitch`; it does not trust `targetId` alone.
+- [x] Offline `petHome` recaptures at the latest owner-loss point.
+- [x] Same-owner pets never auto-target each other; wild budget is separate from a tamed safety ceiling.
+
+## 2026-09-20: tameable wolves and cats
+
+- [x] `wolf` / `cat` kinds, biome-weighted passive spawn, legacy models + original 128×64 PNG.
+- [x] Server-authoritative `entity_use` taming / sit-stand, `ownerId`, follow, bounded teleport.
+- [x] Wild cat fear, tamed wolf combat through existing damage/PvP/claims, pet limit `pets.limit.N`.
+- [x] Tamed pets excluded from wild cap / distance despawn; persistence + snapshots.
+- [ ] Owner live two-client QA: tame, follow, teleport snap, guest cannot sit/stand.
+
+## 2026-09-21: Merge origin/main into Worldgen V3
+
+- [x] Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99) into `cursor/worldgen-v3-water-gourds-border-74e7`.
+- [x] Keep Worldgen V3 hydrology/border/gourds and current-main `syncLocalCombatUse` / sword-blocking visuals.
+
+## 2026-09-21: Worldgen V3 — hydrology, gourds, playable border
+
+- [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
+- [x] Keep climate biomes; `hydrologyRegion` is the mask label; `waterBiome` is wet-only none/lake/ocean.
+- [x] Wild pumpkin/melon patches with separate RNG salts; no stems/farmland.
+- [x] Gourd patch acceptance scaled to 25% of the original frequency (`GOURD_PATCH_DENSITY = 0.25`); 32-block lattice and patch size unchanged.
+- [x] Migration A: V2 snapshots use V3 generator; modifications preserved; next save writes `WORLDGEN_VERSION = 3`.
+- [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
+- [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.
+- [x] Audit harden: bucket/flint/farming/legacy use, mining, signs, minecart AABB enter/dismount, event journal one-shot rebase, seabed materials.
+- [x] Owner live QA of Worldgen V3 generation and reduced wild gourd density (0.25); owner reports the result looks good.
+- [ ] Owner live QA of underwater floors and border fade/collision on Anarchy (not claimed).
+
 ## 2026-09-21: Merge origin/main into sword-blocking
 
 - [x] Semantic merge of current `main` (`cd8ecf3`) into `cursor/sword-blocking-animation-7e91`.

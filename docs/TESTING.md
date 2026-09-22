@@ -1,5 +1,71 @@
 # Тестирование
 
+## 2026-09-23 Merge origin/main into wolves-cats-pets
+
+Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Docs conflicts kept both sides. `MobManager.spawn` keeps playable-border spawn and wild-only `maxMobs`. Auto-merged code kept both pet and current-main families.
+
+## 2026-09-22 Pet hit registration / wolf tail / spawnpet
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/visual-models.test.ts tests/entities.test.ts tests/entity-snapshot-interpolation.test.ts tests/melee-action-intent.test.ts tests/mob-pose-history.test.ts tests/server/pets-anarchy.test.ts tests/server/pet-hit-registration.test.ts tests/server/spawnpet-command.test.ts tests/pet-textures.test.mjs --maxWorkers=2
+```
+
+Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
+## 2026-09-20 Pet models / 3-step taming / rendered melee
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/melee-lag-compensation.test.ts tests/melee-action-intent.test.ts tests/use-interaction.test.ts tests/mob-pose-history.test.ts tests/entity-snapshot-interpolation.test.ts tests/combat.test.ts tests/online-consumable-use.test.ts tests/action-pose-history.test.ts tests/server/player-actions.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&view=front|side|rear|three-quarter&petState=wild|tamed|sitting` and `?qaMob=cat&view=side&walkPhase=1.5708|4.7124&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_pet-models-taming-targeting.md`.
+
+## 2026-09-20 Wolves / cats / pets
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textures.test.mjs tests/visual-models.test.ts tests/entities.test.ts tests/server/pets-anarchy.test.ts tests/server/permissions.test.ts tests/server/anarchy-gameplay.test.ts tests/mob-polish.test.ts tests/entity-host.test.ts tests/entity-interpolation.test.ts tests/entity-snapshot-interpolation.test.ts tests/mob-hurt-flash.test.ts tests/mob-projectile-routing.test.ts tests/network-entity-visual-events.test.ts tests/entity-death-animation.test.ts tests/entity-initial-lighting.test.ts --maxWorkers=2
+```
+
+DEV visual: `?qaMob=wolf&petState=wild|angry|tamed|sitting&view=front|side|rear|three-quarter` and `?qaMob=cat&variant=black|red|siamese&petState=sitting`.
+
+Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
+## 2026-09-21 Merge origin/main into Worldgen V3
+
+Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99). Docs conflicts kept both sides. `Game.ts` auto-merged with both `syncLocalCombatUse` and Worldgen V3 border helpers.
+
+## 2026-09-21 Wild gourd density 0.25
+
+`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434). OWNER MANUAL QA: Worldgen V3 generation and this density were checked in-game; owner reports the result looks good. Other manual scenarios are not claimed.
+
+## 2026-09-21 Worldgen V3 audit harden
+
+Report: `reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+```text
+npx vitest run tests/world-border-interactions.test.ts tests/minecart-world-border.test.ts tests/server/world-border-authority.test.ts tests/server/world-events-v3-migration.test.ts tests/worldgen-v3.test.ts tests/world-border.test.ts --maxWorkers=2
+npx vitest run tests/worldgen-v2.test.ts tests/worldgen-terrain.test.ts tests/generation-stages.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npx vite-node scripts/benchmark-worldgen-compare.ts
+npx vite-node scripts/benchmark-worldgen-phases.ts
+```
+
+Contracts: outside-border use does not mutate scenery; minecart dismount/enter keep the player AABB inside; placing-journal rebase is the recovery authority; generator migration is one-shot; `waterBiome` is never lake/ocean on a dry column; `oceanWater+lakeWater+legacyWater === physicalWater`. GitHub CI was empty at this pass — do not treat local green as CI PASS.
+
+## 2026-09-21 Worldgen V3 / world border
+
+Report: `reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+```text
+npx vitest run tests/worldgen-v3.test.ts tests/world-border.test.ts tests/worldgen-terrain.test.ts tests/worldgen-v2.test.ts tests/generation-stages.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npm run benchmark:worldgen
+```
+
+Contracts: `WORLDGEN_VERSION === 3`, V2 snapshot overlays on V3 terrain, hydrology lakes/oceans, gourd salts, playable `-10000 <= x,z < 10000`, opacity 0 at ≥50, max alpha ≤ 0.28.
+
 ## 2026-09-21 Merge origin/main into sword-blocking
 
 Semantic merge of current `main` (`cd8ecf3`). Docs conflicts kept both sides. Code auto-merged.
