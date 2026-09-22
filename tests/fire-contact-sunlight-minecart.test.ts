@@ -7,7 +7,7 @@ import {
   PlayerArrowManager,
   flamingArrowBlockHit,
 } from '../src/combat';
-import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED, WORLD_HEIGHT } from '../src/core/constants';
+import { CHUNK_SIZE, PLAYER_REACH, WALK_SPEED, WORLD_HEIGHT, floorDiv, positiveMod } from '../src/core/constants';
 import { findCraftingRecipe, getCraftingResult, CRAFTING_RECIPES } from '../src/crafting';
 import {
   isMinecartEntityVisual,
@@ -22,7 +22,7 @@ import {
   minecartDismountFromSprint,
   resolveFlintAndSteelUse,
 } from '../src/entities';
-import { DESKTOP_SNEAK_CODE, DESKTOP_SPRINT_CODES } from '../src/input/InputManager';
+import { DESKTOP_SNEAK_CODES } from '../src/input/InputManager';
 import { Inventory, createItemStack } from '../src/inventory';
 import { ItemId } from '../src/items';
 import { PlayerController } from '../src/player';
@@ -52,12 +52,19 @@ import { asObject3D } from './asObject3D';
 const grid = (...rows: readonly (readonly (string | null)[])[]): readonly (string | null)[] => rows.flat();
 
 function platform(world: VoxelWorld, x0: number, z0: number, x1: number, z1: number, y = 40): void {
-  world.getChunk(Math.floor(x0 / CHUNK_SIZE), Math.floor(z0 / CHUNK_SIZE));
-  world.getChunk(Math.floor(x1 / CHUNK_SIZE), Math.floor(z1 / CHUNK_SIZE));
+  world.getChunk(floorDiv(x0, CHUNK_SIZE), floorDiv(z0, CHUNK_SIZE));
+  world.getChunk(floorDiv(x1, CHUNK_SIZE), floorDiv(z1, CHUNK_SIZE));
   for (let x = x0; x <= x1; x += 1) {
     for (let z = z0; z <= z1; z += 1) {
-      world.setBlock(x, y, z, BlockId.Stone);
-      for (let above = y + 1; above < WORLD_HEIGHT; above += 1) world.setBlock(x, above, z, BlockId.Air);
+      const chunk = world.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE))!;
+      const lx = positiveMod(x, CHUNK_SIZE);
+      const lz = positiveMod(z, CHUNK_SIZE);
+      chunk.set(lx, y, lz, BlockId.Stone);
+      for (let above = y + 1; above < WORLD_HEIGHT; above += 1) chunk.set(lx, above, lz, BlockId.Air);
+      chunk.skyReady = true;
+      for (let skyY = 0; skyY < WORLD_HEIGHT; skyY += 1) {
+        chunk.skyLight[Chunk.index(lx, skyY, lz)] = skyY > y ? 15 : 0;
+      }
     }
   }
 }
@@ -906,10 +913,10 @@ describe('minecart derail and off-rail physics', () => {
 });
 
 describe('minecart Shift dismount', () => {
-  it('binds dismount to Shift/sprint, not sneak, and uses a press edge', () => {
-    expect(DESKTOP_SPRINT_CODES).toContain('ShiftLeft');
-    expect(DESKTOP_SPRINT_CODES).toContain('ShiftRight');
-    expect(DESKTOP_SNEAK_CODE).toBe('KeyC');
+  it('binds dismount to Shift/sneak, not camera KeyC, and uses a press edge', () => {
+    expect(DESKTOP_SNEAK_CODES).toContain('ShiftLeft');
+    expect(DESKTOP_SNEAK_CODES).toContain('ShiftRight');
+    expect(DESKTOP_SNEAK_CODES).not.toContain('KeyC');
     expect(minecartDismountFromSprint(true, false)).toEqual({ dismount: true, held: true });
     expect(minecartDismountFromSprint(true, true)).toEqual({ dismount: false, held: true });
     expect(minecartDismountFromSprint(false, true)).toEqual({ dismount: false, held: false });

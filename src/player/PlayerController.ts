@@ -13,14 +13,14 @@ import {
   PLAYER_SNEAK_EYE_HEIGHT,
   PLAYER_SNEAK_HEIGHT,
   PLAYER_WIDTH,
+  PLAYER_MOVE_SPEED,
   SNEAK_SPEED,
-  SPRINT_SPEED,
   TERMINAL_VELOCITY,
-  WALK_SPEED,
   WATER_GRAVITY,
   WATER_SPEED,
   clamp,
 } from '../core/constants';
+import { clipAabbAxisToWorldBorder, WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../world/worldBorder';
 import type { MoveInput } from '../input/MoveInput';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -609,7 +609,7 @@ export class PlayerController {
     }
     const speed = (this.inWater || this.inLava
       ? WATER_SPEED * (this.inLava ? 0.55 : 1)
-      : this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED)
+      : this.sneaking ? SNEAK_SPEED : PLAYER_MOVE_SPEED)
       * this.webMultiplier;
     if (this.meleeKnockback) {
       // Keep the external impulse; input adds acceleration instead of replacing it.
@@ -742,6 +742,12 @@ export class PlayerController {
           }
         }
       }
+    }
+
+    if (axis === 'x') {
+      allowed = clipAabbAxisToWorldBorder(player.minX, player.maxX, allowed, WORLD_BORDER_MIN, WORLD_BORDER_MAX);
+    } else if (axis === 'z') {
+      allowed = clipAabbAxisToWorldBorder(player.minZ, player.maxZ, allowed, WORLD_BORDER_MIN, WORLD_BORDER_MAX);
     }
 
     this.position[axis] += allowed;

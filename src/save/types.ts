@@ -78,7 +78,7 @@ export interface SerializedServerWorld {
  */
 export interface WorldSnapshot {
   schemaVersion: WorldSchemaVersion;
-  /** Natural generator recipe. Missing on pre-Worldgen-V2 saves. */
+  /** Natural generator recipe metadata. Missing on pre-Worldgen-V2 saves. Does not select a legacy generator. */
   worldgenVersion?: number;
   summary: WorldSummary;
   timeOfDay: number;

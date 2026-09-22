@@ -14,6 +14,7 @@ import {
 import { createItemStack, type ItemStack } from '../inventory';
 import { combinedLight } from '../world/lightingState';
 import type { VoxelWorld } from '../world/World';
+import { isInsidePlayableBlock } from '../world/worldBorder';
 import {
   MOB_DEFINITIONS,
   getMobDefinition,
@@ -680,6 +681,9 @@ export class MobManager {
     }
     if (!spawnOptions.force && this.options.allowSpawn
       && !this.options.allowSpawn(kind, position.x, position.y, position.z)) {
+      return undefined;
+    }
+    if (!spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
       return undefined;
     }
     if (!tamed && this.countWildMobs() >= this.maxMobs) {
@@ -1955,6 +1959,7 @@ export class MobManager {
       + this.random() * (this.maximumSpawnDistance - this.minimumSpawnDistance);
     const x = Math.floor(playerPosition.x + Math.cos(angle) * distance);
     const z = Math.floor(playerPosition.z + Math.sin(angle) * distance);
+    if (!isInsidePlayableBlock(x, z)) return undefined;
     const dx = (x + 0.5) - playerPosition.x;
     const dz = (z + 0.5) - playerPosition.z;
     if (dx * dx + dz * dz < this.minimumSpawnDistance * this.minimumSpawnDistance) return undefined;

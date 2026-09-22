@@ -1,5 +1,10 @@
 import * as THREE from 'three';
-import { bowPullingTexturePath, itemRenderProfile, tryGetItemDefinition, type ItemRenderCategory } from '../items';
+import {
+  bowPullingTexturePath,
+  isSwordItem,
+  itemRenderProfile,
+  type ItemRenderCategory,
+} from '../items';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -10,6 +15,10 @@ import {
   type SkinTextureHandle,
 } from './player/MinecraftSkin';
 import { applyItemViewTransform, ItemVisualFactory } from './ItemVisualFactory';
+import {
+  applyFirstPersonSwordBlockingOverlay,
+  advanceSwordBlockingProgress,
+} from './player/swordBlockingVisual';
 import { PlayerSkinGeometryCache } from './player/PlayerSkinGeometry';
 import {
   formatHeldItemQaQuery,
@@ -82,6 +91,7 @@ export class FirstPersonRenderer {
   private walkStrength = 0;
   private swingSeconds = 1;
   private equipProgress = 1;
+  private blockingProgress = 0;
   private bowTexturePath = 'item/bow';
   private readonly fireOverlay: THREE.Object3D;
   private readonly potionOverlay: THREE.Group;
@@ -153,6 +163,10 @@ export class FirstPersonRenderer {
     return this.mainCategory;
   }
 
+  get swordBlockingProgress(): number {
+    return this.blockingProgress;
+  }
+
   get objectCount(): number {
     let count = 0;
     this.root.traverse(() => { count += 1; });
@@ -174,6 +188,7 @@ export class FirstPersonRenderer {
       this.syncArmVisibility();
       this.bowTexturePath = 'item/bow';
       this.equipProgress = 0;
+      if (!isSwordItem(mainItemId)) this.blockingProgress = 0;
     }
   }
 
@@ -218,6 +233,8 @@ export class FirstPersonRenderer {
     if (potionActive) {
       SharedPotionParticles.instance().update(delta, state.potionKind ?? 'invisibility');
     }
+    const blocking = state.swordBlocking === true && isSwordItem(this.mainItem);
+    this.blockingProgress = advanceSwordBlockingProgress(this.blockingProgress, blocking, delta);
     if (!state.visible) return;
 
     const targetWalk = state.onGround ? THREE.MathUtils.clamp(state.movementSpeed / 4.3, 0, 1) : 0;
@@ -262,16 +279,7 @@ export class FirstPersonRenderer {
         console.info(`[held-qa] ${formatHeldItemQaQuery(heldItemQaValuesFromTransform(resolved))}`);
       }
       this.mainModel.position.y -= (1 - this.equipProgress) * 0.22;
-      const held = tryGetItemDefinition(this.mainItem);
-      if (state.swordBlocking && held?.kind === 'weapon' && held.weapon === 'sword') {
-        // Overlay on the accepted idle pose; no new mesh/material, no accumulated transforms.
-        this.mainModel.position.x -= 0.25;
-        this.mainModel.position.y += 0.13;
-        this.mainModel.position.z += 0.10;
-        this.mainModel.rotation.x -= 0.35;
-        this.mainModel.rotation.y += 0.45;
-        this.mainModel.rotation.z += 0.85;
-      }
+      applyFirstPersonSwordBlockingOverlay(this.mainModel, this.blockingProgress);
       if (state.foodUseProgress > 0) this.applyEatPose(this.mainModel, state.foodUseProgress);
       if (this.mainCategory === 'bow') this.updateBowTexture(this.mainModel, state.bowCharge);
     }

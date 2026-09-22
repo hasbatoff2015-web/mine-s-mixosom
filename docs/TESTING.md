@@ -1,5 +1,17 @@
 # Тестирование
 
+## 2026-09-23 Merge origin/main into wolves-cats-pets
+
+Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Docs conflicts kept both sides. `MobManager.spawn` keeps playable-border spawn and wild-only `maxMobs`. Auto-merged code kept both pet and current-main families.
+
+## 2026-09-22 Pet hit registration / wolf tail / spawnpet
+
+```text
+npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/visual-models.test.ts tests/entities.test.ts tests/entity-snapshot-interpolation.test.ts tests/melee-action-intent.test.ts tests/mob-pose-history.test.ts tests/server/pets-anarchy.test.ts tests/server/pet-hit-registration.test.ts tests/server/spawnpet-command.test.ts tests/pet-textures.test.mjs --maxWorkers=2
+```
+
+Подробности: `docs/reports/2026-09-22_pet-hit-registration-wolf-tail.md`.
+
 ## 2026-09-20 Pet models / 3-step taming / rendered melee
 
 ```text
@@ -19,6 +31,164 @@ npx vitest run tests/pets.test.ts tests/pets-performance.test.ts tests/pet-textu
 DEV visual: `?qaMob=wolf&petState=wild|angry|tamed|sitting&view=front|side|rear|three-quarter` and `?qaMob=cat&variant=black|red|siamese&petState=sitting`.
 
 Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
+## 2026-09-21 Merge origin/main into Worldgen V3
+
+Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99). Docs conflicts kept both sides. `Game.ts` auto-merged with both `syncLocalCombatUse` and Worldgen V3 border helpers.
+
+## 2026-09-21 Wild gourd density 0.25
+
+`GOURD_PATCH_DENSITY === 0.25` on the final spawn chance. `npx vitest run tests/worldgen-v3.test.ts` includes the subset/ratio regression. Sampler: pumpkin 1896 / melon 610 planned patches (was 7582 / 2434). OWNER MANUAL QA: Worldgen V3 generation and this density were checked in-game; owner reports the result looks good. Other manual scenarios are not claimed.
+
+## 2026-09-21 Worldgen V3 audit harden
+
+Report: `reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+```text
+npx vitest run tests/world-border-interactions.test.ts tests/minecart-world-border.test.ts tests/server/world-border-authority.test.ts tests/server/world-events-v3-migration.test.ts tests/worldgen-v3.test.ts tests/world-border.test.ts --maxWorkers=2
+npx vitest run tests/worldgen-v2.test.ts tests/worldgen-terrain.test.ts tests/generation-stages.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npx vite-node scripts/benchmark-worldgen-compare.ts
+npx vite-node scripts/benchmark-worldgen-phases.ts
+```
+
+Contracts: outside-border use does not mutate scenery; minecart dismount/enter keep the player AABB inside; placing-journal rebase is the recovery authority; generator migration is one-shot; `waterBiome` is never lake/ocean on a dry column; `oceanWater+lakeWater+legacyWater === physicalWater`. GitHub CI was empty at this pass — do not treat local green as CI PASS.
+
+## 2026-09-21 Worldgen V3 / world border
+
+Report: `reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+```text
+npx vitest run tests/worldgen-v3.test.ts tests/world-border.test.ts tests/worldgen-terrain.test.ts tests/worldgen-v2.test.ts tests/generation-stages.test.ts --maxWorkers=1
+npm run sample:worldgen-v3
+npm run benchmark:worldgen
+```
+
+Contracts: `WORLDGEN_VERSION === 3`, V2 snapshot overlays on V3 terrain, hydrology lakes/oceans, gourd salts, playable `-10000 <= x,z < 10000`, opacity 0 at ≥50, max alpha ≤ 0.28.
+
+## 2026-09-21 Merge origin/main into sword-blocking
+
+Semantic merge of current `main` (`cd8ecf3`). Docs conflicts kept both sides. Code auto-merged.
+
+## 2026-09-20 Sword blocking hand follow
+
+Report: `reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: LMB swing and RMB block keep the sword parented to `rightArm`/`heldItem`; local `/moveitems` transform is unchanged while arm pose and world position change; grip distance to the hand attachment stays constant; release restores idle world pose. First-person overlay still differs from idle. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking live Anarchy fix
+
+Report: `reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts tests/player-main-integration.test.ts --maxWorkers=2
+```
+
+Contracts: Anarchy `tickOnline` and SP `tickPlayers` share `syncLocalCombatUse`; skipping `updateUse` while `using=true` leaves the idle first-person matrix; after `updateUse` the held-sword transform differs from idle (`distance > 0.2`). Overlay offsets are non-zero. Focused **8 files / 132 tests PASS**.
+
+## 2026-09-20 Sword blocking animation
+
+Report: `reports/2026-09-20_sword-blocking-animation.md`.
+
+```text
+npx vitest run tests/sword-blocking-visual.test.ts tests/player-visual-animation.test.ts tests/classic-combat-integration.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/remote-action-presentation.test.ts tests/server/remote-presentation.test.ts --maxWorkers=2
+```
+
+Contracts: sword + RMB uses existing `CombatSystem.swordBlocking`; tools do not block; 0.1 s lerp overlay on first-person and third-person held transforms; production `/moveitems` defaults unchanged; remote `presentation.swordBlocking` drives `PlayerVisual`. Focused **7 files / 125 tests PASS**.
+
+## 2026-09-20 Merge origin/main into always-run / KeyC
+
+Semantic merge of world-events `main` (`6447556`). Docs conflicts kept both sides. Code auto-merged.
+
+## 2026-09-20 Fixed always-run 7 / crouch 2
+
+Report: `reports/2026-09-20_player-move-speed-7-crouch-2.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/minecart-controls.test.ts tests/creative-flight.test.ts --maxWorkers=2
+```
+
+Contracts: `PLAYER_MOVE_SPEED === 7`, `SNEAK_SPEED === 2`, Shift crouch + jump, hypot diagonal, minecart still `WALK_SPEED×1.5`. Focused player-physics/pipeline/prediction/minecart/move-sim **86/86 PASS**. `typecheck` PASS. `build` PASS.
+
+## 2026-09-20 Always-run / crouch ×1.25 / KeyC camera
+
+Report: `reports/2026-09-20_player-run-crouch-camera.md`.
+
+```text
+npx vitest run tests/player-physics.test.ts tests/lighting-physics-interaction.test.ts tests/third-person-camera.test.ts tests/player-main-integration.test.ts tests/menu-model.test.ts tests/prediction-timeline.test.ts tests/pred-isolation-matrix.test.ts tests/local-motion-pipeline.test.ts tests/correction-diag-dump.test.ts tests/hidden-tab-motion.test.ts tests/creative-flight.test.ts --maxWorkers=2
+npx vitest run tests/fire-contact-sunlight-minecart.test.ts -t "binds dismount" --maxWorkers=1
+```
+
+Contracts: `PLAYER_MOVE_SPEED = 4.317×1.25`, `SNEAK_SPEED = 1.295×1.25`, Shift crouch + jump, hypot diagonal, `KeyC` camera, F5 unbound, remaining WASD/Space/E keybinds, minecart Shift/sneak dismount. Minecart cap still `WALK_SPEED×1.5`. Focused **93/93 PASS** (`player-physics` 14, lighting 8, camera 10, player-main 4, menu 3, prediction/diag/hidden-tab/pipeline 44, creative-flight 9, minecart dismount 1). `typecheck` PASS. `build` PASS.
+
+## 2026-09-20 Event overlay on reconnect
+
+Focused:
+
+```text
+npx vitest run tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/anarchy-server.test.ts tests/server/anarchy-gameplay.test.ts tests/incremental-mesh.test.ts tests/fs-world-store.test.ts tests/world-state.test.ts --maxWorkers=2
+```
+
+## 2026-09-19 World events persistence/streaming races
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/server/claims.test.ts tests/server/claim-commands.test.ts tests/server/claim-anchors.test.ts tests/server/claim-anchor-blocks.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/longtask-monitor.test.ts tests/hidden-tab-motion.test.ts tests/incremental-mesh.test.ts tests/generation-stages.test.ts tests/urgent-block-mesh.test.ts tests/automine-reset-pipeline.test.ts --maxWorkers=2
+```
+
+DEV timings (not a CI gate):
+
+```text
+npx vite-node scripts/qa-streaming-budget.ts
+npx vite-node scripts/qa-world-events-races.ts
+```
+
+## 2026-09-19 World events hardening + bounded streaming
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/server/claims.test.ts tests/server/claim-commands.test.ts tests/server/claim-anchors.test.ts tests/server/claim-anchor-blocks.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/longtask-monitor.test.ts tests/hidden-tab-motion.test.ts tests/incremental-mesh.test.ts tests/generation-stages.test.ts tests/urgent-block-mesh.test.ts tests/automine-reset-pipeline.test.ts --maxWorkers=2
+```
+
+DEV timings (not a CI gate):
+
+```text
+npx vite-node scripts/qa-streaming-budget.ts
+```
+
+## 2026-09-19 Timed world events + event chest
+
+Focused:
+
+```text
+npx vitest run tests/server/event-scheduler.test.ts tests/server/event-templates.test.ts tests/server/wand-selection.test.ts tests/server/world-events.test.ts tests/server/world-events-plugin.test.ts tests/server/auto-mine.test.ts tests/event-chest.test.ts tests/event-chest-texture.test.mjs tests/chest-model.test.ts tests/portal-chest-texture.test.mjs tests/special-preview-contract.test.ts --maxWorkers=2
+```
+
+**11 files / 44 tests PASS**. Related chest/plugin regression **27/27**. `typecheck` / `typecheck:server` / `typecheck:client` / `typecheck:sim` / `check:boundaries` PASS.
+
+## 2026-09-19 Clan invitations + leader announcement
+
+Report: `reports/2026-09-19_clan-invites-announce.md`.
+
+```text
+npx vitest run tests/server/clan-invites-announce.test.ts tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
+## 2026-09-19 Clan roles + Rating menu
+
+Report: `reports/2026-09-19_clan-roles-rating.md`.
+
+```text
+npx vitest run tests/server/clan.test.ts tests/server/clan-plugin.test.ts tests/server/clan-roles-ranking.test.ts tests/clan-gui.test.ts tests/server/economy.test.ts tests/server/friends.test.ts tests/game-menu-gui.test.ts tests/server/game-menu.test.ts --maxWorkers=2
+```
+
+Contracts: roles leader/veteran/member with server-side invite/kick/promote/transfer; nickname invite errors; online snapshot; PvP kills persist independently of economy cooldown and ignore mobs; clan kills = current members; four ranking kinds, top 50 / 10 per page / personal place >50; menu 4+4 + `icon_rating.png` and no «Топ»; friends cancel outgoing; missing roles/kills migrate. Focused **8 files / 80 tests PASS**. `typecheck` / client / server / sim and `check:boundaries` PASS. `test:server` **56/548**, `test:sim` **12/66**, build **4.78 MiB / 405 files**.
 
 ## 2026-09-19 Minecart visual pose interpolation
 

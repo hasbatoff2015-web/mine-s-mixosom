@@ -20,7 +20,7 @@ const HELP = {
   description: 'Кубоидные зоны со случайной генерацией блоков и периодическим reset.',
   commands: [
     { usage: '/automine help', description: 'Показать справку' },
-    { usage: '/automine wand', description: 'Выдать инструмент выделения', permission: 'automine.manage' },
+    { usage: '/automine wand', description: 'Выдать инструмент выделения авто-шахты', permission: 'automine.manage' },
     { usage: '/automine create <name>', description: 'Создать авто-шахту по выделению', permission: 'automine.manage' },
     { usage: '/automine delete <name>', description: 'Удалить авто-шахту и восстановить блоки', permission: 'automine.manage' },
     { usage: '/automine list', description: 'Список авто-шахт', permission: 'automine.manage' },
@@ -94,6 +94,7 @@ export function createAutoMinePlugin(ctx: BuiltinPluginContext): Plugin {
       const applyWandClick = (playerId: string, x: number, y: number, z: number): boolean => {
         const player = api.getPlayer(playerId);
         if (!player || !canManage(playerId, player.name) || !holdingWand(playerId)) return false;
+        if (ctx.selection.isWandActive(playerId)) return false;
         const result = manager.setSelectionPoint(playerId, { x, y, z });
         if (result.slot === 1) {
           player.sendMessage(`Первая точка авто-шахты установлена: ${x} ${y} ${z}`);
@@ -125,6 +126,7 @@ export function createAutoMinePlugin(ctx: BuiltinPluginContext): Plugin {
 
           if (sub === 'wand') {
             if (!player) return fail('Игрок не найден.');
+            ctx.selection.deactivateWand(sender.playerId);
             player.give(AUTOMINE_WAND_ITEM, 1);
             return ok('Выдан инструмент выделения авто-шахты. Кликните по двум углам зоны.');
           }

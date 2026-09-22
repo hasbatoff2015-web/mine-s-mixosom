@@ -44,6 +44,34 @@ describe('player display nickname', () => {
     expect(playerNicknameError('a'.repeat(MAX_PLAYER_NAME_LENGTH + 1))).toMatch(/длиннее/);
   });
 
+  it('accepts a 13-character nick and rejects 14+', () => {
+    expect(MAX_PLAYER_NAME_LENGTH).toBe(13);
+    const max = 'a'.repeat(13);
+    const tooLong = 'a'.repeat(14);
+    expect(max).toHaveLength(13);
+    expect(tooLong).toHaveLength(14);
+    expect(sanitizePlayerName(max)).toBe(max);
+    expect(playerNicknameError(max)).toBeUndefined();
+    expect(savePlayerNickname(max, memoryStorage())).toEqual({ ok: true, name: max });
+    expect(sanitizePlayerName(tooLong)).toBeUndefined();
+    expect(playerNicknameError(tooLong)).toMatch(/длиннее/);
+    expect(savePlayerNickname(tooLong, memoryStorage()).ok).toBe(false);
+    expect(buildAnarchyJoinMessage(tooLong)).toEqual({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+    });
+    expect(parseClientMessage({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+      name: tooLong,
+    })).not.toHaveProperty('name');
+    expect(parseClientMessage({
+      type: 'join',
+      protocol: PROTOCOL_VERSION,
+      name: max,
+    })).toMatchObject({ type: 'join', name: max });
+  });
+
   it('puts a valid nick on the join payload and omits an unset nick', () => {
     expect(buildAnarchyJoinMessage('Misha')).toEqual({
       type: 'join',
@@ -83,6 +111,8 @@ describe('player display nickname', () => {
     expect(gameUiSource).not.toMatch(/<select[^>]*nickname/);
     expect(gameUiSource).not.toContain('<datalist');
     expect(gameUiSource).toContain('nicknameInput?.value');
+    expect(gameUiSource).toContain('maxlength="${MAX_PLAYER_NAME_LENGTH}"');
+    expect(gameUiSource).not.toMatch(/id="account-nickname"[^>]*maxlength="16"/);
   });
 
   it('persists an arbitrary valid custom nick and reloads it', () => {

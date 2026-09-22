@@ -2,6 +2,10 @@ import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
+import {
+  WORLD_BORDER_SPAWN_SET_ERROR,
+  isPlayerCenterInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 
 const HELP = {
   name: 'spawn',
@@ -71,6 +75,9 @@ export function createSpawnPlugin(ctx: BuiltinPluginContext): Plugin {
           const player = api.getPlayer(sender.playerId);
           if (!player) return fail('Player not found.');
           const pos = player.position();
+          if (!isPlayerCenterInsidePlayableWorld(pos.x, pos.z)) {
+            return fail(WORLD_BORDER_SPAWN_SET_ERROR);
+          }
           if (!api.getWorld().setSpawn(pos.x, pos.y, pos.z)) return fail('Could not set spawn.');
           ctx.markDirty();
           return ok(`Spawn set to ${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)}.`);

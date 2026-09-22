@@ -104,7 +104,7 @@ export function blockCollisionBoxes(
   if (block === BlockId.WhiteBed) {
     return [{ minX: x, minY: y, minZ: z, maxX: x + 1, maxY: y + 9 / 16, maxZ: z + 1 }];
   }
-  if (block === BlockId.Chest || block === BlockId.PortalChest) {
+  if (block === BlockId.Chest || block === BlockId.PortalChest || block === BlockId.EventChest) {
     return offsetLocalBoxes(x, y, z, [CHEST_BOX]);
   }
   if (block === BlockId.Lantern) {

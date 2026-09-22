@@ -13,7 +13,7 @@ export function clanIconGlyph(icon: string | undefined): string {
 
 export function clanIconHtml(icon: string | undefined, extraClass = ''): string {
   const id = isClanIconId(icon) ? icon : 'swords';
-  return `<span class="mc-clan-icon ${extraClass}" data-clan-icon="${id}" aria-hidden="true">${clanIconGlyph(id)}</span>`;
+  return `<span class="mc-clan-icon ${extraClass}" aria-hidden="true">${clanIconGlyph(id)}</span>`;
 }
 
 export function clanRankHtml(rank: number): string {
@@ -56,21 +56,38 @@ export function clanJoinCaption(state: ServerClanMessage['card']): string {
 }
 
 export function showsClanBack(screen: ServerClanMessage['screen'], source?: 'menu'): boolean {
-  if (source === 'menu' && (screen === 'ranking' || screen === 'create' || screen === 'card')) return true;
+  if (source === 'menu' && (screen === 'ranking' || screen === 'create' || screen === 'card' || screen === 'accept')) return true;
   return screen === 'card'
     || screen === 'create-confirm'
     || screen === 'invite-confirm'
+    || screen === 'accept'
     || screen === 'accept-confirm'
     || screen === 'makeleader-confirm'
     || screen === 'kick-confirm'
     || screen === 'requests'
     || screen === 'request-confirm'
     || screen === 'join-confirm'
-    || screen === 'replace-request-confirm';
+    || screen === 'replace-request-confirm'
+    || screen === 'member-card'
+    || screen === 'transfer-confirm'
+    || screen === 'announce'
+    || screen === 'set-base-confirm';
 }
 
 export function clanIconIds(): readonly ClanIconId[] {
   return CLAN_ICON_IDS;
+}
+
+export function clanSortButtonsHtml(current: 'money' | 'kills' | undefined, attr: string): string {
+  const moneyOn = current !== 'kills';
+  return `<div class="mc-clan-sort" role="group" aria-label="Сортировка">
+    <button type="button" class="mc-ah-btn${moneyOn ? ' is-on' : ''}" ${attr}="money">По монетам</button>
+    <button type="button" class="mc-ah-btn${!moneyOn ? ' is-on' : ''}" ${attr}="kills">По убийствам</button>
+  </div>`;
+}
+
+export function clanKillsHtml(label: string): string {
+  return `<span class="mc-clan-kills">${label}</span>`;
 }
 
 export { formatCompactMegacoins, isClanIconId };

@@ -64,6 +64,7 @@ export interface TradeRuntime {
   inventory(playerId: string): Inventory | undefined;
   balance(playerId: string): number;
   sendMessage(playerId: string, text: string): void;
+  notifyUnread?(playerId: string, category: 'trade'): void;
 }
 
 function emptyOffer(): TradeOffer {
@@ -145,6 +146,7 @@ export class TradeService {
     };
     this.requests.push(request);
     this.runtime.sendMessage(target.id, `${this.runtime.displayName(fromPlayerId)} предлагает обмен.`);
+    this.runtime.notifyUnread?.(target.id, 'trade');
     return { ok: true, affected: [fromPlayerId, target.id] };
   }
 

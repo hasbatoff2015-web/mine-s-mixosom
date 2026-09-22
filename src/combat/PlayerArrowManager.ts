@@ -14,6 +14,7 @@ import { FIRE_ARROW_IGNITE_TICKS } from './fireArrow';
 import { embedArrow, arrowSupportIntact, releaseEmbeddedArrow, type EmbeddedArrowState } from './ArrowPhysics';
 import { systemRandomFn } from '../gameplay/random';
 import { rayAabbDistance } from '../world/collision';
+import { isInsidePlayableBlock, isInsidePlayablePoint } from '../world/worldBorder';
 
 export interface PlayerArrow {
   readonly id: string;
@@ -327,6 +328,10 @@ export class PlayerArrowManager {
         return true;
       }
       if (blockHit) {
+        if (!isInsidePlayableBlock(blockHit.x, blockHit.z)) {
+          this.remove(index);
+          return true;
+        }
         arrow.embedded = embedArrow(blockHit, arrow.velocity);
         arrow.visualDirection.copy(arrow.embedded.impactVelocity);
         arrow.position.addScaledVector(direction, Math.max(0, blockHit.distance - 0.035));
@@ -341,6 +346,10 @@ export class PlayerArrowManager {
         return false;
       }
       arrow.position.add(movement);
+      if (!isInsidePlayablePoint(arrow.position.x, arrow.position.z)) {
+        this.remove(index);
+        return true;
+      }
       const cell = this.world.getBlock(
         Math.floor(arrow.position.x), Math.floor(arrow.position.y), Math.floor(arrow.position.z), false,
       );

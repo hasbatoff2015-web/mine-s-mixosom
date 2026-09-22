@@ -160,6 +160,7 @@ import { TextureAtlas } from '../rendering/TextureAtlas';
 import { WorldRenderer } from '../rendering/WorldRenderer';
 import { HologramRenderer } from '../rendering/HologramRenderer';
 import { ClaimBoundaryRenderer } from '../rendering/ClaimBoundaryRenderer';
+import { WorldBorderRenderer } from '../rendering/WorldBorderRenderer';
 import { ChunkGridOverlay } from '../rendering/ChunkGridOverlay';
 import { setWorldLightDebug } from '../rendering/worldLighting';
 import { PlayerSkinGeometryCache } from '../rendering/player/PlayerSkinGeometry';
@@ -213,11 +214,13 @@ import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
+import { CONTAINER_STRINGS } from '../ui/containerStrings';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
 import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
 import { VoxelWorld, type VoxelHit } from '../world/World';
 import {
   ANARCHY_SERVER_ID,
@@ -370,7 +373,7 @@ import {
   takePendingAppearance,
 } from '../net/remoteAppearance';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
-import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel } from '../../shared/chat';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -679,6 +682,7 @@ export class Game {
   private holograms?: HologramRenderer;
   private serverTimeOffsetMs = 0;
   private claimBoundaries?: ClaimBoundaryRenderer;
+  private worldBorderRenderer?: WorldBorderRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
   private readonly longTasks = new LongTaskMonitor();
@@ -787,6 +791,7 @@ export class Game {
     this.ui.onHudChat = () => this.openChat();
     this.ui.onHudMenu = () => this.toggleGameMenu();
     this.canvas.addEventListener('click', () => {
+      if (this.ui.isBlockingOverlay()) return;
       this.lifecycle.resumePlayingIfVisible();
       this.canvas.focus({ preventScroll: true });
     });
@@ -1282,6 +1287,12 @@ export class Game {
         this.handleOnlineActionResult(session, message);
         return;
       case 'chunk_data':
+        // Block IDs come from welcome.modifications (and live block_batch).
+        // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
+        // `message.modifications` is the same effective network overlay for
+        // this column (persistent + active event); the client does not replay
+        // it here because restore() already installed the map. Signs are the
+        // payload unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);
@@ -1330,7 +1341,11 @@ export class Game {
           });
         } else {
           if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
-          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text);
+          this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text, {
+            channel: message.channel,
+            style: message.style,
+            id: message.messageId,
+          });
         }
         return;
       case 'inventory':
@@ -1431,7 +1446,9 @@ export class Game {
     const y = window.y ?? 0;
     const z = window.z ?? 0;
     applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest);
-    const block = kind === 'chest' ? BlockId.Chest
+    const worldBlock = session.world.getBlock(x, y, z);
+    const block = kind === 'chest'
+      ? (worldBlock === BlockId.EventChest ? BlockId.EventChest : BlockId.Chest)
       : kind === 'portal-chest' ? BlockId.PortalChest
         : kind === 'furnace' ? BlockId.Furnace
           : BlockId.CraftingTable;
@@ -2464,17 +2481,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeAuction();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isAuctionOpen()) {
@@ -2488,13 +2495,24 @@ export class Game {
     });
   }
 
+  private resumeLookIfNoOverlay(): void {
+    if (this.ui.isBlockingOverlay() || this.ui.isHologramEditorOpen()) return;
+    this.input.clearHeldKeys();
+    this.ui.hidePointerLockFallback();
+    this.lifecycle.endOnlineRespawnRestore();
+    this.lifecycle.setState(lifecycleAfterWorldSessionEnter(this.lifecycle.state));
+    this.previousTime = performance.now();
+    this.accumulator = 0;
+    this.canvas.focus({ preventScroll: true });
+    this.input.tryRequestPointerLock();
+  }
+
   private closeAuctionAndResumeLook(notifyServer: boolean): void {
     if (notifyServer && this.session?.online) {
       this.session.online.client.send({ type: 'auction_action', action: 'close' });
     }
     this.ui.closeAuction();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openClanHouse(message: Extract<ServerMessage, { type: 'clan' }>): void {
@@ -2503,17 +2521,7 @@ export class Game {
     this.ui.setPlayerInClan(Boolean(message.viewer?.clanId));
     if (message.screen === 'closed') {
       this.ui.closeClan();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isClanOpen()) {
@@ -2533,8 +2541,7 @@ export class Game {
       this.session.online.client.send({ type: 'clan_action', action: 'close' });
     }
     this.ui.closeClan();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openGameMenuHouse(message: Extract<ServerMessage, { type: 'menu' }>): void {
@@ -2542,17 +2549,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeGameMenu();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isGameMenuOpen()) {
@@ -2571,8 +2568,7 @@ export class Game {
       this.session.online.client.send({ type: 'menu_action', action: 'close' });
     }
     this.ui.closeGameMenu();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private openTradeHouse(message: Extract<ServerMessage, { type: 'trade' }>): void {
@@ -2580,17 +2576,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeTrade();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isBuyerOpen()
-        && !this.ui.isGameMenuOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isTradeOpen()) {
@@ -2609,8 +2595,7 @@ export class Game {
       this.session.online.client.send({ type: 'trade_action', action: 'close' });
     }
     this.ui.closeTrade();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private syncBuyers(session: GameSession, buyers: readonly NetworkBuyerNpc[]): void {
@@ -2655,17 +2640,7 @@ export class Game {
     if (!session?.online) return;
     if (message.screen === 'closed') {
       this.ui.closeBuyer();
-      if (
-        !this.ui.isInventoryOpen()
-        && !this.ui.isHologramEditorOpen()
-        && !this.ui.isAuctionOpen()
-        && !this.ui.isClanOpen()
-        && !this.ui.isGameMenuOpen()
-        && !this.ui.isTradeOpen()
-      ) {
-        this.enterPlaying();
-        this.input.tryRequestPointerLock();
-      }
+      this.resumeLookIfNoOverlay();
       return;
     }
     if (!this.ui.isBuyerOpen()) {
@@ -2686,8 +2661,7 @@ export class Game {
       this.session.online.client.send({ type: 'buyer_action', action: 'close' });
     }
     this.ui.closeBuyer();
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   private sendOnlineBowRelease(session: GameSession): void {
@@ -2808,6 +2782,7 @@ export class Game {
   }
 
   private startOnlineMine(session: GameSession, targetKey: string): void {
+    if (session.target && !gameplayMayMutateBlock(session.target.x, session.target.z)) return;
     session.miningTarget = targetKey;
     session.miningProgress = 0;
     if (session.online) {
@@ -2823,6 +2798,12 @@ export class Game {
   }
 
   private applyOnlineMiningTick(session: GameSession, targetKey: string | undefined, attackPressed: boolean): void {
+    if (session.target && !gameplayMayMutateBlock(session.target.x, session.target.z)) {
+      if (session.miningTarget) this.sendOnlineMiningAbort(session);
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      return;
+    }
     const online = session.online!;
     if (online.miningFinishKey) {
       online.finishWaitTicks = (online.finishWaitTicks ?? 0) + 1;
@@ -3095,7 +3076,8 @@ export class Game {
 
     const player = new PlayerController();
     const spawn = restored?.player.position ?? options?.spawn ?? this.estimateSpawn(world);
-    player.teleport(spawn);
+    const safeSpawn = relocateStandingPoseInsidePlayableWorld(world, spawn[0], spawn[1], spawn[2]);
+    player.teleport([safeSpawn.x, safeSpawn.y, safeSpawn.z]);
     syncCreativeFlightAllowed(player, summary.mode);
     if (restored) {
       player.restore({
@@ -3104,6 +3086,14 @@ export class Game {
         yaw: restored.player.yaw,
         pitch: restored.player.pitch,
       });
+      const safe = relocateStandingPoseInsidePlayableWorld(
+        world,
+        player.position.x,
+        player.position.y,
+        player.position.z,
+      );
+      player.position.set(safe.x, safe.y, safe.z);
+      player.previousPosition.copy(player.position);
       this.input.yaw = restored.player.yaw;
       this.input.pitch = restored.player.pitch;
     } else {
@@ -3120,11 +3110,11 @@ export class Game {
       onDeath: (source) => this.handleDeath(source),
     });
     const savedServerSpawn = restored?.serverWorld?.spawn ?? options?.serverWorld?.spawn;
-    survival.setSpawnPoint(
-      isFiniteSpawn(savedServerSpawn)
-        ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]]
-        : restored?.player.spawnPoint ?? spawn,
-    );
+    const spawnSource = isFiniteSpawn(savedServerSpawn)
+      ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]] as const
+      : restored?.player.spawnPoint ?? [safeSpawn.x, safeSpawn.y, safeSpawn.z] as const;
+    const safePoint = relocateStandingPoseInsidePlayableWorld(world, spawnSource[0], spawnSource[1], spawnSource[2]);
+    survival.setSpawnPoint([safePoint.x, safePoint.y, safePoint.z]);
     if (restored && (restored.player.absorption !== undefined || restored.player.absorptionTicks !== undefined)) {
       survival.restore({
         health: survival.health,
@@ -3177,6 +3167,8 @@ export class Game {
       },
     );
     this.scene.add(worldRenderer.group);
+    this.worldBorderRenderer?.dispose();
+    this.worldBorderRenderer = new WorldBorderRenderer(this.scene);
     const drops = new DroppedItemManager(entityHost, world, {
       onPickup: (stack) => {
         const remainder = inventory.add(stack as ItemStack);
@@ -3335,6 +3327,7 @@ export class Game {
     const originX = Math.floor(session.player.position.x);
     const originZ = Math.floor(session.player.position.z);
     const tryColumn = (x: number, z: number): boolean => {
+      if (!gameplayMayMutateBlock(x, z)) return false;
       const column = session.world.generator.columnAt(x, z);
       if (column.biome === 'desert' || column.height <= SEA_LEVEL) return false;
       const surface = session.world.surfaceY(x, z);
@@ -3519,16 +3512,23 @@ export class Game {
     }
     const generateLimit = loading ? 8 : 1;
     const generateBudget = Math.max(budget, loading ? 1 : 0);
+    session.world.discardObsoleteGeneration(originX, originZ, generateRadius);
+    let genWork = 0;
     for (const coord of missing) {
       if (generated >= generateLimit) break;
-      if (generateBudget > 0 && performance.now() - jobStart >= generateBudget) break;
+      if (generateBudget > 0 && performance.now() - jobStart >= generateBudget && genWork > 0) break;
       if (inspect) {
         this.jobFrame.genAttempted += 1;
         this.streamingTrace.mark('generationStarted', coord.x, coord.z, performance.now());
       }
       const genStart = performance.now();
-      session.world.getChunk(coord.x, coord.z);
+      const remaining = Math.max(0.25, generateBudget - (performance.now() - jobStart));
+      const result = session.world.continueGeneration(coord.x, coord.z, remaining, {
+        maxColumns: loading ? 64 : 16,
+      });
       this.lastGenerateMs += performance.now() - genStart;
+      if (result.advanced) genWork += 1;
+      if (!result.done) break;
       generated += 1;
       if (inspect) {
         this.jobFrame.genCompleted += 1;
@@ -3537,7 +3537,7 @@ export class Game {
         this.streamingTrace.mark('meshQueued', coord.x, coord.z, doneAt);
       }
     }
-    this.lastChunkGenerationJobs = generated;
+    this.lastChunkGenerationJobs = generated + (genWork > generated ? 1 : 0);
 
     const lightBudget = loading ? WORLD_LOADING_LIGHT_BUDGET_MS : WORLD_LIGHT_BUDGET_MS;
     this.lastLightMs += this.runLightingJobs(session, lightBudget, originX, originZ, inspect, inspectNow);
@@ -3570,7 +3570,7 @@ export class Game {
     const defaultMeshLimit = loading ? 4 : (isCoarsePointer() ? 1 : 2);
     const plan = planMeshFrame({
       loading,
-      generatedThisFrame: generated > 0,
+      generatedThisFrame: genWork > 0,
       consecutiveGenWithoutMesh: this.genWithoutMeshStreak,
       readyJobs,
       defaultMeshLimit,
@@ -3581,10 +3581,10 @@ export class Game {
     this.jobFrame.meshOldestReadyAgeMs = plan.oldestReadyAgeMs;
     this.jobFrame.meshStarvationAvoided = plan.starvationAvoided;
     this.jobFrame.meshSkippedFrame = plan.skipMesh;
-    this.jobFrame.meshSkippedDueToGenSeparation = !loading && generated > 0 && plan.skipMesh;
+    this.jobFrame.meshSkippedDueToGenSeparation = !loading && genWork > 0 && plan.skipMesh;
 
     if (plan.skipMesh || plan.meshLimit <= 0) {
-      if (!loading && generated > 0) this.genWithoutMeshStreak += 1;
+      if (!loading && genWork > 0) this.genWithoutMeshStreak += 1;
       else this.genWithoutMeshStreak = 0;
       this.lastChunkMeshJobs = urgentMeshed;
       return;
@@ -3592,7 +3592,7 @@ export class Game {
 
     const meshBudget = Math.max(0.5, (loading ? WORLD_LOADING_JOB_BUDGET_MS : WORLD_JOB_BUDGET_MS) - (performance.now() - jobStart));
     const meshStart = performance.now();
-    const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0 } : undefined;
+    const meshCounters = inspect ? { attempted: 0, completed: 0, skippedBlocked: 0, sections: 0 } : undefined;
     meshed = session.worldRenderer.rebuildDirty(
       plan.meshLimit,
       meshBudget,
@@ -3604,6 +3604,7 @@ export class Game {
         counters: meshCounters,
         dirX: velocity.x,
         dirZ: velocity.z,
+        maxSections: loading ? 12 : 3,
         onMeshStart: inspect
           ? (chunk) => {
             this.lastMeshActiveKey = inspectChunkKey(chunk.x, chunk.z);
@@ -3632,7 +3633,7 @@ export class Game {
     );
     this.lastMeshMs += performance.now() - meshStart;
     this.lastChunkMeshJobs = meshed + urgentMeshed;
-    this.genWithoutMeshStreak = meshed > 0 || generated === 0 ? 0 : this.genWithoutMeshStreak + 1;
+    this.genWithoutMeshStreak = meshed > 0 || genWork === 0 ? 0 : this.genWithoutMeshStreak + 1;
     if (meshCounters) {
       this.jobFrame.meshAttempted = meshCounters.attempted;
       this.jobFrame.meshCompleted = meshCounters.completed;
@@ -4014,8 +4015,7 @@ export class Game {
     } else {
       this.ui.closeInventory();
     }
-    this.enterPlaying();
-    this.input.tryRequestPointerLock();
+    this.resumeLookIfNoOverlay();
   }
 
   /** Resume from pause/settings and restore desktop mouse-look. Opening pause does not use this. */
@@ -4155,6 +4155,7 @@ export class Game {
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'portal-chest' ? { chest: session.portalChest } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
+      ...(hit.block === BlockId.EventChest ? { containerTitle: CONTAINER_STRINGS.eventChest } : {}),
       onClose: () => {
         this.closeInventoryAndResumeLook();
         void this.saveSession();
@@ -4416,6 +4417,7 @@ export class Game {
         genJobs: this.lastChunkGenerationJobs,
         meshJobs: this.lastChunkMeshJobs,
         at: frameStart,
+        background: this.visibilityProbe.isBackgroundSample(performance.now()),
       });
     }
     if (this.profiler.enabled) {
@@ -4479,6 +4481,21 @@ export class Game {
     if (!this.profiler.enabled) return 0;
     this.simParts[part] += performance.now() - started;
     return performance.now();
+  }
+
+  /**
+   * Shared SP / Anarchy local combat use. Anarchy used to skip this: movement
+   * already slowed from `input.using`, but `combat.swordBlocking` stayed false
+   * so first- and third-person blocking overlays never ran.
+   */
+  private syncLocalCombatUse(
+    session: GameSession,
+    selectedItemId: string | undefined,
+    gameplayAllowed: boolean,
+  ): void {
+    session.combat.setHeldItem(selectedItemId);
+    session.combat.setOffhand(session.inventory.offhand?.itemId);
+    session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
   }
 
   private tickOnline(session: GameSession): void {
@@ -4556,7 +4573,7 @@ export class Game {
         session.player.position.z - prevZ,
       ));
     }
-    session.combat.setHeldItem(selected?.itemId);
+    this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
     if (gameplayAllowed) this.updateTargetAndActions();
@@ -4660,12 +4677,9 @@ export class Game {
           exitedRest = true;
         }
         const selected = this.selectedStack();
-        session.combat.setHeldItem(selected?.itemId);
-        session.combat.setOffhand(session.inventory.offhand?.itemId);
+        this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
         this.firstPerson?.setHeldItems(selected?.itemId);
         simMark = this.addSimPart('combat', simMark);
-
-        session.combat.updateUse(this.input.using, gameplayAllowed, !session.survival.dead);
         const drawingBow = session.bowUseTicks > 0;
         const movement = movementDuringItemUse(
           movementBefore,
@@ -4951,6 +4965,10 @@ export class Game {
       session.miningTarget = undefined;
       session.miningProgress = 0;
       resetMiningSound(this.miningSound);
+    } else if (!gameplayMayMutateBlock(session.target.x, session.target.z)) {
+      session.miningTarget = undefined;
+      session.miningProgress = 0;
+      resetMiningSound(this.miningSound);
     } else {
       if (session.miningTarget !== targetKey) {
         session.miningTarget = targetKey;
@@ -5005,6 +5023,7 @@ export class Game {
     const session = this.session!;
     const hit = session.online ? this.onlineMiningHit(session) : session.target;
     if (!hit) return;
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return;
     if (session.online) {
       const hold = breakFinishHoldReason(session.online, hit.x, hit.y, hit.z);
       if (hold !== 'ok') {
@@ -5114,7 +5133,7 @@ export class Game {
   private releaseBlockEntityContents(hit: VoxelHit): void {
     const session = this.session!;
     const key = `${hit.x},${hit.y},${hit.z}`;
-    if (hit.block === BlockId.Chest) {
+    if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
       session.world.chests.delete(key);
@@ -5442,7 +5461,7 @@ export class Game {
       armor: session.inventory,
     });
     if (!damage.fullHurt) return;
-    session.mobs.assignOwnedWolfTarget(LOCAL_PLAYER_FOCUS_ID, event.mobId, 'mob', 'defend');
+    session.mobs?.assignOwnedWolfTarget(LOCAL_PLAYER_FOCUS_ID, event.mobId, 'mob', 'defend');
     if (event.source === 'melee') {
       session.player.receiveMeleeKnockback({
         x: session.player.position.x - event.position.x,
@@ -5585,6 +5604,7 @@ export class Game {
     const session = this.session!;
     const cart = session.minecarts.get(id);
     if (!cart || !session.minecarts.isRideable(cart)) return;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) return;
     if (session.ridingCartId === id) return;
     if (session.ridingCartId) {
       this.ui.toast('Сначала выйдите из текущей вагонетки.');
@@ -5618,7 +5638,7 @@ export class Game {
   private updateMinecartRiding(session: GameSession): void {
     const id = session.ridingCartId;
     if (!id) {
-      this.minecartDismountHeld = this.input.movement().sprint;
+      this.minecartDismountHeld = this.input.movement().sneak;
       return;
     }
     const cart = session.minecarts.get(id);
@@ -5626,7 +5646,7 @@ export class Game {
       this.clearMinecartRide(session);
       return;
     }
-    const edge = minecartDismountFromSprint(this.input.movement().sprint, this.minecartDismountHeld);
+    const edge = minecartDismountFromSprint(this.input.movement().sneak, this.minecartDismountHeld);
     this.minecartDismountHeld = edge.held;
     if (edge.dismount) {
       this.clearMinecartRide(session, true);
@@ -5706,7 +5726,8 @@ export class Game {
 
   private openChat(prefix = ''): void {
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
-    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen() || this.ui.isAuctionOpen() || this.ui.isClanOpen()) return;
+    if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()
+      || this.ui.isAuctionOpen() || this.ui.isClanOpen() || this.ui.isGameMenuOpen() || this.ui.isTradeOpen()) return;
     this.input.releaseActions();
     this.input.releasePointerLock();
     this.ui.setChatInputHistory(this.chat.history);
@@ -5755,7 +5776,7 @@ export class Game {
   private pushChat(
     kind: 'system' | 'player' | 'command' | 'death' | 'error',
     text: string,
-    extra: { from?: string; channel?: ChatChannel; id?: string } = {},
+    extra: { from?: string; channel?: ChatChannel; id?: string; style?: ChatMessageStyle } = {},
   ): void {
     const message = this.chat.push(kind, text, performance.now(), extra);
     this.ui.appendChat(message);
@@ -5945,6 +5966,8 @@ export class Game {
     this.ui.closeAuction();
     this.ui.closeClan();
     this.ui.closeBuyer();
+    this.ui.closeGameMenu();
+    this.ui.closeTrade();
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
@@ -6049,6 +6072,7 @@ export class Game {
     this.ui.fadeChatLines(now, chatLineOpacity);
     this.holograms?.update();
     this.claimBoundaries?.update(now);
+    this.worldBorderRenderer?.update(this.camera.position.x, this.camera.position.z);
     this.renderer.info.reset();
     this.renderer.render(this.scene, this.camera);
     this.firstPerson?.render(this.renderer);
@@ -6064,7 +6088,7 @@ export class Game {
     session.playerVisual.setVisible(
       thirdPerson
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen(),
+      && !this.ui.isBlockingOverlay(),
     );
     const seated = Boolean(session.ridingCartId);
     const pose = session.playerVisual.update(this.renderDeltaSeconds, {
@@ -6164,7 +6188,7 @@ export class Game {
     const state = this.firstPersonFrameState;
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
-      && !this.ui.isInventoryOpen()
+      && !this.ui.isBlockingOverlay()
       && effectiveCameraPerspective(this.cameraPerspective, Boolean(session?.restingBed)) === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
@@ -6251,7 +6275,7 @@ export class Game {
       const renderInfo = this.renderer.info.render;
       const itemCache = this.itemVisuals?.cacheStats;
       const sfx = this.audio.debugSnapshot();
-      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
+      this.cachedDebugText = `FPS ${this.fps} · frame ${frameTiming.averageMs.toFixed(2)} / p95 ${frameTiming.p95Ms.toFixed(2)} / p99 ${frameTiming.p99Ms.toFixed(2)} / spike ${frameTiming.maximumMs.toFixed(2)} ms\nTPS ${TICK_RATE} fixed · tick ${tickTiming.averageMs.toFixed(2)} / spike ${tickTiming.maximumMs.toFixed(2)} ms\nXYZ ${session.player.position.x.toFixed(2)} / ${session.player.position.y.toFixed(2)} / ${session.player.position.z.toFixed(2)}\nLight ${session.world.skyLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} sky / ${session.world.blockLightAt(Math.floor(session.player.position.x), Math.floor(session.player.position.y + session.player.eyeHeight), Math.floor(session.player.position.z))} block\nChunk ${this.chunkDebugLine(session)}\nChunks ${session.worldRenderer.chunkCount}/${session.world.chunks.size} · dirty ${session.world.dirtyChunkCount} · jobs gen ${this.lastChunkGenerationJobs} mesh ${this.lastChunkMeshJobs}\nFaces ${session.worldRenderer.faceCount} · triangles ${renderInfo.triangles} · calls ${renderInfo.calls}\nGen ${session.world.generationAverageMs.toFixed(2)} avg / ${session.world.generationMaximumMs.toFixed(2)} max slice · job ${session.world.generationJobAverageMs.toFixed(2)} avg / ${session.world.generationJobMaximumMs.toFixed(2)} max ms · mesh ${session.worldRenderer.meshSectionAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshSectionMaximumMs.toFixed(2)} max section · job ${session.worldRenderer.meshAverageMs.toFixed(2)} avg / ${session.worldRenderer.meshMaximumMs.toFixed(2)} max ms\nTarget ${target}\nMobs ${session.mobs.count} · Projectiles ${session.mobs.projectileCount + session.arrows.count} · Drops ${session.drops.count}\nViewmodel ${this.firstPerson?.heldCategory ?? 'hand'} · item cache ${itemCache?.blockGeometries ?? 0}/${itemCache?.itemTextures ?? 0}\nSFX ${sfx.bufferCount}/${sfx.catalogFiles} buf · ${sfx.voiceCount} voices · ${sfx.contextState}${sfx.muted ? ' muted' : ''}\nRedstone ${session.redstone.sourceCount} · Primed TNT ${session.redstone.primedTntCount} · boom Q ${this.explosionQueue.pendingCount}/${this.explosionQueue.lastTick.processed} vx ${this.explosionQueue.lastTick.destroyed} · ${this.explosionQueue.lastTick.cpuMs.toFixed(2)}/${this.explosionQueue.lastTick.relightMs.toFixed(2)} ms sky ${this.explosionQueue.lastTick.skyRecomputes}\nSeed ${session.summary.seed} · ${session.summary.mode}`;
       if (this.debugTickOrder && this.kernelTrace.length > 0) {
         this.cachedDebugText += `\nKernel ${formatGameplayKernelTrace(this.kernelTrace)}`;
       }
@@ -6368,6 +6392,8 @@ export class Game {
     this.holograms = undefined;
     this.claimBoundaries?.dispose();
     this.claimBoundaries = undefined;
+    this.worldBorderRenderer?.dispose();
+    this.worldBorderRenderer = undefined;
     this.scene.remove(this.session.worldRenderer.group);
     this.session.worldRenderer.dispose();
     this.session.playerVisual?.dispose();

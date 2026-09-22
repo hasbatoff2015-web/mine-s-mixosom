@@ -29,6 +29,20 @@ interface ChunkVisual {
   chests: Array<{ x: number; y: number; z: number }>;
 }
 
+interface MeshJob {
+  key: string;
+  minSection: number;
+  maxSection: number;
+  nextSection: number;
+  partial: boolean;
+  revision: string;
+  startedAt: number;
+  cpuMs: number;
+  contentVersion: number;
+  lightVersion: number;
+  stale: boolean;
+}
+
 export class WorldRenderer {
   readonly group = new THREE.Group();
   readonly selection: THREE.LineSegments;
@@ -49,7 +63,12 @@ export class WorldRenderer {
   meshSamples = 0;
   meshTotalMs = 0;
   meshMaximumMs = 0;
+  meshSectionSamples = 0;
+  meshSectionTotalMs = 0;
+  meshSectionMaximumMs = 0;
+  meshJobMaximumMs = 0;
   lastRebuildSections = 0;
+  private readonly meshJobs = new Map<string, MeshJob>();
 
   constructor(
     private readonly world: VoxelWorld,
@@ -128,14 +147,18 @@ export class WorldRenderer {
       requireNeighborLight?: boolean;
       allowPendingLighting?: boolean;
       preferKeys?: ReadonlySet<string>;
-      counters?: { attempted: number; completed: number; skippedBlocked: number };
+      counters?: { attempted: number; completed: number; skippedBlocked: number; sections?: number };
       onMeshStart?: (chunk: Chunk) => void;
       onMeshComplete?: (chunk: Chunk) => void;
       dirX?: number;
       dirZ?: number;
+      maxSections?: number;
+      now?: () => number;
+      onSectionWork?: () => void;
     } = {},
   ): number {
-    const start = performance.now();
+    const nowFn = options.now ?? (() => performance.now());
+    const start = nowFn();
     const centerX = originX === undefined ? this.world.viewChunkX : floorDiv(originX, CHUNK_SIZE);
     const centerZ = originZ === undefined ? this.world.viewChunkZ : floorDiv(originZ, CHUNK_SIZE);
     const meshRadius = options.meshRadius;
@@ -145,7 +168,8 @@ export class WorldRenderer {
     const counters = options.counters;
     const dirX = options.dirX ?? 0;
     const dirZ = options.dirZ ?? 0;
-    const now = performance.now();
+    const now = nowFn();
+    if (meshRadius !== undefined) this.cancelObsoleteMeshJobs(centerX, centerZ, meshRadius);
     const dirty: Chunk[] = [];
     for (const chunk of this.world.chunks.values()) {
       if (!chunk.dirty && !chunk.lightMeshStale) continue;
@@ -162,6 +186,8 @@ export class WorldRenderer {
       return sa - sb;
     });
     let rebuilt = 0;
+    let sectionsThisFrame = 0;
+    this.lastRebuildSections = 0;
     for (const chunk of dirty) {
       if (rebuilt >= maxChunks) break;
       if (!chunk.lightingReady) {
@@ -172,7 +198,6 @@ export class WorldRenderer {
         continue;
       }
       if (!allowPendingLighting && this.world.hasPendingLighting(chunk)) {
-        // Skip blocked head; keep scanning for a later ready chunk.
         if (counters) {
           counters.attempted += 1;
           counters.skippedBlocked += 1;
@@ -192,10 +217,30 @@ export class WorldRenderer {
         }
         continue;
       }
-      if (rebuilt > 0 && performance.now() - start >= timeBudgetMs) break;
+      if (sectionsThisFrame > 0 && nowFn() - start >= timeBudgetMs) break;
       if (counters) counters.attempted += 1;
-      options.onMeshStart?.(chunk);
-      this.rebuild(chunk);
+      const visual = this.ensureVisual(chunk);
+      const job = this.ensureMeshJob(chunk, visual);
+      if (job.nextSection === job.minSection && job.cpuMs === 0) options.onMeshStart?.(chunk);
+      while (job.nextSection <= job.maxSection) {
+        if (sectionsThisFrame > 0 && nowFn() - start >= timeBudgetMs) break;
+        if (options.maxSections !== undefined && sectionsThisFrame >= options.maxSections) break;
+        options.onSectionWork?.();
+        const sectionStart = performance.now();
+        this.rebuildSection(chunk, visual, job.nextSection);
+        const sectionMs = performance.now() - sectionStart;
+        this.meshSectionSamples += 1;
+        this.meshSectionTotalMs += sectionMs;
+        this.meshSectionMaximumMs = Math.max(this.meshSectionMaximumMs, sectionMs);
+        job.cpuMs += sectionMs;
+        job.nextSection += 1;
+        sectionsThisFrame += 1;
+        this.lastRebuildSections += 1;
+        if (counters && counters.sections !== undefined) counters.sections += 1;
+        this.refreshVisualMeta(visual);
+      }
+      if (job.nextSection <= job.maxSection) break;
+      this.finalizeMeshJob(chunk, visual, job);
       options.onMeshComplete?.(chunk);
       if (counters) counters.completed += 1;
       rebuilt += 1;
@@ -208,37 +253,158 @@ export class WorldRenderer {
   }
 
   rebuild(chunk: Chunk): void {
-    const meshStart = performance.now();
+    this.lastRebuildSections = 0;
+    const visual = this.ensureVisual(chunk);
+    const job = this.ensureMeshJob(chunk, visual);
+    while (job.nextSection <= job.maxSection) {
+      const sectionStart = performance.now();
+      this.rebuildSection(chunk, visual, job.nextSection);
+      job.cpuMs += performance.now() - sectionStart;
+      job.nextSection += 1;
+      this.lastRebuildSections += 1;
+    }
+    this.finalizeMeshJob(chunk, visual, job);
+  }
+
+  meshJobDebug(key: string): {
+    minSection: number;
+    maxSection: number;
+    nextSection: number;
+    stale: boolean;
+    contentVersion: number;
+  } | undefined {
+    const job = this.meshJobs.get(key);
+    if (!job) return undefined;
+    return {
+      minSection: job.minSection,
+      maxSection: job.maxSection,
+      nextSection: job.nextSection,
+      stale: job.stale,
+      contentVersion: job.contentVersion,
+    };
+  }
+
+  sectionChests(key: string, section: number): Array<{ x: number; y: number; z: number }> {
+    const chests = this.chunks.get(key)?.sections.get(section)?.userData.chests;
+    return Array.isArray(chests) ? chests as Array<{ x: number; y: number; z: number }> : [];
+  }
+
+  get pendingMeshJobCount(): number {
+    return this.meshJobs.size;
+  }
+
+  get meshSectionAverageMs(): number {
+    return this.meshSectionTotalMs / Math.max(1, this.meshSectionSamples);
+  }
+
+  cancelObsoleteMeshJobs(centerChunkX: number, centerChunkZ: number, meshRadius: number): number {
+    let removed = 0;
+    for (const [key, job] of [...this.meshJobs]) {
+      const comma = key.indexOf(',');
+      const cx = Number(key.slice(0, comma));
+      const cz = Number(key.slice(comma + 1));
+      const wanted = Math.max(Math.abs(cx - centerChunkX), Math.abs(cz - centerChunkZ)) <= meshRadius;
+      if (wanted) continue;
+      this.meshJobs.delete(key);
+      removed += 1;
+      void job;
+    }
+    return removed;
+  }
+
+  private meshRevision(chunk: Chunk, minSection: number, maxSection: number, partial: boolean): string {
+    return [
+      chunk.lightVersion,
+      chunk.dirty ? 1 : 0,
+      chunk.meshDirtyAllY ? 1 : 0,
+      chunk.meshDirtyMinY,
+      chunk.meshDirtyMaxY,
+      minSection,
+      maxSection,
+      partial ? 1 : 0,
+    ].join(':');
+  }
+
+  private ensureVisual(chunk: Chunk): ChunkVisual {
     const key = chunkKey(chunk.x, chunk.z);
     let visual = this.chunks.get(key);
-    if (!visual) {
-      visual = {
-        group: new THREE.Group(),
-        sections: new Map(),
-        faces: 0,
-        chests: [],
-      };
-      visual.group.name = `chunk-${key}`;
-      this.group.add(visual.group);
-      this.chunks.set(key, visual);
-    }
+    if (visual) return visual;
+    visual = {
+      group: new THREE.Group(),
+      sections: new Map(),
+      faces: 0,
+      chests: [],
+    };
+    visual.group.name = `chunk-${key}`;
+    this.group.add(visual.group);
+    this.chunks.set(key, visual);
+    return visual;
+  }
+
+  private ensureMeshJob(chunk: Chunk, visual: ChunkVisual): MeshJob {
+    const key = chunkKey(chunk.x, chunk.z);
     const maxY = chunk.scanMaxY();
     const lightRebake = chunk.lightMeshStale && !chunk.dirty;
     const range = lightRebake || !visual.sections.size
       ? { minSection: 0, maxSection: Math.floor(Math.max(0, maxY) / MESH_SECTION_HEIGHT), partial: false }
       : chunk.meshSectionRange(maxY);
-    this.lastRebuildSections = 0;
-    for (let section = range.minSection; section <= range.maxSection; section += 1) {
-      this.rebuildSection(chunk, visual, section);
-      this.lastRebuildSections += 1;
+    const revision = this.meshRevision(chunk, range.minSection, range.maxSection, range.partial);
+    const existing = this.meshJobs.get(key);
+    if (existing && existing.nextSection <= existing.maxSection) {
+      if (range.maxSection > existing.maxSection) existing.maxSection = range.maxSection;
+      if (range.minSection < existing.minSection) existing.stale = true;
+      if (chunk.meshContentVersion !== existing.contentVersion) existing.stale = true;
+      if (chunk.lightVersion !== existing.lightVersion) existing.stale = true;
+      existing.partial = existing.partial && range.partial;
+      existing.revision = revision;
+      return existing;
     }
-    if (!range.partial) {
+    const job: MeshJob = {
+      key,
+      minSection: range.minSection,
+      maxSection: range.maxSection,
+      nextSection: range.minSection,
+      partial: range.partial,
+      revision,
+      startedAt: performance.now(),
+      cpuMs: 0,
+      contentVersion: chunk.meshContentVersion,
+      lightVersion: chunk.lightVersion,
+      stale: false,
+    };
+    this.meshJobs.set(key, job);
+    return job;
+  }
+
+  private finalizeMeshJob(chunk: Chunk, visual: ChunkVisual, job: MeshJob): void {
+    if (!job.partial) {
       for (const [section, group] of [...visual.sections.entries()]) {
-        if (section < range.minSection || section > range.maxSection) {
+        if (section < job.minSection || section > job.maxSection) {
           this.disposeSection(visual, section, group);
         }
       }
     }
+    this.refreshVisualMeta(visual);
+    this.signs.invalidateVisibility();
+    const stale = job.stale
+      || chunk.meshContentVersion !== job.contentVersion
+      || chunk.lightVersion !== job.lightVersion;
+    const jobMs = job.cpuMs;
+    this.meshJobMaximumMs = Math.max(this.meshJobMaximumMs, jobMs);
+    this.meshSamples += 1;
+    this.meshTotalMs += jobMs;
+    this.meshMaximumMs = Math.max(this.meshMaximumMs, jobMs);
+    this.meshJobs.delete(job.key);
+    if (stale) {
+      chunk.dirty = true;
+      return;
+    }
+    chunk.dirty = false;
+    chunk.meshedLightVersion = chunk.lightVersion;
+    this.world.acknowledgeMeshed(chunk);
+  }
+
+  private refreshVisualMeta(visual: ChunkVisual): void {
     visual.faces = 0;
     visual.chests = [];
     for (const group of visual.sections.values()) {
@@ -246,14 +412,6 @@ export class WorldRenderer {
       const chests = group.userData.chests as Array<{ x: number; y: number; z: number }> | undefined;
       if (chests) visual.chests.push(...chests);
     }
-    this.signs.invalidateVisibility();
-    chunk.dirty = false;
-    chunk.meshedLightVersion = chunk.lightVersion;
-    this.world.acknowledgeMeshed(chunk);
-    const meshMilliseconds = performance.now() - meshStart;
-    this.meshSamples += 1;
-    this.meshTotalMs += meshMilliseconds;
-    this.meshMaximumMs = Math.max(this.meshMaximumMs, meshMilliseconds);
   }
 
   removeChunks(keys: readonly string[]): void {
@@ -343,6 +501,7 @@ export class WorldRenderer {
 
   dispose(): void {
     for (const key of [...this.chunks.keys()]) this.removeChunk(key);
+    this.meshJobs.clear();
     this.group.remove(this.selection);
     (this.selection.material as THREE.Material).dispose();
     for (const geometry of this.selectionGeometries.values()) geometry.dispose();
@@ -360,6 +519,7 @@ export class WorldRenderer {
   }
 
   private removeChunk(key: string): void {
+    this.meshJobs.delete(key);
     const existing = this.chunks.get(key);
     if (!existing) return;
     this.group.remove(existing.group);
@@ -372,8 +532,6 @@ export class WorldRenderer {
   private rebuildSection(chunk: Chunk, visual: ChunkVisual, section: number): void {
     const minY = section * MESH_SECTION_HEIGHT;
     const maxY = minY + MESH_SECTION_HEIGHT - 1;
-    const existing = visual.sections.get(section);
-    if (existing) this.disposeSection(visual, section, existing);
     const meshed = this.mesher.build(chunk, this.world, { minY, maxY });
     const group = new THREE.Group();
     group.name = `chunk-section-${chunk.x},${chunk.z}:${section}`;
@@ -385,8 +543,10 @@ export class WorldRenderer {
     this.attachLayer(group, meshed.fire, SharedFireTexture.instance().material, 4);
     group.userData.faces = meshed.faces;
     group.userData.chests = meshed.chests;
+    const existing = visual.sections.get(section);
     visual.group.add(group);
     visual.sections.set(section, group);
+    if (existing) this.disposeSection(visual, section, existing, false);
   }
 
   private attachLayer(
@@ -404,10 +564,10 @@ export class WorldRenderer {
     geometry.dispose();
   }
 
-  private disposeSection(visual: ChunkVisual, section: number, group: THREE.Group): void {
+  private disposeSection(visual: ChunkVisual, section: number, group: THREE.Group, removeFromMap = true): void {
     visual.group.remove(group);
     this.disposeObject3D(group);
-    visual.sections.delete(section);
+    if (removeFromMap && visual.sections.get(section) === group) visual.sections.delete(section);
   }
 
   private disposeObject3D(root: THREE.Object3D): void {

@@ -53,6 +53,7 @@ export interface EconomyBalanceRecord {
   readonly playerId: string;
   balance: number;
   name: string;
+  kills: number;
 }
 
 export interface EconomyResult {
@@ -70,6 +71,7 @@ export interface EconomyTopEntry {
   readonly playerId: string;
   readonly name: string;
   readonly balance: number;
+  readonly kills: number;
 }
 
 export interface BlockBreakRewardOptions {
@@ -191,7 +193,9 @@ export class EconomyService {
   private readonly placed = new Set<string>();
   private placedDirty = false;
   private readonly rewardedDeaths = new Set<string>();
+  private readonly countedKillDeaths = new Set<string>();
   private readonly pvpDeathBurst = new Map<string, number>();
+  private killSeq = 0;
   private readonly pvpCooldowns = new Map<string, number>();
 
   constructor(
@@ -212,6 +216,7 @@ export class EconomyService {
         playerId: entry.playerId,
         balance: Math.max(0, Math.min(ECONOMY_MAX_BALANCE, balance)),
         name: typeof entry.name === 'string' && entry.name.length > 0 ? entry.name : entry.playerId.slice(0, 8),
+        kills: Number.isInteger(entry.kills) && Number(entry.kills) >= 0 ? Math.trunc(Number(entry.kills)) : 0,
       });
     }
     const tx = this.store.load<TransactionFile>('economy/transactions', { nextId: 1, transactions: [] });
@@ -370,7 +375,58 @@ export class EconomyService {
     return [...this.players.values()]
       .sort((a, b) => b.balance - a.balance || a.name.localeCompare(b.name, 'ru'))
       .slice(0, cap)
-      .map((entry) => ({ playerId: entry.playerId, name: entry.name, balance: entry.balance }));
+      .map((entry) => ({ playerId: entry.playerId, name: entry.name, balance: entry.balance, kills: entry.kills ?? 0 }));
+  }
+
+  getKills(playerId: string): number {
+    return this.players.get(playerId)?.kills ?? 0;
+  }
+
+  listPlayers(): readonly EconomyBalanceRecord[] {
+    return [...this.players.values()];
+  }
+
+  rankPlayers(metric: 'money' | 'kills'): Array<{
+    readonly playerId: string;
+    readonly name: string;
+    readonly balance: number;
+    readonly kills: number;
+    readonly rank: number;
+  }> {
+    const rows = [...this.players.values()].map((entry) => ({
+      playerId: entry.playerId,
+      name: entry.name,
+      balance: entry.balance,
+      kills: entry.kills ?? 0,
+    }));
+    rows.sort((a, b) => {
+      const av = metric === 'money' ? a.balance : a.kills;
+      const bv = metric === 'money' ? b.balance : b.kills;
+      if (bv !== av) return bv - av;
+      return a.name.localeCompare(b.name, 'ru', { sensitivity: 'base' });
+    });
+    return rows.map((row, index) => ({ ...row, rank: index + 1 }));
+  }
+
+  /**
+   * Persistent PvP kill statistic. Independent of the 5-minute economy cooldown.
+   * Mob deaths must not call this.
+   */
+  recordPvpKill(killerId: string, victimId: string, deathId: string): { ok: boolean; kills: number; error?: string } {
+    if (!killerId || killerId === victimId) return { ok: false, kills: this.getKills(killerId), error: 'self' };
+    const stableId = deathId === victimId || deathId === killerId || !deathId;
+    const key = stableId
+      ? `pvp-kill:${killerId}:${victimId}:${this.now()}:${this.killSeq++}`
+      : deathId;
+    if (this.countedKillDeaths.has(key)) {
+      return { ok: false, kills: this.getKills(killerId), error: 'duplicate' };
+    }
+    this.countedKillDeaths.add(key);
+    if (this.countedKillDeaths.size > 8_000) this.countedKillDeaths.clear();
+    const player = this.ensurePlayer(killerId);
+    player.kills += 1;
+    this.persistBalances();
+    return { ok: true, kills: player.kills };
   }
 
   rememberName(playerId: string, name: string): void {
@@ -473,6 +529,7 @@ export class EconomyService {
       playerId,
       balance: ECONOMY_INITIAL_BALANCE,
       name: name && name.length > 0 ? name : playerId.slice(0, 8),
+      kills: 0,
     };
     this.players.set(playerId, created);
     this.persistBalances();
@@ -544,6 +601,7 @@ export class EconomyService {
         playerId: entry.playerId,
         balance: entry.balance,
         name: entry.name,
+        kills: entry.kills ?? 0,
       })),
     });
   }

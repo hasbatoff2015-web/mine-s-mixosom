@@ -12,7 +12,8 @@ import { bedOtherCell, isMatchingBedHalf } from './bed';
 import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
-import { TerrainGenerator, type Biome } from './Generator';
+import { TerrainGenerator, type Biome, type TerrainGenJob } from './Generator';
+import { gameplayMayMutateBlock } from './worldBorder';
 import {
   consumeLightTouched,
   continuePendingLight,
@@ -192,6 +193,12 @@ export class VoxelWorld {
   generationSamples = 0;
   generationTotalMs = 0;
   generationMaximumMs = 0;
+  generationJobSamples = 0;
+  generationJobTotalMs = 0;
+  generationJobMaximumMs = 0;
+  /** Chunks committed via `finishGeneratedChunk` (sliced or getChunk). */
+  generationCommitCount = 0;
+  private readonly generationJobs = new Map<string, TerrainGenJob>();
   meshDirtyMarks = 0;
   lightQueueMarks = 0;
   mutationMarks = 0;
@@ -331,29 +338,113 @@ export class VoxelWorld {
     let chunk = this.chunks.get(key);
     if (!chunk && generate) {
       const generationStart = performance.now();
-      chunk = new Chunk(chunkX, chunkZ);
-      this.generator.generate(chunk);
-      const delta = this.modifications.get(key);
-      if (delta) {
-        for (const [index, block] of delta) {
-          adoptUnknownBlockLight(block);
-          chunk.writeIndex(index, block);
+      const pending = this.generationJobs.get(key);
+      if (pending) {
+        while (!this.generator.advanceGenerate(pending, 16 * 16)) {
+          // gameplay readers still need a complete chunk
         }
-      }
-      this.chunks.set(key, chunk);
-      activateGeneratedFluidBoundaries(this, chunk);
-      const generationMilliseconds = performance.now() - generationStart;
-      this.generationSamples += 1;
-      this.generationTotalMs += generationMilliseconds;
-      this.generationMaximumMs = Math.max(this.generationMaximumMs, generationMilliseconds);
-      this.markMeshDirty(chunk);
-      for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-        const neighbor = this.chunks.get(chunkKey(chunkX + dx, chunkZ + dz));
-        if (neighbor) this.markMeshDirty(neighbor);
+        const elapsed = performance.now() - generationStart;
+        pending.elapsedMs += elapsed;
+        this.noteGenerationSlice(elapsed);
+        this.finishGeneratedChunk(pending.chunk, pending.elapsedMs);
+        this.generationJobs.delete(key);
+        chunk = pending.chunk;
+      } else {
+        chunk = new Chunk(chunkX, chunkZ);
+        this.generator.generate(chunk);
+        const elapsed = performance.now() - generationStart;
+        this.noteGenerationSlice(elapsed);
+        this.finishGeneratedChunk(chunk, elapsed);
       }
     }
     if (chunk) chunk.lastTouched = performance.now();
     return chunk;
+  }
+
+  /**
+   * Time-sliced client streaming generation. Incomplete chunks stay off `chunks`
+   * so lighting/meshing never observe a half-filled column.
+   */
+  continueGeneration(
+    chunkX: number,
+    chunkZ: number,
+    budgetMs: number,
+    options: { maxColumns?: number; now?: () => number } = {},
+  ): { done: boolean; advanced: boolean } {
+    const key = chunkKey(chunkX, chunkZ);
+    if (this.chunks.has(key)) return { done: true, advanced: false };
+    const now = options.now ?? (() => performance.now());
+    const start = now();
+    const maxColumns = options.maxColumns ?? 16;
+    let job = this.generationJobs.get(key);
+    let advanced = false;
+    if (!job) {
+      job = this.generator.beginGenerate(new Chunk(chunkX, chunkZ));
+      this.generationJobs.set(key, job);
+    }
+    while (true) {
+      const finished = this.generator.advanceGenerate(job, maxColumns);
+      advanced = true;
+      if (finished) {
+        const elapsed = now() - start;
+        job.elapsedMs += elapsed;
+        this.noteGenerationSlice(elapsed);
+        this.finishGeneratedChunk(job.chunk, job.elapsedMs);
+        this.generationJobs.delete(key);
+        return { done: true, advanced: true };
+      }
+      if (now() - start >= budgetMs) break;
+    }
+    const elapsed = now() - start;
+    job.elapsedMs += elapsed;
+    this.noteGenerationSlice(elapsed);
+    return { done: false, advanced };
+  }
+
+  discardObsoleteGeneration(originX: number, originZ: number, generateRadius: number): number {
+    const originCx = floorDiv(originX, CHUNK_SIZE);
+    const originCz = floorDiv(originZ, CHUNK_SIZE);
+    let removed = 0;
+    for (const [key, job] of [...this.generationJobs]) {
+      const dx = Math.abs(job.chunk.x - originCx);
+      const dz = Math.abs(job.chunk.z - originCz);
+      if (Math.max(dx, dz) <= generateRadius) continue;
+      this.generationJobs.delete(key);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  get pendingGenerationJobs(): number {
+    return this.generationJobs.size;
+  }
+
+  private noteGenerationSlice(elapsed: number): void {
+    this.generationSamples += 1;
+    this.generationTotalMs += elapsed;
+    this.generationMaximumMs = Math.max(this.generationMaximumMs, elapsed);
+  }
+
+  private finishGeneratedChunk(chunk: Chunk, jobMilliseconds: number): void {
+    const key = chunkKey(chunk.x, chunk.z);
+    const delta = this.modifications.get(key);
+    if (delta) {
+      for (const [index, block] of delta) {
+        adoptUnknownBlockLight(block);
+        chunk.writeIndex(index, block);
+      }
+    }
+    this.chunks.set(key, chunk);
+    activateGeneratedFluidBoundaries(this, chunk);
+    this.generationCommitCount += 1;
+    this.generationJobSamples += 1;
+    this.generationJobTotalMs += jobMilliseconds;
+    this.generationJobMaximumMs = Math.max(this.generationJobMaximumMs, jobMilliseconds);
+    this.markMeshDirty(chunk);
+    for (const [dx, dz] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+      const neighbor = this.chunks.get(chunkKey(chunk.x + dx, chunk.z + dz));
+      if (neighbor) this.markMeshDirty(neighbor);
+    }
   }
 
   setViewCenter(blockX: number, blockZ: number, meshRadius: number): void {
@@ -440,11 +531,18 @@ export class VoxelWorld {
   }
 
   /**
-   * Import-only: store authored state without support/fluid side effects.
+   * Import/restore: store authored state without support/fluid side effects,
+   * or clear it when `state` is undefined so snapshot restore can remove a
+   * render state that the overlay introduced on the same block ID.
    * Mesh dirty is still required so stairs/doors/rails appear correctly.
    */
-  replaceBlockState(x: number, y: number, z: number, state: BlockRenderState): void {
-    this.blockStates.set(blockKey(x, y, z), state);
+  replaceBlockState(x: number, y: number, z: number, state: BlockRenderState | undefined): void {
+    const key = blockKey(x, y, z);
+    if (state === undefined) {
+      if (!this.blockStates.delete(key)) return;
+    } else {
+      this.blockStates.set(key, state);
+    }
     this.markBlockDirty(x, z);
   }
 
@@ -536,6 +634,10 @@ export class VoxelWorld {
 
   get generationAverageMs(): number {
     return this.generationTotalMs / Math.max(1, this.generationSamples);
+  }
+
+  get generationJobAverageMs(): number {
+    return this.generationJobTotalMs / Math.max(1, this.generationJobSamples);
   }
 
   getBlock(x: number, y: number, z: number, generate = true): BlockId {
@@ -788,6 +890,7 @@ export class VoxelWorld {
   markMeshDirty(chunk: Chunk, y?: number): void {
     this.meshDirtyMarks += 1;
     chunk.dirty = true;
+    chunk.bumpMeshContentVersion();
     if (y === undefined) chunk.noteMeshDirtyAllY();
     else chunk.noteMeshDirtyY(y);
     this.pendingMesh.add(chunkKey(chunk.x, chunk.z));
@@ -1005,7 +1108,12 @@ export class VoxelWorld {
       if (Math.abs(chunk.x - cx) <= radius + 1 && Math.abs(chunk.z - cz) <= radius + 1) continue;
       this.chunks.delete(key);
       this.pendingMesh.delete(key);
+      this.generationJobs.delete(key);
       removed.push(key);
+    }
+    for (const [key, job] of [...this.generationJobs]) {
+      if (Math.abs(job.chunk.x - cx) <= radius + 1 && Math.abs(job.chunk.z - cz) <= radius + 1) continue;
+      this.generationJobs.delete(key);
     }
     abandonLightingFloodIfOrphaned((key) => this.chunks.has(key), this);
     return removed;
@@ -1329,6 +1437,7 @@ export class VoxelWorld {
       this.scheduled.splice(index, 1);
       this.scheduledKeys.delete(blockKey(scheduled.x, scheduled.y, scheduled.z));
       processed += 1;
+      if (!gameplayMayMutateBlock(scheduled.x, scheduled.z)) continue;
       const block = this.getBlock(scheduled.x, scheduled.y, scheduled.z);
       const definition = getBlockDefinition(block);
       if (definition.gravity && scheduled.y > 0) {
@@ -1348,6 +1457,7 @@ export class VoxelWorld {
   }
 
   private tickFire(x: number, y: number, z: number): void {
+    if (!gameplayMayMutateBlock(x, z)) return;
     if (this.getBlock(x, y, z, false) !== BlockId.Fire) return;
     const below = this.getBlock(x, y - 1, z, false);
     const support = getBlockDefinition(below);

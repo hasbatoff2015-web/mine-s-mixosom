@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIXED_DT, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, PLAYER_MOVE_SPEED } from '../src/core/constants';
 import { advanceFixedStep } from '../src/core/fixedStep';
 import { LocalPlayerRenderState } from '../src/core/localPlayerRenderState';
 import type { MoveInput } from '../src/input/MoveInput';
@@ -177,7 +177,7 @@ function runMode(mode: IsolationMode, seconds = 2, frameDt = 1 / 60): ModeStats 
     meanStep,
     maxStep: Math.max(0, ...deltas),
     negative: 0,
-    large: deltas.filter((value) => value > WALK_SPEED * frameDt * 2.5).length,
+    large: deltas.filter((value) => value > PLAYER_MOVE_SPEED * frameDt * 2.5).length,
   };
 }
 
@@ -188,7 +188,7 @@ describe('pred isolation 4-mode matrix', () => {
     expect(normal.states).toBeGreaterThan(0);
     expect(normal.corrections).toBe(0);
     expect(normal.acceptMutations).toBe(0);
-    expect(normal.maxStep).toBeLessThan(WALK_SPEED * (1 / 60) * 2.5);
+    expect(normal.maxStep).toBeLessThan(PLAYER_MOVE_SPEED * (1 / 60) * 2.5);
   });
 
   it('predNoState keeps sending and matches noNet render', () => {
@@ -281,7 +281,7 @@ describe('incoming player_state velocity/flag mismatch', () => {
     for (let i = 1; i < samples.length; i += 1) {
       deltas.push(Math.abs(samples[i]! - samples[i - 1]!));
     }
-    expect(Math.max(0, ...deltas)).toBeLessThan(WALK_SPEED * (1 / 60) * 2.5);
+    expect(Math.max(0, ...deltas)).toBeLessThan(PLAYER_MOVE_SPEED * (1 / 60) * 2.5);
   });
 });
 

@@ -1,4 +1,8 @@
 import { isValidWorldY } from '../../src/core/constants';
+import {
+  WORLD_BORDER_TELEPORT_ERROR,
+  isPlayerCenterInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 import type { EventBus } from '../events';
 
 export type TeleportReason =
@@ -11,7 +15,8 @@ export type TeleportReason =
   | 'back'
   | 'death'
   | 'automine'
-  | 'friends';
+  | 'friends'
+  | 'clan';
 
 export interface TeleportLocation {
   readonly worldId: string;
@@ -131,6 +136,9 @@ export class TeleportService {
     }
     if (!isValidWorldY(Math.floor(dest.y)) && !isValidWorldY(Math.ceil(dest.y))) {
       return { ok: false, error: 'Y is outside the world.' };
+    }
+    if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
+      return { ok: false, error: WORLD_BORDER_TELEPORT_ERROR };
     }
     const from = actor.position();
     if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {

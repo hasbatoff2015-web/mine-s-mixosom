@@ -23,7 +23,7 @@ export const CHUNK_SIZE = 16;
 /** Vertical mesh section. Live voxel edits remesh only dirty Y bands, not the full 16×256×16 column. */
 export const MESH_SECTION_HEIGHT = 16;
 /** Natural terrain recipe. Additive save metadata; independent of save schema/protocol. */
-export const WORLDGEN_VERSION = 2;
+export const WORLDGEN_VERSION = 3;
 /**
  * Vertical world size in blocks (Y in `0 .. WORLD_HEIGHT-1`).
  * Raised 96 → 256 so imported structures can occupy build space up to Y=255.
@@ -56,9 +56,14 @@ export const PLAYER_REACH = 5;
 export const PLAYER_NET_REACH_SLACK = 1.5;
 export const PLAYER_NET_REACH = PLAYER_REACH + PLAYER_NET_REACH_SLACK;
 
+/** Java 1.9 walk (m/s). Minecart cap and historical probes still use this. */
 export const WALK_SPEED = 4.317;
+/** Default WASD ground speed (always-run). Shared client/server. */
+export const PLAYER_MOVE_SPEED = 7;
+/** Java 1.9 sprint (m/s). Unused for default WASD; always-run uses PLAYER_MOVE_SPEED. */
 export const SPRINT_SPEED = 5.612;
-export const SNEAK_SPEED = 1.295;
+/** Crouch/sneak ground speed. Shared client/server. */
+export const SNEAK_SPEED = 2;
 export const WATER_SPEED = 2.2;
 export const GRAVITY = 32;
 export const WATER_GRAVITY = 5;

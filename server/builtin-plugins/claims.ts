@@ -9,7 +9,12 @@ import {
   claimAnchorVolume,
   findClaimByAnchor,
   overlappingAnchorClaims,
+  volumesOverlap,
 } from '../services/claimAnchors';
+import {
+  EVENT_CLAIM_ANCHOR_MESSAGE,
+  EVENT_CLAIM_CREATE_MESSAGE,
+} from '../services/eventProtection';
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
@@ -30,6 +35,10 @@ import {
 import { findClaimByName, parseClaimFlagArgs, parseClaimMemberArgs } from '../services/claimCommands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
+import {
+  WORLD_BORDER_CLAIM_ERROR,
+  isVolumeInsidePlayableWorld,
+} from '../../src/world/worldBorder';
 
 const HELP = {
   name: 'claim',
@@ -88,9 +97,13 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       ): boolean => {
         if (effectiveFlag(claims, flag)) return true;
         if (bypass(playerId, playerName)) return true;
+        const trusted = (claim: Claim) => (
+          isTrusted(claim, playerName)
+          || (!!claim.clanId && ctx.clan.isClanMember(claim.clanId, playerId))
+        );
         const setter = flagSetter(claims, flag);
-        if (setter) return isTrusted(setter, playerName);
-        return claims.some((claim) => isTrusted(claim, playerName));
+        if (setter) return trusted(setter);
+        return claims.some(trusted);
       };
 
       const describeProtection = (
@@ -140,6 +153,18 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const key = claimAnchorKey(event.blockId);
         if (!key) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        if (!isVolumeInsidePlayableWorld(volume)) {
+          event.cancel();
+          player.sendMessage(WORLD_BORDER_CLAIM_ERROR);
+          return;
+        }
+        const eventClaim = ctx.worldEvents.systemClaim();
+        if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+          event.cancel();
+          player.sendMessage(EVENT_CLAIM_ANCHOR_MESSAGE);
+          ctx.claimBoundaries.show(player.id, eventClaim);
+          return;
+        }
         const overlappingAnchors = overlappingAnchorClaims(load().claims, worldId(), volume);
         if (overlappingAnchors.length === 0) return;
         event.cancel();
@@ -152,7 +177,21 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const volume = claimAnchorVolume(event.x, event.y, event.z, key);
+        if (!isVolumeInsidePlayableWorld(volume)) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(WORLD_BORDER_CLAIM_ERROR);
+          return;
+        }
         const store = load();
+        const eventClaim = ctx.worldEvents.systemClaim();
+        if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(EVENT_CLAIM_ANCHOR_MESSAGE);
+          ctx.claimBoundaries.show(player.id, eventClaim);
+          return;
+        }
         const overlappingAnchors = overlappingAnchorClaims(store.claims, worldId(), volume);
         if (overlappingAnchors.length > 0) {
           api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
@@ -185,6 +224,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!claim) return;
         store.claims = store.claims.filter((entry) => entry.id !== claim.id);
         save(store);
+        if (claim.clanId) ctx.clan.onClanClaimRemoved(claim.id);
       });
       api.registerEvent('playerDamage', (event) => {
         const player = api.getPlayer(event.playerId);
@@ -263,6 +303,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!name) return usageError('/claim create <name>');
             const volume = ctx.selection.volume(sender.playerId);
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
+            if (!isVolumeInsidePlayableWorld(volume)) return fail(WORLD_BORDER_CLAIM_ERROR);
             const store = load();
             if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
               && !bypass(sender.playerId, sender.name)) {
@@ -270,6 +311,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             }
             if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);
+            }
+            const eventClaim = ctx.worldEvents.systemClaim();
+            if (eventClaim && volumesOverlap(volume, eventClaim.volume)) {
+              ctx.claimBoundaries.show(sender.playerId, eventClaim);
+              return fail(EVENT_CLAIM_CREATE_MESSAGE);
             }
             store.claims.push({
               id: `${ownerKey}:${name}:${Date.now()}`,
@@ -292,8 +338,10 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               claim.owner === ownerKey || bypass(sender.playerId, sender.name)
             ));
             if (index < 0) return fail(`Claim '${name}' not found.`);
+            const removed = store.claims[index]!;
             store.claims.splice(index, 1);
             save(store);
+            if (removed.clanId) ctx.clan.onClanClaimRemoved(removed.id);
             return ok(`Deleted claim '${name}'.`);
           }
           if (sub === 'rename') {
@@ -425,10 +473,14 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               const name = args[2]?.toLowerCase();
               if (!name) return usageError('/claim admin delete <name>');
               const store = load();
+              const removed = store.claims.filter((claim) => claim.name === name);
               const next = store.claims.filter((claim) => claim.name !== name);
               if (next.length === store.claims.length) return fail(`Claim '${name}' not found.`);
               store.claims = next;
               save(store);
+              for (const claim of removed) {
+                if (claim.clanId) ctx.clan.onClanClaimRemoved(claim.id);
+              }
               return ok(`Admin deleted claim '${name}'.`);
             }
             return usageError('/claim admin delete <name>');

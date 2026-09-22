@@ -3,6 +3,7 @@ import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
 import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
@@ -107,8 +108,9 @@ import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
-import { PlayerSelectionService } from './services/selection';
-import { AutoMineManager } from './services/autoMine';
+import { PlayerSelectionService, volumeContains } from './services/selection';
+import { AutoMineManager, mineVolume } from './services/autoMine';
+import { WorldEventsManager, overlayEventPlacementOnChunkModifications, overlayEventPlacementOnModifications } from './services/worldEvents';
 import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
@@ -116,7 +118,9 @@ import { EconomyService, formatMegacoinAmount, formatMegacoins } from './service
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { TradeService } from './services/trade';
+import { NotificationService } from './services/notifications';
 import {
+  buildRankingSnapshot,
   buildTradeMessage,
   closedMenuMessage,
   createMenuSession,
@@ -136,7 +140,7 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, toNetworkHologram } from './services/holograms';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
-import { migrateClaimStore, type Claim } from './services/claims';
+import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import {
@@ -543,6 +547,7 @@ export class WorldInstance {
   readonly rtp: RtpService;
   readonly rtpSessions: RtpSessionManager;
   readonly autoMine: AutoMineManager;
+  readonly worldEvents: WorldEventsManager;
   readonly economy: EconomyService;
   readonly auction: AuctionService;
   readonly clan: ClanService;
@@ -550,6 +555,7 @@ export class WorldInstance {
   readonly homes: HomeService;
   readonly friends: FriendsService;
   readonly trade: TradeService;
+  readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
@@ -566,8 +572,11 @@ export class WorldInstance {
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
+  private loadedWorldgenVersion?: number;
   private readonly generatedChunks = new Set<string>();
   private persistTimer: ReturnType<typeof setInterval> | undefined;
+  private saveGeneration = 0;
+  private saveQueue: Promise<void> = Promise.resolve();
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
   private tickAccumulator = 0;
@@ -630,6 +639,11 @@ export class WorldInstance {
     this.homes = new HomeService(this.pluginStore);
     this.friends = new FriendsService(this.pluginStore);
     this.trade = new TradeService(this.economy);
+    this.notifications = new NotificationService(this.pluginStore);
+    const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
+      this.notifyUnread(playerId, category);
+    };
+    this.auction.setRuntime({ notifyUnread });
     this.clan.setRuntime({
       onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -640,7 +654,7 @@ export class WorldInstance {
         if (stored) return stored.name;
         return this.economy.displayName(playerId);
       },
-      sendMessage: (playerId, text) => {
+      sendMessage: (playerId, text, extra) => {
         const target = this.players.get(playerId);
         if (!target?.connected) return;
         this.sendTo(target, {
@@ -649,8 +663,32 @@ export class WorldInstance {
           playerId: 'server',
           text,
           kind: 'system',
+          ...(extra?.channel ? { channel: extra.channel } : {}),
+          ...(extra?.style ? { style: extra.style } : {}),
         });
       },
+      lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+      friendRelation: (viewerId, targetId) => this.friends.relation(viewerId, targetId),
+      requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
+      cancelFriendRequest: (fromId, targetId) => this.friends.cancelOutgoing(fromId, targetId),
+      notifyUnread,
+      playerPosition: (playerId) => {
+        const live = this.players.get(playerId);
+        if (!live) return undefined;
+        const pos = live.controller.position;
+        return { x: pos.x, y: pos.y, z: pos.z };
+      },
+      worldId: () => this.worldId,
+      getBlock: (x, y, z) => this.world.getBlock(x, y, z),
+      setBlock: (x, y, z, blockId) => this.worldView.setBlock(x, y, z, blockId),
+      loadClaims: () => this.loadClaimStore(),
+      saveClaims: (store) => this.saveClaimStore(store),
+      extraClaims: () => {
+        const claim = this.worldEvents.systemClaim();
+        return claim ? [claim] : [];
+      },
+      teleportNow: (playerId, dest) => this.teleports.now(playerId, dest, 'clan', { silent: true }),
+      showClaim: (playerId, claim) => this.claimBoundaries.show(playerId, claim),
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -669,6 +707,7 @@ export class WorldInstance {
           kind: 'system',
         });
       },
+      notifyUnread,
     });
     this.trade.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -689,6 +728,7 @@ export class WorldInstance {
           kind: 'system',
         });
       },
+      notifyUnread,
     });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
@@ -720,6 +760,7 @@ export class WorldInstance {
           if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
             return false;
           }
+          if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
           player.restingBed = undefined;
           player.controller.teleport([x, y, z]);
           if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
@@ -789,6 +830,80 @@ export class WorldInstance {
       log: (message) => serverLog(`plugin automine ${message}`),
       onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
     });
+    this.worldEvents = new WorldEventsManager({
+      world: this.world,
+      worldId: () => this.worldId,
+      now: () => Date.now(),
+      random: () => Math.random(),
+      spawn: () => this.spawn,
+      loadStore: () => this.pluginStore.load('world-events/state', {}),
+      saveStore: (store) => this.pluginStore.save('world-events/state', store),
+      createValidationContext: () => {
+        const before = this.pluginStore.readCount;
+        const claims = this.loadClaimStore().claims
+          .filter((claim) => claim.worldId === this.worldId)
+          .map((claim) => claim.volume);
+        const store = this.pluginStore.load<{ portals?: Array<{ worldId?: string; volume?: { minX: number; minY: number; minZ: number; maxX: number; maxY: number; maxZ: number } }> }>(
+          'rtpportal/portals',
+          { portals: [] },
+        );
+        const specialVolumes = (store.portals ?? [])
+          .filter((portal) => portal.worldId === this.worldId && portal.volume)
+          .map((portal) => portal.volume!);
+        const autoMineVolumes = this.autoMine.list()
+          .filter((mine) => mine.worldId === this.worldId)
+          .map((mine) => mineVolume(mine));
+        return {
+          storeReads: this.pluginStore.readCount - before,
+          claimVolumes: claims,
+          autoMineVolumes,
+          specialVolumes,
+          homes: this.homes.all(),
+          players: this.connectedPlayers().map((player) => ({
+            x: player.controller.position.x,
+            y: player.controller.position.y,
+            z: player.controller.position.z,
+          })),
+        };
+      },
+      persistWorld: () => { void this.save(); },
+      homes: () => this.homes.all(),
+      players: () => this.connectedPlayers().map((player) => ({
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+      })),
+      flush: () => this.flushBlockChanges(),
+      markDirty: () => { this.dirty = true; },
+      closeChestWindow: (x, y, z) => {
+        for (const player of this.players.values()) {
+          if (player.window.kind === 'chest' && player.window.x === x && player.window.y === y && player.window.z === z) {
+            player.window = { kind: 'inventory' };
+            player.inventoryDirty = true;
+            this.flushPlayerInventory(player);
+          }
+        }
+      },
+      broadcast: (text) => this.broadcastChat('system', 'server', text),
+      send: (playerId, text) => {
+        const player = this.players.get(playerId);
+        if (!player) return;
+        this.sendTo(player, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      log: (message) => serverLog(`plugin world-events ${message}`),
+      loadedWorldgenVersion: () => this.loadedWorldgenVersion,
+      acknowledgeWorldgenMigration: () => {
+        this.loadedWorldgenVersion = WORLDGEN_VERSION;
+        this.dirty = true;
+      },
+    });
+    this.gameplay.isExplosionProtected = (x, y, z) => this.worldEvents.isProtected(x, y, z);
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
@@ -821,6 +936,10 @@ export class WorldInstance {
     const existing = await this.worldStore.load(this.worldId);
     if (existing) {
       this.createdAt = existing.summary.createdAt;
+      this.loadedWorldgenVersion = existing.worldgenVersion;
+      if (this.loadedWorldgenVersion === undefined || this.loadedWorldgenVersion < WORLDGEN_VERSION) {
+        this.dirty = true;
+      }
       this.world.restore({
         timeOfDay: existing.timeOfDay,
         modifications: existing.modifications,
@@ -830,7 +949,11 @@ export class WorldInstance {
         blockStates: existing.blockStates,
       });
       const spawn = existing.serverWorld?.spawn ?? existing.player.spawnPoint ?? existing.player.position;
-      this.spawn = [spawn[0], spawn[1], spawn[2]];
+      // Canonical saved spawn stays put when already inside the playable AABB.
+      // Relocate would generate V3 terrain and lift Y out of schematic solids.
+      this.spawn = isPlayerCenterInsidePlayableWorld(spawn[0], spawn[2])
+        ? [spawn[0], spawn[1], spawn[2]]
+        : this.relocatePose(spawn[0], spawn[1], spawn[2]);
       this.storedPlayers = existing.players ?? {};
       for (const stored of Object.values(this.storedPlayers)) {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
@@ -842,13 +965,14 @@ export class WorldInstance {
       this.clan.load();
       this.homes.load();
       this.friends.load();
+      this.notifications.load();
       this.buyer.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
-    this.spawn = estimateWorldSpawn(this.world);
+    this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
     this.createdAt = Date.now();
     this.permissions.load();
     this.economy.load();
@@ -856,6 +980,7 @@ export class WorldInstance {
     this.clan.load();
     this.homes.load();
     this.friends.load();
+    this.notifications.load();
     this.buyer.load();
     this.preloadSpawnChunks();
     this.dirty = true;
@@ -878,6 +1003,7 @@ export class WorldInstance {
         rtpSessions: this.rtpSessions,
         selection: this.selection,
         autoMine: this.autoMine,
+        worldEvents: this.worldEvents,
         economy: this.economy,
         auction: this.auction,
         clan: this.clan,
@@ -963,6 +1089,13 @@ export class WorldInstance {
   }
 
   async save(): Promise<void> {
+    const generation = ++this.saveGeneration;
+    const run = this.saveQueue.then(() => this.flushWorldSnapshot(generation));
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  private async flushWorldSnapshot(generation: number): Promise<void> {
     const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
     for (const player of this.players.values()) {
       players[player.id] = this.toStored(player);
@@ -999,9 +1132,11 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();
+    this.notifications.persist();
     this.buyer.persist();
     this.dirty = false;
   }
@@ -1083,6 +1218,7 @@ export class WorldInstance {
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) existing.appearance = joinedAppearance;
         this.resetConnectionInput(existing);
+        this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
         const fp = sessionTokenFingerprint(existing.sessionToken);
         serverLog(
           `player joined: ${existing.name} (${existing.id}, resume) `
@@ -1436,7 +1572,9 @@ export class WorldInstance {
     else if (view === 'create') result = this.clan.openCreate(playerId);
     else if (view === 'delete') result = this.clan.openDelete(playerId);
     else if (view === 'add') result = this.clan.openAdd(playerId);
-    else if (view === 'accept') result = this.clan.openAccept(playerId);
+    else if (view === 'accept') result = this.clan.openAccept(playerId, {
+      allowInClan: this.clan.session(playerId).openedFromMenu === true,
+    });
     else if (view === 'leave') result = this.clan.openLeave(playerId);
     else if (view === 'makeleader') result = this.clan.openMakeLeader(playerId);
     else if (view === 'mine') result = this.clan.openMyClan(playerId);
@@ -1448,6 +1586,12 @@ export class WorldInstance {
 
   handleClanAction(player: ServerPlayer, message: ClientClanActionMessage): void {
     if (!this.hasClanPermission(player, message.action)) {
+      const session = this.clan.session(player.id);
+      if (session.screen !== 'closed') {
+        session.message = 'You do not have permission.';
+        this.flushClan(player);
+        return;
+      }
       this.sendTo(player, {
         type: 'clan',
         screen: 'closed',
@@ -1483,12 +1627,16 @@ export class WorldInstance {
       : action === 'confirm_delete' || action === 'cancel_delete'
         ? 'clan.delete'
         : action === 'select_player' || action === 'confirm_invite' || action === 'cancel_invite'
+          || action === 'set_invite_name' || action === 'invite_by_name'
           ? 'clan.add'
           : action === 'select_invitation' || action === 'confirm_accept' || action === 'cancel_accept'
+            || action === 'reject_invitation'
             ? 'clan.accept'
             : action === 'confirm_leave' || action === 'cancel_leave'
               ? 'clan.leave'
-              : action === 'select_member' || action === 'confirm_makeleader' || action === 'cancel_makeleader'
+              : action === 'confirm_makeleader' || action === 'cancel_makeleader'
+                || action === 'promote_veteran' || action === 'demote_veteran'
+                || action === 'transfer_leader' || action === 'confirm_transfer_leader' || action === 'cancel_transfer_leader'
                 ? 'clan.makeleader'
                 : action === 'kick' || action === 'confirm_kick' || action === 'cancel_kick'
                   ? 'clan.kick'
@@ -1677,6 +1825,7 @@ export class WorldInstance {
       friends: this.friends,
       trade: this.trade,
       clan: this.clan,
+      notifications: this.notifications,
       worldId: this.worldId,
       maxHomesFor: (entry) => {
         const live = this.players.get(entry.id);
@@ -1770,11 +1919,18 @@ export class WorldInstance {
       return;
     }
     if (outcome.kind === 'open-clan') {
+      this.clan.markOpenedFromMenu(player.id, outcome.view);
+      const result = this.openClan(player.id, outcome.view);
+      if (!result || result.ok === false) {
+        const clanSession = this.clan.session(player.id);
+        clanSession.openedFromMenu = undefined;
+        clanSession.menuEntry = undefined;
+        session.message = result && 'error' in result ? (result.error ?? 'Не удалось открыть клан.') : 'Не удалось открыть клан.';
+        this.flushMenu(player);
+        return;
+      }
       this.menuReturn.set(player.id, 'clans');
       this.menuSessions.delete(player.id);
-      this.openClan(player.id, outcome.view);
-      this.clan.markOpenedFromMenu(player.id);
-      this.flushClan(player);
       return;
     }
     if (outcome.kind === 'open-auction') {
@@ -1893,6 +2049,7 @@ export class WorldInstance {
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
     const balance = this.economy.getBalance(player.id);
+    const notifications = this.notifications.counts(player.id);
     const base = {
       type: 'menu' as const,
       screen: session.screen as GameMenuScreenKind,
@@ -1900,6 +2057,7 @@ export class WorldInstance {
       balance,
       balanceLabel: formatMegacoinAmount(balance),
       inClan,
+      notifications,
       ...(session.message ? { message: session.message } : {}),
     };
     if (session.screen === 'homes' || session.screen === 'home-delete-confirm') {
@@ -1978,7 +2136,25 @@ export class WorldInstance {
         })),
       };
     }
+    if (session.screen === 'rating') {
+      return {
+        ...base,
+        ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
+      };
+    }
+    if (session.screen === 'auction-history') {
+      return {
+        ...base,
+        auctionHistory: this.auction.historyRows(player.id),
+      };
+    }
     return base;
+  }
+
+  private notifyUnread(playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade'): void {
+    this.notifications.notify(playerId, category);
+    const player = this.players.get(playerId);
+    if (player?.connected && this.menuSessions.has(playerId)) this.flushMenu(player);
   }
 
   disconnect(playerId: string, persist = true, connectionId?: string): void {
@@ -2914,6 +3090,7 @@ export class WorldInstance {
     const eye = player.controller.eyePosition();
     const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
     if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
+      || !gameplayMayMutateBlock(x, z)
       || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
       this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
       return;
@@ -3243,6 +3420,26 @@ export class WorldInstance {
     return this.world.serializeModifications();
   }
 
+  /**
+   * Effective terrain deltas for a new client world: persistent modifications
+   * plus the active event overlay. Does not mutate `world.modifications`.
+   */
+  networkModifications(): WorldModifications {
+    return overlayEventPlacementOnModifications(
+      this.world.serializeModifications(),
+      this.worldEvents.networkPlacement(),
+    );
+  }
+
+  networkChunkModifications(cx: number, cz: number): Record<string, number> {
+    return overlayEventPlacementOnChunkModifications(
+      this.world.serializeChunkModifications(cx, cz),
+      this.worldEvents.networkPlacement(),
+      cx,
+      cz,
+    );
+  }
+
   blockStates(): WorldBlockStates {
     return this.world.serializeBlockStates();
   }
@@ -3318,7 +3515,7 @@ export class WorldInstance {
     });
     for (const player of this.players.values()) {
       if (!player.connected) continue;
-      this.gameplay.updateRiding(player, player.lastInput.sprint);
+      this.gameplay.updateRiding(player, player.lastInput.sneak);
     }
     this.recordCombatPoses();
     this.gameplay.mobs.recordPoseHistory(this.tickNumber);
@@ -3328,6 +3525,7 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
+    this.worldEvents.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {
@@ -3602,6 +3800,7 @@ export class WorldInstance {
       pitch: player.controller.pitch,
       selectedSlot: player.selectedSlot,
     };
+    player.knownChunks.clear();
   }
 
   /** Player physics + survival + mining/use hold. Invoked from GameplayKernel `players` step. */
@@ -3986,6 +4185,11 @@ export class WorldInstance {
     }
   }
 
+  private relocatePose(x: number, y: number, z: number): [number, number, number] {
+    const pose = relocateStandingPoseInsidePlayableWorld(this.world, x, y, z);
+    return [pose.x, pose.y, pose.z];
+  }
+
   private preloadSpawnChunks(): void {
     const cx = floorDiv(Math.floor(this.spawn[0]), 16);
     const cz = floorDiv(Math.floor(this.spawn[2]), 16);
@@ -4034,7 +4238,7 @@ export class WorldInstance {
         if (!this.generatedChunks.has(key)) continue;
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
-          const mods = this.world.serializeChunkModifications(x, z);
+          const mods = this.networkChunkModifications(x, z);
           this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
           this.lastChunkSends += 1;
         }
@@ -4059,6 +4263,7 @@ export class WorldInstance {
       spawn: (): [number, number, number] => instance.spawn,
       setSpawn: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         instance.spawn = [x, y, z];
         instance.dirty = true;
         return true;
@@ -4069,6 +4274,7 @@ export class WorldInstance {
         if (!isKnownBlockId(blockId) || !isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) {
           return false;
         }
+        if (!gameplayMayMutateBlock(x, z)) return false;
         if (!instance.world.setBlock(x, y, z, blockId)) return false;
         instance.dirty = true;
         instance.flushBlockChanges();
@@ -4109,8 +4315,9 @@ export class WorldInstance {
         pitch: player.controller.pitch,
       }),
       snapshot: () => player.snapshot(),
-      teleport: (x: number, y: number, z: number) => {
+        teleport: (x: number, y: number, z: number) => {
         if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
+        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
         player.restingBed = undefined;
         player.controller.teleport([x, y, z]);
         return true;
@@ -4201,7 +4408,7 @@ export class WorldInstance {
 
   private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
     const controller = new PlayerController({
-      position: [stored.x, stored.y, stored.z],
+      position: this.relocatePose(stored.x, stored.y, stored.z),
       yaw: stored.yaw,
       pitch: stored.pitch,
     });

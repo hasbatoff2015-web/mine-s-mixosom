@@ -5,6 +5,7 @@ import { interpolateVec3, lerpAngle } from '../core/entityInterpolation';
 import type { VoxelWorld } from '../world/World';
 import type { GameMode } from '../save/types';
 import { isSpaceClear, moveVoxelBody } from './voxelPhysics';
+import { clampHorizontalCenterToWorldBorder, isPlayerCenterInsidePlayableWorld } from '../world/worldBorder';
 import type { EntityHost, EntityVisual } from './EntityHost';
 import { isEntityHost } from './EntityHost';
 import { resolveEntityHost } from './resolveEntityHost';
@@ -87,7 +88,7 @@ const CART_HIT_AABB = Object.freeze({
 
 export type MinecartVariant = 'normal' | 'tnt';
 
-/** Rising edge of Shift/sprint: one keydown → one dismount. Hold does not repeat. */
+/** Rising edge of Shift/sneak: one keydown → one dismount. Hold does not repeat. */
 export function minecartDismountFromSprint(
   sprintDown: boolean,
   wasHeld: boolean,
@@ -493,25 +494,65 @@ export class MinecartManager {
           cart.position.y + lift,
           cart.position.z + dz,
         );
-        if (!isSpaceClear(this.world, candidate, shape)) continue;
-        if (this.overlapsCart(cart, {
-          minX: candidate.x - PLAYER_WIDTH * 0.5,
-          maxX: candidate.x + PLAYER_WIDTH * 0.5,
-          minY: candidate.y,
-          maxY: candidate.y + PLAYER_HEIGHT,
-          minZ: candidate.z - PLAYER_WIDTH * 0.5,
-          maxZ: candidate.z + PLAYER_WIDTH * 0.5,
-        })) continue;
-        const below = this.world.getBlock(
-          Math.floor(candidate.x), Math.floor(candidate.y - 0.05), Math.floor(candidate.z), false,
-        );
-        if (below === BlockId.Rail && !isSpaceClear(this.world, candidate.clone().setY(candidate.y + 0.2), shape)) {
-          continue;
-        }
-        return candidate;
+        if (this.isValidDismountPose(cart, candidate, shape)) return candidate;
       }
     }
-    return new Vec3(cart.position.x + 0.8, cart.position.y + 0.2, cart.position.z);
+    return this.fallbackDismountPosition(cart, shape);
+  }
+
+  private isValidDismountPose(
+    cart: MinecartEntity,
+    candidate: Vec3,
+    shape: { width: number; height: number },
+  ): boolean {
+    if (!isPlayerCenterInsidePlayableWorld(candidate.x, candidate.z)) return false;
+    if (!isSpaceClear(this.world, candidate, shape)) return false;
+    if (this.overlapsCart(cart, {
+      minX: candidate.x - PLAYER_WIDTH * 0.5,
+      maxX: candidate.x + PLAYER_WIDTH * 0.5,
+      minY: candidate.y,
+      maxY: candidate.y + PLAYER_HEIGHT,
+      minZ: candidate.z - PLAYER_WIDTH * 0.5,
+      maxZ: candidate.z + PLAYER_WIDTH * 0.5,
+    })) return false;
+    const below = this.world.getBlock(
+      Math.floor(candidate.x), Math.floor(candidate.y - 0.05), Math.floor(candidate.z), false,
+    );
+    if (below === BlockId.Rail && !isSpaceClear(this.world, candidate.clone().setY(candidate.y + 0.2), shape)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Last-resort pose: always inside the playable AABB, preferring the world interior.
+   * May overlap solids if every clear cell is outside the border.
+   */
+  private fallbackDismountPosition(
+    cart: MinecartEntity,
+    shape: { width: number; height: number },
+  ): Vec3 {
+    const interior = clampHorizontalCenterToWorldBorder(cart.position.x, cart.position.z);
+    const towardX = cart.position.x >= 0 ? -1 : 1;
+    const towardZ = cart.position.z >= 0 ? -1 : 1;
+    const offsets: Array<readonly [number, number]> = [
+      [0, 0],
+      [towardX, 0],
+      [0, towardZ],
+      [towardX, towardZ],
+      [towardX * 2, 0],
+      [0, towardZ * 2],
+      [-towardX, 0],
+      [0, -towardZ],
+    ];
+    for (const lift of [0, 0.2, 1]) {
+      for (const [dx, dz] of offsets) {
+        const clamped = clampHorizontalCenterToWorldBorder(interior.x + dx, interior.z + dz);
+        const candidate = new Vec3(clamped.x, cart.position.y + lift, clamped.z);
+        if (this.isValidDismountPose(cart, candidate, shape)) return candidate;
+      }
+    }
+    return new Vec3(interior.x, cart.position.y + 0.2, interior.z);
   }
 
   update(deltaSeconds: number, input: MinecartUpdateInput = {}): void {
@@ -747,8 +788,14 @@ export class MinecartManager {
 
     if (!cart.rail) return;
     const pose = sampleRail(cart.rail, cart.progress);
-    cart.position.set(pose.x, pose.y, pose.z);
-    cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
+    const clamped = clampHorizontalCenterToWorldBorder(pose.x, pose.z, BODY.width);
+    cart.position.set(clamped.x, pose.y, clamped.z);
+    if (clamped.x !== pose.x || clamped.z !== pose.z) {
+      cart.alongSpeed = 0;
+      cart.velocity.set(0, 0, 0);
+    } else {
+      cart.velocity.set(pose.tangentX * cart.alongSpeed, pose.tangentY * cart.alongSpeed, pose.tangentZ * cart.alongSpeed);
+    }
     cart.yaw = pose.yaw;
     cart.pitch = pose.pitch;
   }

@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: merge origin/main into wolves-cats-pets — 2026-09-23
+
+- Semantic merge текущего `origin/main` (`5d972cfc`) в `codex/wolves-cats-pets`.
+- Конфликты: docs (`ARCHITECTURE`, `PROJECT_STATE`, `ROADMAP`, `TESTING`) и `src/entities/MobManager.ts` (union: playable-border spawn + wild `countWildMobs`).
+- `Game.ts` / `WorldInstance.ts` / `gameplay.ts` / `protocol.ts` / `permissions.ts` / `AnarchyServer.ts` / `PlayerArrowManager.ts` / `main.ts` слились автоматически; сохранены и pets (`resolvePetUseTarget`, receive-time `entity_use` freeze, `/spawnpet`, `pets.limit.N`), и current-main (`WorldBorderRenderer`, `WORLDGEN_VERSION = 3`, `syncLocalCombatUse`, `events.*`).
+- OWNER MANUAL QA (до sync, владелец): hit registration, wolf taming/feeding, pet interaction, latest visual fixes. Cursor post-sync live smoke — в отчёте merge.
+- Подробности: `docs/reports/2026-09-23_merge-main-into-wolves-cats-pets.md`.
+
 ## Последний проход: pet hit registration / wolf tail / spawnpet — 2026-09-22
 
 - Ветка `codex/wolves-cats-pets`. Sequenced melee и `entity_use` строят click-ray из `action.yaw/pitch`, глаз остаётся command-boundary. `entity_use` замораживает pose цели в момент receive (`receivedServerTick`), очередь за `commandSeq` больше не старит rewind. `MAX_MOB_REWIND_TICKS = 8` (400 ms), `MAX_PVP_REWIND_TICKS = 5`. Targeting AABB = visual core ∪ ±width/2. Хвост волка: legacy pitch/Y-wag через адаптер. Оператор `/spawnpet <wolf|cat>`. DEV F3 `PetUse`.
@@ -25,6 +33,169 @@
 - Ветка `codex/wolves-cats-pets` (без merge в `main`). `wolf` / `cat` — обычные server-authoritative mobs в `MobManager`, не вторая симуляция. Natural spawn через weighted passive selection (лес/равнины/снег; пустыня без cat/wolf). Приручение `entity_use` (CLIENT OWNS INTENT / SERVER OWNS RESULT). `ownerId` = стабильный `player.id`. Sit/stand, follow, bounded teleport (24 кандидата, `getBlock(..., false)`), wild cat fear, tamed wolf combat через существующий damage/PvP/claims. Default pet limit 2, роли `pets.limit.N` (hard max 10). Tamed pets не distance-despawn и не занимают wild `passiveCap`.
 - Модели: code-defined legacy ModelWolf / ModelOcelot, PNG 128×64 / logical 64×32, collar overlay без shared-material mutation.
 - Подробности: `docs/reports/2026-09-20_wolves-cats-pets.md`.
+
+## Последний проход: Merge origin/main into Worldgen V3 — 2026-09-21
+
+- Semantic merge текущего `origin/main` (`d2d45e6`, sword blocking PR #99) в `cursor/worldgen-v3-water-gourds-border-74e7`.
+- `Game.ts` слился автоматически: сохранены и `syncLocalCombatUse` / `combat.swordBlocking`, и `WorldBorderRenderer` / `gameplayMayMutateBlock` / `relocateStandingPoseInsidePlayableWorld`.
+- Restore of an already-inside schematic/Anarchy spawn keeps the saved Y; outside poses still relocate. AutoMine 15³ remesh fixture flattens the sea-level Y band so V3 water faces do not inflate the existing 40 ms bound.
+- Конфликты только в docs: сохранены оба прохода (Worldgen V3 + sword blocking).
+- OWNER MANUAL QA (до этого sync, владелец): Worldgen V3 generation и финальная density `GOURD_PATCH_DENSITY = 0.25` проверены в игре; результат хороший. Two-client border QA и прочие edge cases не утверждаются.
+- Подробности: `docs/reports/2026-09-21_merge-main-into-worldgen-v3.md`.
+
+## Последний проход: Wild gourd density 0.25 — 2026-09-21
+
+- Owner manual QA found wild pumpkin/melon patches too dense. `GOURD_PATCH_DENSITY = 0.25` scales the **final** spawn chance (including melon near-water bonus). Lattice stays 32, salts and fruitCount unchanged. Surviving patches are a deterministic subset of the old set.
+- Sampler 8×2048: pumpkin 7582→1896 patches, melon 2434→610; avg size still ~2. `WORLDGEN_VERSION` stays 3.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+## Последний проход: Worldgen V3 audit harden — border / minecart / migration — 2026-09-21
+
+- Follow-up before merge of Worldgen V3. Gameplay use (bucket, flint, farming, legacy blocks, mining, signs) cannot mutate scenery outside ±10000. Minecart enter/dismount keeps the full player AABB inside the playable volume.
+- World-event V2→V3 rebase uses the placing journal as recovery authority, is one-shot per manager instance, and marks the world dirty so `worldgenVersion` persists as 3 after rebase.
+- `hydrologyRegion` is the mask label (dry coasts allowed). `waterBiome` is wet-only. Submerged floors no longer use GrassBlock/SnowBlock.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-border-migration-harden.md`.
+
+## Последний проход: Worldgen V3 — hydrology, gourds, world border — 2026-09-21
+
+- `WORLDGEN_VERSION = 3`. Migration A: V2 saves keep player modifications and rematerialize natural terrain with the V3 generator; the next save writes `worldgenVersion: 3`. There is no retained V2 generator.
+- Hydrology is a negative-only, seed+XZ deterministic layer (`src/world/hydrology.ts`). Land biomes stay plains/forest/desert/snowy_plains; `ColumnInfo.hydrologyRegion` is the mask label; `ColumnInfo.waterBiome` is wet-only `none|lake|ocean`.
+- Wild Pumpkin/Melon use existing block IDs and separate decoration salts. Staged `generate` matches monolithic.
+- Playable world is `-10000 <= x,z < 10000` (`src/world/worldBorder.ts`). Shared AABB collision on client prediction and server. `WorldBorderRenderer` draws four translucent red planes; scenery chunks beyond the plane still stream with normal view distance.
+- Подробности: `docs/reports/2026-09-21_worldgen-v3-water-gourds-border.md`.
+
+## Последний проход: Merge origin/main into sword-blocking — 2026-09-21
+
+- Semantic merge актуального `origin/main` (`cd8ecf3`, world events + always-run/KeyC) в `cursor/sword-blocking-animation-7e91`.
+- Код (`Game.ts`, `PlayerVisual`, InputManager) слился автоматически. Конфликты только в docs: сохранены оба прохода.
+- Sword-use остаётся render-only; `PLAYER_MOVE_SPEED = 7` / Shift crouch / KeyC camera из main не трогались.
+
+## Последний проход: Sword blocking — меч следует за рукой — 2026-09-20
+
+- Third-person ПКМ больше не задаёт отдельный local/world TRS меча. Как при ЛКМ swing: меч остаётся child `rightArm` → `heldItem` с `/moveitems` калибровкой; поднимается только рука.
+- `THIRD_PERSON_HELD_ITEM_DEFAULTS.sword` не менялся. First-person overlay на viewmodel сохранён (рука в FP скрыта).
+- Live QA: `?qaPlayer=1` + Anarchy FP/TP-front — меч следует за поднятой рукой; два WS-клиента синхронизируют `swordBlocking`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-hand-follow.md`.
+
+## Последний проход: Sword blocking animation live fix — 2026-09-20
+
+- Живой Anarchy: замедление ПКМ работало, а поза меча не менялась. Причина: `tickOnline` слал `use` и тормозил из `input.using`, но не вызывал `combat.updateUse`, поэтому локальный `swordBlocking` оставался `false`. Overlay в `FirstPersonRenderer` / `PlayerVisual` не запускался.
+- И SP, и Anarchy теперь синхронизируют held/use через `Game.syncLocalCombatUse` до `setHeldItems`. Transform overlay (base calibration + extra TRS) не переписывался — он просто не получал `swordBlocking === true`.
+- Live QA: first-person и local third-person поза видна. Два WS-клиента на том же Anarchy-сервере: observer видит `presentation.swordBlocking` true/false. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation-live-fix.md`.
+
+## Последний проход: Sword blocking animation (1.5.2-style) — 2026-09-20
+
+- Удержание ПКМ с мечом по-прежнему берёт существующий `CombatSystem.swordBlocking` / `input.using` / `input.use`. Скорость движения ×0.2 не менялась.
+- First-person и third-person (локальный и remote) плавно поднимают меч в blocking pose за 0.1 с поверх `/moveitems` / `FIRST_PERSON_SPRITE_POSE`. Калибровка idle не перезаписывается.
+- Сервер уже публиковал `presentation.swordBlocking`; `RemotePlayerView` → `PlayerVisual` теперь применяет тот же overlay, что и локальный third-person.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_sword-blocking-animation.md`.
+
+## Последний проход: Merge origin/main into always-run / KeyC — 2026-09-20
+
+- Semantic merge `origin/main` (`6447556`, world events + event chest) into `cursor/player-run-crouch-camera-d1a5`.
+- Код (`WorldInstance`, `Game`, hidden-tab tests) слился автоматически. Конфликты только в docs: сохранены оба прохода.
+- Скорости `PLAYER_MOVE_SPEED = 7` / `SNEAK_SPEED = 2`, Shift=crouch, KeyC camera, minecart `WALK_SPEED` сохранены.
+
+## Последний проход: Always-run 7 / crouch 2 — 2026-09-20
+
+- Фиксированные горизонтальные скорости: `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2`. Multiplier `×1.25` убран.
+- WASD без Shift по-прежнему всегда бег; Shift — существующий crouch (высота/камера/hitbox/pose/edge/прыжок не трогались).
+- `WALK_SPEED = 4.317` и minecart cap `×1.5` без изменений. KeyC/F5 без изменений.
+- Подробности: `docs/reports/2026-09-20_player-move-speed-7-crouch-2.md`.
+
+## Последний проход: Always-run WASD, Shift=crouch, KeyC camera — 2026-09-20
+
+- Обычная ходьба убрана: WASD без Shift всегда использует `PLAYER_MOVE_SPEED` (теперь фиксированные 7 после follow-up). Источник истины — `src/core/constants.ts`, тот же `PlayerController` на клиенте и сервере.
+- Shift — существующий crouch/sneak (высота 1.5, глаз 1.27, pose, edge protection). Скорость приседа теперь фиксированные 2. Прыжок из crouch по-прежнему разрешён. Диагональ нормализуется `hypot`.
+- Камера 1P↔3P: физическая `event.code === 'KeyC'` (`DESKTOP_CAMERA_TOGGLE_CODE`). F5 больше не переключает камеру и не получает новое действие.
+- Desktop sprint key убран; touch sprint и `movement.sprint` остаются для mobile pose/FOV. Minecart dismount — rising edge Shift/sneak, не KeyC.
+- `WALK_SPEED = 4.317` сохранён для minecart cap (`×1.5`).
+- Подробности: `docs/reports/2026-09-20_player-run-crouch-camera.md`.
+
+## Последний проход: Sync origin/main into world-events — 2026-09-20
+
+- Semantic merge `origin/main` (`9b8f785`) into `cursor/world-events-event-chest-525a`. Conflicts only in docs + `server/gameplay.ts` (kept both `isExplosionProtected` and minecart occupancy comment).
+- Clan `set_base` overlap now includes the virtual world-event column (`extraClaims`).
+- Подробности: `docs/reports/2026-09-20_merge-main-into-world-events.md`.
+
+## Последний проход: Event overlay on reconnect — 2026-09-20
+
+- Welcome/chunk_data теперь отдают effective network modifications: persistent `world.modifications` + active event `placement`. Persistent save по-прежнему без overlay (`record: false`).
+- `ServerPlayer.knownChunks` сбрасывается с connection epoch (`resetConnectionInput`), чтобы reconnect не считал новый `VoxelWorld` уже простримленным.
+- Подробности: `docs/reports/2026-09-20_world-events-reconnect-overlay.md`.
+
+## Последний проход: World events persistence/streaming races — 2026-09-19
+
+- Follow-up после code audit: event overlay больше не пишет `world.modifications`; snapshot restore снимает `BlockRenderState` когда его не было; resumable MeshJob не помечает chunk clean после mutation уже собранной секции; server event search генерирует far chunks через `continueGeneration` с лимитом 1 commit/tick; failed search не спавнит после `cleanupAt`; catch-up берёт lock/announce из фактического `now`; перед place — один fresh validation context.
+- Не переписывались scheduler IANA, virtual claim, journal/saveGeneration, loot, texture art.
+- Подробности: `docs/reports/2026-09-19_world-events-persistence-streaming-races.md`.
+
+## Последний проход: World events hardening + bounded streaming — 2026-09-19
+
+- Follow-up после live QA: Europe/Moscow scheduler, virtual full-height event protection, spawn validation без sync disk IO, crash journal, incremental mesh/generation slices, F3 latest/max spike telemetry.
+- EventChest renderer не был root cause FPS. Просадки на дистанции 3000–5000 — unbounded chunk gen/mesh.
+- Подробности: `docs/reports/2026-09-19_world-events-hardening.md`.
+
+## Последний проход: Timed world events + event chest — 2026-09-19
+
+- Anarchy builtin `world-events`: daily timed event foundation + first `resource_chest` event (warn 15 мин, spawn locked chest + 5×5 shrine, unlock 5 мин, cleanup 2 ч + snapshot restore). Persist `plugin-data/world-events/state.json`.
+- Shared `/wand` on `PlayerSelectionService` (click1/click2/cycle). AutoMine keeps a private selection and skips while wand mode is on; `/automine wand` turns shared wand off.
+- `BlockId.EventChest = 166`, texture `entity/chest/event` (Crimson Relic, UV/alpha 1:1 with source). OakSign stays 165.
+- Подробности: `docs/reports/2026-09-19_world-events-event-chest.md`.
+
+## Последний проход: Nameplate clipping, ник 13 символов, offset 2.05 — 2026-09-20
+
+- Длинный ник обрезался, потому что Press Start 2P 44px шире фиксированного logical canvas 512px (~12 глифов). Canvas теперь `max(512, measureText + stroke 6 + pad 32×2)`; world width растёт пропорционально, высота/кегль 44px без изменений.
+- `MAX_PLAYER_NAME_LENGTH = 13`. Сервер/`sanitizePlayerName` отклоняют 14+, без silent truncate. UI `maxlength` берёт ту же константу. Названия кланов (3–16) не трогались.
+- Nameplate offset `2.15 → 2.05`.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-clip-nick-limit.md`.
+
+## Последний проход: Player nameplate без фона, пиксельный шрифт, 2× и качество holograms — 2026-09-20
+
+- `PlayerNameplate` остаётся Sprite на `RemotePlayerView` (не world hologram entity). Ник, HP, hide/fade/invisibility, appearance/skins не менялись по логике.
+- Фон/плашка убраны. Ник — тот же `hologramCanvasFont('display')` / **Press Start 2P**. Весь текст 2× (world 2.1×0.84, canvas 44px/36px). HP `#ff1f1f`.
+- Качество close-up: те же `hologramTextCanvas.ts` helpers, что у `HologramRenderer` (supersample 2–4×dpr, Linear mag, mipmaps, `needsUpdate`).
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_player-nameplate-hologram-quality.md`.
+
+## Последний проход: Точка базы клана — 2026-09-20
+
+- У клана одна persistent серверная точка базы: Diamond claim того же радиуса 30, что и личный алмазный приват (`CLAIM_ANCHOR_RADIUS.diamond_block`).
+- Глава ставит/меняет базу с текущей позиции (блок под ногами → `diamond_block`). Кнопка открывает подтверждение (`Подтвердить` / `Отмена`); установка идёт только после подтверждения с live-позицией. Bedrock не заменяется: якорь на блок выше. Пересечение с любым существующим claim запрещено, в том числе со своими личными. Cooldown 24ч на клан, только после успешной установки.
+- Участники телепортируются через существующий `TeleportService` (`reason: 'clan'`) на `x+0.5, y+1, z+0.5`. Доступ в зону — текущее членство (`Claim.clanId`), не статический список UUID.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-20_clan-base-point.md`.
+
+## Последний проход: Auction history + menu unread badges — 2026-09-19
+
+- Формат объявления главы: `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - текст` (без кавычек, цвет `#4ecfdc` без изменений).
+- Аукцион: кнопка **История сделок** (вложенный экран меню). Только подтверждённые buy/sell, 24ч TTL, UI 20 записей, persist `plugin-data/auction/history.json`.
+- Unread badges на плитках Друзья/Кланы/Аукцион/Обмен: жёлтый квадрат, чёрная цифра. Сервер `NotificationService` (`plugin-data/notifications/unread.json`). Сброс при `menu_action open` соответствующей вкладки.
+- Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_auction-history-menu-notifications.md`.
+
+## Последний проход: Clan invitations + leader announcement — 2026-09-19
+
+- Рейтинг: суммы монет рисуются через существующий `icon_coin.png` / `.mc-menu-coin`, без Unicode 🪙.
+- Вкладка Кланы: кнопка **Приглашения** всегда доступна. Список актуальных инвайтов (клан, ник пригласившего, TTL) с **Принять** / **Отклонить**. Серверные проверки те же, что у `acceptInvitation`. Чат приглашения: `Игрок <ник> пригласил вас в клан <название>. Примите приглашение в меню`.
+- **Объявление соклановцам** только у Главы (GUI + сервер). Лимит как у чата (`MAX_CHAT_LENGTH` = 128). Текст `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - …` бирюзовый (`style: announcement`) только online-соклановцам. Cooldown 3 часа на клан, `announcementCooldownUntil` в `clans.json`, переживает рестарт.
+- Protocol: `clans_invitations`, `reject_invitation`, `open_announce`, `set_announce_text`, `send_announcement`. Не мержить без ревью владельца.
+- Live Anarchy QA (Vite 4173 + `dev:server`): новый текст приглашения, вкладка **Приглашения**, кнопка объявления только у Главы, cooldown 3ч после рестарта, рейтинг с `icon_coin.png` без □, overlay X/E.
+- Подробности: `docs/reports/2026-09-19_clan-invites-announce.md`.
+
+## Последний проход: Clan roles + Rating menu — 2026-09-19
+
+- Существующий `ClanService` расширен ролями **Глава / Ветеран / Участник**. `ownerId` по-прежнему лидер. Ветеран: invite + kick только `member`. Глава: все права. Передача главы только ветерану; старый глава становится ветераном.
+- Приглашение по нику на вкладке Запросы, inline-ошибки, TTL 24ч. `/clan add` по-прежнему только online.
+- Карточка участника: ник, онлайн-снимок (без polling), роль, монеты, убийства, друзья (добавить / уже / исходящая+отмена), «Это вы», kick/promote/demote/transfer по правам.
+- PvP-убийства пишутся в `EconomyService` (`balances.json.kills`) независимо от 5-минутного кулдауна награды. Мобы не считаются. Убийства клана = сумма текущих участников.
+- Поиск кланов: сорт по монетам (как раньше: members, затем `createdAt`) и по убийствам (tie-break имя). Меню **Рейтинг**: 4 независимых топа, 50 / 10 / 5 страниц, жёлтая своя строка, место даже если >50. Сетка меню 4+4, иконка `public/ui/menu/icon_rating.png`.
+- Миграция: нет `roles` → owner=leader, остальные member; нет `kills` → 0.
+- Overlay QA: clan/menu больше не считаются inventory (`inventoryContext`); backdrop `replaceWith` без click-through; `resumeLookIfNoOverlay` **не** вызывает `enterPlaying()` (только PLAYING + pointer lock, если нет blocking overlay); роли `.mc-clan-role` `#e8e8e8`, owner/card-meta `#d8d8d8`. Transparent `icon_rating.png`. Не мержить без ревью владельца.
+- Подробности: `docs/reports/2026-09-19_clan-roles-rating.md`.
 
 ## Последний проход: minecart occupancy + stable W/S controls — 2026-09-20
 
@@ -146,7 +317,7 @@
 
 ## Последний проход: Utility Items final polish — 2026-09-15
 
-- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая F5-перспектива не переписывается, F5 в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
+- Во время `session.restingBed` рендер использует `effectiveCameraPerspective = thirdPersonBack` с первого resting frame: world `PlayerVisual` виден, first-person руки скрыты, направление камеры — back. Сохранённая camera-toggle перспектива не переписывается, KeyC в bed rest игнорируется, после Space возвращается прежний режим, включая `thirdPersonFront`. Bed pose, anchor, Y offset и сетевое состояние не менялись.
 - Только `totem.activate`: catalog volume `0.9 → 0.45`; optional `startOffsetSeconds = 0.7` передаётся через `named()` в `AudioBufferSourceNode.start(0, 0.7)`, чтобы сразу начать после тишины внутри MP3. Остальные события используют `start(0)`; короткий/невалидный buffer тоже безопасно использует `start(0)`. Combat voice policy, retry и один authoritative `world_sound` не менялись.
 - HUD offhand отделён от центрированного hotbar: CSS gap `8 → 20px` (сдвиг влево на 12 CSS px). Браузерные измерения при 1280×720, 1920×1080, 2560×1440, 960×600 подтвердили центр hotbar и 20px gap. Browser Audio QA: 27/27 decoded, volume 0.45, один `recentPlays`, без drops. Relevant tests 123/123, sim 66/66, typechecks/build/checks PASS; full Vitest 234/238 files, 2289/2297 tests и один worker timeout — не green (известные extractor/CRLF/fire timeout/tick-load failures). Интерактивный bed/PvP QA в in-app browser ограничен недоступным pointer lock; 10 двухклиентных активаций со слуховой проверкой не выполнены. Детали: `docs/reports/2026-09-15_utility-items-final-polish.md`.
 
@@ -553,7 +724,7 @@
 ## Последний проход: AutoMine plugin — 2026-09-09
 
 - Builtin Anarchy plugin `automine` (`/automine`). Кубоидные авто-шахты, weighted random из 12 существующих BlockId, reset через `VoxelWorld.applyBlockBatch` (64 блока/тик), эвакуация через `TeleportService`.
-- Выделение — свой wand (`wooden_axe`), не Claims / не `PlayerSelectionService`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
+- Выделение авто-шахты — свой wand (`wooden_axe`) на `AutoMineManager`, не Claims. Общий `/wand` живёт в `PlayerSelectionService` и **не** перехватывает клики AutoMine, пока не включён `activateWand`. Persistence: `plugin-data/automine/automines.json` + snapshot исходных блоков для delete-restore.
 - Шансы зашиты в коде (сумма 100%, Obsidian = Coal, Titanium самый редкий). Нет команд изменения composition.
 - TitaniumOre остаётся 161; TNT Powerful/Destructive 162/163 — конфликт ID не возвращался.
 - Handoff: `docs/reports/2026-09-09_automine-plugin.md`.
@@ -1017,7 +1188,7 @@
 
 - Ветка `cursor/online-prediction-remesh-86e1`. **Не merge в main.**
 - Owner: одна вкладка игры, переключение на ChatGPT на 1–2 с → jitter сильно хуже / иногда снова гладко. Не duplicate sessionToken.
-- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`WALK_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
+- **Пока вкладка BACKGROUND:** `tickOnline` не бежит (pred=0, send=0). Сервер продолжает `lastInput` на 20 TPS. `player_state` приходит, но latest-slot + `duplicate-seq` ignore. Локальная поза заморожена, сервер уходит на ~`PLAYER_MOVE_SPEED×hiddenSeconds`. Resume: RAF freeze → до 4 catch-up ticks со stale pose → correction storm. Сервер **не** копит FIFO команд — sticky lastInput.
 - **Политика:** hide → один idle (сервер останавливается); show → `previousTime`/`accumulator` reset, force resync к последнему snapshot, history сброшена, look сохранён. Не меняли physics / tolerance / interpolation / TPS.
 - DEV: F3 `visibility/focus/hiddenDurationMs/resumeTicks/resumeSnapshots`, `inGap/inBurst`; логи `[vis]`, `[vis-resume]`, `[vis-resync]`.
 - Tests: hidden-tab **9/9**; prediction **29/29**; tick-clock **6/6**; typecheck client/server/sim PASS.
@@ -1151,8 +1322,8 @@
 - `Game.tickOnline` не запускает client world simulation. Perspective и `PlayerVisual` остаются presentation-only; gameplay targeting/reach по-прежнему строятся из `PlayerController.eyePosition()` / `viewDirection()`.
 - `RemotePlayerView` больше не создаёт временный `BoxGeometry`: bounded snapshot interpolation управляет feet/yaw/pitch/velocity/state, а canonical `PlayerVisual` отвечает за rig, render-frame locomotion, invisibility и shared entity lighting.
 - Protocol несёт appearance metadata только на join/welcome/`player_joined` и редком `player_appearance`; live `player_state` по-прежнему без skin texture/`skinId`. Remote `PlayerVisual` получает `info.appearance`, а не `DEFAULT_PLAYER_APPEARANCE`.
-- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
-- F5 сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- KeyC сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay (`event.code === 'KeyC'`) и не очищает WASD/input sequence или network session. F5 камеру не переключает. Camera collision читает canonical `world/blockGeometry`/collision boxes.
+- KeyC сохраняет `first → back → front → first`, обрабатывается только edge-triggered в active gameplay и не очищает WASD/input sequence или network session. Camera collision читает canonical `world/blockGeometry`/collision boxes.
 - `BlockBreakingOverlay` остаётся render-path consumer того же authoritative eye/look target во всех perspectives; mapping/cache/no-remesh contract не менялся.
 - Focused player gate **41/41**, expanded player/server/network/overlay gate **236/236**, shared sim **42/42**, server **73/73**; all typechecks, boundaries, Node smokes, build, size and archive pass. Full comparable run has no new failure class versus exact main; details below.
 - Подробности исходной реализации: `docs/reports/2026-08-31_player-skins-third-person.md`; post-server results добавлены в его секцию `POST-SERVER INTEGRATION`. Отдельный integration handoff: `docs/reports/2026-09-02_pr31-player-visual-server-integration.md`.
@@ -1164,8 +1335,8 @@
 - `PlayerVisual` — артикулированная модель высотой 1.8 блока: раздельные head/body/arms/legs, правильные modern 64×64 left/right UV, Classic 4 px arms, Slim 3 px arms и пониженный Slim shoulder pivot, отдельные hat/jacket/sleeves/pants overlays. Feet origin совпадает с `PlayerController.position`.
 - First-person empty arm использует тот же appearance/texture и right-arm UV, включая right sleeve toggle. Runtime `Game.setPlayerAppearance()` меняет world + viewmodel без reload мира. Главное меню показывает блок «Персонаж» с тем же `PlayerVisual`; «Выбрать скин» открывает сетку всех 45 production skins. Confirm вызывает `setPlayerAppearance`; Cancel не сохраняет preview.
 - Клиентский appearance state — `fc.player.appearance` (тот же localStorage подход, что никнейм). Online Anarchy хранит metadata за `playerId` в существующем `players.json`.
-- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует.
-- F5 в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; вне gameplay browser F5 не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
+- Remote nameplate — отдельный billboard sprite на `RemotePlayerView` (не hologram entity): ник + `❤ HP` из authoritative health, интерполяция вместе с remote feet, fade/hide по дистанции, hide при invisibility. Локальный first/third person свой nameplate не рисует. Визуал без background panel, шрифт hologram `display` (Press Start 2P), высота 2×, supersample как у обычных holograms, HP `#ff1f1f`. Logical width считается от `measureText` с padding, max ник 13, offset `2.05`.
+- KeyC в активном gameplay циклически переключает `firstPerson → thirdPersonBack → thirdPersonFront → firstPerson`; F5 больше не перехватывается. Default third-person distance — 4 блока. Восемь corner probes проверяют swept camera volume через `blockCollisionBoxes`; препятствие втягивает камеру сразу, освобождение восстанавливает distance плавно. Gameplay raycast/targeting остаётся от authoritative player eye/view.
 - World player visual обновляется на render frame из interpolated feet и live input look, но physics/combat/mining остаются fixed 20 TPS. Есть walk/sprint/sneak/jump/fall/swing/mining/bow/sword-block/food poses, independent head/body yaw, cached third-person held item, voxel entity lighting, hurt tint и invisibility (skin скрыт, held item остаётся).
 - DEV `?qaPlayer=1`: 46 skin entries (45 supplied + UV QA), Classic/Slim, layers, poses, sword/pickaxe/block/bow/food, head yaw/pitch, hurt/invisibility и first/back/front. Browser QA подтвердил front/back UV, Slim shoulder, first-person arm, layer draw-count `13 → 7`, held pickaxe/bow; console warnings/errors отсутствуют.
 - Права на 45 пользовательских skins не выводятся из технической интеграции: перед публикацией владелец проекта должен подтвердить происхождение/лицензии, особенно для узнаваемых персонажей. Generated ImageGen concept сохранён только в ignored `.local/` и не ship/commit.
@@ -1496,7 +1667,7 @@
 | Entities | Готово для alpha | 8 legacy articulated rigs, 1-block mob step-up, falling-block entities, zombie limb/pose fix, simple AI, voxel lighting; **render interpolation** (pos/yaw/walkPhase) при simulation `20 TPS` |
 | Day/night | Alpha approximation | 24,000-tick clock; terrain and world entities compose the same sky/block sample (`sky * daylight` vs warm torch block light) without Lambert N·L |
 | Saves | Готово для alpha | IndexedDB schema 1 для **singleplayer**; online Anarchy persist — filesystem `server/data/worlds/anarchy/` |
-| Desktop input | Готово | Pointer lock, WASD, Shift sprint / fly descend, Ctrl fly sprint, double Space Creative flight, C sneak, mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
+| Desktop input | Готово | Pointer lock, WASD always-run, Shift crouch / fly descend, Ctrl fly sprint, double Space Creative flight, KeyC camera 1P/3P (layout-independent `event.code`), mouse, F3 debug, **T chat** / **`/` command**, E inventory, DEV F8 chunk grid / F7 light view / F9 freeze streaming inspect; `?worldgenDebug=1` пишет surfaceY/mountain/hills/cave/cap/block на chunk HUD |
 | Touch/mobile | Alpha approximation | Joystick, look zone, action buttons, safe-area CSS and portrait rotate overlay |
 | Responsive browser QA | Готово для заданной matrix | Все desktop/mobile viewport sizes прошли visibility/count checks; representative visual QA выполнен на `667×375` и portrait |
 | Audio | Готово для alpha | Cached sample SFX (`AudioManager.play` / `playAt` / `playBlock`), ~26 short MP3, material sound groups, restrained mining/footsteps, positional world events; pause/mute/volume; no music |

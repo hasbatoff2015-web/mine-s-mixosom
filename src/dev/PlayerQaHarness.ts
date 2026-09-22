@@ -217,7 +217,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   };
   root.addEventListener('click', onClick);
   const onKeyDown = (event: KeyboardEvent): void => {
-    if (event.code !== 'F5' || event.repeat) return;
+    if (event.code !== 'KeyC' || event.repeat) return;
     event.preventDefault();
     perspective = nextCameraPerspective(perspective);
   };

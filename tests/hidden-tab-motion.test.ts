@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { BlockId, getBlockDefinition } from '../src/blocks';
-import { FIXED_DT, MAX_CATCH_UP_TICKS, MAX_FRAME_DELTA, WALK_SPEED } from '../src/core/constants';
+import { FIXED_DT, MAX_CATCH_UP_TICKS, MAX_FRAME_DELTA } from '../src/core/constants';
 import { advanceFixedStep } from '../src/core/fixedStep';
 import { worldSimulationActive } from '../src/core/gameplayModal';
-import { PageVisibilityProbe } from '../src/debug/pageVisibilityProbe';
+import { PageVisibilityProbe, VISIBILITY_PROBE_WINDOW_MS } from '../src/debug/pageVisibilityProbe';
 import type { MoveInput } from '../src/input/MoveInput';
 import {
   evaluateHiddenTabResume,
@@ -388,6 +388,16 @@ describe('page visibility probe', () => {
     expect(rates.inputsPerSec).toBeCloseTo(0.5, 5);
     expect(rates.ticksPerSec).toBeCloseTo(0.5, 5);
     expect(rates.snapsPerSec).toBeCloseTo(0.5, 5);
+  });
+
+  it('marks hidden and resume-window samples as background, not gameplay', () => {
+    const probe = new PageVisibilityProbe();
+    expect(probe.isBackgroundSample(0)).toBe(false);
+    probe.notifyHidden(1000, { predSeq: 1, ackSeq: 1, pending: 0, accumulator: 0, alpha: 0 });
+    expect(probe.isBackgroundSample(1100)).toBe(true);
+    probe.notifyVisible(2000, { predSeq: 2, ackSeq: 2, pending: 0, accumulator: 0, alpha: 0 });
+    expect(probe.isBackgroundSample(2100)).toBe(true);
+    expect(probe.isBackgroundSample(2000 + VISIBILITY_PROBE_WINDOW_MS + 1)).toBe(false);
   });
 
   it('does not treat a second hidden notification as a new hide', () => {

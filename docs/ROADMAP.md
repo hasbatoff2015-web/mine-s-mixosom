@@ -1,5 +1,10 @@
 # Roadmap
 
+## 2026-09-23: Merge origin/main into wolves-cats-pets
+
+- [x] Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`.
+- [x] Keep pets (taming, ownership, hit registration, models) and current-main Worldgen V3 / border / world-events / sword blocking / run-crouch-camera.
+
 ## 2026-09-22: pet hit registration / wolf tail / spawnpet
 
 - [x] Click-time `action.yaw/pitch` for sequenced melee and `entity_use` rays; command-boundary eye/slot stay server-owned.
@@ -8,7 +13,7 @@
 - [x] Targeting AABB unions visual core with ±`MobDefinition.width/2`; physics width/height unchanged.
 - [x] Wolf tail Minecraft-like pose via `legacyRotationToThree` (wild/angry/tamed/sit, Y wag).
 - [x] Operator `/spawnpet <wolf|cat>` (`/petspawn` alias); no spawn eggs; natural weights unchanged.
-- [ ] Owner live Anarchy QA: Bones/meats, moving hits, latency, wolf tail.
+- [x] Owner live Anarchy QA: Bones/meats, moving hits, wolf tail (owner confirmed after latest fixes; latency not separately claimed).
 
 ## 2026-09-22: pet geometry / cat targeting
 
@@ -41,11 +46,140 @@
 - [x] Tamed pets excluded from wild cap / distance despawn; persistence + snapshots.
 - [ ] Owner live two-client QA: tame, follow, teleport snap, guest cannot sit/stand.
 
-- [x] `wolf` / `cat` kinds, biome-weighted passive spawn, legacy models + original 128×64 PNG.
-- [x] Server-authoritative `entity_use` taming / sit-stand, `ownerId`, follow, bounded teleport.
-- [x] Wild cat fear, tamed wolf combat through existing damage/PvP/claims, pet limit `pets.limit.N`.
-- [x] Tamed pets excluded from wild cap / distance despawn; persistence + snapshots.
-- [ ] Owner live two-client QA: tame, follow, teleport snap, guest cannot sit/stand.
+## 2026-09-21: Merge origin/main into Worldgen V3
+
+- [x] Semantic merge of current `main` (`d2d45e6`, sword blocking PR #99) into `cursor/worldgen-v3-water-gourds-border-74e7`.
+- [x] Keep Worldgen V3 hydrology/border/gourds and current-main `syncLocalCombatUse` / sword-blocking visuals.
+
+## 2026-09-21: Worldgen V3 — hydrology, gourds, playable border
+
+- [x] Negative-only hydrology lakes/oceans on top of V2 land height (`hydrologyAt` / `applyHydrologyHeight`).
+- [x] Keep climate biomes; `hydrologyRegion` is the mask label; `waterBiome` is wet-only none/lake/ocean.
+- [x] Wild pumpkin/melon patches with separate RNG salts; no stems/farmland.
+- [x] Gourd patch acceptance scaled to 25% of the original frequency (`GOURD_PATCH_DENSITY = 0.25`); 32-block lattice and patch size unchanged.
+- [x] Migration A: V2 snapshots use V3 generator; modifications preserved; next save writes `WORLDGEN_VERSION = 3`.
+- [x] Canonical playable border ±10000 with shared physics, gameplay guards, and a translucent red renderer.
+- [x] Stream scenery chunks beyond the border via normal view distance; generator stays unclipped.
+- [x] Audit harden: bucket/flint/farming/legacy use, mining, signs, minecart AABB enter/dismount, event journal one-shot rebase, seabed materials.
+- [x] Owner live QA of Worldgen V3 generation and reduced wild gourd density (0.25); owner reports the result looks good.
+- [ ] Owner live QA of underwater floors and border fade/collision on Anarchy (not claimed).
+
+## 2026-09-21: Merge origin/main into sword-blocking
+
+- [x] Semantic merge of current `main` (`cd8ecf3`) into `cursor/sword-blocking-animation-7e91`.
+- [x] Keep sword-use visual animation and main world-events / always-run / KeyC camera.
+
+## 2026-09-20: Sword blocking animation
+
+- [x] Reuse existing `CombatSystem.swordBlocking` / RMB use-item for first- and third-person blocking poses.
+- [x] Interpolate idle → block → idle (0.1 s) as an overlay on `/moveitems` and first-person idle calibration.
+- [x] Replicate blocking to remote players via existing `presentation.swordBlocking`.
+- [x] Anarchy `tickOnline` calls the same `syncLocalCombatUse` as SP so local FP/TP `swordBlocking` is actually true while RMB is held.
+- [x] Live QA: first-person and local third-person blocking pose visible; live two-client `presentation.swordBlocking` true/false on the running Anarchy server.
+- [x] Third-person RMB uses the same arm-child held-item attachment as LMB swing (`/moveitems` local pose unchanged).
+
+## 2026-09-20: Merge origin/main into always-run / KeyC
+
+- [x] Semantic merge of world-events `main` (`6447556`) into `cursor/player-run-crouch-camera-d1a5`.
+- [x] Keep `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2`, KeyC camera, minecart `WALK_SPEED`.
+
+## 2026-09-20: Fixed always-run 7 / crouch 2
+
+- [x] `PLAYER_MOVE_SPEED = 7`, `SNEAK_SPEED = 2` as literal constants (no ×1.25 multiplier).
+- [x] WASD still always-run; Shift still existing crouch; minecart still `WALK_SPEED`.
+- [ ] Owner live speed feel QA.
+
+## 2026-09-20: Always-run movement, Shift crouch, KeyC camera
+
+- [x] Default WASD ground speed = previous walk `4.317 × 1.25` (`PLAYER_MOVE_SPEED`); no separate walk mode.
+- [x] Shift is existing crouch; crouch speed = previous sneak `1.295 × 1.25`; jump-from-crouch kept; diagonal hypot kept.
+- [x] Camera cycle on physical `KeyC`; F5 unbound from camera.
+- [x] Shared client/server speed constants; minecart still uses `WALK_SPEED`.
+- [ ] Owner live WASD/Shift/KeyC/F5 and Anarchy prediction QA.
+
+## 2026-09-20: Sync origin/main into world-events
+
+- [x] Semantic merge of current `main` (clan base, nameplates, minecart occupancy) into the world-events branch.
+- [x] Keep reconnect overlay, transient `record: false`, and virtual event protection.
+
+## 2026-09-20: Event overlay on reconnect
+
+- [x] Network-only composition of persistent modifications + active event placement for welcome/`chunk_data`.
+- [x] Reset `ServerPlayer.knownChunks` on connection epoch so reconnect resyncs streaming.
+- [x] Keep `EVENT_TRANSIENT_BATCH.record === false` and `world.serializeModifications()` free of the overlay.
+- [ ] Owner live Anarchy reconnect QA at the shrine.
+
+## 2026-09-19: World events persistence/streaming races
+
+- [x] Event placement/cleanup uses `applyBlockBatch(..., { record: false })` so the overlay is not a permanent modification.
+- [x] Snapshot restore clears missing `BlockRenderState` via `replaceBlockState(x,y,z, state | undefined)`.
+- [x] `Chunk.meshContentVersion` + finish-then-refresh MeshJob so a mutation inside an already-built section is remeshed.
+- [x] Server event search pending candidate + `continueGeneration` (max 1 chunk commit / tick).
+- [x] Failed search cannot place after `cleanupAt`; catch-up lock/announce follows actual `now`.
+- [x] Fresh `SpawnValidationContext` immediately before `placeAt`.
+- [ ] Owner live Anarchy QA of FPS at event distance with the new F3 latest/max lines.
+
+## 2026-09-19: World events hardening + bounded streaming
+
+- [x] Europe/Moscow IANA schedule, catch-up, failed-search retry, manual force does not eat the daily event.
+- [x] Virtual full-height event protection; user/anchor claims cannot overlap the active event column.
+- [x] In-memory spawn validation; crash journal `placing`/`cleaning`; persistent-block reject.
+- [x] Resumable section meshing + staged generation slices; latest/max longtask and 33 ms frameSpike HUD.
+- [ ] Owner live Anarchy QA of FPS at event distance with the new F3 latest/max lines.
+
+## 2026-09-19: Timed world events + event chest
+
+- [x] Real-time event scheduler (daily HH:MM, server-local or UTC) with warning / spawn / unlock / cleanup offsets.
+- [x] First event type: daily resource chest + rotatable chest-anchored mini-location template.
+- [x] Shared `/wand` + `/wand clear` without breaking AutoMine private selection.
+- [x] Persist active event + snapshot; restore or cleanup after restart.
+- [x] Crimson Relic event-chest texture with source UV/alpha compatibility test.
+- [ ] Owner live Anarchy QA of `/wand`, template save, force spawn/unlock/cleanup, restart, and chest look.
+
+## 2026-09-20: Nameplate clipping + nick max 13
+
+- [x] Size nameplate canvas from measureText + stroke/padding so 13-char Press Start 2P nicks are not clipped.
+- [x] `MAX_PLAYER_NAME_LENGTH` 16 → 13 (client + server reject 14+; clan names unchanged).
+- [x] Lower nameplate offset `2.15 → 2.05`.
+- [ ] Owner live Anarchy QA of a 13-char nick close-up.
+
+## 2026-09-20: Player nameplate hologram visuals
+
+- [x] Remove nameplate background panel; keep nick + heart/HP text only.
+- [x] Reuse hologram `display` pixel font (Press Start 2P) and hologram canvas supersample helpers.
+- [x] 2× world/text size, bright-red HP `#ff1f1f`, existing nick/HP/hide/distance logic unchanged.
+- [ ] Owner live Anarchy QA: walk up to another player; nick stays sharp, no plate, HP bright red.
+
+## 2026-09-20: Clan base point
+
+- [x] One persistent clan diamond base (same radius as personal diamond claim).
+- [x] Leader-only set/move with 24h clan cooldown; overlap with any existing claim denied.
+- [x] Bedrock is never replaced; members teleport via TeleportService.
+- [ ] Owner live Anarchy QA of clan base place/move/teleport.
+
+## 2026-09-19: Auction history + menu unread badges
+
+- [x] Clan announcement format `[ОБЪЯВЛЕНИЕ ОТ ГЛАВЫ КЛАНА] - text` (no quotes).
+- [x] Auction deal history (confirmed buy/sell only, 24h, max 20 UI, `plugin-data/auction/history.json`).
+- [x] Server-authoritative unread badges on Friends/Clans/Auction/Trade tiles; persist `plugin-data/notifications/unread.json`.
+- [x] Opening a tab clears that category; one domain event increments once.
+
+## 2026-09-19: Clan invitations + leader announcement
+
+- [x] Ranking money rows use `icon_coin.png` instead of Unicode 🪙.
+- [x] Menu Кланы **Приглашения** (accept/reject, TTL, server checks); invite chat points to the menu.
+- [x] Leader-only clan announcement, chat limit 128, turquoise style, 3h persisted per-clan cooldown.
+- [x] Agent live Anarchy QA of invites inbox, announce cooldown after restart, transfer button visibility, and ranking coin icons.
+
+## 2026-09-19: Clan roles + Rating menu
+
+- [x] Roles Глава / Ветеран / Участник on existing `ClanService` (no parallel clan system).
+- [x] Veteran invite + kick members; leader-only promote/demote/transfer; transfer only to veteran.
+- [x] Nickname invite on Requests with inline errors; 24h TTL; `/clan add` stays online-only.
+- [x] Member list: role, online snapshot, leader first, money/kills sort; player card with friends + rights.
+- [x] Persistent PvP kills on `EconomyService`; clan kills = live sum of current members.
+- [x] Main-menu Рейтинг (4 rankings, top 50 / 10 per page); 4+4 grid; `icon_rating.png`.
+- [ ] Owner live Anarchy QA of rating, invites, transfer, and kill increment.
 
 ## 2026-09-20: minecart occupancy + stable vehicle controls
 

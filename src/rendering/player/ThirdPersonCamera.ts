@@ -18,7 +18,7 @@ export function nextCameraPerspective(current: CameraPerspective): CameraPerspec
   return 'firstPerson';
 }
 
-/** Bed rest temporarily changes presentation without changing the player's F5 preference. */
+/** Bed rest temporarily changes presentation without changing the player's camera-toggle preference. */
 export function effectiveCameraPerspective(preferred: CameraPerspective, resting: boolean): CameraPerspective {
   return resting ? 'thirdPersonBack' : preferred;
 }

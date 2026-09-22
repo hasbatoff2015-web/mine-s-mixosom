@@ -10,6 +10,7 @@ import {
   findClaimByAnchor,
   isClaimAnchorBlock,
   overlappingAnchorClaims,
+  overlappingClaims,
   volumesOverlap,
 } from '../../server/services/claimAnchors';
 import {
@@ -112,6 +113,17 @@ describe('claim anchor store helpers', () => {
     ).map((entry) => entry.name).sort()).toEqual(['1', '2']);
     expect(BLOCK_CLAIM_OVERLAP_MESSAGE).toContain('блок-приват');
   });
+
+  it('treats regular /claim volumes as overlap for clan-base style checks', () => {
+    const regular = claim({
+      name: 'plot',
+      volume: { minX: 0, minY: 0, minZ: 0, maxX: 10, maxY: 10, maxZ: 10 },
+    });
+    const diamond = claimAnchorVolume(0, 10, 0, 'diamond_block');
+    expect(overlappingAnchorClaims([regular], 'anarchy', diamond)).toEqual([]);
+    expect(overlappingClaims([regular], 'anarchy', diamond).map((entry) => entry.name)).toEqual(['plot']);
+    expect(overlappingClaims([regular], 'anarchy', diamond, regular.id)).toEqual([]);
+  });
 });
 
 describe('claim store migration with anchors', () => {
@@ -131,7 +143,27 @@ describe('claim store migration with anchors', () => {
     expect(store.claims[0]!.anchor).toBeUndefined();
     expect(store.blockClaimSeq).toBeUndefined();
     expect(store.claims[0]!.flags).toEqual({ pvp: false });
+    expect(store.claims[0]!.clanId).toBeUndefined();
     expect(DEFAULT_CLAIM_FLAGS['block-break']).toBe(false);
+  });
+
+  it('preserves clanId on clan diamond base claims', () => {
+    const store = migrateClaimStore({
+      claims: [{
+        id: 'clan:clan-1:base',
+        name: 'Warriors',
+        owner: 'clan:clan-1',
+        worldId: 'anarchy',
+        volume: claimAnchorVolume(8, 64, 8, 'diamond_block'),
+        members: [],
+        flags: {},
+        anchor: { x: 8, y: 64, z: 8, block: 'diamond_block' },
+        clanId: 'clan-1',
+      }],
+    });
+    expect(store.claims[0]!.clanId).toBe('clan-1');
+    expect(store.claims[0]!.anchor?.block).toBe('diamond_block');
+    expect(store.claims[0]!.volume).toEqual(claimAnchorVolume(8, 64, 8, 'diamond_block'));
   });
 
   it('rebuilds block-claim volume from the stored anchor instead of keeping a full-height box', () => {

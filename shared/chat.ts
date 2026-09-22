@@ -3,6 +3,13 @@ import { MAX_CHAT_LENGTH } from './config';
 export const CHAT_CHANNELS = ['global', 'nearby', 'clan'] as const;
 export type ChatChannel = (typeof CHAT_CHANNELS)[number];
 
+export const CHAT_MESSAGE_STYLES = ['announcement'] as const;
+export type ChatMessageStyle = (typeof CHAT_MESSAGE_STYLES)[number];
+
+export function isChatMessageStyle(value: unknown): value is ChatMessageStyle {
+  return value === 'announcement';
+}
+
 /** Inclusive 3D radius in blocks for the Nearby chat channel. */
 export const NEARBY_CHAT_RADIUS = 20;
 

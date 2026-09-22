@@ -26,6 +26,7 @@ import {
   clamp,
   isValidWorldY,
 } from '../src/core/constants';
+import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
   clearDoorBlocks,
   daylightFactor,
@@ -218,6 +219,8 @@ export class ServerGameplay {
   readonly random = systemRandomFn;
   /** Regular /claim volumes; block-claims are filtered by TNT profile instead. */
   loadRegularClaimVolumes?: () => readonly SelectionVolume[];
+  /** Extra per-voxel explosion deny (active world-event area). */
+  isExplosionProtected?: (x: number, y: number, z: number) => boolean;
   /** Live authoritative players; occupancy is derived from `restingBed` / `ridingCartId`. */
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
@@ -742,6 +745,7 @@ export class ServerGameplay {
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     const block = this.world.getBlock(x, y, z);
     if (block === BlockId.Air) return { ok: false, reason: 'empty' };
@@ -801,6 +805,7 @@ export class ServerGameplay {
   ): { ok: true } | { ok: false; reason: string } {
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
+    if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!intent && !this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
     let hit: VoxelHit | undefined;
     if (intent) {
@@ -972,6 +977,7 @@ export class ServerGameplay {
     if (definition.breakable === false || definition.hardness < 0) {
       return { ok: false, reason: 'unbreakable' };
     }
+    if (!gameplayMayMutateBlock(hit.x, hit.z)) return { ok: false, reason: 'bounds' };
     if (
       !player.miningTarget
       || player.miningTarget.x !== hit.x
@@ -1294,6 +1300,10 @@ export class ServerGameplay {
     this.lastVehicleEnterReject = undefined;
     const cart = this.minecarts.get(entityId);
     if (!cart || !this.minecarts.isRideable(cart)) return false;
+    if (!isPlayerCenterInsidePlayableWorld(cart.position.x, cart.position.z)) {
+      this.rejectVehicleEnter('bounds');
+      return false;
+    }
     if (player.ridingCartId === entityId) return true;
     if (player.ridingCartId) {
       this.rejectVehicleEnter('already_riding');
@@ -1347,7 +1357,7 @@ export class ServerGameplay {
     player.controller.velocity.set(0, 0, 0);
   }
 
-  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding'): void {
+  private rejectVehicleEnter(reason: 'vehicle_occupied' | 'already_riding' | 'bounds'): void {
     this.lastVehicleEnterReject = reason;
     this.pendingUseReject = reason;
   }
@@ -1588,7 +1598,7 @@ export class ServerGameplay {
 
   private releaseContents(player: GameplayPlayer, x: number, y: number, z: number, block: number): void {
     const key = blockKey(x, y, z);
-    if (block === BlockId.Chest) {
+    if (block === BlockId.Chest || block === BlockId.EventChest) {
       const chest = this.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.chests.delete(key);
@@ -1663,11 +1673,16 @@ export class ServerGameplay {
     if (event.cancelled) return;
     const profile = getTntProfile(blockId);
     const volumes = profile.canBreakRegularClaims ? [] : (this.loadRegularClaimVolumes?.() ?? []);
+    const hasEventProtect = this.isExplosionProtected !== undefined;
     this.explosions.enqueue({
       x, y, z, radius, power, profile,
-      canDestroy: volumes.length === 0
+      canDestroy: volumes.length === 0 && !hasEventProtect
         ? undefined
-        : (cx, cy, cz) => !volumes.some((volume) => volumeContains(volume, cx, cy, cz)),
+        : (cx, cy, cz) => {
+          if (volumes.some((volume) => volumeContains(volume, cx, cy, cz))) return false;
+          if (this.isExplosionProtected?.(cx, cy, cz)) return false;
+          return true;
+        },
     });
   }
 
