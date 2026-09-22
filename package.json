@@ -26,6 +26,9 @@
     "check:boundaries": "node scripts/check-import-boundaries.mjs",
     "smoke:sim": "node --import ./scripts/block-three-register.mjs ./node_modules/vite-node/vite-node.mjs scripts/sim-node-smoke.ts",
     "smoke:server": "vite-node scripts/server-headless-smoke.ts",
+    "build:server": "node scripts/build-server.mjs",
+    "start:server": "node dist/server/index.mjs",
+    "smoke:server:prod": "node scripts/server-production-smoke.mjs",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
     "benchmark:lighting": "vite-node scripts/benchmark-lighting.ts",
     "benchmark:perf-pass": "vite-node scripts/benchmark-perf-pass.ts",
@@ -45,9 +48,10 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
+    "@types/node": "^22.13.10",
     "@types/three": "^0.179.0",
     "@types/ws": "^8.18.1",
-    "@types/node": "^22.13.10",
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
     "vite-node": "^3.2.4",

@@ -108,6 +108,44 @@ The server process must compile and boot **without Three.js, DOM, or the Vite cl
 
 Shared simulation used by this process is Node-safe (`npm run typecheck:sim`, `npm run smoke:sim`). Client stay on `npm run dev` / `npm run typecheck:client`.
 
+## Production-like local server
+
+`npm run dev:server` stays on `vite-node`. A production-shaped process is a normal Node run of one bundled file. Same env as the dev server (`HOST`, `PORT`, `SERVER_MODE`, `WORLD`, `WORLD_PATH`, and the rest of the table above). There is no dotenv loader.
+
+`npm run build` writes the browser client and clears `dist/`. Run `build:server` after that if you need both artifacts. `dist/server/` is not part of the Yandex static archive check.
+
+```powershell
+npm run build:server
+
+$env:SERVER_MODE="anarchy"
+$env:PORT="2567"
+$env:WORLD="anarchy"
+$env:WORLD_PATH="C:\temp\fc-worlds"
+
+npm run start:server
+```
+
+`npm run start:server` is `node dist/server/index.mjs`.
+
+Status: `GET http://127.0.0.1:2567/status` → `{ name, world, mode, ready, online, maxPlayers, tickRate }`.
+
+The same bundle runs the other modes. Change only the env, and point `WORLD_PATH` at an absolute directory that is not inside a release folder:
+
+```text
+SERVER_MODE=survival PORT=2568 WORLD=survival
+SERVER_MODE=peaceful PORT=2569 WORLD=peaceful
+```
+
+Builtin plugins are inside the bundle. Disk plugins are still loaded with `import()` from `PLUGIN_DIR` and are not inlined. `FC_EXAMPLE_PLUGIN` resolves `plugin-examples` next to `import.meta.url`. In this bundle that directory is `dist/server/`, and `server/plugin-examples` is not copied there. Example and on-disk plugin loading under plain Node is a later task. `.ts` files in `PLUGIN_DIR` still need `vite-node`.
+
+Check the artifact without touching `server/data/worlds`:
+
+```bash
+npm run smoke:server:prod
+```
+
+That builds the bundle, starts Anarchy, Survival, and Peaceful one after another on a free port (`PORT=0`) under a temporary `WORLD_PATH`, checks `GET /status` (`200`, `ready === true`, matching `mode` and `world`), sends `SIGTERM`, and checks that `.instance.lock` is gone.
+
 ## Start client
 
 ```bash

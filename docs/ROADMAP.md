@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-22: Production Node server bundle
+
+- [x] `npm run build:server` → `dist/server/index.mjs`. `npm run start:server` runs it with plain `node`. Dev `vite-node` scripts stay.
+- [x] Disk plugin `import()` is not inlined. Builtin plugins ship inside the bundle.
+- [x] `smoke:server:prod` boots Anarchy, Survival, and Peaceful one at a time from that artifact, checks `/status`, and checks `.instance.lock` is removed after SIGTERM.
+- [ ] `FC_EXAMPLE_PLUGIN` / on-disk `.ts` plugins under plain Node. systemd, PM2, TLS, and VPS layout stay later.
+
 ## 2026-09-21: Local multi-server modes
 
 - [x] `SERVER_MODE=anarchy|survival|peaceful` on the existing server process. Default remains Anarchy.
