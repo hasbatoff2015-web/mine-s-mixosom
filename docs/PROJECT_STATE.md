@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Production server bundle — 2026-09-22
+
+- `npm run build:server` собирает `server/index.ts` в `dist/server/index.mjs` (esbuild, ESM, Node 20). `ws` и остальные npm-пакеты остаются external.
+- `npm run start:server` — `node dist/server/index.mjs`. Те же env, что у dev-сервера. `dev:server` и `dev:server:anarchy|survival|peaceful` по-прежнему на `vite-node`.
+- Builtin plugins внутри бандла. Динамический `import()` плагинов с диска не инлайнится. `FC_EXAMPLE_PLUGIN` ищет `plugin-examples` рядом с бандлом (`dist/server/`), каталог `server/plugin-examples` туда не копируется.
+- Проверка: `npm run smoke:server:prod` (временный `WORLD_PATH`, три режима по очереди, `/status`, SIGTERM, снятие `.instance.lock`).
+- Подробности: `docs/LOCAL_SERVER.md`, `docs/reports/2026-09-22_server-production-build.md`.
+
 ## Последний проход: Local server modes — 2026-09-21
 
 - Один серверный код (`AnarchyServer` / `WorldInstance` / builtin plugins). Режим — `SERVER_MODE`: `anarchy` (по умолчанию), `survival`, `peaceful`.

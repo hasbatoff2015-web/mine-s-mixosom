@@ -9,8 +9,14 @@ async function walk(directory) {
   for (const name of await readdir(directory)) {
     const full = join(directory, name);
     const info = await stat(full);
-    if (info.isDirectory()) await walk(full);
-    else files.push({ path: relative(rootPath, full), bytes: info.size });
+    if (info.isDirectory()) {
+      // Node server bundle (dist/server) is not part of the Yandex static archive.
+      const rel = relative(rootPath, full).split(sep).join('/');
+      if (rel === 'server') continue;
+      await walk(full);
+    } else {
+      files.push({ path: relative(rootPath, full), bytes: info.size });
+    }
   }
 }
 
