@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: Server fatal shutdown — 2026-09-23
+
+- `SIGINT` / `SIGTERM` / `SIGHUP`, ошибка `listen` (`EADDRINUSE`) и `uncaughtException` / `unhandledRejection` идут в один `shutdown`. Повтор не запускает второй `stop()`.
+- Успешный сигнал: save, снятие `.instance.lock`, exit 0. Ошибка старта и фатальные ошибки: тот же stop, exit 1. Лог bind содержит mode, world, host, port и текст ошибки.
+- Сборка `build:server` / `start:server` не менялась. Проверка: `tests/server/server-process-lifecycle.test.ts`.
+- Подробности: `docs/reports/2026-09-23_server-fatal-shutdown.md`.
+
 ## Последний проход: Production server bundle — 2026-09-22
 
 - `npm run build:server` собирает `server/index.ts` в `dist/server/index.mjs` (esbuild, ESM, Node 20). `ws` и остальные npm-пакеты остаются external.

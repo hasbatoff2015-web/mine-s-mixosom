@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-23: Server fatal shutdown
+
+- [x] Occupied port: log mode/world/host/port, `stop()` releases that process's `.instance.lock`, exit 1. The process that already holds the port keeps running.
+- [x] `uncaughtException` and `unhandledRejection` use the same shutdown as SIGTERM, then exit 1. A second signal or fatal error does not start a second `stop()`.
+- [ ] systemd, PM2, TLS, and VPS layout stay later.
+
 ## 2026-09-22: Production Node server bundle
 
 - [x] `npm run build:server` → `dist/server/index.mjs`. `npm run start:server` runs it with plain `node`. Dev `vite-node` scripts stay.

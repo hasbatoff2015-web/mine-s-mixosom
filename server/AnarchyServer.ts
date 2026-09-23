@@ -82,22 +82,31 @@ export class AnarchyServer {
     if (failed.length > 0) {
       serverLog(`plugins: ${failed.length} failed: ${failed.map((record) => record.plugin.name).join(', ')}`, 'warn');
     }
-    await new Promise<void>((resolve, reject) => {
-      const http = createServer((req, res) => this.handleHttp(req, res));
-      this.http = http;
-      http.once('error', reject);
-      http.listen(this.config.port, this.config.host, () => {
-        const address = http.address();
-        this.listeningPort = typeof address === 'object' && address ? address.port : this.config.port;
-        const wss = new WebSocketServer({
-          server: http,
-          maxPayload: MAX_CLIENT_MESSAGE_BYTES,
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const http = createServer((req, res) => this.handleHttp(req, res));
+        this.http = http;
+        http.once('error', reject);
+        http.listen(this.config.port, this.config.host, () => {
+          const address = http.address();
+          this.listeningPort = typeof address === 'object' && address ? address.port : this.config.port;
+          const wss = new WebSocketServer({
+            server: http,
+            maxPayload: MAX_CLIENT_MESSAGE_BYTES,
+          });
+          this.wss = wss;
+          wss.on('connection', (socket) => this.handleConnection(socket));
+          resolve();
         });
-        this.wss = wss;
-        wss.on('connection', (socket) => this.handleConnection(socket));
-        resolve();
       });
-    });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(
+        `listen failed mode=${this.config.serverMode} world=${this.config.worldId} host=${this.config.host} port=${this.config.port}: ${detail}`,
+        'error',
+      );
+      throw error;
+    }
     this.world.startLoops();
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
