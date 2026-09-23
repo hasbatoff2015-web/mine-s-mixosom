@@ -117,10 +117,13 @@ describe('server modes', () => {
       WORLD: LOCAL_SERVER_PRESETS[mode].worldId,
     }));
     expect(() => assertDistinctWorldDirectories(configs)).not.toThrow();
+    // worldDirectory keeps the on-disk contract dataDir/<worldId> and normalizes
+    // separators. mkdtemp on Windows returns backslashes, so compare the same form.
+    const root = dataDir.replaceAll('\\', '/');
     expect(configs.map((config) => worldDirectory(config))).toEqual([
-      `${dataDir}/anarchy`,
-      `${dataDir}/survival`,
-      `${dataDir}/peaceful`,
+      `${root}/anarchy`,
+      `${root}/survival`,
+      `${root}/peaceful`,
     ]);
     const instances = configs.map((config) => new WorldInstance(config));
     expect(instances.map((world) => world.serverMode)).toEqual(['anarchy', 'survival', 'peaceful']);

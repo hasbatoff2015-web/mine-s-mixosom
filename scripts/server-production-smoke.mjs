@@ -56,21 +56,39 @@ function startServer(env) {
   };
 }
 
-async function stopServer(session) {
-  if (session.child.exitCode !== null || session.child.signalCode !== null) {
-    return session.child.exitCode;
-  }
-  session.child.kill('SIGTERM');
+function exitResult(child) {
+  return { code: child.exitCode, signal: child.signalCode };
+}
+
+function waitExit(child, timeoutMs, output) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(exitResult(child));
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      session.child.kill('SIGKILL');
-      reject(new Error(`SIGTERM did not stop the server\n${session.output()}`));
-    }, STOP_TIMEOUT_MS);
-    session.child.once('exit', (code) => {
+      child.kill('SIGKILL');
+      reject(new Error(`SIGTERM did not stop the server\n${output()}`));
+    }, timeoutMs);
+    const finish = (code, signal) => {
       clearTimeout(timer);
-      resolve(code);
-    });
+      resolve({ code, signal });
+    };
+    child.once('exit', finish);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      child.off('exit', finish);
+      finish(child.exitCode, child.signalCode);
+    }
   });
+}
+
+async function stopServer(session) {
+  if (session.child.exitCode !== null || session.child.signalCode !== null) {
+    return exitResult(session.child);
+  }
+  // POSIX: this delivers SIGTERM and index.ts exits 0 after save.
+  // Windows: Node's child.kill('SIGTERM') is TerminateProcess. The handler does not run,
+  // and the exit code is null. A fresh world also logs "world saved" during initialize(),
+  // before listen, so that line alone is not evidence of a graceful stop.
+  session.child.kill('SIGTERM');
+  return waitExit(session.child, STOP_TIMEOUT_MS, session.output);
 }
 
 async function waitForStatus(session, mode, world) {
@@ -125,12 +143,25 @@ async function smokeMode(worldPath, { mode, world }) {
       throw new Error(`expected lock before shutdown: ${lockPath}`);
     }
     console.log(`[smoke:server:prod] ${mode} port=${port} status=${JSON.stringify(body)}`);
-    const code = await stopServer(session);
-    if (code !== 0) {
-      throw new Error(`${mode} SIGTERM exit ${code}\n${session.output()}`);
+    const stopped = await stopServer(session);
+    const stoppedLog = session.output().includes('[server] stopped');
+    const lockGone = !(await exists(lockPath));
+    if (process.platform === 'win32' && !(stopped.code === 0 && stoppedLog && lockGone)) {
+      if (stopped.code === 0 || stoppedLog) {
+        throw new Error(
+          `${mode} shutdown was partial (exit ${stopped.code}, signal ${stopped.signal}, stopped=${stoppedLog}, lockGone=${lockGone})\n${session.output()}`,
+        );
+      }
+      console.log(
+        `[smoke:server:prod] ${mode} ready. child.kill(SIGTERM) on Windows is abrupt `
+        + `(exit ${stopped.code}, signal ${stopped.signal}); graceful SIGTERM is checked on POSIX.`,
+      );
+      return;
     }
-    if (await exists(lockPath)) {
-      throw new Error(`lock remained after SIGTERM: ${lockPath}`);
+    if (stopped.code !== 0 || !stoppedLog || !lockGone) {
+      throw new Error(
+        `${mode} SIGTERM exit ${stopped.code} signal ${stopped.signal} stopped=${stoppedLog} lockGone=${lockGone}\n${session.output()}`,
+      );
     }
     console.log(`[smoke:server:prod] ${mode} SIGTERM exit 0, lock removed`);
   } catch (error) {
@@ -146,7 +177,10 @@ try {
   for (const preset of MODES) {
     await smokeMode(worldPath, preset);
   }
-  console.log('[smoke:server:prod] anarchy, survival, peaceful ok');
+  const shutdown = process.platform === 'win32'
+    ? 'graceful SIGTERM is not delivered by child.kill on win32'
+    : 'graceful SIGTERM exit 0';
+  console.log(`[smoke:server:prod] anarchy, survival, peaceful ok (${shutdown})`);
 } finally {
   await rm(worldPath, { recursive: true, force: true });
 }

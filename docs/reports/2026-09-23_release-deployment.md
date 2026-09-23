@@ -51,6 +51,14 @@ Not measured.
 
 Optional native `ws` peers (`bufferutil`, `utf-8-validate`) are not copied. The server runs without them.
 
+`npm run pack:release` with no arguments writes `release/<git-sha>/`. The first version required `--out` and threw `The "paths[0]" argument must be of type string` because `path.resolve(undefined)` ran on the missing path.
+
+`child.kill('SIGTERM')` on Windows is `TerminateProcess` (Node.js `child_process` docs). The process exit code is `null`, and `server/index.ts` does not get to run. A fresh world logs `world saved` during `initialize()`, before listen, so that line in the smoke dump is not a SIGTERM save. POSIX smoke and `server-process-lifecycle` still require exit 0, one `[server] stopped`, and lock removal. Windows tests assert the abrupt kill instead of treating `null` as success. Production `shutdown()` is unchanged.
+
+`server-modes` expected `` `${dataDir}/anarchy` ``. `worldDirectory` already normalizes separators to `dataDir/<worldId>`. On Windows `mkdtemp` keeps backslashes, so the test now compares the normalized form. `worldDirectory` itself was not changed.
+
+`tick-load-flight` (`max < 80`, `mean < 50`) is the existing host-load gate. This PR does not change tick, `setView`, or that threshold. A Windows `test:server` run reported max 85.06 ms and mean 67.13 ms. That is the documented baseline under parallel load, not a release-tooling regression.
+
 ## Deferred
 
 Nginx, TLS, GitHub Actions, Docker, PM2, provider APIs.

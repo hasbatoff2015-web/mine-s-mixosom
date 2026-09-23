@@ -14,6 +14,9 @@ Thumbs.db
 .local/
 .local/minecraft-reference-audio/
 
+# Local production pack from `npm run pack:release`. Not a world save.
+/release/
+
 # Authoritative local server worlds (runtime persistence).
 server/data/worlds/**
 !server/data/worlds/.gitkeep

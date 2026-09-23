@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error untyped release helper; the shell scripts call the same module
-import { assertOutsideWorldData, assertReleaseId, cleanupPlan, gitReleaseId, installRelease, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
+import { assertOutsideWorldData, assertReleaseId, cleanupPlan, gitReleaseId, installRelease, packRelease, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../..');
 const bashProbe = spawn('bash', ['-c', 'echo ok'], { stdio: 'ignore' });
@@ -70,6 +70,19 @@ describe('release layout', () => {
         source,
         releaseId: '228492d6607b',
       })).rejects.toThrow(/already exists/);
+
+      const packed = await packRelease({ repo: source, releaseId: 'aabbccddee01' });
+      expect(packed.out).toBe(join(source, 'release', 'aabbccddee01'));
+      expect(await readFile(join(packed.out, 'dist/server/index.mjs'), 'utf8')).toContain('export');
+      expect(await readFile(join(packed.out, 'node_modules/ws/package.json'), 'utf8')).toContain('ws');
+      expect(await readFile(join(packed.out, 'package.json'), 'utf8')).toContain('frontier-cubes-server');
+      expect(await readFile(join(packed.out, 'RELEASE_ID'), 'utf8')).toBe('aabbccddee01\n');
+      await expect(readFile(join(packed.out, 'worlds/anarchy/world.json'), 'utf8')).rejects.toThrow();
+      const again = await packRelease({ repo: source, releaseId: 'aabbccddee01' });
+      expect(again.out).toBe(packed.out);
+      const explicit = join(parent, 'explicit-pack');
+      await packRelease({ repo: source, out: explicit, releaseId: 'aabbccddee01' });
+      await expect(packRelease({ repo: source, out: explicit, releaseId: 'aabbccddee01' })).rejects.toThrow(/already exists/);
     } finally {
       await rm(parent, { recursive: true, force: true });
     }
@@ -131,7 +144,7 @@ describe('release shell scripts', () => {
     }
   });
 
-  it.skipIf(!bashAvailable)('deploys, rolls back, and leaves world bytes untouched', async () => {
+  it.skipIf(!bashAvailable || process.platform === 'win32')('deploys, rolls back, and leaves world bytes untouched', async () => {
     const parent = await mkdtemp(join(tmpdir(), 'fc-deploy-sh-'));
     const opt = join(parent, 'opt');
     const worlds = join(parent, 'worlds', 'anarchy');

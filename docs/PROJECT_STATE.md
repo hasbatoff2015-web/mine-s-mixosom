@@ -3,7 +3,7 @@
 ## Последний проход: release deployment — 2026-09-23
 
 - Релиз: `/opt/frontier-cubes/releases/<id>/` и атомарный `current`. Id — git SHA (`--short=12`) или явный `--release-id`.
-- `npm run pack:release` кладёт в релиз `dist/server/index.mjs` и external `ws`. На VPS `npm install` не нужен. Миры в `/var/lib/frontier-cubes/worlds/<mode>` скрипты не изменяют.
+- `npm run pack:release` без аргументов пишет `release/<git-sha>/`: `dist/server/index.mjs` и external `ws`. На VPS `npm install` не нужен. Миры в `/var/lib/frontier-cubes/worlds/<mode>` скрипты не изменяют.
 - `scripts/deploy-release.sh` ставит релиз, переключает `current`, делает `systemctl restart` трёх unit-ов и `status:servers`. Неуспех возвращает предыдущий `current`. `scripts/rollback-release.sh` откатывает. `scripts/cleanup-releases.sh` по умолчанию только печатает план.
 - Подробности: `docs/DEPLOYMENT.md`.
 

@@ -128,23 +128,39 @@ export function gitReleaseId(repo) {
   return sha;
 }
 
+export function defaultReleaseOut(repo, releaseId) {
+  assertReleaseId(releaseId);
+  const out = join(repo, 'release', releaseId);
+  assertOutsideWorldData(out);
+  const rel = relative(join(repo, 'release'), out);
+  if (rel.startsWith('..') || rel.includes(sep) || rel === '') {
+    throw new Error(`release id escapes the local release directory: ${releaseId}`);
+  }
+  return out;
+}
+
 export async function packRelease({ repo, out, releaseId }) {
   const id = releaseId || gitReleaseId(repo);
   assertReleaseId(id);
-  assertOutsideWorldData(out);
   assertOutsideWorldData(repo);
-  if (await exists(out)) throw new Error(`pack output already exists: ${out}`);
+  const destination = out ?? defaultReleaseOut(repo, id);
+  assertOutsideWorldData(destination);
+  if (normalize(destination) === normalize(repo)) throw new Error('refusing to pack a release onto the repository root');
   await assertReleaseBundle(repo);
-  await mkdir(dirname(out), { recursive: true });
-  await mkdir(out, { recursive: false });
+  if (await exists(destination)) {
+    if (out) throw new Error(`pack output already exists: ${destination}`);
+    await rm(destination, { recursive: true, force: true });
+  }
+  await mkdir(dirname(destination), { recursive: true });
+  await mkdir(destination, { recursive: false });
   try {
-    await copyAllowlist(repo, out, id);
-    await assertReleaseBundle(out);
+    await copyAllowlist(repo, destination, id);
+    await assertReleaseBundle(destination);
   } catch (error) {
-    await rm(out, { recursive: true, force: true });
+    await rm(destination, { recursive: true, force: true });
     throw error;
   }
-  return { id, out };
+  return { id, out: destination };
 }
 
 export async function cleanupPlan(root, current, previous) {
@@ -195,6 +211,7 @@ async function main() {
         out: arg('--out'),
         releaseId: arg('--release-id'),
       });
+      console.error(`release ${packed.id}`);
       console.log(packed.out);
       return;
     }

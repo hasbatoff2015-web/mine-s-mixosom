@@ -35,12 +35,13 @@ RELEASE_ID
 ```bash
 npm ci
 npm run build:server
-npm run pack:release -- --out /tmp/fc-releases/228492d6607b --release-id 228492d6607b
+npm run pack:release
 ```
 
-Без `--release-id` берётся `git rev-parse --short=12 HEAD`. Timestamp в id не используется. Архив, если нужен для копирования:
+Без аргументов каталог — `release/<id>/` в корне репозитория. Id — `git rev-parse --short=12 HEAD`. Повторный запуск того же id заменяет только этот локальный каталог. Timestamp в id не используется. Явный путь не перезаписывается:
 
 ```bash
+npm run pack:release -- --out /tmp/fc-releases/228492d6607b --release-id 228492d6607b
 tar -C /tmp/fc-releases -czf /tmp/fc-228492d6607b.tar.gz 228492d6607b
 ```
 
