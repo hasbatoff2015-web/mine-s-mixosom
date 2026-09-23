@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: production VPS readiness — 2026-09-23
+
+- Первый запуск: `systemctl enable` без `--now`, затем `scripts/deploy-release.sh`. Иначе отсутствующий `current` крутит `Restart=on-failure`.
+- Мёртвый pid в `.instance.lock` снимается следующим стартом (`world lock stale`). Живой pid каталог не отдаёт. Неудачный rollback возвращает прежний `current` и снова проверяет `/status`.
+- Миры остаются в `/var/lib/frontier-cubes/worlds/<mode>`, режим каталогов `750`, владелец `frontier-cubes`. Релиз и unit-ы не меняют игровую логику.
+- Подробности: `docs/DEPLOYMENT.md`, `docs/SYSTEMD.md`.
+
 ## Последний проход: release deployment — 2026-09-23
 
 - Релиз: `/opt/frontier-cubes/releases/<id>/` и атомарный `current`. Id — git SHA (`--short=12`) или явный `--release-id`.

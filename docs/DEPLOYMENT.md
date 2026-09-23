@@ -26,7 +26,21 @@ RELEASE_ID
 
 ## Первичная настройка
 
-Каталоги, пользователь и unit-ы ставятся один раз по `docs/SYSTEMD.md`. После `enable --now` процессы ещё не найдут bundle, пока не появится `current`. Первый успешный deploy это исправляет.
+Каталоги, пользователь и unit-ы ставятся один раз по `docs/SYSTEMD.md`. Unit-ы включают без старта (`systemctl enable`, не `enable --now`): bundle ещё нет, и `Restart=on-failure` иначе крутит падение каждые 5 секунд. Первый `deploy-release.sh` создаёт `current` и запускает три процесса.
+
+Топология на одной машине:
+
+```text
+/opt/frontier-cubes/releases/<release-id>/
+/opt/frontier-cubes/current -> releases/<release-id>
+/opt/frontier-cubes/previous
+
+/var/lib/frontier-cubes/worlds/anarchy
+/var/lib/frontier-cubes/worlds/survival
+/var/lib/frontier-cubes/worlds/peaceful
+```
+
+Три unit-а — три процесса Node. Каждый владеет одним каталогом мира. Второй процесс тот же каталог не откроет, пока жив pid в `.instance.lock`. Релиз не хранит миры.
 
 ## Сборка
 
@@ -105,6 +119,10 @@ sudo bash scripts/cleanup-releases.sh --apply
 journalctl -u frontier-cubes-anarchy -u frontier-cubes-survival -u frontier-cubes-peaceful -f
 npm run status:servers
 ```
+
+`/status` начинает отвечать только после инициализации мира (`ready: true`) и `listen`. Health-check ждёт HTTP 200, `ready`, совпадающие `mode` и `world`, а также поля `name`, `online`, `maxPlayers`, `tickRate`.
+
+В journald для разбора инцидента достаточно строк `[server]`: `listening on ws://...`, `listen failed mode= world= host= port=`, `startup failed`, `world saved`, `world lock acquired`, `world lock stale`, `world lock released`, `stopped`, `uncaughtException`, `unhandledRejection`, `shutdown failed`.
 
 ## Если выкладка не сошлась
 

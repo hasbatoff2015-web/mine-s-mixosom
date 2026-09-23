@@ -304,7 +304,7 @@ This Cloud checkout already ran that bake: spawn `53.5, 68.01, 70.5`, 63 chunks 
 
 ## systemd on one machine
 
-Three production processes of this same server. Units: `docs/SYSTEMD.md`. Release install and rollback: `docs/DEPLOYMENT.md`. World files stay in `/var/lib/frontier-cubes/worlds/<world>`, not inside the release tree. `npm run status:servers` checks the three `/status` endpoints.
+Three production processes of this same server. Units: `docs/SYSTEMD.md`. Enable them without starting, then install the release with `docs/DEPLOYMENT.md`. World files stay in `/var/lib/frontier-cubes/worlds/<world>`, not inside the release tree. `npm run status:servers` checks the three `/status` endpoints.
 
 Nginx, TLS, WSS, a domain, Docker, PM2, Redis, and PostgreSQL are not part of that install.
 

@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-23: production VPS readiness
+
+- [x] First boot enables the three units without starting them, then `deploy-release.sh` switches `current` and starts them.
+- [x] A dead `.instance.lock` pid is replaced on the next start and logged. A live pid still rejects the second process.
+- [x] A failed rollback restores the previous `current` and runs the same three-server `/status` check. World directories stay outside the release.
+
 ## 2026-09-23: production release tooling
 
 - [x] Pack a release with `dist/server/index.mjs` and external `ws`. No world files, no `npm install` on the VPS.

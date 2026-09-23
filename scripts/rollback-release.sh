@@ -31,7 +31,13 @@ on_fail() {
     echo "returning current to $current_id" >&2
     switch_current "$current_id"
     printf '%s\n' "$target" > "$FC_OPT_ROOT/previous"
-    restart_services || echo "restart after failed rollback failed" >&2
+    if ! restart_services; then
+      echo "restart after failed rollback failed" >&2
+    elif health_check; then
+      echo "restored release is healthy; rollback still failed" >&2
+    else
+      echo "restored release failed health-check" >&2
+    fi
   fi
   exit "$code"
 }

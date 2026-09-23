@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ServerMode } from './config';
+import { serverLog } from './log';
 
 export const WORLD_LOCK_FILE = '.instance.lock';
 
@@ -26,6 +27,7 @@ export class WorldDirectoryLock {
       const current = await readLock(this.path);
       if (current && current.pid !== process.pid) return;
       await rm(this.path, { force: true });
+      serverLog(`world lock released world=${this.info.worldId} pid=${this.info.pid}`);
     } catch {
       // The directory may already be gone.
     }
@@ -62,6 +64,9 @@ export async function acquireWorldDirectoryLock(
       } finally {
         await handle.close();
       }
+      serverLog(
+        `world lock acquired world=${payload.worldId} mode=${payload.mode} pid=${payload.pid} port=${payload.port}`,
+      );
       return new WorldDirectoryLock(directory, payload);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
@@ -71,6 +76,9 @@ export async function acquireWorldDirectoryLock(
           `World directory is already owned by pid ${existing.pid}`
           + ` (mode ${existing.mode}, world ${existing.worldId}, port ${existing.port}): ${directory}`,
         );
+      }
+      if (existing) {
+        serverLog(`world lock stale pid=${existing.pid} world=${existing.worldId} path=${path}`);
       }
       await rm(path, { force: true });
     }
