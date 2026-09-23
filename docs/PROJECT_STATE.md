@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: systemd deployment — 2026-09-23
+
+- Три unit-файла в `deploy/systemd/`: Anarchy `:2567`, Survival `:2568`, Peaceful `:2569`. Каждый запускает `/usr/bin/node .../dist/server/index.mjs` от пользователя `frontier-cubes`.
+- Миры: `/var/lib/frontier-cubes/worlds/<world>`. `WORLD_PATH` в env — родитель `/var/lib/frontier-cubes/worlds`, потому что процесс дописывает `WORLD`. Релиз в `/opt/frontier-cubes/current` миры не хранит.
+- `SIGTERM`, `Restart=on-failure`, журнал systemd. Проверка статуса: `npm run status:servers`.
+- Подробности: `docs/SYSTEMD.md`, `docs/reports/2026-09-23_systemd-deployment.md`.
+
 ## Последний проход: Server fatal shutdown — 2026-09-23
 
 - `SIGINT` / `SIGTERM` / `SIGHUP`, ошибка `listen` (`EADDRINUSE`) и `uncaughtException` / `unhandledRejection` идут в один `shutdown`. Повтор не запускает второй `stop()`.
