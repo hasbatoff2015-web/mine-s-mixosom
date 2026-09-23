@@ -1,17 +1,23 @@
 # Roadmap
 
+## 2026-09-23: systemd deployment
+
+- [x] Three systemd units run `dist/server/index.mjs` as user `frontier-cubes` (Anarchy 2567, Survival 2568, Peaceful 2569).
+- [x] World directories stay at `/var/lib/frontier-cubes/worlds/<world>`, outside the release tree.
+- [x] `SIGTERM` stop, `Restart=on-failure`, journald. `npm run status:servers` checks the three `/status` endpoints.
+- [ ] Nginx, TLS/WSS, firewall, and a provider-specific VPS image stay later.
+
 ## 2026-09-23: Server fatal shutdown
 
 - [x] Occupied port: log mode/world/host/port, `stop()` releases that process's `.instance.lock`, exit 1. The process that already holds the port keeps running.
 - [x] `uncaughtException` and `unhandledRejection` use the same shutdown as SIGTERM, then exit 1. A second signal or fatal error does not start a second `stop()`.
-- [ ] systemd, PM2, TLS, and VPS layout stay later.
 
 ## 2026-09-22: Production Node server bundle
 
 - [x] `npm run build:server` → `dist/server/index.mjs`. `npm run start:server` runs it with plain `node`. Dev `vite-node` scripts stay.
 - [x] Disk plugin `import()` is not inlined. Builtin plugins ship inside the bundle.
 - [x] `smoke:server:prod` boots Anarchy, Survival, and Peaceful one at a time from that artifact, checks `/status`, and checks `.instance.lock` is removed after SIGTERM.
-- [ ] `FC_EXAMPLE_PLUGIN` / on-disk `.ts` plugins under plain Node. systemd, PM2, TLS, and VPS layout stay later.
+- [ ] `FC_EXAMPLE_PLUGIN` / on-disk `.ts` plugins under plain Node. PM2 and TLS stay later.
 
 ## 2026-09-21: Local multi-server modes
 

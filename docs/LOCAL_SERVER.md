@@ -302,17 +302,11 @@ Restart the server after import. Do not commit `.schem` or `server/data/worlds/*
 
 This Cloud checkout already ran that bake: spawn `53.5, 68.01, 70.5`, 63 chunks / 361576 modified cells. Other machines still need the local `.schem` + the same CLI if their `server/data/worlds/anarchy` is empty or procedural.
 
-## Future production layout (not deployed here)
+## systemd on one machine
 
-The local scheme is the production shape later: three processes of this same server, each with its own world directory.
+Three production processes of this same server. Install, upgrade, and rollback: `docs/SYSTEMD.md`. Unit files and env files: `deploy/systemd/`. World files stay in `/var/lib/frontier-cubes/worlds/<world>`, not inside the release tree. `npm run status:servers` checks the three `/status` endpoints.
 
-| Mode | Port |
-| --- | --- |
-| Anarchy | 2567 |
-| Survival | 2568 |
-| Peaceful | 2569 |
-
-That can be one machine or several. This pass does not add Docker, Nginx, Caddy, TLS, WSS, a domain, systemd, PM2, Redis, or PostgreSQL. Take the same Node process and change `HOST` / `PORT` / `WORLD` / `WORLD_PATH` when that deployment work starts. Do not rewrite world simulation.
+Nginx, TLS, WSS, a domain, Docker, PM2, Redis, and PostgreSQL are not part of that install.
 
 ## Gameplay on the server
 

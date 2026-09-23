@@ -29,6 +29,7 @@
     "build:server": "node scripts/build-server.mjs",
     "start:server": "node dist/server/index.mjs",
     "smoke:server:prod": "node scripts/server-production-smoke.mjs",
+    "status:servers": "node scripts/check-game-servers.mjs",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
     "benchmark:lighting": "vite-node scripts/benchmark-lighting.ts",
     "benchmark:perf-pass": "vite-node scripts/benchmark-perf-pass.ts",

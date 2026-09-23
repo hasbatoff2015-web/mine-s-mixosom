@@ -1,0 +1,23 @@
+[Unit]
+Description=Frontier Cubes Anarchy game server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=frontier-cubes
+Group=frontier-cubes
+WorkingDirectory=/opt/frontier-cubes/current
+ExecStart=/usr/bin/node /opt/frontier-cubes/current/dist/server/index.mjs
+EnvironmentFile=/etc/frontier-cubes/anarchy.env
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=30
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
