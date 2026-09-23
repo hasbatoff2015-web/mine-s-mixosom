@@ -113,6 +113,7 @@ async function smokeMode(worldPath, { mode, world }) {
     PERSIST_INTERVAL_MS: '60000',
     FC_EXAMPLE_PLUGIN: '',
     FC_NO_BUILTIN_PLUGINS: '',
+    FC_TEST_FATAL: '',
   });
   try {
     const { port, body } = await waitForStatus(session, mode, world);

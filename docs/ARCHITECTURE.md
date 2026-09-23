@@ -977,7 +977,7 @@ Shield отсутствует в item union/registry/render categories, FirstPer
 Это браузерная voxel alpha с **двумя режимами мира**:
 
 - **Singleplayer** — client-authoritative, `WorldSnapshot` via `IdbWorldStore` (IndexedDB `frontier-cubes-saves` / `worlds`).
-- **Online Anarchy** — отдельный Node process. Dev: `npm run dev:server` (`vite-node server/index.ts`). Production-shaped: `npm run build:server` пишет `dist/server/index.mjs`, `npm run start:server` запускает его обычным `node`. WebSocket JSON protocol, server-authoritative world/player/blocks. Один процесс по-прежнему владеет одним миром. VPS later is config, not a rewrite.
+- **Online Anarchy** — отдельный Node process. Dev: `npm run dev:server` (`vite-node server/index.ts`). Production-shaped: `npm run build:server` пишет `dist/server/index.mjs`, `npm run start:server` запускает его обычным `node`. WebSocket JSON protocol, server-authoritative world/player/blocks. Один процесс по-прежнему владеет одним миром. `server/index.ts` держит один shutdown: сигнал завершается exit 0 после save и снятия `.instance.lock`; ошибка `listen`, `uncaughtException` и `unhandledRejection` вызывают тот же `stop()` и exit 1. Второй вход в shutdown игнорируется. VPS later is config, not a rewrite.
 
 Colyseus отсутствует; транспорт — `ws` + browser `WebSocket`. ECS framework по-прежнему не используется. Подробности: `docs/LOCAL_SERVER.md`.
 
