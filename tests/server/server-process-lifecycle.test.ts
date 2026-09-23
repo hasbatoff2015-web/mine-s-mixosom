@@ -70,22 +70,35 @@ function baseEnv(worldPath: string, world: string, port: string, extra: NodeJS.P
   };
 }
 
-function waitClose(child: ChildProcess, timeoutMs: number): Promise<number | null> {
-  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
+interface ExitResult {
+  code: number | null;
+  signal: NodeJS.Signals | null;
+}
+
+function waitClose(child: ChildProcess, timeoutMs: number): Promise<ExitResult> {
+  const current = (): ExitResult => ({ code: child.exitCode, signal: child.signalCode });
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(current());
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       reject(new Error(`process did not exit within ${timeoutMs}ms`));
     }, timeoutMs);
-    child.once('close', (code) => {
+    const finish = (code: number | null, signal: NodeJS.Signals | null) => {
       clearTimeout(timer);
-      resolve(code);
-    });
+      resolve({ code, signal });
+    };
+    child.once('exit', finish);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      child.off('exit', finish);
+      finish(child.exitCode, child.signalCode);
+    }
   });
 }
 
-async function stopServer(session: Session): Promise<number | null> {
-  if (session.child.exitCode !== null) return session.child.exitCode;
+async function stopServer(session: Session): Promise<ExitResult> {
+  if (session.child.exitCode !== null || session.child.signalCode !== null) {
+    return { code: session.child.exitCode, signal: session.child.signalCode };
+  }
   session.child.kill('SIGTERM');
   return waitClose(session.child, STOP_TIMEOUT_MS);
 }
@@ -132,7 +145,7 @@ describe('production server process lifecycle', () => {
       contender = startServer(baseEnv(worldPath, 'contender', String(port)));
       const code = await waitClose(contender.child, START_TIMEOUT_MS);
       const log = contender.output();
-      expect(code).toBe(1);
+      expect(code.code).toBe(1);
       expect(log).toContain('EADDRINUSE');
       expect(log).toContain('mode=anarchy');
       expect(log).toContain('world=contender');
@@ -148,9 +161,17 @@ describe('production server process lifecycle', () => {
       expect(body.world).toBe('holder');
 
       const holderCode = await stopServer(holder);
-      expect(holderCode).toBe(0);
-      expect(holder.output()).toContain('world saved');
-      expect(await exists(holderLock)).toBe(false);
+      if (process.platform === 'win32') {
+        // child.kill('SIGTERM') is TerminateProcess. It must not be reported as exit 0.
+        expect(holderCode.code).toBeNull();
+        expect(holderCode.signal).toBe('SIGTERM');
+        expect(holder.output()).not.toContain('[server] stopped');
+      } else {
+        expect(holderCode.code).toBe(0);
+        expect(holder.output()).toContain('world saved');
+        expect(holder.output()).toContain('[server] stopped');
+        expect(await exists(holderLock)).toBe(false);
+      }
     } finally {
       await stopServer(holder).catch(() => undefined);
       if (contender && contender.child.exitCode === null) contender.child.kill('SIGKILL');
@@ -158,7 +179,7 @@ describe('production server process lifecycle', () => {
     }
   }, START_TIMEOUT_MS);
 
-  it('SIGTERM saves the world, removes the lock, and exits 0 once', async () => {
+  it.skipIf(process.platform === 'win32')('SIGTERM saves the world, removes the lock, and exits 0 once', async () => {
     const worldPath = await mkdtemp(join(tmpdir(), 'fc-term-'));
     const session = startServer(baseEnv(worldPath, 'term-world', '0'));
     const lockPath = join(worldPath, 'term-world', '.instance.lock');
@@ -168,12 +189,28 @@ describe('production server process lifecycle', () => {
       session.child.kill('SIGTERM');
       session.child.kill('SIGTERM');
       const code = await waitClose(session.child, STOP_TIMEOUT_MS);
-      expect(code).toBe(0);
+      expect(code.code).toBe(0);
       expect(session.output()).toContain('world saved');
       expect(session.output().match(/\[server\] stopped/g)).toHaveLength(1);
       expect(await exists(lockPath)).toBe(false);
     } finally {
-      if (session.child.exitCode === null) session.child.kill('SIGKILL');
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
+      await rm(worldPath, { recursive: true, force: true });
+    }
+  }, START_TIMEOUT_MS);
+
+  it.skipIf(process.platform !== 'win32')('Windows child.kill(SIGTERM) does not run the graceful shutdown', async () => {
+    const worldPath = await mkdtemp(join(tmpdir(), 'fc-term-win-'));
+    const session = startServer(baseEnv(worldPath, 'term-world', '0'));
+    try {
+      await waitForStatus(session, 'term-world');
+      session.child.kill('SIGTERM');
+      const code = await waitClose(session.child, STOP_TIMEOUT_MS);
+      expect(code.code).toBeNull();
+      expect(code.signal).toBe('SIGTERM');
+      expect(session.output()).not.toContain('[server] stopped');
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
       await rm(worldPath, { recursive: true, force: true });
     }
   }, START_TIMEOUT_MS);
@@ -189,14 +226,14 @@ describe('production server process lifecycle', () => {
     try {
       const code = await waitClose(session.child, START_TIMEOUT_MS);
       const log = session.output();
-      expect(code).toBe(1);
+      expect(code.code).toBe(1);
       expect(log).toContain(label);
       expect(log).toContain(message);
       expect(log).toContain('world saved');
       expect(log.match(/\[server\] stopped/g)).toHaveLength(1);
       expect(await exists(lockPath)).toBe(false);
     } finally {
-      if (session.child.exitCode === null) session.child.kill('SIGKILL');
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
       await rm(worldPath, { recursive: true, force: true });
     }
   }, START_TIMEOUT_MS);

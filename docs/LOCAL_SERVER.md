@@ -144,7 +144,7 @@ Check the artifact without touching `server/data/worlds`:
 npm run smoke:server:prod
 ```
 
-That builds the bundle, starts Anarchy, Survival, and Peaceful one after another on a free port (`PORT=0`) under a temporary `WORLD_PATH`, checks `GET /status` (`200`, `ready === true`, matching `mode` and `world`), sends `SIGTERM`, and checks that `.instance.lock` is gone.
+That builds the bundle, starts Anarchy, Survival, and Peaceful one after another on a free port (`PORT=0`) under a temporary `WORLD_PATH`, and checks `GET /status` (`200`, `ready === true`, matching `mode` and `world`). On POSIX it then sends `SIGTERM` and checks exit 0 and removal of `.instance.lock`. `child.kill('SIGTERM')` on Windows is `TerminateProcess` and does not run that handler, so the smoke does not treat a null exit code as a successful stop there.
 
 `SIGINT`, `SIGTERM`, and `SIGHUP` share one shutdown: save, remove `.instance.lock`, exit 0. A second signal during that shutdown does not start a second stop. If `listen` fails (`EADDRINUSE`), or the process hits `uncaughtException` / `unhandledRejection`, the same stop runs and the process exits 1. The bind failure log includes mode, world, host, port, and the original error. The world lock from that failed process is not left on disk.
 
@@ -304,7 +304,7 @@ This Cloud checkout already ran that bake: spawn `53.5, 68.01, 70.5`, 63 chunks 
 
 ## systemd on one machine
 
-Three production processes of this same server. Install, upgrade, and rollback: `docs/SYSTEMD.md`. Unit files and env files: `deploy/systemd/`. World files stay in `/var/lib/frontier-cubes/worlds/<world>`, not inside the release tree. `npm run status:servers` checks the three `/status` endpoints.
+Three production processes of this same server. Units: `docs/SYSTEMD.md`. Release install and rollback: `docs/DEPLOYMENT.md`. World files stay in `/var/lib/frontier-cubes/worlds/<world>`, not inside the release tree. `npm run status:servers` checks the three `/status` endpoints.
 
 Nginx, TLS, WSS, a domain, Docker, PM2, Redis, and PostgreSQL are not part of that install.
 
