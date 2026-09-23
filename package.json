@@ -27,6 +27,7 @@
     "smoke:sim": "node --import ./scripts/block-three-register.mjs ./node_modules/vite-node/vite-node.mjs scripts/sim-node-smoke.ts",
     "smoke:server": "vite-node scripts/server-headless-smoke.ts",
     "build:server": "node scripts/build-server.mjs",
+    "pack:release": "node scripts/release-ops.mjs pack",
     "start:server": "node dist/server/index.mjs",
     "smoke:server:prod": "node scripts/server-production-smoke.mjs",
     "status:servers": "node scripts/check-game-servers.mjs",

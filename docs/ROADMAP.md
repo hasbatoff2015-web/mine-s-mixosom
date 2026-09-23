@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-09-23: production release tooling
+
+- [x] Pack a release with `dist/server/index.mjs` and external `ws`. No world files, no `npm install` on the VPS.
+- [x] `deploy-release.sh` installs, atomically switches `current`, restarts the three systemd units, and requires all three `/status` checks.
+- [x] Failed deploy restores the previous `current`. `rollback-release.sh` and dry-run cleanup never delete world data.
+
 ## 2026-09-23: systemd deployment
 
 - [x] Three systemd units run `dist/server/index.mjs` as user `frontier-cubes` (Anarchy 2567, Survival 2568, Peaceful 2569).

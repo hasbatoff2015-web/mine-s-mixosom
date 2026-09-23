@@ -40,26 +40,7 @@ sudo chmod 750 /var/lib/frontier-cubes /var/lib/frontier-cubes/worlds
 
 ## Установка релиза
 
-Сборка выполняется отдельно от каталогов миров. На машине сборки, в дереве репозитория:
-
-```bash
-npm ci
-npm run build:server
-```
-
-Дальше на сервере, под новым каталогом релиза (подставьте sha коммита):
-
-```bash
-sudo mkdir -p /opt/frontier-cubes/releases/<sha>/dist
-sudo rsync -a dist/server /opt/frontier-cubes/releases/<sha>/dist/
-sudo rsync -a package.json package-lock.json /opt/frontier-cubes/releases/<sha>/
-sudo npm ci --omit=dev --prefix /opt/frontier-cubes/releases/<sha>
-sudo ln -sfn /opt/frontier-cubes/releases/<sha> /opt/frontier-cubes/current
-sudo chown -R root:root /opt/frontier-cubes/releases/<sha>
-sudo chmod -R a+rX /opt/frontier-cubes/releases/<sha>
-```
-
-`npm ci --omit=dev` нужен из-за external-пакета `ws`. В этот каталог не копируют `server/data`. Старый релиз не удаляют.
+Сборка и выкладка описаны в `docs/DEPLOYMENT.md`. Коротко: `npm run build:server`, `npm run pack:release`, затем на сервере `scripts/deploy-release.sh`. Каталоги миров этот шаг не изменяет. `npm install` на VPS не нужен: в релиз уже входит `dist/server/index.mjs` и external-пакет `ws`.
 
 ## Unit-файлы и env
 
@@ -120,28 +101,6 @@ sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-c
 
 `restart` для каждого сервиса шлёт SIGTERM, ждёт до 30 секунд, пока `stop()` сохранит мир и удалит `.instance.lock`, затем запускает процесс заново. После этого снова `npm run status:servers`.
 
-## Обновление
+## Обновление и откат
 
-1. Собрать новый sha отдельно (`npm ci`, `npm run build:server`).
-2. Положить его в `/opt/frontier-cubes/releases/<new>` вместе с `npm ci --omit=dev`. Не удалять `/var/lib/frontier-cubes` и не удалять предыдущий `/opt/frontier-cubes/releases/<old>`.
-3. Переключить ссылку только после того, как новый каталог собран:
-
-```bash
-sudo ln -sfn /opt/frontier-cubes/releases/<new> /opt/frontier-cubes/current
-sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-cubes-peaceful
-npm run status:servers
-```
-
-`restart` даёт текущему процессу SIGTERM: мир пишется на диск, lock снимается, новый процесс открывает тот же каталог мира.
-
-## Откат
-
-Предыдущий релиз всё ещё лежит на диске. Миры не перезаписывались установкой кода.
-
-```bash
-sudo ln -sfn /opt/frontier-cubes/releases/<old> /opt/frontier-cubes/current
-sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-cubes-peaceful
-npm run status:servers
-```
-
-Старый каталог релиза удаляют только после успешной проверки нового `/status`.
+Новый релиз ставится через `scripts/deploy-release.sh`: каталог создаётся рядом со старым, `current` переключается атомарно, три сервиса получают SIGTERM и проходят `/status`. Предыдущий релиз не удаляется. Откат: `scripts/rollback-release.sh`. Подробности и очистка старых каталогов: `docs/DEPLOYMENT.md`. `daemon-reload` нужен только после смены unit-файлов, не после смены релиза.
