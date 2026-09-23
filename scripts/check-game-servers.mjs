@@ -22,7 +22,12 @@ for (const server of SERVERS) {
     const ok = response.status === 200
       && body.ready === true
       && body.mode === server.mode
-      && body.world === server.world;
+      && body.world === server.world
+      && typeof body.name === 'string'
+      && body.name.length > 0
+      && typeof body.online === 'number'
+      && typeof body.maxPlayers === 'number'
+      && typeof body.tickRate === 'number';
     if (!ok) failed += 1;
     console.log(`${ok ? 'ok' : 'FAIL'} ${url} http=${response.status} ${JSON.stringify(body)}`);
   } catch (error) {

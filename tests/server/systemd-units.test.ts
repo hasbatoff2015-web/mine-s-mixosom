@@ -95,4 +95,15 @@ describe('systemd production units', () => {
     }
     expect(new Set(directories).size).toBe(SERVERS.length);
   });
+
+  it('keeps one shutdown for SIGINT, SIGTERM, and SIGHUP, and requires a full /status', () => {
+    const index = readFileSync(join(ROOT, 'server/index.ts'), 'utf8');
+    expect(index).toContain("for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const)");
+    expect(index).toContain('shutdown(0)');
+    expect(index).toContain('shutdown(1)');
+    const health = readFileSync(join(ROOT, 'scripts/check-game-servers.mjs'), 'utf8');
+    for (const field of ['ready', 'mode', 'world', 'name', 'online', 'maxPlayers', 'tickRate']) {
+      expect(health).toContain(field);
+    }
+  });
 });

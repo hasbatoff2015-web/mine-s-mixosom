@@ -33,10 +33,13 @@ sudo mkdir -p /opt/frontier-cubes/releases \
   /var/lib/frontier-cubes/plugins \
   /etc/frontier-cubes
 sudo chown -R frontier-cubes:frontier-cubes /var/lib/frontier-cubes
-sudo chmod 750 /var/lib/frontier-cubes /var/lib/frontier-cubes/worlds
+sudo chmod 750 /var/lib/frontier-cubes /var/lib/frontier-cubes/worlds \
+  /var/lib/frontier-cubes/worlds/anarchy \
+  /var/lib/frontier-cubes/worlds/survival \
+  /var/lib/frontier-cubes/worlds/peaceful
 ```
 
-`/opt/frontier-cubes` остаётся читаемым для `frontier-cubes` и не должен быть местом, куда процесс пишет мир.
+`/opt/frontier-cubes` остаётся читаемым для `frontier-cubes` и не должен быть местом, куда процесс пишет мир. Каталоги миров принадлежат `frontier-cubes` и имеют режим `750`: другой пользователь системы не может их менять. Файлы релиза после `deploy-release.sh` от root принадлежат root и открыты на чтение сервисному пользователю. В unit-файлах секретов нет.
 
 ## Установка релиза
 
@@ -52,8 +55,10 @@ sudo cp deploy/systemd/frontier-cubes-anarchy.service /etc/systemd/system/
 sudo cp deploy/systemd/frontier-cubes-survival.service /etc/systemd/system/
 sudo cp deploy/systemd/frontier-cubes-peaceful.service /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now frontier-cubes-anarchy frontier-cubes-survival frontier-cubes-peaceful
+sudo systemctl enable frontier-cubes-anarchy frontier-cubes-survival frontier-cubes-peaceful
 ```
+
+`enable` без `--now`. Пока нет `/opt/frontier-cubes/current`, `start` падает, а `Restart=on-failure` поднимает unit снова через 5 секунд. Первый запуск делает `scripts/deploy-release.sh`: он переключает `current` и сам вызывает `systemctl restart`. `daemon-reload` после смены релиза не нужен.
 
 В git лежат только эти значения: режим, порт, `HOST=0.0.0.0`, родитель миров, tick rate, view radius, max players, интервал сохранения, каталог дисковых плагинов. Паролей там нет. Если на сервере позже появится `FC_OPERATORS`, его дописывают в `/etc/frontier-cubes/*.env` и не коммитят.
 
@@ -66,7 +71,7 @@ sudo systemctl enable --now frontier-cubes-anarchy frontier-cubes-survival front
 - `NoNewPrivileges=true`, `PrivateTmp=true`
 - stdout/stderr в journald
 
-`systemctl stop` шлёт SIGTERM. Процесс сохраняет мир, снимает `.instance.lock` и выходит с кодом 0, поэтому `Restart=on-failure` его снова не поднимает. Падение с кодом 1 поднимается через 5 секунд.
+`systemctl stop` шлёт SIGTERM. Процесс сохраняет мир, снимает `.instance.lock` и выходит с кодом 0, поэтому `Restart=on-failure` его снова не поднимает. Падение с кодом 1 (`listen`, `uncaughtException`, `unhandledRejection`, ошибка shutdown) поднимается через 5 секунд. Если `TimeoutStopSec` всё же убивает процесс, следующий старт видит мёртвый pid в `.instance.lock`, пишет `world lock stale` и забирает каталог. Живой pid тот же каталог не отдаёт.
 
 ## Статус и журналы
 

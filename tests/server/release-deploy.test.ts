@@ -239,6 +239,17 @@ echo "[status:servers] anarchy, survival, peaceful ready"
       expect(await readFile(join(opt, 'previous'), 'utf8')).toBe('ccccccc\n');
       expect(await readFile(sentinel, 'utf8')).toBe('{"keep":1}\n');
 
+      const failedBack = await run('bash', ['scripts/rollback-release.sh', '--root', opt], {
+        ...env,
+        UNHEALTHY_ID: 'ccccccc',
+      });
+      expect(failedBack.code).not.toBe(0);
+      expect(failedBack.err).toContain('returning current to aaaaaaa');
+      expect(failedBack.err).toContain('restored release is healthy; rollback still failed');
+      expect(await readFile(join(opt, 'current', 'RELEASE_ID'), 'utf8')).toBe('aaaaaaa\n');
+      expect(await readFile(join(opt, 'previous'), 'utf8')).toBe('ccccccc\n');
+      expect(await readFile(sentinel, 'utf8')).toBe('{"keep":1}\n');
+
       const log = await readFile(systemctlLog, 'utf8');
       expect(log).toContain('frontier-cubes-anarchy.service');
       expect(log).toContain('frontier-cubes-survival.service');
