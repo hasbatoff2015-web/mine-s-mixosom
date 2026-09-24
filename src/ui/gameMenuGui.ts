@@ -41,14 +41,32 @@ const CHAT_SPRITE_FILES = {
   '--chat-off-img': 'off.png',
 } as const;
 
-export function menuAssetUrl(file: string): string {
+/**
+ * Absolute URL for a public file.
+ * A relative `url()` stored in a custom property is resolved against the
+ * stylesheet (`/assets/*.css`), so `./ui/...` would request `/assets/ui/...`.
+ * Resolving against the document URL first keeps Vite `base: './'` and still
+ * loads the file next to `index.html`.
+ */
+export function resolveAssetUrl(path: string, base: string): string {
+  const url = new URL(path, base);
+  url.pathname = url.pathname.replace(/\/{2,}/g, '/');
+  return url.toString();
+}
+
+function publicAssetUrl(directory: string, file: string): string {
   const base = import.meta.env.BASE_URL ?? './';
-  return `${base}ui/menu/${file}`;
+  const relative = `${base}${directory}/${file}`;
+  if (typeof document === 'undefined' || document.baseURI.length === 0) return relative;
+  return resolveAssetUrl(relative, document.baseURI);
+}
+
+export function menuAssetUrl(file: string): string {
+  return publicAssetUrl('ui/menu', file);
 }
 
 export function chatAssetUrl(file: string): string {
-  const base = import.meta.env.BASE_URL ?? './';
-  return `${base}ui/chat/${file}`;
+  return publicAssetUrl('ui/chat', file);
 }
 
 function spriteStyle(files: Record<string, string>, urlFor: (file: string) => string): string {
