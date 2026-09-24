@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: полный набор золотых инструментов — 2026-09-24
+
+- Gold вошёл в общий `TierStats` между iron и diamond: prefix `golden`, tier `gold`, durability 32, miningSpeed 12, damageBonus 0. Отдельный special-case `golden_hoe` удалён; id `golden_hoe` не менялся.
+- Реестр теперь создаёт `golden_pickaxe`, `golden_axe`, `golden_shovel`, `golden_hoe`, `golden_sword`. Крафт идёт через тот же `toolMaterials` (Gold Ingot + Stick). Titanium upgrade recipes не трогались.
+- `TOOL_TIER_RANK.gold` остаётся 1, как у wood. Armor IDs остаются `gold_helmet` / `gold_chestplate` / `gold_leggings` / `gold_boots`.
+- Runtime PNG скопированы байт-в-байт из `assets/minecraft/textures/items/gold_*.png`.
+- Подробности: `docs/reports/2026-09-24_golden-tools.md`.
+
 ## Последний проход: production client endpoint — 2026-09-23
 
 - `npm run dev` по-прежнему ходит на `ws://127.0.0.1:2567` и `http://127.0.0.1:2567/status`.
@@ -1770,7 +1778,7 @@
 - Data-first item registry связывает block items, resources, foods, tools, weapons, четыре комплекта armor, **flint and steel**, **golden apple**, **glass bottle**, **invisibility/regeneration/repair potions**, **buckets**, **fire arrow** и **minecart**.
 - Bucket follow-up: empty stack max 16, filled max 1. Пустое ведро использует тот же DDA с `stopOnLiquids`: первый liquid останавливает луч, source проверяется через `isFluidSource`; нельзя забирать через стену или flowing/falling cell. Обычный targeting по-прежнему игнорирует fluids. Survival сохраняет остаток пустого стака и добавляет filled bucket (при полном inventory — canonical drop); Creative pickup кладёт filled в active slot, placement его сохраняет. Source placement/pickup используют deferred lighting; Lava emission удаляется через существующий budgeted lighting path.
 - Fluid timing follow-up: все новые задания, включая generic block edits и generated boundaries, получают material-aware delay, Air не ставится в очередь. Water first arrivals = ticks **5/10/15/20**, Lava = **30/60/90**. Старые `delay=1` calls не обходят rate; `+1` остаётся только для already-due budget retry. Material/lifetime смена инвалидирует старый ticket. Hill footprint предыдущего routing pass сохранён: **134 / 42** cells, late writes 0.
-- В progression есть wood/stone/iron/diamond pickaxe, axe, shovel и sword; hoe и gold tools намеренно исключены.
+- В progression есть wood/stone/iron/gold/diamond/ruby/titanium pickaxe, axe, shovel, hoe и sword. Gold: prefix `golden`, durability 32, miningSpeed 12, damageBonus 0; harvest rank совпадает с wood (`TOOL_TIER_RANK.gold = 1`). Armor по-прежнему использует IDs `gold_*`.
 - Gold armor присутствует, как и leather/iron/diamond armor.
 - Stack validation, merge/split, left/right click semantics, durability, equipment constraints, atomic consume и serialization покрыты unit tests.
 - Mining использует Java 1.9 формулу `(S/H)/30` при harvest и `/100` иначе. Preferred tool ускоряет добычу; `requiresCorrectTool` нужен только камню, рудам и furnace.

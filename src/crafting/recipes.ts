@@ -217,13 +217,9 @@ const toolMaterials = [
   { prefix: 'wooden', ingredient: tag('planks') },
   { prefix: 'stone', ingredient: exact('cobblestone') },
   { prefix: 'iron', ingredient: exact(ItemId.IronIngot) },
+  { prefix: 'golden', ingredient: exact(ItemId.GoldIngot) },
   { prefix: 'diamond', ingredient: exact(ItemId.Diamond) },
   { prefix: 'ruby', ingredient: exact(ItemId.RubyIngot) },
-] as const;
-
-const hoeMaterials = [
-  ...toolMaterials,
-  { prefix: 'golden', ingredient: exact(ItemId.GoldIngot) },
 ] as const;
 
 for (const material of toolMaterials) {
@@ -248,7 +244,7 @@ for (const material of toolMaterials) {
   );
 }
 
-for (const material of hoeMaterials) {
+for (const material of toolMaterials) {
   recipes.push({
     id: `${material.prefix}_hoe`, type: 'shaped', pattern: ['MM', ' S', ' S'], mirrored: true,
     key: { M: material.ingredient, S: exact(ItemId.Stick) },
