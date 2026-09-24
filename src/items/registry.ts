@@ -103,7 +103,7 @@ function food(
 
 interface TierStats {
   readonly tier: ItemTier;
-  readonly prefix: 'wooden' | 'stone' | 'iron' | 'diamond' | 'ruby' | 'titanium';
+  readonly prefix: 'wooden' | 'stone' | 'iron' | 'golden' | 'diamond' | 'ruby' | 'titanium';
   readonly durability: number;
   readonly miningSpeed: number;
   readonly damageBonus: number;
@@ -113,6 +113,7 @@ const tiers: readonly TierStats[] = [
   { tier: 'wood', prefix: 'wooden', durability: 59, miningSpeed: 2, damageBonus: 0 },
   { tier: 'stone', prefix: 'stone', durability: 131, miningSpeed: 4, damageBonus: 1 },
   { tier: 'iron', prefix: 'iron', durability: 250, miningSpeed: 6, damageBonus: 2 },
+  { tier: 'gold', prefix: 'golden', durability: 32, miningSpeed: 12, damageBonus: 0 },
   { tier: 'diamond', prefix: 'diamond', durability: 1561, miningSpeed: 8, damageBonus: 3 },
   { tier: 'ruby', prefix: 'ruby', durability: 2100, miningSpeed: 10, damageBonus: 4 },
   { tier: 'titanium', prefix: 'titanium', durability: 2800, miningSpeed: 12, damageBonus: 5 },
@@ -144,20 +145,13 @@ const tools: ItemDefinition[] = tiers.flatMap((stats) =>
   }),
 );
 
-const hoes: ItemDefinition[] = [
-  ...tiers.map((stats): ToolItemDefinition => Object.freeze({
-    id: `${stats.prefix}_hoe`, name: requiredDisplayName(`${stats.prefix}_hoe`),
-    kind: 'tool', maxStack: 1, texture: `item/${stats.prefix}_hoe`,
-    tags: Object.freeze(['tool', 'hoe', `tier:${stats.tier}`]),
-    tool: 'hoe', tier: stats.tier, durability: stats.durability,
-    miningSpeed: stats.miningSpeed, attackDamage: 1 + stats.damageBonus,
-  })),
-  Object.freeze({
-    id: ItemId.GoldenHoe, name: requiredDisplayName(ItemId.GoldenHoe), kind: 'tool', maxStack: 1,
-    texture: 'item/golden_hoe', tags: Object.freeze(['tool', 'hoe', 'tier:gold']),
-    tool: 'hoe', tier: 'gold', durability: 32, miningSpeed: 12, attackDamage: 1,
-  } satisfies ToolItemDefinition),
-];
+const hoes: ItemDefinition[] = tiers.map((stats): ToolItemDefinition => Object.freeze({
+  id: `${stats.prefix}_hoe`, name: requiredDisplayName(`${stats.prefix}_hoe`),
+  kind: 'tool', maxStack: 1, texture: `item/${stats.prefix}_hoe`,
+  tags: Object.freeze(['tool', 'hoe', `tier:${stats.tier}`]),
+  tool: 'hoe', tier: stats.tier, durability: stats.durability,
+  miningSpeed: stats.miningSpeed, attackDamage: 1 + stats.damageBonus,
+}));
 
 const swords: ItemDefinition[] = tiers.map((stats): WeaponItemDefinition => {
   const id = `${stats.prefix}_sword`;

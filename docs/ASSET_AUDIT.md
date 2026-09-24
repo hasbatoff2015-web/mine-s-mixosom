@@ -241,7 +241,7 @@ assets/
 - `bread.png` присутствует, но по ТЗ нужен максимум как Creative item, без farming chain.
 - Иконки блоков для dropped items/inventory можно брать из block atlas; отдельные item sprites для каждого блока не обязательны.
 
-Hoe и gold tools в наборе есть, но в текущий scope не входят.
+Hoe и полный gold tool set входят в runtime: `gold_hoe.png` → `golden_hoe.png`, и так же `gold_pickaxe.png`, `gold_axe.png`, `gold_shovel.png`, `gold_sword.png`. Armor icons остаются `gold_*`.
 
 Runtime whitelist после feel/polish pass включает все три `bow_pulling_*` стадии и отдельный `entity/projectiles/arrow.png`. Bow variants используются только готовыми cached item meshes; projectile sheet обрезается до legacy arrow region общим `ArrowVisualFactory` для player и skeleton.
 

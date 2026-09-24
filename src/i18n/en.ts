@@ -22,4 +22,9 @@ export const EN_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   titanium_axe: 'Titanium Axe',
   titanium_shovel: 'Titanium Shovel',
   titanium_hoe: 'Titanium Hoe',
+  golden_pickaxe: 'Golden Pickaxe',
+  golden_axe: 'Golden Axe',
+  golden_shovel: 'Golden Shovel',
+  golden_hoe: 'Golden Hoe',
+  golden_sword: 'Golden Sword',
 });

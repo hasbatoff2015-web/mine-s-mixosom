@@ -24,11 +24,11 @@ import { mountMoveItemsPanel, type MoveItemsCatalogGroup, type MoveItemsPanel } 
 
 const DEFAULT_ITEM = 'iron_pickaxe';
 const FEATURED_IDS = [
-  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'diamond_pickaxe', 'ruby_pickaxe', 'titanium_pickaxe',
-  'wooden_axe', 'stone_axe', 'iron_axe', 'diamond_axe', 'ruby_axe', 'titanium_axe',
-  'wooden_shovel', 'stone_shovel', 'iron_shovel', 'diamond_shovel', 'ruby_shovel', 'titanium_shovel',
+  'wooden_pickaxe', 'stone_pickaxe', 'iron_pickaxe', 'golden_pickaxe', 'diamond_pickaxe', 'ruby_pickaxe', 'titanium_pickaxe',
+  'wooden_axe', 'stone_axe', 'iron_axe', 'golden_axe', 'diamond_axe', 'ruby_axe', 'titanium_axe',
+  'wooden_shovel', 'stone_shovel', 'iron_shovel', 'golden_shovel', 'diamond_shovel', 'ruby_shovel', 'titanium_shovel',
   'wooden_hoe', 'stone_hoe', 'iron_hoe', 'golden_hoe', 'diamond_hoe', 'ruby_hoe', 'titanium_hoe',
-  'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
+  'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
   'bow', 'stick', 'flint_and_steel', 'arrow', 'fire_arrow',
   'apple', 'totem_of_undying', 'coal', 'torch', 'stone', 'oak_planks',
 ] as const;

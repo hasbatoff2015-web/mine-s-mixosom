@@ -266,9 +266,9 @@ Idle first-person right-hand vanilla path восстановлен как matrix
 | Terminal velocity | `50 b/s` | Gameplay clamp; vanilla около `78.4 b/s` |
 | Reach | block `5`, entity melee `3 blocks` | Block reach — alpha; melee — classic AABB raycast |
 | Mining | `S/H/30`, иначе `S/H/100`; speeds wood `2`, stone `4`, iron `6`, diamond `8` | Core formula совпадает; эффекты и post-break delay могут быть частичными |
-| Gold tools | speed `12`, tier `0`, durability `32`, если включены | Exact values; gold можно исключить из раннего UI, но не подменять tier |
+| Gold tools | speed `12`, tier `0`, durability `32`, если включены | Включены: speed 12, durability 32, harvest rank = wood (`TOOL_TIER_RANK.gold = 1`) |
 | Melee cadence | полный damage на click, без attackSpeed/cooldown | Product override: classic 1.8 |
-| Damage totals | sword 5/6/7/8, axe 4/5/6/7, pick 3/4/5/6, shovel 2/3/4/5 | Wood/stone/iron/diamond; gold tools не добавлены |
+| Damage totals | sword 5/6/7/8, axe 4/5/6/7, pick 3/4/5/6, shovel 2/3/4/5 | Wood/stone/iron/diamond плюс gold с damageBonus 0: sword 5, axe 4, pick 3, shovel 2, hoe 1 |
 | Critical | falling ×1.5, совместим со sprint | Classic 1.8, не 1.9 |
 | Hurt resistance | 20 ticks, первая половина: reject equal/weaker, stronger difference | Shared player/mob gate |
 | Knockback | halve XYZ; base8 b/s, Y cap8; extra sprint10 XZ/+2Y | Classic transform, bounded alpha collision integration |

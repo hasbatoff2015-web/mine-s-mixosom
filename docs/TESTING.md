@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-24 Golden tools
+
+```text
+npx vitest run tests/golden-tools.test.ts tests/crafting.test.ts tests/mining.test.ts tests/ruby-titanium-equipment.test.ts tests/item-rendering.test.ts tests/combat.test.ts tests/third-person-held-item.test.ts tests/sword-blocking-visual.test.ts tests/block-registry.test.ts tests/authored-item-assets.test.mjs
+```
+
+Contracts: five `golden_*` tools, one registry row each; hoe stats stay durability 32 / miningSpeed 12 / attackDamage 1 / tier gold; sword damage 5 and `isSwordItem`; gold harvest rank equals wood; mirrored axe and hoe craft from Gold Ingot + Stick; Titanium upgrades stay nine shapeless Ruby recipes; runtime PNG bytes match `assets/minecraft/textures/items/gold_*.png`.
+
 ## 2026-09-23 Merge origin/main into wolves-cats-pets
 
 Semantic merge of current `main` (`5d972cfc`) into `codex/wolves-cats-pets`. Docs conflicts kept both sides. `MobManager.spawn` keeps playable-border spawn and wild-only `maxMobs`. Auto-merged code kept both pet and current-main families.
@@ -286,7 +294,7 @@ Focused:
 npx vitest run tests/third-person-held-item.test.ts --maxWorkers=2 --silent
 ```
 
-Contracts: every `tool === 'axe'` uses tool position/scale plus local 180° handle flip `(1,1,0)`; pickaxe/shovel/hoe stay unflipped tool pose; swords stay sword pose; first-person / block / generated / bow unchanged. Axe IDs: wooden/stone/iron/diamond/ruby/titanium_axe. No `gold_axe`.
+Contracts: every `tool === 'axe'` uses tool position/scale plus local 180° handle flip `(1,1,0)`; pickaxe/shovel/hoe stay unflipped tool pose; swords stay sword pose; first-person / block / generated / bow unchanged. Axe IDs include `golden_axe` between iron and diamond. Parallel id `gold_axe` stays absent.
 
 ## 2026-09-18 Third-person sword vs tool poses
 
@@ -296,7 +304,7 @@ Focused:
 npx vitest run tests/third-person-held-item.test.ts tests/item-rendering.test.ts --maxWorkers=2 --silent
 ```
 
-Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` except axes uses tool pose; wooden/iron/diamond sword+pickaxe, shovel, hoe covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. No `gold_sword` / `gold_pickaxe` in registry (golden_hoe is a tool).
+Contracts: every `weapon === 'sword'` uses sword pose; every `kind: 'tool'` except axes uses tool pose; wooden/iron/diamond sword+pickaxe, shovel, hoe covered; stick/flint stay historical `handheld`; block/generated/bow unchanged; `FIRST_PERSON_SPRITE_POSE` unchanged. Canonical ids are `golden_*` (including `golden_sword` and `golden_pickaxe`). Parallel `gold_sword` / `gold_pickaxe` ids stay absent. Armor ids stay `gold_*`.
 
 ## 2026-09-18 Third-person held-item calibrator `/moveitems`
 
