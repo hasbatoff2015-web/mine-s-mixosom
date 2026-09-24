@@ -168,6 +168,8 @@ npm run dev:anarchy
 
 Query overrides: `?server=anarchy|survival|peaceful`, `?anarchyUrl=ws://127.0.0.1:2567`, or `?anarchyHost=` / `?anarchyPort=`.
 
+`npm run dev` does not set `VITE_ANARCHY_URL`, so the Anarchy card stays on `ws://127.0.0.1:2567` and `http://127.0.0.1:2567/status`. `vite build` loads `.env.production` and bakes `VITE_ANARCHY_URL=wss://megacraft.agariobrainrot.ru`. The menu status check for that card is `https://megacraft.agariobrainrot.ru/status` (`wss` → `https`, path `/status`). The header badge then shows that host instead of `localhost`. Survival and Peaceful have no production proxy, so those cards stay on `127.0.0.1:2568` and `:2569` and the badge returns to `localhost` when one of them is selected. `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still win over that env. `?anarchyStatus=` replaces only the status URL.
+
 `PROTOCOL_VERSION` is **3**. Older clients (v1/v2) fail join (`unsupported protocol`). Rebuild both processes after pulling this branch. World files in `server/data/worlds/anarchy/` are unchanged. Targeted Online actions require `targetBlockId`.
 
 ## Two-client test

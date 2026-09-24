@@ -4,6 +4,7 @@ export {
   anarchyStatusUrl,
   buildAnarchyJoinMessage,
   clientUrlForServer,
+  endpointLabel,
   fetchAnarchyStatus,
   fetchLocalServerStatuses,
   isLocalServerName,

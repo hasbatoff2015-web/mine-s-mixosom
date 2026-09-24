@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: production client endpoint — 2026-09-23
+
+- `npm run dev` по-прежнему ходит на `ws://127.0.0.1:2567` и `http://127.0.0.1:2567/status`.
+- `vite build` читает `.env.production`: `VITE_ANARCHY_URL=wss://megacraft.agariobrainrot.ru`. Status той же карточки — `https://megacraft.agariobrainrot.ru/status`. Бейдж меню показывает этот host. Survival и Peaceful без production proxy остаются на `:2568` и `:2569`.
+- `?anarchyUrl=`, `?anarchyHost=`, `?anarchyPort=` важнее env. Survival/Peaceful presets остаются локальными. Протокол и сервер не менялись.
+- Подробности: `docs/LOCAL_SERVER.md`, `docs/reports/2026-09-23_production-client-url.md`.
+
 ## Последний проход: production VPS readiness — 2026-09-23
 
 - Первый запуск: `systemctl enable` без `--now`, затем `scripts/deploy-release.sh`. Иначе отсутствующий `current` крутит `Restart=on-failure`.

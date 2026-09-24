@@ -59,6 +59,7 @@ function moveItemsDevRoutePlugin(): Plugin {
   };
 }
 
+// `vite build` loads `.env.production` (`VITE_ANARCHY_URL`). `npm run dev` does not.
 export default defineConfig({
   base: './',
   plugins: [playerSkinHashPlugin(), moveItemsDevRoutePlugin()],
