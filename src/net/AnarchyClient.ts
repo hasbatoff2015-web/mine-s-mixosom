@@ -51,11 +51,12 @@ function hasExplicitEndpoint(params: URLSearchParams | null): boolean {
 
 /**
  * `VITE_ANARCHY_URL` is the production WebSocket default (`vite build` loads
- * `.env.production`). `npm run dev` does not set it. An explicit search string
- * keeps the local presets so tests and `?server=` links stay on 127.0.0.1.
+ * `.env.production`). `npm run dev` does not set it. A missing or empty search
+ * uses that default. A non-empty search (`?server=`, `?anarchyHost=`,
+ * `?anarchyPort=`) keeps the local presets.
  */
 function configuredAnarchyUrl(search: string | undefined): string | undefined {
-  if (search !== undefined || typeof import.meta === 'undefined') return undefined;
+  if ((search !== undefined && search !== '') || typeof import.meta === 'undefined') return undefined;
   const value = import.meta.env?.VITE_ANARCHY_URL;
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
