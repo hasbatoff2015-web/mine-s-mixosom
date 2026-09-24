@@ -23,9 +23,13 @@ describe('anarchy client endpoints', () => {
     expect(anarchyClientUrl()).toBe('ws://127.0.0.1:2567');
     expect(anarchyStatusUrl()).toBe('http://127.0.0.1:2567/status');
     expect(anarchyClientUrl('')).toBe('ws://127.0.0.1:2567');
+    expect(anarchyStatusUrl('')).toBe('http://127.0.0.1:2567/status');
     expect(anarchyStatusUrl('?server=anarchy')).toBe('http://127.0.0.1:2567/status');
     expect(clientUrlForServer('survival')).toBe('ws://127.0.0.1:2568');
+    expect(clientUrlForServer('survival', '')).toBe('ws://127.0.0.1:2568');
+    expect(clientUrlForServer('peaceful', '')).toBe('ws://127.0.0.1:2569');
     expect(statusUrlForServer('peaceful')).toBe('http://127.0.0.1:2569/status');
+    expect(statusUrlForServer('peaceful', '')).toBe('http://127.0.0.1:2569/status');
   });
 
   it('uses VITE_ANARCHY_URL for the live Anarchy socket and derives https /status', () => {
@@ -39,11 +43,39 @@ describe('anarchy client endpoints', () => {
     expect(statusUrlForServer('peaceful')).toBe('http://127.0.0.1:2569/status');
   });
 
+  it('treats an empty search as no query and uses the production Anarchy endpoint', async () => {
+    vi.stubEnv('VITE_ANARCHY_URL', PRODUCTION_WS);
+    expect(anarchyClientUrl('')).toBe(PRODUCTION_WS);
+    expect(anarchyStatusUrl('')).toBe(PRODUCTION_STATUS);
+    expect(clientUrlForServer('anarchy', '')).toBe(PRODUCTION_WS);
+    expect(statusUrlForServer('anarchy', '')).toBe(PRODUCTION_STATUS);
+    expect(clientUrlForServer('survival', '')).toBe('ws://127.0.0.1:2568');
+    expect(statusUrlForServer('survival', '')).toBe('http://127.0.0.1:2568/status');
+    expect(clientUrlForServer('peaceful', '')).toBe('ws://127.0.0.1:2569');
+    expect(statusUrlForServer('peaceful', '')).toBe('http://127.0.0.1:2569/status');
+
+    const seen: string[] = [];
+    vi.stubGlobal('fetch', async (url: string) => {
+      seen.push(String(url));
+      return { ok: true, json: async () => ({ online: 0, maxPlayers: 300 }) };
+    });
+    await fetchLocalServerStatuses('');
+    expect(seen).toEqual([
+      PRODUCTION_STATUS,
+      'http://127.0.0.1:2568/status',
+      'http://127.0.0.1:2569/status',
+    ]);
+  });
+
   it('keeps an explicit search on the local presets even when production env is set', () => {
     vi.stubEnv('VITE_ANARCHY_URL', PRODUCTION_WS);
-    expect(anarchyClientUrl('')).toBe('ws://127.0.0.1:2567');
     expect(anarchyClientUrl('?server=anarchy')).toBe('ws://127.0.0.1:2567');
+    expect(anarchyStatusUrl('?server=anarchy')).toBe('http://127.0.0.1:2567/status');
     expect(anarchyClientUrl('?server=survival')).toBe('ws://127.0.0.1:2568');
+    expect(anarchyStatusUrl('?server=survival')).toBe('http://127.0.0.1:2568/status');
+    expect(clientUrlForServer('survival', '?server=survival')).toBe('ws://127.0.0.1:2568');
+    expect(clientUrlForServer('anarchy', '?server=survival')).toBe('ws://127.0.0.1:2567');
+    expect(clientUrlForServer('survival', '?server=survival')).not.toBe(PRODUCTION_WS);
     expect(anarchyClientUrl('?server=peaceful')).toBe('ws://127.0.0.1:2569');
     expect(anarchyStatusUrl('?server=peaceful')).toBe('http://127.0.0.1:2569/status');
     expect(anarchyClientUrl('?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
