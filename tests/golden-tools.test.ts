@@ -11,7 +11,7 @@ import { CombatSystem, getAttackProfile } from '../src/combat';
 import { CRAFTING_RECIPES, getCraftingResult } from '../src/crafting';
 import type { ShapedRecipe } from '../src/crafting';
 import { displayNameFor } from '../src/i18n';
-import { createItemStack, damageItem } from '../src/inventory';
+import { createItemStack, damageItem, type ItemStack } from '../src/inventory';
 import {
   ITEMS,
   ItemId,
@@ -232,14 +232,18 @@ describe('golden tool combat and rendering', () => {
   });
 
   it('wears a golden sword down through the generic durability pipeline', () => {
-    let stack = createItemStack(ItemId.GoldenSword);
-    expect(stack?.durability ?? getItemDefinition(ItemId.GoldenSword).durability).toBe(32);
+    const sword = getItemDefinition(ItemId.GoldenSword);
+    expect(sword.kind).toBe('weapon');
+    if (sword.kind !== 'weapon') return;
+    expect(sword.durability).toBe(32);
+    let stack: ItemStack | null = createItemStack(ItemId.GoldenSword);
     for (let hit = 1; hit < 32; hit += 1) {
-      const next = damageItem(stack!, getAttackProfile(ItemId.GoldenSword).durabilityCost);
-      expect(next?.durability, `hit ${hit}`).toBe(32 - hit);
-      stack = next;
+      if (stack === null) throw new Error(`sword broke on hit ${hit}`);
+      stack = damageItem(stack, getAttackProfile(ItemId.GoldenSword).durabilityCost);
+      expect(stack?.durability, `hit ${hit}`).toBe(32 - hit);
     }
-    expect(damageItem(stack!, 1)).toBeNull();
+    if (stack === null) throw new Error('sword broke before the last point');
+    expect(damageItem(stack, 1)).toBeNull();
   });
 
   it('classifies golden tools as handheld tools and the sword as a handheld sword', () => {

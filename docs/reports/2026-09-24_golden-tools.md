@@ -48,7 +48,12 @@ Gold is one tier in the existing generator, not four extra item objects. Prefix 
 
 ## Tests
 
-Recorded in the follow-up commit after `typecheck:client`, `typecheck:server`, targeted vitest and `npm run build`.
+- `npm run typecheck:client` — PASS
+- `npm run typecheck:server` — PASS
+- Targeted vitest (golden tools, crafting, mining, ruby/titanium, item rendering, combat, third-person held item, sword blocking, block registry, authored item assets) — PASS, 10 files, 159 tests
+- `tests/golden-tools.test.ts` after the durability typing fix — PASS, 12 tests
+- `npm run build` (`tsc --noEmit && vite build`) — PASS
+- `npm test` — 296 files passed, 9 files failed; 2871 tests passed, 14 failed, 1 skipped. Failures are lighting budgets, AutoMine reset timing, tick-load timing, a missing Pillow import, an extra local sfx file (27 vs 26), fence jump height, and a minecart geometry cache count. None of those files are part of the golden tool change. GitHub CI was not checked.
 
 ## Visual QA
 
