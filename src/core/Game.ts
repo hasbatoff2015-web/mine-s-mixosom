@@ -229,7 +229,7 @@ import {
   isFiniteSpawn,
   resolveAnarchyStartup,
 } from '../world/import';
-import { AnarchyClient, RemotePlayerView, clientUrlForServer, fetchLocalServerStatuses, isLocalServerName } from '../net';
+import { AnarchyClient, RemotePlayerView, clientUrlForServer, endpointLabel, fetchLocalServerStatuses, isLocalServerName } from '../net';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
@@ -979,10 +979,11 @@ export class Game {
       this.ui.toast('Этот сервер пока недоступен');
       return;
     }
-    this.ui.showLoading('Подключение к серверу…', 12, 'localhost');
+    const url = clientUrlForServer(id);
+    this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url));
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect(clientUrlForServer(id), loadPlayerNickname(), this.playerAppearance);
+      const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance);
       await this.startOnlineAnarchy(client, welcome);
     } catch {
       client.disconnect();

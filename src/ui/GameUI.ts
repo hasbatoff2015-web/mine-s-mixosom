@@ -141,7 +141,7 @@ import {
   type MenuServerLiveStatus,
 } from './menuModel';
 import type { LocalServerName } from '../../shared/config';
-import { selectedLocalServer } from '../net/AnarchyClient';
+import { clientUrlForServer, endpointLabel, selectedLocalServer } from '../net/AnarchyClient';
 import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
 import type { PlayerAppearance, PlayerModelVariant } from '../player/appearance/PlayerAppearance';
 import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
@@ -815,9 +815,10 @@ export class GameUI {
     selectedId = selectedLocalServer(),
   ): void {
     let current: LocalServerName = isMenuServerId(selectedId) ? selectedId : 'anarchy';
+    const connectionBadge = (): string => endpointLabel(clientUrlForServer(current));
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
-        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">localhost</span></header>
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${connectionBadge()}</span></header>
         <div class="server-list">${renderOnlineServerRows(statuses, current)}</div>
         <footer class="menu-footer"><button class="game-button primary" data-action="connect">Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
       </div></section>`, actions.back);
@@ -830,6 +831,8 @@ export class GameUI {
         const next = button.dataset.serverId;
         if (!next || !isMenuServerId(next)) return;
         current = next;
+        const badge = this.screen!.querySelector('.mock-badge');
+        if (badge) badge.textContent = connectionBadge();
         for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
           const selected = row === button;
           row.classList.toggle('selected', selected);

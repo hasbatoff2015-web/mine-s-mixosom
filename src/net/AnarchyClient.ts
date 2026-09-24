@@ -40,21 +40,67 @@ function endpointFromParams(params: URLSearchParams | null): { host: string; por
   return { host, port };
 }
 
+/** Non-empty `anarchyHost` / numeric `anarchyPort` replace the configured default. */
+function hasExplicitEndpoint(params: URLSearchParams | null): boolean {
+  if (!params) return false;
+  const host = params.get('anarchyHost');
+  if (host != null && host !== '') return true;
+  const portRaw = params.get('anarchyPort');
+  return portRaw != null && portRaw !== '' && Number.isFinite(Number(portRaw));
+}
+
+/**
+ * `VITE_ANARCHY_URL` is the production WebSocket default (`vite build` loads
+ * `.env.production`). `npm run dev` does not set it. An explicit search string
+ * keeps the local presets so tests and `?server=` links stay on 127.0.0.1.
+ */
+function configuredAnarchyUrl(search: string | undefined): string | undefined {
+  if (search !== undefined || typeof import.meta === 'undefined') return undefined;
+  const value = import.meta.env?.VITE_ANARCHY_URL;
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+}
+
+/** `ws://` / `wss://` endpoint → `http://` / `https://` `/status` on the same origin. */
+export function statusUrlFromAnarchyWs(wsUrl: string): string {
+  let url: URL;
+  try {
+    url = new URL(wsUrl);
+  } catch {
+    return defaultStatusUrl();
+  }
+  if (url.protocol === 'wss:') url.protocol = 'https:';
+  else if (url.protocol === 'ws:') url.protocol = 'http:';
+  else return defaultStatusUrl();
+  url.pathname = '/status';
+  url.search = '';
+  url.hash = '';
+  return url.toString();
+}
+
 export function anarchyClientUrl(search?: string): string {
   const params = readConnectParams(search);
-  const override = params?.get('anarchyUrl')
-    ?? (search === undefined && typeof import.meta !== 'undefined'
-      ? import.meta.env?.VITE_ANARCHY_URL as string | undefined
-      : undefined);
-  if (override) return override;
+  const queryUrl = params?.get('anarchyUrl');
+  if (queryUrl) return queryUrl;
+  if (!hasExplicitEndpoint(params)) {
+    const configured = configuredAnarchyUrl(search);
+    if (configured) return configured;
+  }
   const endpoint = endpointFromParams(params);
   return defaultWsUrl(endpoint.host, endpoint.port);
 }
 
 export function anarchyStatusUrl(search?: string): string {
   const params = readConnectParams(search);
-  const override = params?.get('anarchyStatus');
-  if (override) return override;
+  const statusOverride = params?.get('anarchyStatus');
+  if (statusOverride) return statusOverride;
+  // `?anarchyUrl=` still overrides only the socket. Status stays on host/port
+  // unless that query, or `?anarchyStatus=`, says otherwise.
+  if (!params?.get('anarchyUrl') && !hasExplicitEndpoint(params)) {
+    const configured = configuredAnarchyUrl(search);
+    if (configured) return statusUrlFromAnarchyWs(configured);
+  }
   const endpoint = endpointFromParams(params);
   return defaultStatusUrl(endpoint.host, endpoint.port);
 }
@@ -73,14 +119,30 @@ export function localServerClientUrl(server: LocalServerName): string {
   return defaultWsUrl(DEFAULT_SERVER_HOST, LOCAL_SERVER_PRESETS[server].port);
 }
 
+/**
+ * Survival and Peaceful have no production reverse proxy. Their presets stay
+ * `127.0.0.1:2568` and `:2569` even when `VITE_ANARCHY_URL` points Anarchy at wss.
+ */
 export function localServerStatusUrl(server: LocalServerName): string {
   return defaultStatusUrl(DEFAULT_SERVER_HOST, LOCAL_SERVER_PRESETS[server].port);
 }
 
+/** Menu badge and loading detail. Local binds stay "localhost"; a public host is shown as itself. */
+export function endpointLabel(url: string): string {
+  try {
+    const host = new URL(url).hostname;
+    if (host === '127.0.0.1' || host === 'localhost' || host === '[::1]' || host === '::1') return 'localhost';
+    return host;
+  } catch {
+    return 'localhost';
+  }
+}
+
 /**
  * Connect URL for one menu card.
- * `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still override the card
- * that `?server=` (or the Anarchy default) addresses. The other cards use their preset.
+ * `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` override the card that
+ * `?server=` (or the Anarchy default) addresses, ahead of `VITE_ANARCHY_URL`.
+ * The other cards keep their local presets.
  */
 export function clientUrlForServer(server: LocalServerName, search?: string): string {
   if (server === selectedLocalServer(search)) return anarchyClientUrl(search);
@@ -286,6 +348,7 @@ export async function fetchLocalServerStatuses(
 ): Promise<Record<LocalServerName, { reachable: boolean; online: number; maxPlayers: number }>> {
   const names = Object.keys(LOCAL_SERVER_PRESETS) as LocalServerName[];
   const pairs = await Promise.all(names.map(async (id) => {
+    // Anarchy follows VITE_ANARCHY_URL. Survival and Peaceful stay on their local ports.
     const status = await fetchStatusAt(statusUrlForServer(id, search));
     return [id, { reachable: status.reachable, online: status.online, maxPlayers: status.maxPlayers }] as const;
   }));
