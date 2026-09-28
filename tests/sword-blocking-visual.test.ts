@@ -90,7 +90,7 @@ function worldPos(object: THREE.Object3D): THREE.Vector3 {
 describe('sword item classification', () => {
   it('treats every registered sword as a sword and rejects tools and other items', () => {
     expect(SWORD_IDS).toEqual([
-      'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
+      'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
     ]);
     for (const id of SWORD_IDS) expect(isSwordItem(id)).toBe(true);
     for (const id of ['iron_axe', 'iron_pickaxe', 'iron_shovel', 'golden_hoe', 'bow', 'apple', 'stone']) {

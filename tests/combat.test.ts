@@ -10,7 +10,7 @@ import { tryGetItemDefinition } from '../src/items';
 
 describe('classic 1.8 melee', () => {
   it.each([
-    ['wooden', 0], ['stone', 1], ['iron', 2], ['diamond', 3], ['ruby', 4], ['titanium', 5],
+    ['wooden', 0], ['stone', 1], ['iron', 2], ['golden', 0], ['diamond', 3], ['ruby', 4], ['titanium', 5],
   ] as const)('uses total damage for every %s sword and tool', (tier, bonus) => {
     for (const [weapon, base] of [['sword', 5], ['axe', 4], ['pickaxe', 3], ['shovel', 2]] as const) {
       const id = tier + '_' + weapon;
@@ -26,7 +26,8 @@ describe('classic 1.8 melee', () => {
     expect(combat.attack('wooden_sword').damage).toBe(5);
     expect(combat.attack('iron_axe').damage).toBe(6);
     expect(combat.attack('bow').damage).toBe(1);
-    expect(tryGetItemDefinition('golden_sword')).toBeUndefined();
+    expect(tryGetItemDefinition('golden_sword')).toMatchObject({ attackDamage: 5, tier: 'gold' });
+    expect(combat.attack('golden_sword').damage).toBe(5);
   });
 
   it('ignores obsolete saved fields and never restores transient use', () => {

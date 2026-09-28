@@ -1,5 +1,11 @@
 # Архитектура
 
+## Golden tools — 2026-09-24
+
+Gold is a row in the same `TierStats` list as wood, stone, iron, diamond, ruby and titanium. Prefix is `golden` (item ids `golden_pickaxe` / `golden_axe` / `golden_shovel` / `golden_hoe` / `golden_sword`). Tier value stays `gold`. Stats: durability 32, miningSpeed 12, damageBonus 0. Hoe attack is `1 + damageBonus`; other tools and the sword use the existing base-damage tables. There is no second golden-hoe definition.
+
+`TOOL_TIER_RANK.gold` stays 1, equal to wood. `canHarvestBlock` compares that rank; `miningSpeedMultiplier` only checks the preferred tool. Crafting uses `toolMaterials` (Gold Ingot + Stick), including the hoe. Titanium remains the shapeless Ruby + Titanium Ingot upgrade and is not in `toolMaterials`. Armor ids stay `gold_helmet`, `gold_chestplate`, `gold_leggings`, `gold_boots`.
+
 ## Local server modes — 2026-09-21
 
 One codebase, one Node process, one world directory. `loadServerConfig` reads `SERVER_MODE` / `FC_SERVER_MODE` into `ServerConfig.serverMode` (`anarchy` | `survival` | `peaceful`). Unset stays `anarchy`. An unknown non-blank value throws. `WORLD` still selects the directory; when it is unset the world id is the mode, so three processes do not share `server/data/worlds/anarchy`.

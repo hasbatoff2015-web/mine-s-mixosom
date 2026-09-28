@@ -69,7 +69,7 @@ describe('third-person held item defaults', () => {
 
   it('uses one sword pose for every sword and one tool pose for every non-axe tool', () => {
     expect(SWORD_IDS).toEqual([
-      'wooden_sword', 'stone_sword', 'iron_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
+      'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
     ]);
     expect(OTHER_TOOL_IDS).toContain('wooden_pickaxe');
     expect(OTHER_TOOL_IDS).toContain('iron_pickaxe');
@@ -111,7 +111,7 @@ describe('third-person held item defaults', () => {
 
   it('flips every axe 180° around the local handle axis on top of the shared tool pose', () => {
     expect(AXE_IDS).toEqual([
-      'wooden_axe', 'stone_axe', 'iron_axe', 'diamond_axe', 'ruby_axe', 'titanium_axe',
+      'wooden_axe', 'stone_axe', 'iron_axe', 'golden_axe', 'diamond_axe', 'ruby_axe', 'titanium_axe',
     ]);
     expect(AXE_HANDLE_LOCAL_AXIS).toEqual({ x: 1, y: 1, z: 0 });
     expect(AXE_HANDLE_FLIP_RADIANS).toBe(Math.PI);

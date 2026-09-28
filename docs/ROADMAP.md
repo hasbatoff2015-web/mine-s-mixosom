@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-24: complete golden tool set
+
+- [x] Register `golden_pickaxe`, `golden_axe`, `golden_shovel`, `golden_sword` through the existing tier pipeline. Keep `golden_hoe`.
+- [x] Craft all five from Gold Ingots and Sticks. Leave Titanium as a Ruby upgrade.
+- [x] Publish the existing `gold_*.png` sprites as `golden_*.png` without recoloring.
+- [ ] Owner manual QA on DEV VPS: Creative icons, held pose, crafting, fast low-tier mining, durability 32, sword block.
+
 ## 2026-09-23: production VPS readiness
 
 - [x] First boot enables the three units without starting them, then `deploy-release.sh` switches `current` and starts them.
