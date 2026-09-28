@@ -6,14 +6,14 @@ Tell online friends when a player actually comes online, and show that player's 
 
 ## Result
 
-`WorldInstance.join` notifies mutual online friends only on an offline → connected edge. The line is ordinary system chat: `Друг <ник> зашел в игру.` A second tab that replaces a live socket does not send it again.
+`WorldInstance.join` notifies mutual online friends only on an offline → connected edge. The line is ordinary system chat: `<ник> зашел в игру.` A real disconnect of the current connection sends `<ник> вышел из игры.` A second tab that replaces a live socket does not send either line.
 
 `PlayerChatBubble` is a transient sprite on `RemotePlayerView`. The client builds it from a delivered player `ServerChatMessage`. There is no new protocol packet.
 
 ## Implemented
 
-- `friendJoinChatText` and `notifyFriendsOfOnlineTransition`. `wasConnected` is captured before `existing.connected = true`. New players and stored restores always notify. The joiner, strangers, pending requests and offline friends do not receive the line. One `crypto.randomUUID()` is shared by every recipient of that presence event. No `style`, no `NotificationService.notify`.
-- `PlayerChatBubble` plus pure `wrapPlayerChatBubbleText` / `PlayerChatBubbleState` (32 columns, word wrap, hard wrap, 5000 ms). A new line replaces the previous one and restarts the timer. Canvas repaints only when the text or layout key changes.
+- `friendJoinChatText`, `friendLeaveChatText`, and `notifyFriendsOfPresence`. `wasConnected` is captured before `existing.connected = true`. New players and stored restores always notify on join. Leave runs only after `disconnect` accepts the live connectionId, sets `connected = false`, emits `playerQuit`, and broadcasts `player_left`. The joiner, strangers, pending requests and offline friends do not receive the line. One `crypto.randomUUID()` is shared by every recipient of that presence event. No `style`, no `NotificationService.notify`.
+- `PlayerChatBubble` plus pure `wrapPlayerChatBubbleText` / `PlayerChatBubbleState` (32 columns, word wrap, hard wrap, 5000 ms). A new line replaces the previous one and restarts the timer. Canvas repaints only when the text or layout key changes. A canvas size change allocates a new `CanvasTexture` because Three.js does not resize `texStorage2D` on `needsUpdate`.
 - The bubble sits above the nameplate, uses the hologram canvas helpers and `#fff7c2`, and follows the remote group. Invisibility and nameplate distance fade hide it. `reset` clears it. `dispose` releases the sprite, texture and material.
 - `Game` calls `presentRemoteChatBubble` for `kind: 'player'` and passes the render `now` into `updateNameplate`. System, command and error lines do not create a bubble. The local player is not in `remotes`.
 

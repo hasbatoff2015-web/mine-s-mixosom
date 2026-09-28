@@ -3,6 +3,9 @@ import {
   NAMEPLATE_HEIGHT,
   NAMEPLATE_HEIGHT_OFFSET,
   NAMEPLATE_MAX_DISTANCE,
+  NAMEPLATE_NAME_FONT_PX,
+  NAMEPLATE_STROKE_WIDTH,
+  NAMEPLATE_TEXT_LOGICAL_HEIGHT,
   nameplateOpacity,
 } from './PlayerNameplate';
 
@@ -10,16 +13,19 @@ import {
 export const PLAYER_CHAT_BUBBLE_VISIBLE_MS = 5_000;
 /** Press Start 2P is nearly monospaced, so a fixed column count wraps deterministically. */
 export const PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS = 32;
-export const PLAYER_CHAT_BUBBLE_GAP = 0.16;
-export const PLAYER_CHAT_BUBBLE_FONT_PX = 28;
-export const PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT = 44;
-export const PLAYER_CHAT_BUBBLE_PAD_X = 24;
-export const PLAYER_CHAT_BUBBLE_PAD_Y = 16;
+/** Gap between the painted nickname glyphs and the bubble bottom, in world units. */
+export const PLAYER_CHAT_BUBBLE_GAP = 0.06;
+export const PLAYER_CHAT_BUBBLE_FONT_PX = 40;
+export const PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT = 56;
+export const PLAYER_CHAT_BUBBLE_PAD_X = 16;
+export const PLAYER_CHAT_BUBBLE_PAD_Y = 8;
 export const PLAYER_CHAT_BUBBLE_STROKE_WIDTH = 6;
 export const PLAYER_CHAT_BUBBLE_COLOR = '#fff7c2';
-/** World width of one glyph. 32 columns stay near a long nameplate, not a screen-wide banner. */
-export const PLAYER_CHAT_BUBBLE_GLYPH_WORLD = 0.105;
-export const PLAYER_CHAT_BUBBLE_LINE_WORLD = 0.34;
+/**
+ * One logical pixel in world units. 40px Press Start 2P then matches the
+ * nameplate nick glyph (~0.18). Width and height share this scale.
+ */
+export const PLAYER_CHAT_BUBBLE_WORLD_PER_PX = 0.0045;
 
 export { NAMEPLATE_FADE_START, NAMEPLATE_MAX_DISTANCE, nameplateOpacity };
 
@@ -63,7 +69,28 @@ export interface PlayerChatBubbleLayout {
   readonly centerY: number;
 }
 
-/** Bottom of the bubble sits above the nameplate top, including multiline growth. */
+/** World size of one chat glyph. Matches the nameplate nickname, not a tiny caption. */
+export function playerChatBubbleGlyphWorld(): number {
+  return PLAYER_CHAT_BUBBLE_FONT_PX * PLAYER_CHAT_BUBBLE_WORLD_PER_PX;
+}
+
+/**
+ * World Y of the painted top of the nickname glyphs.
+ * The nameplate sprite is taller than the ink: the nick sits in the first third.
+ */
+export function playerChatBubbleNicknameVisualTop(): number {
+  const spriteTop = playerChatBubbleNameplateTop();
+  const glyphTop = NAMEPLATE_TEXT_LOGICAL_HEIGHT / 3
+    - NAMEPLATE_NAME_FONT_PX / 2
+    - NAMEPLATE_STROKE_WIDTH / 2;
+  return spriteTop - (glyphTop / NAMEPLATE_TEXT_LOGICAL_HEIGHT) * NAMEPLATE_HEIGHT;
+}
+
+export function playerChatBubbleNameplateTop(): number {
+  return NAMEPLATE_HEIGHT_OFFSET + NAMEPLATE_HEIGHT / 2;
+}
+
+/** Bottom stays on the nickname gap. Extra lines grow upward. */
 export function playerChatBubbleLayout(lines: readonly string[]): PlayerChatBubbleLayout {
   const longest = lines.reduce((max, line) => Math.max(max, line.length), 1);
   const lineCount = Math.max(1, lines.length);
@@ -72,15 +99,11 @@ export function playerChatBubbleLayout(lines: readonly string[]): PlayerChatBubb
     longest * PLAYER_CHAT_BUBBLE_FONT_PX + PLAYER_CHAT_BUBBLE_STROKE_WIDTH + PLAYER_CHAT_BUBBLE_PAD_X * 2,
   );
   const logicalHeight = lineCount * PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT + PLAYER_CHAT_BUBBLE_PAD_Y * 2;
-  const worldWidth = Math.max(PLAYER_CHAT_BUBBLE_GLYPH_WORLD * 2, longest * PLAYER_CHAT_BUBBLE_GLYPH_WORLD);
-  const worldHeight = lineCount * PLAYER_CHAT_BUBBLE_LINE_WORLD;
-  const nameplateTop = NAMEPLATE_HEIGHT_OFFSET + NAMEPLATE_HEIGHT / 2;
-  const centerY = nameplateTop + PLAYER_CHAT_BUBBLE_GAP + worldHeight / 2;
+  const worldWidth = logicalWidth * PLAYER_CHAT_BUBBLE_WORLD_PER_PX;
+  const worldHeight = logicalHeight * PLAYER_CHAT_BUBBLE_WORLD_PER_PX;
+  const bottom = playerChatBubbleNicknameVisualTop() + PLAYER_CHAT_BUBBLE_GAP;
+  const centerY = bottom + worldHeight / 2;
   return { logicalWidth, logicalHeight, worldWidth, worldHeight, centerY };
-}
-
-export function playerChatBubbleNameplateTop(): number {
-  return NAMEPLATE_HEIGHT_OFFSET + NAMEPLATE_HEIGHT / 2;
 }
 
 /** Timer and wrapped lines for one remote player. Rendering reads this; it does not own Three objects. */

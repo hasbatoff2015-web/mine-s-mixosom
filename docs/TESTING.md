@@ -6,7 +6,7 @@
 npx vitest run tests/player-chat-bubble.test.ts tests/player-nameplate.test.ts tests/chat-layout.test.ts tests/chat-channels.test.ts tests/server/chat-channels.test.ts tests/server/friends.test.ts tests/server/anarchy-server.test.ts tests/remote-appearance-join.test.ts tests/server/friend-join-chat.test.ts
 ```
 
-Contracts: friend notice is one system chat line without `style`; pending requests and a live session takeover do not notify; a real disconnect then resume notifies once and shares one `messageId`. Bubble lifetime is 5000 ms, a second line replaces the first, wrap stays within 32 columns, and `SERVER_MESSAGE_TYPES` has no speech-bubble packet.
+Contracts: join text is `<name> зашел в игру.` and leave text is `<name> вышел из игры.`, both without `style`. Pending requests and a live session takeover do not notify. A stale connectionId does not leave. A real disconnect then resume sends one leave and one join. Bubble lifetime is 5000 ms. `ку` → `да` redraws the same texture; `ку` → `привет` replaces the CanvasTexture. Wrap stays within 32 columns, and `SERVER_MESSAGE_TYPES` has no speech-bubble packet.
 
 ## 2026-09-24 Golden tools
 

@@ -1,12 +1,21 @@
 import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
+import * as THREE from 'three';
+import { afterEach, describe, expect, it } from 'vitest';
+import { hologramTextCanvasScale } from '../shared/hologramStyle';
 import { SERVER_MESSAGE_TYPES } from '../shared/protocol';
 import { ChatLog, CHAT_FADE_MS, CHAT_VISIBLE_MS } from '../src/chat';
-import { friendJoinChatText } from '../shared/friends';
+import { friendJoinChatText, friendLeaveChatText } from '../shared/friends';
+import { PlayerChatBubble } from '../src/rendering/player/PlayerChatBubble';
 import {
+  PLAYER_CHAT_BUBBLE_FONT_PX,
+  PLAYER_CHAT_BUBBLE_GAP,
   PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS,
   PLAYER_CHAT_BUBBLE_VISIBLE_MS,
   PlayerChatBubbleState,
+  playerChatBubbleGlyphWorld,
+  playerChatBubbleLayout,
+  playerChatBubbleNameplateTop,
+  playerChatBubbleNicknameVisualTop,
   presentRemoteChatBubble,
   wrapPlayerChatBubbleText,
 } from '../src/rendering/player/playerChatBubbleLayout';
@@ -109,5 +118,179 @@ describe('server chat routes to a remote bubble without a new packet', () => {
     expect(entry.style).toBeUndefined();
     expect(log.visible(1_000 + CHAT_VISIBLE_MS, false).map((message) => message.text)).toContain(text);
     expect(log.visible(1_000 + CHAT_VISIBLE_MS + CHAT_FADE_MS, false)).toHaveLength(0);
+    expect(friendJoinChatText('Игрок1234')).toBe('Игрок1234 зашел в игру.');
+    expect(friendJoinChatText('Bob')).not.toContain('Друг');
+    const leave = friendLeaveChatText('Игрок1234');
+    expect(leave).toBe('Игрок1234 вышел из игры.');
+    const leaveEntry = log.push('system', leave, 1_000, { id: 'friend-leave' });
+    expect(leaveEntry.style).toBeUndefined();
+    expect(log.visible(1_000 + CHAT_VISIBLE_MS, false).map((message) => message.text)).toContain(leave);
+  });
+});
+
+class FakeContext {
+  readonly fillTexts: string[] = [];
+  readonly strokeTexts: string[] = [];
+  font = '';
+  setTransform(): void {}
+  clearRect(): void {}
+  strokeText(text: string): void {
+    this.strokeTexts.push(text);
+  }
+  fillText(text: string): void {
+    this.fillTexts.push(text);
+  }
+}
+
+class FakeCanvas {
+  width = 0;
+  height = 0;
+  readonly context = new FakeContext();
+  getContext(): FakeContext {
+    return this.context;
+  }
+}
+
+function installCanvasDocument(): { canvas: FakeCanvas; restore: () => void } {
+  const previous = globalThis.document;
+  const canvas = new FakeCanvas();
+  globalThis.document = {
+    createElement: () => canvas,
+  } as unknown as Document;
+  return {
+    canvas,
+    restore() {
+      if (previous === undefined) {
+        delete (globalThis as { document?: Document }).document;
+      } else {
+        globalThis.document = previous;
+      }
+    },
+  };
+}
+
+function bubbleMap(bubble: PlayerChatBubble): THREE.Texture {
+  return (bubble.sprite.material as THREE.SpriteMaterial).map!;
+}
+
+describe('player chat bubble canvas upload', () => {
+  let restore: (() => void) | undefined;
+  afterEach(() => restore?.());
+
+  it('replaces the GPU texture when a longer line resizes the canvas', () => {
+    const installed = installCanvasDocument();
+    restore = installed.restore;
+    const bubble = new PlayerChatBubble();
+    const sprite = bubble.sprite;
+    const material = bubble.sprite.material;
+
+    bubble.show('ку', 1_000);
+    const short = playerChatBubbleLayout(bubble.lines);
+    const scale = hologramTextCanvasScale();
+    const first = bubbleMap(bubble);
+    expect(bubble.text).toBe('ку');
+    expect(bubble.lines).toEqual(['ку']);
+    expect(installed.canvas.width).toBe(short.logicalWidth * scale);
+    expect(installed.canvas.height).toBe(short.logicalHeight * scale);
+    expect(first.version).toBeGreaterThan(0);
+    expect(installed.canvas.context.fillTexts.at(-1)).toBe('ку');
+
+    let disposed = false;
+    first.addEventListener('dispose', () => {
+      disposed = true;
+    });
+    bubble.show('привет', 2_000);
+    const tall = playerChatBubbleLayout(bubble.lines);
+    const second = bubbleMap(bubble);
+    expect(bubble.text).toBe('привет');
+    expect(bubble.lines).toEqual(['привет']);
+    expect(bubble.lines.join('')).not.toContain('ку');
+    expect(installed.canvas.width).toBe(tall.logicalWidth * scale);
+    expect(installed.canvas.width).toBeGreaterThan(short.logicalWidth * scale);
+    expect(second).not.toBe(first);
+    expect(disposed).toBe(true);
+    expect(bubble.sprite).toBe(sprite);
+    expect(bubble.sprite.material).toBe(material);
+    expect(installed.canvas.context.fillTexts.at(-1)).toBe('привет');
+    expect(installed.canvas.context.strokeTexts.at(-1)).toBe('привет');
+    bubble.dispose();
+  });
+
+  it('redraws the same texture when the next line does not resize the canvas', () => {
+    const installed = installCanvasDocument();
+    restore = installed.restore;
+    const bubble = new PlayerChatBubble();
+    bubble.show('ку', 1_000);
+    const first = bubbleMap(bubble);
+    const version = first.version;
+    const width = installed.canvas.width;
+    bubble.show('да', 2_000);
+    expect(bubble.text).toBe('да');
+    expect(bubble.lines).toEqual(['да']);
+    expect(installed.canvas.width).toBe(width);
+    expect(bubbleMap(bubble)).toBe(first);
+    expect(first.version).toBe(version + 1);
+    expect(installed.canvas.context.fillTexts.at(-1)).toBe('да');
+    expect(installed.canvas.context.fillTexts.filter((text) => text === 'да')).toHaveLength(1);
+    bubble.dispose();
+  });
+
+  it('font readiness repaints the current line, not the first one', async () => {
+    const installed = installCanvasDocument();
+    restore = installed.restore;
+    let releaseFonts: () => void = () => {};
+    const ready = new Promise<void>((resolve) => {
+      releaseFonts = resolve;
+    });
+    Object.assign(globalThis.document, {
+      fonts: {
+        load: () => Promise.resolve(),
+        ready,
+      },
+    });
+    const bubble = new PlayerChatBubble();
+    bubble.show('ку', 1_000);
+    bubble.show('привет', 1_500);
+    releaseFonts();
+    await ready;
+    for (let step = 0; step < 5; step += 1) await Promise.resolve();
+    expect(installed.canvas.context.fillTexts.at(-1)).toBe('привет');
+    expect(bubble.text).toBe('привет');
+    bubble.dispose();
+  });
+});
+
+describe('player chat bubble size and nickname gap', () => {
+  function bottom(lines: readonly string[]): number {
+    const layout = playerChatBubbleLayout(lines);
+    return layout.centerY - layout.worldHeight / 2;
+  }
+
+  it('keeps a readable glyph and the canvas aspect on short and long lines', () => {
+    expect(PLAYER_CHAT_BUBBLE_FONT_PX).toBeGreaterThanOrEqual(36);
+    expect(playerChatBubbleGlyphWorld()).toBeGreaterThan(0.16);
+    expect(playerChatBubbleGlyphWorld()).toBeLessThanOrEqual(0.2);
+    const samples = [
+      wrapPlayerChatBubbleText('ку'),
+      wrapPlayerChatBubbleText('Привет'),
+      wrapPlayerChatBubbleText('Привет всем'),
+      wrapPlayerChatBubbleText(`${'длинное сообщение '.repeat(6)}конец`),
+    ];
+    const anchor = playerChatBubbleNicknameVisualTop() + PLAYER_CHAT_BUBBLE_GAP;
+    for (const lines of samples) {
+      const layout = playerChatBubbleLayout(lines);
+      expect(layout.worldWidth / layout.worldHeight).toBeCloseTo(layout.logicalWidth / layout.logicalHeight);
+      expect(bottom(lines)).toBeCloseTo(anchor);
+      expect(bottom(lines)).toBeGreaterThan(playerChatBubbleNicknameVisualTop());
+      expect(bottom(lines)).toBeLessThan(playerChatBubbleNameplateTop());
+      expect(lines.every((line) => line.length <= PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS)).toBe(true);
+    }
+    const shortLines = wrapPlayerChatBubbleText('ку');
+    const tallLines = wrapPlayerChatBubbleText('я'.repeat(128));
+    const short = playerChatBubbleLayout(shortLines);
+    const tall = playerChatBubbleLayout(tallLines);
+    expect(tall.worldHeight).toBeGreaterThan(short.worldHeight);
+    expect(bottom(tallLines)).toBeCloseTo(bottom(shortLines));
+    expect(tall.centerY).toBeGreaterThan(short.centerY);
   });
 });

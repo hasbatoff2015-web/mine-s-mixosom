@@ -25,11 +25,13 @@ import {
 export class PlayerChatBubble {
   readonly sprite: THREE.Sprite;
   readonly state = new PlayerChatBubbleState();
-  private readonly texture: THREE.CanvasTexture | THREE.Texture;
+  private texture: THREE.CanvasTexture | THREE.Texture;
   private readonly material: THREE.SpriteMaterial;
   private readonly canvas?: HTMLCanvasElement;
   private paintedKey = '';
   private paintCount = 0;
+  private uploadedWidth = 0;
+  private uploadedHeight = 0;
   private invisible = false;
   private worldWidth = 0.4;
   private worldHeight = 0.34;
@@ -54,6 +56,11 @@ export class PlayerChatBubble {
       this.paintedKey = '';
       this.paint();
     });
+  }
+
+  /** Current map. Replaced when the canvas pixel size changes. */
+  get map(): THREE.Texture {
+    return this.texture;
   }
 
   get text(): string {
@@ -114,6 +121,29 @@ export class PlayerChatBubble {
     this.material.dispose();
   }
 
+  /**
+   * Three.js allocates immutable GPU storage on the first canvas upload
+   * (`texStorage2D`). A later `needsUpdate` only calls `texSubImage2D` into
+   * that storage. A larger message would keep the previous pixels, so a
+   * size change gets a new CanvasTexture and the old GPU texture is disposed.
+   */
+  private commitTexture(pixelWidth: number, pixelHeight: number): void {
+    const resized = pixelWidth !== this.uploadedWidth || pixelHeight !== this.uploadedHeight;
+    if (resized && this.canvas) {
+      const previous = this.texture;
+      const next = new THREE.CanvasTexture(this.canvas);
+      configureHologramTextTexture(next);
+      this.material.map = next;
+      this.material.needsUpdate = true;
+      this.texture = next;
+      if (previous !== next) previous.dispose();
+    } else {
+      this.texture.needsUpdate = true;
+    }
+    this.uploadedWidth = pixelWidth;
+    this.uploadedHeight = pixelHeight;
+  }
+
   private layout(): void {
     const layout = playerChatBubbleLayout(this.state.lines);
     this.worldWidth = layout.worldWidth;
@@ -150,6 +180,6 @@ export class PlayerChatBubble {
       context.strokeText(line, layout.logicalWidth / 2, y);
       context.fillText(line, layout.logicalWidth / 2, y);
     });
-    this.texture.needsUpdate = true;
+    this.commitTexture(layout.logicalWidth * scale, layout.logicalHeight * scale);
   }
 }

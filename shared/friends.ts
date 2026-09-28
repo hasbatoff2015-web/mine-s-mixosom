@@ -13,7 +13,12 @@ export const FRIENDS_EMPTY_NAME_ERROR = 'Введите ник игрока.';
 
 /** System chat line sent to online friends when a player actually comes online. */
 export function friendJoinChatText(name: string): string {
-  return `Друг ${name} зашел в игру.`;
+  return `${name} зашел в игру.`;
+}
+
+/** System chat line sent to online friends when a player actually goes offline. */
+export function friendLeaveChatText(name: string): string {
+  return `${name} вышел из игры.`;
 }
 export const FRIENDS_SELF_CARD_LABEL = 'Это вы';
 export const FRIENDS_ALREADY_LABEL = 'Уже в друзьях';

@@ -129,7 +129,7 @@ import {
   toMenuClaim,
   type GameMenuSession,
 } from './services/gameMenu';
-import { FRIENDS_MAX, friendJoinChatText } from '../shared/friends';
+import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
 import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
 import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
 import {
@@ -1265,7 +1265,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
-        if (!wasConnected) this.notifyFriendsOfOnlineTransition(existing);
+        if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -1281,7 +1281,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
-        this.notifyFriendsOfOnlineTransition(restored);
+        this.notifyFriendsOfPresence(restored, 'joined');
         return { player: restored, resumed: true };
       }
     }
@@ -1320,21 +1320,21 @@ export class WorldInstance {
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
-    this.notifyFriendsOfOnlineTransition(player);
+    this.notifyFriendsOfPresence(player, 'joined');
     return { player, resumed: false };
   }
 
   /**
-   * Online friends hear a normal system chat line only on a real
-   * offline → connected edge. A second tab that replaces a live socket
-   * keeps `connected === true` and does not notify again.
+   * Online friends hear one ordinary system chat line on a real presence edge.
+   * Join uses the offline → connected transition. Leave runs only after
+   * `disconnect` has accepted the current connectionId.
    */
-  private notifyFriendsOfOnlineTransition(joined: ServerPlayer): void {
-    const text = friendJoinChatText(joined.name);
+  private notifyFriendsOfPresence(player: ServerPlayer, state: 'joined' | 'left'): void {
+    const text = state === 'joined' ? friendJoinChatText(player.name) : friendLeaveChatText(player.name);
     const messageId = crypto.randomUUID();
     for (const target of this.connectedPlayers()) {
-      if (target.id === joined.id) continue;
-      if (!this.friends.isFriend(target.id, joined.id)) continue;
+      if (target.id === player.id) continue;
+      if (!this.friends.isFriend(target.id, player.id)) continue;
       this.sendTo(target, {
         type: 'chat',
         messageId,
@@ -2254,6 +2254,7 @@ export class WorldInstance {
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
     this.broadcast({ type: 'player_left', playerId: player.id }, playerId);
+    this.notifyFriendsOfPresence(player, 'left');
     if (persist) {
       this.storedPlayers[player.id] = this.toStored(player);
       this.dirty = true;

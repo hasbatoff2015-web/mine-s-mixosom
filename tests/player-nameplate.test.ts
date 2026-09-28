@@ -39,7 +39,7 @@ import { hologramDevicePixelRatio } from '../src/rendering/hologramTextCanvas';
 import {
   PLAYER_CHAT_BUBBLE_GAP,
   playerChatBubbleLayout,
-  playerChatBubbleNameplateTop,
+  playerChatBubbleNicknameVisualTop,
 } from '../src/rendering/player/playerChatBubbleLayout';
 
 const remoteInfo: RemotePlayerInfo = {
@@ -271,18 +271,21 @@ describe('remote player chat bubble', () => {
     const short = playerChatBubbleLayout(view.chatBubble.lines);
     expect(view.chatBubble.lines).toEqual(['привет']);
     expect(view.chatBubble.sprite.position.y).toBeCloseTo(short.centerY);
-    expect(short.centerY - short.worldHeight / 2).toBeGreaterThanOrEqual(
-      playerChatBubbleNameplateTop() + PLAYER_CHAT_BUBBLE_GAP - 1e-6,
+    expect(short.centerY - short.worldHeight / 2).toBeCloseTo(
+      playerChatBubbleNicknameVisualTop() + PLAYER_CHAT_BUBBLE_GAP,
     );
 
     view.showChatBubble(`${'длинное слово '.repeat(8)}конец`, 4_000);
     const tall = playerChatBubbleLayout(view.chatBubble.lines);
     expect(view.chatBubble.lines.length).toBeGreaterThan(1);
     expect(view.chatBubble.sprite.position.y).toBeCloseTo(tall.centerY);
-    expect(tall.centerY - tall.worldHeight / 2).toBeGreaterThanOrEqual(
-      playerChatBubbleNameplateTop() + PLAYER_CHAT_BUBBLE_GAP - 1e-6,
+    expect(tall.centerY - tall.worldHeight / 2).toBeCloseTo(
+      playerChatBubbleNicknameVisualTop() + PLAYER_CHAT_BUBBLE_GAP,
     );
-    expect(view.chatBubble.sprite.position.y).toBeGreaterThan(view.nameplate.sprite.position.y + NAMEPLATE_HEIGHT / 2);
+    expect(tall.centerY).toBeGreaterThan(short.centerY);
+    expect(view.chatBubble.sprite.position.y - tall.worldHeight / 2).toBeGreaterThan(
+      playerChatBubbleNicknameVisualTop() - 1e-6,
+    );
     expect(view.group.children.filter((child) => child.name === 'player-chat-bubble')).toHaveLength(1);
 
     view.group.position.set(4, 8, -2);

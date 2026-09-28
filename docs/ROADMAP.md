@@ -2,8 +2,8 @@
 
 ## 2026-09-28: friend join notices and player chat bubbles
 
-- [x] System chat to online mutual friends only on a real offline → online edge.
-- [x] Five-second billboard above the remote nameplate, fed only by a delivered player chat message.
+- [x] System chat to online mutual friends only on a real offline → online edge, and the matching leave line on a real disconnect.
+- [x] Five-second billboard above the remote nickname, fed only by a delivered player chat message. A new line replaces the previous texture when the canvas size changes.
 - [ ] Owner manual QA on DEV VPS with two or three clients (second tab, nearby, clan privacy, invisibility).
 
 ## 2026-09-24: complete golden tool set

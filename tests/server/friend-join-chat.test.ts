@@ -7,7 +7,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerChatMessage } from '../../shared/protocol';
-import { friendJoinChatText } from '../../shared/friends';
+import { friendJoinChatText, friendLeaveChatText } from '../../shared/friends';
 import { ChatLog } from '../../src/chat/ChatLog';
 
 function testConfig(dataDir: string) {
@@ -40,11 +40,19 @@ class MemorySink implements ConnectedSink {
   }
 }
 
-function friendNotices(sink: MemorySink, name: string): ServerChatMessage[] {
+function presenceNotices(sink: MemorySink, text: string): ServerChatMessage[] {
   return sink.payloads.filter((payload): payload is ServerChatMessage => {
     const record = payload as ServerChatMessage;
-    return record.type === 'chat' && record.text === friendJoinChatText(name);
+    return record.type === 'chat' && record.text === text;
   });
+}
+
+function friendNotices(sink: MemorySink, name: string): ServerChatMessage[] {
+  return presenceNotices(sink, friendJoinChatText(name));
+}
+
+function leaveNotices(sink: MemorySink, name: string): ServerChatMessage[] {
+  return presenceNotices(sink, friendLeaveChatText(name));
 }
 
 describe('friend join system chat', () => {
@@ -99,10 +107,11 @@ describe('friend join system chat', () => {
       messageId: expect.any(String),
       from: 'server',
       playerId: 'server',
-      text: 'Друг Bob зашел в игру.',
+      text: 'Bob зашел в игру.',
       kind: 'system',
     });
     expect(notice[0]?.style).toBeUndefined();
+    expect(JSON.stringify(ada.sink.payloads)).not.toContain('Друг Bob');
     expect(notice[0]?.messageId).toMatch(/^[0-9a-f-]{36}$/i);
     expect(friendNotices(cara.sink, 'Bob')).toHaveLength(0);
     expect(friendNotices(returned.sink, 'Bob')).toHaveLength(0);
@@ -171,5 +180,97 @@ describe('friend join system chat', () => {
     joinPlayer(world, 'Bob', bob.player.sessionToken);
     expect(friendNotices(ada.sink, 'Bob')).toHaveLength(1);
     expect(friendNotices(dana.sink, 'Bob')).toHaveLength(1);
+  });
+
+  it('tells only online friends when a player actually leaves', async () => {
+    const world = await boot();
+    const ada = joinPlayer(world, 'Ada');
+    const cara = joinPlayer(world, 'Cara');
+    const bob = joinPlayer(world, 'Bob');
+    befriend(world, ada.player.id, 'Bob', bob.player.id);
+    for (const player of [ada, cara, bob]) player.sink.payloads.length = 0;
+
+    world.disconnect(bob.player.id);
+    expect(bob.player.connected).toBe(false);
+    const notice = leaveNotices(ada.sink, 'Bob');
+    expect(notice).toHaveLength(1);
+    expect(notice[0]).toEqual({
+      type: 'chat',
+      messageId: expect.any(String),
+      from: 'server',
+      playerId: 'server',
+      text: 'Bob вышел из игры.',
+      kind: 'system',
+    });
+    expect(notice[0]?.style).toBeUndefined();
+    expect(leaveNotices(cara.sink, 'Bob')).toHaveLength(0);
+    expect(leaveNotices(bob.sink, 'Bob')).toHaveLength(0);
+    expect(readFileSync('src/style.css', 'utf8')).toContain('.chat-line.kind-system { color: #c8c8c8; }');
+
+    const log = new ChatLog();
+    const entry = log.push('system', notice[0]!.text, 0, { id: notice[0]!.messageId });
+    expect(entry.kind).toBe('system');
+    expect(entry.style).toBeUndefined();
+  });
+
+  it('does not announce a leave for a pending request', async () => {
+    const world = await boot();
+    const ada = joinPlayer(world, 'Ada');
+    const bob = joinPlayer(world, 'Bob');
+    expect(world.friends.request(ada.player.id, 'Bob').ok).toBe(true);
+    ada.sink.payloads.length = 0;
+    world.disconnect(bob.player.id);
+    expect(leaveNotices(ada.sink, 'Bob')).toHaveLength(0);
+  });
+
+  it('ignores a stale socket close and announces the current connection once', async () => {
+    const world = await boot();
+    const ada = joinPlayer(world, 'Ada');
+    const bob = joinPlayer(world, 'Bob');
+    befriend(world, ada.player.id, 'Bob', bob.player.id);
+    const firstConnectionId = bob.player.connectionId;
+    const takeover = joinPlayer(world, 'Bob', bob.player.sessionToken);
+    expect(takeover.previousConnectionId).toBe(firstConnectionId);
+    expect(bob.player.connectionId).not.toBe(firstConnectionId);
+    ada.sink.payloads.length = 0;
+
+    world.disconnect(bob.player.id, true, firstConnectionId);
+    expect(bob.player.connected).toBe(true);
+    expect(leaveNotices(ada.sink, 'Bob')).toHaveLength(0);
+    expect(friendNotices(ada.sink, 'Bob')).toHaveLength(0);
+
+    world.disconnect(bob.player.id, true, bob.player.connectionId);
+    expect(bob.player.connected).toBe(false);
+    expect(leaveNotices(ada.sink, 'Bob')).toHaveLength(1);
+    expect(friendNotices(ada.sink, 'Bob')).toHaveLength(0);
+  });
+
+  it('sends one leave and one join across a real offline gap', async () => {
+    const world = await boot();
+    const ada = joinPlayer(world, 'Ada');
+    const dana = joinPlayer(world, 'Dana');
+    const bob = joinPlayer(world, 'Bob');
+    befriend(world, ada.player.id, 'Bob', bob.player.id);
+    befriend(world, dana.player.id, 'Bob', bob.player.id);
+    for (const player of [ada, dana]) player.sink.payloads.length = 0;
+
+    world.disconnect(bob.player.id);
+    const adaLeave = leaveNotices(ada.sink, 'Bob');
+    const danaLeave = leaveNotices(dana.sink, 'Bob');
+    expect(adaLeave).toHaveLength(1);
+    expect(danaLeave).toHaveLength(1);
+    expect(adaLeave[0]?.messageId).toBe(danaLeave[0]?.messageId);
+    expect(friendNotices(ada.sink, 'Bob')).toHaveLength(0);
+
+    for (const player of [ada, dana]) player.sink.payloads.length = 0;
+    joinPlayer(world, 'Bob', bob.player.sessionToken);
+    const adaJoin = friendNotices(ada.sink, 'Bob');
+    const danaJoin = friendNotices(dana.sink, 'Bob');
+    expect(adaJoin).toHaveLength(1);
+    expect(danaJoin).toHaveLength(1);
+    expect(adaJoin[0]?.messageId).toBe(danaJoin[0]?.messageId);
+    expect(adaJoin[0]?.messageId).not.toBe(adaLeave[0]?.messageId);
+    expect(adaJoin[0]?.text).toBe('Bob зашел в игру.');
+    expect(leaveNotices(ada.sink, 'Bob')).toHaveLength(0);
   });
 });
