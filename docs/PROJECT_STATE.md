@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: friend join chat и speech bubble — 2026-09-28
+
+- Реальный переход `connected: false → true` шлёт онлайн-друзьям обычный system chat `Друг <ник> зашел в игру.` Повторный join уже подключённого игрока (вторая вкладка / takeover) уведомление не повторяет. `NotificationService` и `style: announcement` не используются.
+- Над `PlayerNameplate` чужого игрока на 5 секунд появляется `PlayerChatBubble`. Источник — уже доставленный `ServerChatMessage` с `kind: 'player'`. Отдельного bubble-пакета нет, поэтому Nearby и Clan не утекают. Свой ник в `remotes` отсутствует.
+- Подробности: `docs/reports/2026-09-28_friend-join-chat-bubbles.md`.
+
 ## Последний проход: полный набор золотых инструментов — 2026-09-24
 
 - Gold вошёл в общий `TierStats` между iron и diamond: prefix `golden`, tier `gold`, durability 32, miningSpeed 12, damageBonus 0. Отдельный special-case `golden_hoe` удалён; id `golden_hoe` не менялся.

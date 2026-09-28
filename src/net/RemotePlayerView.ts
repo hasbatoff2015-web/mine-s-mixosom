@@ -20,6 +20,7 @@ import {
   type RemoteInterpDiagnostics,
   type RemoteSampledPose,
 } from './remotePlayerInterpolation';
+import { PlayerChatBubble } from '../rendering/player/PlayerChatBubble';
 import { PlayerNameplate } from '../rendering/player/PlayerNameplate';
 import {
   DEFAULT_PLAYER_APPEARANCE,
@@ -44,6 +45,7 @@ export class RemotePlayerView {
   readonly visual: PlayerVisual;
   readonly buffer = new RemoteInterpolationBuffer();
   readonly nameplate: PlayerNameplate;
+  readonly chatBubble: PlayerChatBubble;
   private readonly id: string;
   private spawnYaw: number;
   private spawnPitch: number;
@@ -79,6 +81,8 @@ export class RemotePlayerView {
     this.visual.root.position.set(0, 0, 0);
     this.nameplate = new PlayerNameplate(info.name, info.health ?? 20);
     this.group.add(this.nameplate.sprite);
+    this.chatBubble = new PlayerChatBubble();
+    this.group.add(this.chatBubble.sprite);
     if (info.appearance) this.visual.setAppearance(createPlayerAppearance(info.appearance));
     this.rebuildWhOutline();
     this.reset(info, now);
@@ -103,6 +107,7 @@ export class RemotePlayerView {
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.seated = Boolean('ridingEntityId' in info && info.ridingEntityId);
     this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
+    this.chatBubble.clear();
     if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
   }
@@ -242,9 +247,15 @@ export class RemotePlayerView {
     return this.lastRenderedPose?.renderTick;
   }
 
-  updateNameplate(camera: THREE.Camera): void {
+  showChatBubble(text: string, now = performance.now()): void {
+    this.chatBubble.show(text, now);
+  }
+
+  updateNameplate(camera: THREE.Camera, now = performance.now()): void {
     this.nameplate.setInvisible(this.lastInvisible);
     this.nameplate.update(camera);
+    this.chatBubble.setInvisible(this.lastInvisible);
+    this.chatBubble.update(camera, now);
   }
 
   diagnostics(now = 0): RemoteInterpDiagnostics {
@@ -254,6 +265,7 @@ export class RemotePlayerView {
   dispose(): void {
     this.options.onRemove?.(this.id);
     this.buffer.reset();
+    this.chatBubble.dispose();
     this.nameplate.dispose();
     for (const line of this.whOutline) line.removeFromParent();
     for (const geometry of this.whOutlineGeometries) geometry.dispose();

@@ -19,6 +19,7 @@ import {
   outgoingChatText,
   type CommandContext,
 } from '../chat';
+import { presentRemoteChatBubble } from '../rendering/player/playerChatBubbleLayout';
 import { AudioManager } from './AudioManager';
 import {
   DEFAULT_PET_LIMIT,
@@ -1333,6 +1334,7 @@ export class Game {
         return;
       case 'chat':
         if (message.kind === 'player') {
+          presentRemoteChatBubble(session.online.remotes, message, performance.now());
           if (message.channel === 'clan') this.ui.setPlayerInClan(true);
           this.pushChat('player', message.text, {
             from: message.from,
@@ -6041,7 +6043,7 @@ export class Game {
           this.renderDeltaSeconds,
           daylightFactor(session.world.timeOfDay),
         );
-        remote.updateNameplate(this.camera);
+        remote.updateNameplate(this.camera, now);
       });
       session.online?.buyers.forEach((buyer) => {
         buyer.update(this.renderDeltaSeconds, daylightFactor(session.world.timeOfDay));

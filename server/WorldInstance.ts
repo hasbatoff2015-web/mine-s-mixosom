@@ -129,7 +129,7 @@ import {
   toMenuClaim,
   type GameMenuSession,
 } from './services/gameMenu';
-import { FRIENDS_MAX } from '../shared/friends';
+import { FRIENDS_MAX, friendJoinChatText } from '../shared/friends';
 import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
 import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
 import {
@@ -1243,6 +1243,7 @@ export class WorldInstance {
       const existingId = this.tokens.get(options.sessionToken);
       const existing = existingId ? this.players.get(existingId) : undefined;
       if (existing) {
+        const wasConnected = existing.connected;
         const previousConnectionId = existing.connectionId;
         existing.connected = true;
         existing.disconnectedAt = 0;
@@ -1264,6 +1265,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
+        if (!wasConnected) this.notifyFriendsOfOnlineTransition(existing);
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -1279,6 +1281,7 @@ export class WorldInstance {
         );
         this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
+        this.notifyFriendsOfOnlineTransition(restored);
         return { player: restored, resumed: true };
       }
     }
@@ -1317,7 +1320,30 @@ export class WorldInstance {
     this.events.emit('playerJoin', { playerId: player.id, name: player.name });
     this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
+    this.notifyFriendsOfOnlineTransition(player);
     return { player, resumed: false };
+  }
+
+  /**
+   * Online friends hear a normal system chat line only on a real
+   * offline → connected edge. A second tab that replaces a live socket
+   * keeps `connected === true` and does not notify again.
+   */
+  private notifyFriendsOfOnlineTransition(joined: ServerPlayer): void {
+    const text = friendJoinChatText(joined.name);
+    const messageId = crypto.randomUUID();
+    for (const target of this.connectedPlayers()) {
+      if (target.id === joined.id) continue;
+      if (!this.friends.isFriend(target.id, joined.id)) continue;
+      this.sendTo(target, {
+        type: 'chat',
+        messageId,
+        from: 'server',
+        playerId: 'server',
+        text,
+        kind: 'system',
+      });
+    }
   }
 
   findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {

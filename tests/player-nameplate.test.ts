@@ -36,6 +36,11 @@ import gameSource from '../src/core/Game.ts?raw';
 import nameplateSource from '../src/rendering/player/PlayerNameplate.ts?raw';
 import { hologramCanvasFont, hologramTextCanvasScale } from '../shared/hologramStyle';
 import { hologramDevicePixelRatio } from '../src/rendering/hologramTextCanvas';
+import {
+  PLAYER_CHAT_BUBBLE_GAP,
+  playerChatBubbleLayout,
+  playerChatBubbleNameplateTop,
+} from '../src/rendering/player/playerChatBubbleLayout';
 
 const remoteInfo: RemotePlayerInfo = {
   id: 'remote', name: 'Misha', x: 0, y: 70, z: 0, yaw: 0, pitch: 0, health: 20,
@@ -174,7 +179,7 @@ describe('player nameplate', () => {
   });
 
   it('does not attach a local first-person nameplate in Game', () => {
-    expect(gameSource).toContain('remote.updateNameplate(this.camera)');
+    expect(gameSource).toContain('remote.updateNameplate(this.camera, now)');
     expect(gameSource).not.toContain('new PlayerNameplate(');
     expect(gameSource).toContain('session.playerVisual.setVisible(');
   });
@@ -252,5 +257,96 @@ describe('player nameplate', () => {
       expect(canvas.height).toBe(NAMEPLATE_TEXT_LOGICAL_HEIGHT * scale);
     }
     plate.dispose();
+  });
+});
+
+describe('remote player chat bubble', () => {
+  it('sits above the nameplate, follows the player, and replaces instead of stacking', () => {
+    const { view, dispose } = makeView();
+    expect(view.chatBubble.sprite).toBeInstanceOf(THREE.Sprite);
+    expect(view.group.children).toContain(view.chatBubble.sprite);
+    expect(view.group.children).toContain(view.nameplate.sprite);
+
+    view.showChatBubble('привет', 1_000);
+    const short = playerChatBubbleLayout(view.chatBubble.lines);
+    expect(view.chatBubble.lines).toEqual(['привет']);
+    expect(view.chatBubble.sprite.position.y).toBeCloseTo(short.centerY);
+    expect(short.centerY - short.worldHeight / 2).toBeGreaterThanOrEqual(
+      playerChatBubbleNameplateTop() + PLAYER_CHAT_BUBBLE_GAP - 1e-6,
+    );
+
+    view.showChatBubble(`${'длинное слово '.repeat(8)}конец`, 4_000);
+    const tall = playerChatBubbleLayout(view.chatBubble.lines);
+    expect(view.chatBubble.lines.length).toBeGreaterThan(1);
+    expect(view.chatBubble.sprite.position.y).toBeCloseTo(tall.centerY);
+    expect(tall.centerY - tall.worldHeight / 2).toBeGreaterThanOrEqual(
+      playerChatBubbleNameplateTop() + PLAYER_CHAT_BUBBLE_GAP - 1e-6,
+    );
+    expect(view.chatBubble.sprite.position.y).toBeGreaterThan(view.nameplate.sprite.position.y + NAMEPLATE_HEIGHT / 2);
+    expect(view.group.children.filter((child) => child.name === 'player-chat-bubble')).toHaveLength(1);
+
+    view.group.position.set(4, 8, -2);
+    const world = new THREE.Vector3();
+    view.chatBubble.sprite.getWorldPosition(world);
+    expect(world.x).toBeCloseTo(4);
+    expect(world.z).toBeCloseTo(-2);
+    expect(world.y).toBeCloseTo(8 + view.chatBubble.sprite.position.y);
+    dispose();
+  });
+
+  it('hides with invisibility and the nameplate distance fade, and clears on reset', () => {
+    const { view, dispose } = makeView();
+    const camera = new THREE.PerspectiveCamera();
+    view.group.position.set(0, 0, 0);
+    view.showChatBubble('hello', 0);
+    const bubbleY = view.chatBubble.sprite.position.y;
+    camera.position.set(0, bubbleY, 10);
+    view.updateNameplate(camera, 100);
+    expect(view.chatBubble.sprite.visible).toBe(true);
+    expect((view.chatBubble.sprite.material as THREE.SpriteMaterial).opacity).toBeCloseTo(nameplateOpacity(10));
+
+    camera.position.set(0, bubbleY, 40);
+    view.updateNameplate(camera, 100);
+    expect((view.chatBubble.sprite.material as THREE.SpriteMaterial).opacity).toBeCloseTo(nameplateOpacity(40));
+
+    camera.position.set(0, bubbleY, NAMEPLATE_MAX_DISTANCE + 8);
+    view.updateNameplate(camera, 100);
+    expect(view.chatBubble.sprite.visible).toBe(false);
+
+    view.group.position.set(0, 70, 0);
+    for (let tick = 20; tick <= 24; tick += 1) {
+      view.applySnapshot(snapshot({ invisible: true, x: 0, y: 70, z: 0 }), tick * REMOTE_TICK_MS, tick);
+    }
+    camera.position.set(0, 72, 2);
+    view.interpolate(24 * REMOTE_TICK_MS, 1 / 60, 1);
+    view.showChatBubble('secret', 24 * REMOTE_TICK_MS);
+    view.updateNameplate(camera, 24 * REMOTE_TICK_MS);
+    expect(view.nameplate.sprite.visible).toBe(false);
+    expect(view.chatBubble.sprite.visible).toBe(false);
+
+    view.reset(remoteInfo, 30_000);
+    view.group.position.set(0, 0, 0);
+    camera.position.set(0, 2, 4);
+    view.updateNameplate(camera, 30_000);
+    expect(view.chatBubble.visibleAt(30_000)).toBe(false);
+    expect(view.chatBubble.sprite.visible).toBe(false);
+    expect(view.chatBubble.text).toBe('');
+    dispose();
+  });
+
+  it('repaints only when the text changes and disposes the bubble with the view', () => {
+    const { view, dispose } = makeView();
+    const camera = new THREE.PerspectiveCamera();
+    camera.position.set(0, 72, 3);
+    view.showChatBubble('one', 0);
+    const paints = view.chatBubble.paints;
+    expect(paints).toBeGreaterThan(0);
+    for (let frame = 1; frame <= 8; frame += 1) view.updateNameplate(camera, frame * 100);
+    expect(view.chatBubble.paints).toBe(paints);
+    view.showChatBubble('two', 1_000);
+    expect(view.chatBubble.paints).toBe(paints + 1);
+    const sprite = view.chatBubble.sprite;
+    dispose();
+    expect(sprite.parent).toBeNull();
   });
 });
