@@ -6,6 +6,7 @@ import { FIXED_DT, clamp } from '../core/constants';
 import type { Inventory } from '../inventory';
 import { tryGetItemDefinition, type FoodItemDefinition, type StatusEffectId, type StatusEffectSpec } from '../items';
 import type { PlayerController } from '../player';
+import { FALL_DAMAGE_MIN_HEALTH } from '../player/fallDamage';
 import type { VoxelWorld } from '../world/World';
 
 export const MAX_HEALTH = 20;
@@ -296,7 +297,8 @@ export class SurvivalSystem {
     const absorbed = Math.min(this.absorption, afterArmor);
     this.absorption -= absorbed;
     const dealt = Math.max(0, afterArmor - absorbed);
-    this.health = Math.max(0, this.health - dealt);
+    const nextHealth = Math.max(0, this.health - dealt);
+    this.health = source === 'fall' && nextHealth <= 0 ? FALL_DAMAGE_MIN_HEALTH : nextHealth;
     const deathProtected = this.health <= 0 && source !== 'void' && this.tryDeathProtection?.(source) === true;
     if (deathProtected) {
       this.clearEffects();

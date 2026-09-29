@@ -1,5 +1,15 @@
 # Архитектура
 
+## Saplings, drops, footsteps, fall damage — 2026-09-29
+
+Saplings are `BlockId` 167–169 and normal block items. `plantedAtMs` lives on the existing `BlockRenderState` and is indexed in `VoxelWorld.saplingPlantedAt`. `VoxelWorld.tick` calls `tickSaplings`, which compares that timestamp to `Date.now()` (not the 20 TPS counter). A due sapling grows through `treeCells`, the same shape `TerrainGenerator.placeTree` writes, and only if every cell is air, replaceable, or the sapling itself. `applyBlockBatch` is the block update, so connected players get the usual committed-block deltas.
+
+`rollBrokenBlockDrops` is the one break/detach loot roll. A `substitute` replaces the primary item (gravel → flint at 0.1). A `bonus` adds a stack (leaves → sapling at 0.2) and does not remove the primary drop. Blocks without those fields consume the same RNG as `rollDropCount`.
+
+Footsteps call `footstepEventForGroup`. The glass group returns no step event. Break still uses `glass.break`.
+
+`fallDamageFromDistance` is applied once in `PlayerController` and handed to `SurvivalSystem.damage`. For `source === 'fall'` only, health that would reach 0 becomes 1 before the death/totem check.
+
 ## Golden tools — 2026-09-24
 
 Gold is a row in the same `TierStats` list as wood, stone, iron, diamond, ruby and titanium. Prefix is `golden` (item ids `golden_pickaxe` / `golden_axe` / `golden_shovel` / `golden_hoe` / `golden_sword`). Tier value stays `gold`. Stats: durability 32, miningSpeed 12, damageBonus 0. Hoe attack is `1 + damageBonus`; other tools and the sword use the existing base-damage tables. There is no second golden-hoe definition.

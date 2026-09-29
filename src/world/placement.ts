@@ -1,4 +1,5 @@
 import { BlockId, getBlockDefinition, type BlockRenderShape, type BlockRenderState } from '../blocks';
+import { SAPLING_GROUND_BLOCKS, isSaplingBlock } from './saplings';
 import { attachmentNormal, type BlockNeighborView } from './blockGeometry';
 import { blockCollisionBoxes } from './collision';
 import { bedOtherCell } from './bed';
@@ -34,10 +35,13 @@ const VEGETATION_SUBSTRATES: ReadonlyMap<BlockId, ReadonlySet<BlockId>> = new Ma
   [BlockId.PotatoCrop, new Set([BlockId.Farmland])],
   [BlockId.MelonStem, new Set([BlockId.Farmland])],
   [BlockId.PumpkinStem, new Set([BlockId.Farmland])],
+  [BlockId.OakSapling, SAPLING_GROUND_BLOCKS],
+  [BlockId.BirchSapling, SAPLING_GROUND_BLOCKS],
+  [BlockId.SpruceSapling, SAPLING_GROUND_BLOCKS],
 ]);
 
 export function isVegetationBlock(block: BlockId): boolean {
-  return VEGETATION_SUBSTRATES.has(block);
+  return VEGETATION_SUBSTRATES.has(block) || isSaplingBlock(block);
 }
 
 export function isLanternBlock(block: BlockId): boolean {

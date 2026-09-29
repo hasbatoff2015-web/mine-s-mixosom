@@ -40,6 +40,7 @@ import {
 } from '../blocks';
 import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../world/worldBorder';
+import { SAPLING_GROUND_BLOCKS, isSaplingBlock } from '../world/saplings';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
@@ -698,6 +699,16 @@ export function placeBlockAt(
     if (ctx.intersectsBlock(x, y, z)) return { ok: false, reason: 'collision' };
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
     if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
+    return { ok: true };
+  }
+
+  if (isSaplingBlock(blockId)) {
+    if (!SAPLING_GROUND_BLOCKS.has(ctx.world.getBlock(x, y - 1, z, false))) {
+      return { ok: false, reason: 'no-anchor' };
+    }
+    if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
+    if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
+    ctx.world.setBlockState(x, y, z, { plantedAtMs: Date.now() });
     return { ok: true };
   }
 

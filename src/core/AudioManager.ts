@@ -16,6 +16,7 @@ import {
   stereoPan,
 } from '../audio/audioMath';
 import {
+  footstepEventForGroup,
   materialSoundEvent,
   type AudioListenerPose,
   type AudioVec3,
@@ -221,6 +222,12 @@ export class AudioManager {
       return;
     }
     if (!group) return;
+    if (action === 'step') {
+      const step = footstepEventForGroup(group);
+      if (!step) return;
+      this.playInternal(step, worldPosition, listener, options);
+      return;
+    }
     const event = action === 'break' && group === 'glass'
       ? 'glass.break'
       : materialSoundEvent(action, group);

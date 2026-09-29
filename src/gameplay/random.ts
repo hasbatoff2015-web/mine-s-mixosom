@@ -50,6 +50,41 @@ export function rollDropCount(
 /** Historical name used by the Anarchy server. Same helper. */
 export const rollBlockDropCount = rollDropCount;
 
+export interface RolledBlockDrop {
+  readonly item: string;
+  readonly count: number;
+}
+
+/**
+ * Primary drop, then an optional substitute or bonus.
+ * Blocks without `substitute` / `bonus` consume the same RNG as `rollDropCount`.
+ */
+export function rollBrokenBlockDrops(
+  drop: {
+    readonly item: string;
+    readonly count?: number;
+    readonly min?: number;
+    readonly max?: number;
+    readonly substitute?: { readonly item: string; readonly chance: number };
+    readonly bonus?: { readonly item: string; readonly chance: number; readonly count?: number };
+  },
+  random: RandomFn = systemRandomFn,
+): RolledBlockDrop[] {
+  const result: RolledBlockDrop[] = [];
+  const count = rollDropCount(drop, random);
+  if (count > 0) {
+    const item = drop.substitute !== undefined && random() < drop.substitute.chance
+      ? drop.substitute.item
+      : drop.item;
+    result.push({ item, count });
+  }
+  if (drop.bonus !== undefined && random() < drop.bonus.chance) {
+    const bonusCount = drop.bonus.count ?? 1;
+    if (bonusCount > 0) result.push({ item: drop.bonus.item, count: bonusCount });
+  }
+  return result;
+}
+
 /** Horizontal velocity span: `(r - 0.5) * this` → ±0.7 at scale 1. */
 export const DROP_SCATTER_HORIZONTAL = 1.4;
 /** Upward toss. Death scatter does not scale this. */

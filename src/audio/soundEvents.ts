@@ -74,3 +74,13 @@ export function materialSoundEvent(
 ): MaterialSoundEventId {
   return `block.${action}.${group}`;
 }
+
+/**
+ * Walking sample for a block. Glass-group blocks (glass, ice, glowstone) share
+ * the glass break file, so footsteps on them stay silent. Break and place do not
+ * use this helper.
+ */
+export function footstepEventForGroup(group: BlockSoundGroup | undefined): MaterialSoundEventId | undefined {
+  if (!group || group === 'glass') return undefined;
+  return materialSoundEvent('step', group);
+}

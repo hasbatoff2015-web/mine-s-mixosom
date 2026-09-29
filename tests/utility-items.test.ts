@@ -433,7 +433,7 @@ describe('milk, rockets, WH marks and totem', () => {
     mainOnly.setSlot(0, createItemStack(ItemId.TotemOfUndying));
     const lethal = new SurvivalSystem();
     lethal.setDeathProtection(() => consumeOffhandTotem(mainOnly));
-    expect(lethal.damage(40, 'fall', { ignoreInvulnerability: true }).killed).toBe(true);
+    expect(lethal.damage(40, 'explosion', { ignoreInvulnerability: true }).killed).toBe(true);
     expect(mainOnly.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
 
     const both = new Inventory();
@@ -441,7 +441,7 @@ describe('milk, rockets, WH marks and totem', () => {
     both.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
     const protectedPlayer = new SurvivalSystem();
     protectedPlayer.setDeathProtection(() => consumeOffhandTotem(both));
-    expect(protectedPlayer.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    expect(protectedPlayer.damage(40, 'explosion', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     expect(both.offhand).toBeNull();
     expect(both.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
   });

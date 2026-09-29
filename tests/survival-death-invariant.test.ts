@@ -50,7 +50,7 @@ describe('health/death invariant', () => {
     expect(heartHudIcons(20).icons.every((icon) => icon === 'full')).toBe(true);
   });
 
-  it.each(['melee', 'projectile', 'fire', 'lava', 'fall', 'explosion'] as const)(
+  it.each(['melee', 'projectile', 'fire', 'lava', 'explosion'] as const)(
     '%s damage to 0 starts the death flow',
     (source) => {
       const survival = new SurvivalSystem({ health: 4 });
@@ -60,4 +60,12 @@ describe('health/death invariant', () => {
       expect(survival.dead).toBe(true);
     },
   );
+
+  it('lethal fall damage stays alive at 1 HP', () => {
+    const survival = new SurvivalSystem({ health: 4 });
+    const result = survival.damage(99, 'fall', { ignoreInvulnerability: true, bypassArmor: true });
+    expect(result.killed).toBe(false);
+    expect(survival.health).toBe(1);
+    expect(survival.dead).toBe(false);
+  });
 });

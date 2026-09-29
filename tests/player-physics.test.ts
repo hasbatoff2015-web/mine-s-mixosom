@@ -79,7 +79,7 @@ describe('PlayerController voxel physics', () => {
       player.tick(world as unknown as VoxelWorld, input(), 0.05, (amount) => damage.push(amount));
     }
     expect(player.position.y).toBeCloseTo(1, 6);
-    expect(damage).toEqual([3]);
+    expect(damage).toEqual([1]);
     expect(player.lastFallDistance).toBeCloseTo(6, 1);
   });
 

@@ -1,5 +1,9 @@
 # Roadmap
 
+## 2026-09-29: saplings, flint, silent glass steps, fall damage, chat Tab
+
+Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and add a 0.2 sapling. Gravel is 0.1 flint or gravel. Growth uses the existing tree shape after two real minutes stored on the block state. Glass-group footsteps are silent. Fall damage is halved once and cannot kill. The chat close sprite says TAB and Tab still closes chat.
+
 ## 2026-09-24: complete golden tool set
 
 - [x] Register `golden_pickaxe`, `golden_axe`, `golden_shovel`, `golden_sword` through the existing tier pipeline. Keep `golden_hoe`.
