@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-09-29 Saplings, flint, footsteps, fall damage, chat
+
+```text
+npx vitest run tests/server/saplings-and-drops.test.ts tests/fall-damage.test.ts tests/audio-sfx.test.ts tests/player-physics.test.ts tests/block-registry.test.ts tests/chat-layout.test.ts tests/chat-channels.test.ts tests/random-source.test.ts
+```
+
+Contracts: leaf drop keeps the leaf and adds a sapling at 0.2; gravel is flint at 0.1 otherwise gravel; saplings plant only on dirt/grass/farmland/snow; growth waits `SAPLING_GROW_MS` of real time, survives `blockStates` restore, and will not overwrite a solid build; glass/ice/glowstone have no step event while `glass.break` stays; fall damage is `floor(ceil(distance - 3) / 2)` once and lethal falls leave 1 HP; melee/lava/void still kill; chat close PNG stays 102×96 and the control is Tab.
+
 ## 2026-09-24 Golden tools
 
 ```text

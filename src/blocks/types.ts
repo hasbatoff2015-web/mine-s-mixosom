@@ -81,6 +81,11 @@ export interface BlockRenderState {
   /** Decorative two-cell bed geometry; text and spawn state never live here. */
   readonly bedPart?: 'foot' | 'head';
   readonly signRotation?: number;
+  /**
+   * Wall-clock milliseconds when a sapling was planted.
+   * Missing on older saves and on every non-sapling state.
+   */
+  readonly plantedAtMs?: number;
 }
 
 export interface BlockTextures {
@@ -112,6 +117,10 @@ export interface BlockDrop {
   readonly max?: number;
   readonly requiresCorrectTool?: boolean;
   readonly silkTouchItem?: string;
+  /** Replaces `item` when the roll succeeds. Absent rolls keep the primary drop. */
+  readonly substitute?: { readonly item: string; readonly chance: number };
+  /** Independent extra stack. Does not replace or remove the primary drop. */
+  readonly bonus?: { readonly item: string; readonly chance: number; readonly count?: number };
 }
 
 export type BlockCategory =
@@ -300,4 +309,7 @@ export enum BlockId {
   SugarCane = 164,
   OakSign = 165,
   EventChest = 166,
+  OakSapling = 167,
+  BirchSapling = 168,
+  SpruceSapling = 169,
 }

@@ -35,7 +35,7 @@ import {
   dropScatterOrigin,
   performUseHeld,
   placeBlockAt,
-  rollBlockDropCount,
+  rollBrokenBlockDrops,
   systemRandomFn,
   tickGameplayKernel,
   type UseSimulationContext,
@@ -776,10 +776,12 @@ export class ServerGameplay {
           this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
         }
       } else if (definition.drop) {
-        const count = rollBlockDropCount(definition.drop, this.random);
-        const extra = isSlabBlock(block) && defaultSlabType(blockState) === 'double' ? count : 0;
-        if (count + extra > 0) {
-          this.spawnDroppedStack(createItemStack(definition.drop.item, count + extra), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
+        for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
+          const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
+          if (count > 0) {
+            this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+          }
         }
       }
     }
@@ -1628,9 +1630,10 @@ export class ServerGameplay {
       }
       const drop = getBlockDefinition(event.block).drop;
       if (!drop) continue;
-      const count = rollBlockDropCount(drop, this.random);
-      if (count > 0) {
-        this.spawnDroppedStack(createItemStack(drop.item, count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+      for (const rolled of rollBrokenBlockDrops(drop, this.random)) {
+        if (rolled.count > 0) {
+          this.spawnDroppedStack(createItemStack(rolled.item, rolled.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        }
       }
     }
   }
