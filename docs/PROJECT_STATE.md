@@ -1,11 +1,11 @@
 # Состояние проекта
 
-## Последний проход: stable mesh light during sliced floods — 2026-09-30
+## Последний проход: edit lighting queue without quiet-hold starvation — 2026-09-30
 
-- Срочный remesh по-прежнему пишет новую геометрию, пока lighting job ещё не committed (`allowPendingLighting: true`). Меш и overlay читают последнее committed состояние: lazy snapshot page, если страница уже тронута, иначе текущий массив.
-- `lightVersion` растёт только на commit и только при реальном отличии. Начальный unlit flood (`snapshot.initial`) страницы не хранит и по-прежнему не мешится. Второго полного light buffer нет. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
-- `?perf=1` показывает owner/slice/pending mesh и DEV census источников света. Census шагает раз в 400 ms и после прохода держит строку ещё 400 ms. Смена мира сбрасывает scanner. Mesher отпускает snapshot readers в конце `build`. Яркость мира не менялась.
-- Подробности: `docs/reports/2026-09-30_lighting-flicker-stable-mesh-audit.md`.
+- Непрерывный mining больше не ждёт 80 ms тишины. `queueLight` кладёт регион в пространственную очередь (`EDIT_LIGHT_QUEUE_LIMIT = 32`): пересекающиеся регионы сливаются, далёкие остаются отдельными jobs. Уже идущий flood не сбрасывается. Правки во время flood пиннятся sparse override и становятся следующим job. Каждый законченный job коммитит свет до старта следующего.
+- Срочный remesh по-прежнему пишет геометрию сразу (`allowPendingLighting: true`) и читает последний committed light. `lightVersion` растёт только на реальном отличии. Второго полного light buffer нет. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
+- `?perf=1` добавляет строку `EDITQ` (очередь, age, commits, restart, merge). Census источников остаётся только в perf mode, шаг 400 ms, удержание прохода 4 s, немедленный перескан при смене набора чанков.
+- Подробности: `docs/reports/2026-09-30_lighting-edit-queue.md`. Предыдущий проход stable mesh: `docs/reports/2026-09-30_lighting-flicker-stable-mesh-audit.md`.
 
 ## Последний проход: friend join chat и speech bubble — 2026-09-28
 
@@ -355,7 +355,7 @@
 ## Последний проход: Player fire height + AutoMine reset pipeline — 2026-09-17
 
 - Burning-player fire overlay: `PlayerVisual` keeps overlay width and `position.y = 0.15`, then `scale.y = 0.5`. Mob / first-person fire paths unchanged.
-- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit-region floods wait until a voxel burst pauses.
+- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit light is a spatial queue and is not held until the burst pauses.
 - Handoff: `docs/reports/2026-09-17_automine-fire-pipeline.md`.
 
 ## Предыдущий проход: Bugfix/performance gameplay pass — 2026-09-17

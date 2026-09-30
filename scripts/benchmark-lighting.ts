@@ -246,6 +246,106 @@ function manyEmitterTrial(count: number) {
     emitterAdd: added ? { totalMs: added.totalMs, maxSliceMs: added.maxSliceMs, columns: added.columns, nodes: added.nodes, slices: added.slices } : null,
   };
 }
+function creativeStreamTrial() {
+  const world = scene('room');
+  lightAll(world);
+  world.applyBlockBatch(burstBlocks, { scheduleNeighbors: false });
+  for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
+  let commitsDuring = 0;
+  let maxQueue = 0;
+  let maxAge = 0;
+  let maxSlice = 0;
+  let editMs = 0;
+  let columns = 0;
+  let nodes = 0;
+  const merges0 = world.editLightMerges;
+  const enqueued0 = world.editLightEnqueued;
+  const restarts0 = world.editLightRestarts;
+  for (let index = 0; index < burstBlocks.length; index += 1) {
+    edit(world, [{ ...burstBlocks[index]!, block: BlockId.Air }]);
+    for (let frame = 0; frame < 3; frame += 1) {
+      const before = world.editLightCommits;
+      const elapsed = world.processLighting(2, 8, 8);
+      editMs += elapsed;
+      maxSlice = Math.max(maxSlice, elapsed, light.lightFrameStats.maxSlice);
+      columns += light.lightFrameStats.columns;
+      nodes += light.lightFrameStats.nodes;
+      if (index < burstBlocks.length - 1) commitsDuring += world.editLightCommits - before;
+      maxQueue = Math.max(maxQueue, world.editLightQueueLength);
+      maxAge = Math.max(maxAge, world.editLightOldestAgeMs());
+    }
+  }
+  const settleStart = performance.now();
+  let settleSlices = 0;
+  while ((world.pendingLightJobs > 0 || light.lightingFloodOwner(world)) && settleSlices < 20000) {
+    world.processLighting(2, 8, 8);
+    settleSlices += 1;
+  }
+  return {
+    edits: burstBlocks.length,
+    model: '3 processLighting(2ms) calls per edit, about 60 FPS between 20 TPS edits',
+    commitsDuring,
+    maxQueue,
+    maxAgeMs: Math.round(maxAge),
+    restarts: world.editLightRestarts - restarts0,
+    merges: world.editLightMerges - merges0,
+    enqueued: world.editLightEnqueued - enqueued0,
+    columns,
+    nodes,
+    maxSliceMs: maxSlice,
+    editPhaseMs: editMs,
+    settleMs: performance.now() - settleStart,
+    settleSlices,
+    pending: world.pendingLightJobs,
+    peakSnapshotBytes: light.lightingMemoryUsage(world).peakSnapshotBytes,
+    snapshotBytes: light.lightingMemoryUsage(world).snapshotBytes,
+  };
+}
+function editQueueShapeTrial() {
+  const same = scene('room');
+  lightAll(same);
+  const stones = Array.from({ length: 100 }, (_, index) => ({
+    x: 6 + (index % 10), y: 43, z: 6 + Math.floor(index / 10), block: BlockId.Stone,
+  }));
+  same.applyBlockBatch(stones, { scheduleNeighbors: false });
+  same.deferredLighting = true;
+  for (const stone of stones) edit(same, [{ ...stone, block: BlockId.Air }]);
+  const sameShape = {
+    queue: same.editLightQueueLength,
+    merges: same.editLightMerges,
+    enqueued: same.editLightEnqueued,
+    marks: same.lightQueueMarks,
+  };
+  const distant = new VoxelWorld('bench-distant-edits');
+  distant.ensureChunks(8, 8, 1);
+  distant.ensureChunks(8 + 10 * CHUNK_SIZE, 8, 1);
+  for (const chunk of distant.chunks.values()) distant.ensureChunkLighting(chunk);
+  distant.deferredLighting = true;
+  for (let index = 0; index < 10; index += 1) {
+    distant.applyBlockBatch([{ x: 4 + index, y: 48, z: 4, block: BlockId.Glowstone }], {
+      deferLighting: true, scheduleNeighbors: false, skipSupport: true,
+    });
+    distant.applyBlockBatch([{ x: 4 + index + 10 * CHUNK_SIZE, y: 48, z: 4, block: BlockId.Glowstone }], {
+      deferLighting: true, scheduleNeighbors: false, skipSupport: true,
+    });
+  }
+  return {
+    sameChunk: sameShape,
+    distant: {
+      queue: distant.editLightQueueLength,
+      merges: distant.editLightMerges,
+      enqueued: distant.editLightEnqueued,
+      regions: distant.editLightRegions().map((region) => ({
+        minX: region.minX, maxX: region.maxX, minZ: region.minZ, maxZ: region.maxZ,
+      })),
+    },
+  };
+}
+const editScheduler = !baseline && !only ? {
+  removedQuietHold: 'Previously >=8 edits held the region flood until 80ms without a new edit. A 50ms stream never released it, so commits during mining were 0.',
+  creativeBurst100Stream: [0, 1, 2].map(() => creativeStreamTrial()),
+  shapes: editQueueShapeTrial(),
+} : undefined;
 const manyEmitters = !only ? [0, 32, 128, 256].map((count) => {
   const trials = [];
   for (let trial = 0; trial < 3; trial += 1) trials.push(manyEmitterTrial(count));
@@ -259,6 +359,7 @@ const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'
 const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming ?? {};
 const result = { runtime: 'Node CPU; no browser FPS claim', baseline, worldHeight: WORLD_HEIGHT, trials: 3, budgetMs: 2,
   manyEmittersNote: 'CPU benchmark; not browser/GPU FPS. Idle is processLighting after settle, not a frame time.',
+  editScheduler,
   manyEmitters,
   remeshCount: 'production-gated CPU mesh acknowledgements; no GPU work',
   memoryScope: 'Typed arrays only; excludes JS object overhead, world deltas, import voxel objects, GPU and renderer caches',

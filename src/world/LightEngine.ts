@@ -44,6 +44,8 @@ export interface LightFrameStats {
   ms: number; maxSlice: number; dirtyLightChunks: number;
 }
 export const lightEngineStats = { skyRecomputes: 0, blockPropagations: 0 };
+/** Region floods restarted while one was already running. A healthy edit queue stays near zero. */
+export const lightSchedulerStats = { restarts: 0 };
 export const lightFrameStats: LightFrameStats = {
   jobsActive: 0, jobsPending: 0, columns: 0, nodes: 0, ms: 0, maxSlice: 0, dirtyLightChunks: 0,
 };
@@ -116,6 +118,13 @@ interface LightState {
   readonly touched: Map<Chunk, Snapshot>;
   emitters: Array<readonly [number, number, number]>;
   emitterCursor: number;
+  /**
+   * Blocks changed after the active region flood started.
+   * The flood keeps reading these ids so its commit matches the world at start.
+   * Sparse: one entry per edited cell, not a second chunk buffer.
+   */
+  blockView?: Map<Chunk, Map<number, number>>;
+  emissionView?: Map<Chunk, Map<number, number>>;
   snapshotBytes: number;
   peakSnapshotBytes: number;
   peakFlagsBytes: number;
@@ -156,6 +165,63 @@ function entryFor(state: LightState, chunk: Chunk): Entry {
 }
 function loadedChunk(world: VoxelWorld, x: number, z: number): Chunk | undefined {
   return world.chunks.get(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE)));
+}
+/** Block id the active flood is allowed to see. Empty view means the live world. */
+function viewedBlock(state: LightState | undefined, chunk: Chunk, index: number): number {
+  const view = state?.blockView;
+  if (view === undefined) return chunk.blocks[index]!;
+  const pinned = view.get(chunk)?.get(index);
+  return pinned !== undefined ? pinned : chunk.blocks[index]!;
+}
+function clearBlockView(state: LightState): void {
+  state.blockView = undefined;
+  state.emissionView = undefined;
+}
+/**
+ * Pin the pre-edit block while a region flood is already running.
+ * Later edits of the same cell keep the first pin (the id at flood start).
+ */
+export function noteLightingBlockOverride(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  blockId: number,
+  emission?: number,
+): void {
+  const state = states.get(world);
+  if (!state || state.owner !== LIGHT_FLOOD_REGION) return;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  const view = state.blockView ?? (state.blockView = new Map());
+  let page = view.get(chunk);
+  if (!page) {
+    page = new Map();
+    view.set(chunk, page);
+  }
+  if (!page.has(index)) page.set(index, blockId);
+  if (emission === undefined) return;
+  const emissions = state.emissionView ?? (state.emissionView = new Map());
+  let levels = emissions.get(chunk);
+  if (!levels) {
+    levels = new Map();
+    emissions.set(chunk, levels);
+  }
+  if (!levels.has(index)) levels.set(index, emission);
+}
+export function lightingBlockOverrideCount(world: VoxelWorld): number {
+  const view = states.get(world)?.blockView;
+  if (!view) return 0;
+  let count = 0;
+  for (const page of view.values()) count += page.size;
+  return count;
+}
+/** The region job whose working arrays are mid-flood, if any. */
+export function activeRegionLightJob(world: VoxelWorld): PendingLightJob | undefined {
+  const state = states.get(world);
+  if (!state || state.owner !== LIGHT_FLOOD_REGION) return undefined;
+  return state.job;
 }
 function touch(state: LightState, entry: Entry, index: number, channel: 'sky' | 'block'): void {
   const chunk = entry.chunk;
@@ -248,6 +314,9 @@ export function resetLightEngineStats(): void {
   lightEngineStats.skyRecomputes = 0;
   lightEngineStats.blockPropagations = 0;
 }
+export function resetLightSchedulerStats(): void {
+  lightSchedulerStats.restarts = 0;
+}
 export function resetLightFrameStats(): void {
   for (const key of Object.keys(lightFrameStats) as Array<keyof LightFrameStats>) lightFrameStats[key] = 0;
 }
@@ -325,7 +394,7 @@ function floodNode(state: LightState): void {
     const at = cell & SLOT_MASK;
     if (!inside(state, target, at, sky)) continue;
     if (sky && !target.chunk.skyReady && !state.region) continue;
-    const id = target.chunk.blocks[at]!;
+    const id = viewedBlock(state, target.chunk, at);
     if (sky ? FILTER[id] === 16 : OCCLUDES[id] && !EMISSION[id]) continue;
     const next = level - 1 - (sky ? FILTER[id]! : 0);
     if (sky && next < 15 - LATERAL_SKY_RADIUS) continue;
@@ -336,18 +405,19 @@ function floodNode(state: LightState): void {
   }
 }
 function emissionAt(state: LightState, entry: Entry, index: number): number {
-  const id = entry.chunk.blocks[index]!;
-  return id === BlockId.Furnace
-    ? state.world.blockEmissionAt(entry.chunk.x * CHUNK_SIZE + index % CHUNK_SIZE, Math.floor(index / COLUMNS),
-      entry.chunk.z * CHUNK_SIZE + Math.floor(index / CHUNK_SIZE) % CHUNK_SIZE)
-    : EMISSION[id]!;
+  const id = viewedBlock(state, entry.chunk, index);
+  if (id !== BlockId.Furnace) return EMISSION[id]!;
+  const pinned = state.emissionView?.get(entry.chunk)?.get(index);
+  if (pinned !== undefined) return pinned;
+  return state.world.blockEmissionAt(entry.chunk.x * CHUNK_SIZE + index % CHUNK_SIZE, Math.floor(index / COLUMNS),
+    entry.chunk.z * CHUNK_SIZE + Math.floor(index / CHUNK_SIZE) % CHUNK_SIZE);
 }
 function fillColumn(chunk: Chunk, x: number, z: number, state?: LightState): void {
   let sky = 15;
   let filterHeight = 0;
   const entry = state ? entryFor(state, chunk) : undefined;
   for (let index = chunk.scanMaxY() * COLUMNS + z * CHUNK_SIZE + x; index >= 0; index -= COLUMNS) {
-    const attenuation = FILTER[chunk.blocks[index]!]!;
+    const attenuation = FILTER[viewedBlock(state, chunk, index)]!;
     if (attenuation > 0 && filterHeight === 0) filterHeight = Math.floor(index / COLUMNS) + 1;
     if (attenuation === 16) sky = 0;
     if (state && entry) write(state, entry, index, sky, 'sky');
@@ -387,7 +457,7 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
     boundary ||= state.region ? !inside(state, other, at, true) : other.chunk !== chunk;
   }
   for (let index = column; index < Math.min(WORLD_HEIGHT, maxY) * COLUMNS; index += COLUMNS) {
-    const id = chunk.blocks[index]!;
+    const id = viewedBlock(state, chunk, index);
     if (FILTER[id] === 16) continue;
     let value = chunk.skyLightAtIndex(index);
     if (value <= 1 && !boundary) continue;
@@ -404,7 +474,7 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
         value = incoming;
         push(state, entry, index);
       }
-      if (value > 1 && value - 1 - FILTER[other.chunk.blocks[at]!]! > other.chunk.skyLightAtIndex(at)) push(state, entry, index);
+      if (value > 1 && value - 1 - FILTER[viewedBlock(state, other.chunk, at)]! > other.chunk.skyLightAtIndex(at)) push(state, entry, index);
     }
   }
 }
@@ -424,7 +494,7 @@ function seedBlockColumn(state: LightState, entry: Entry, column: number): void 
   const maxZ = state.region?.maxZ ?? (entry.chunk.z + 1) * CHUNK_SIZE - 1;
   for (let y = minY; y <= maxY; y += 1) {
     const index = y * COLUMNS + column;
-    const id = entry.chunk.blocks[index]!;
+    const id = viewedBlock(state, entry.chunk, index);
     if ((EMISSION[id] || id === BlockId.Furnace) && entry.chunk.blockLight[index]! > 0) push(state, entry, index);
     if (OCCLUDES[id] && !EMISSION[id]) continue;
     if (x !== minX && x !== maxX && z !== minZ && z !== maxZ && y !== minY && y !== maxY) continue;
@@ -473,6 +543,7 @@ function finishWork(state: LightState): void {
   state.phase = 'done';
   state.emitters = [];
   state.emitterCursor = 0;
+  clearBlockView(state);
 }
 function advancePhase(state: LightState): void {
   state.cursor = 0;
@@ -624,6 +695,7 @@ export function relightRegion(world: VoxelWorld, region: LightRegion, sky = true
   const started = performance.now();
   const state = stateFor(world);
   if (state.owner !== LIGHT_FLOOD_REGION || !job || state.job !== job) {
+    if (state.owner === LIGHT_FLOOD_REGION) lightSchedulerStats.restarts += 1;
     startWork(state, LIGHT_FLOOD_REGION, sky, block, undefined, job ?? { region, sky, block, origin: 'other' });
     if (!sky && !block) state.phase = 'done';
   }

@@ -5,6 +5,8 @@ Branch: `cursor/lighting-flicker-stable-mesh-audit-47e9`
 Base: `origin/main` `bc8b29fcb31d59a8ccb91088b8b342acb6428ada`
 **Draft PR. Do not merge.** Production and the live spawn world were not changed.
 
+Follow-up on the same branch removes the 80 ms edit quiet hold. See `docs/reports/2026-09-30_lighting-edit-queue.md`. Sentences below that say the hold was left unchanged describe this pass only.
+
 ## Goal
 
 Stop the short dark flash that appears when blocks break faster than a sliced light flood can finish, without delaying the new voxel geometry and without a second full light buffer on every chunk.

@@ -26,9 +26,11 @@ import {
   lightingFloodOwner,
   abandonLightingFloodIfOrphaned,
   resetIncompleteBlockLighting,
-  resetRegionLightFlood,
+  activeRegionLightJob,
+  noteLightingBlockOverride,
   lightEngineStats,
   lightFrameStats,
+  lightSchedulerStats,
   processChunkLighting,
   relightAround,
   relightRegion,
@@ -109,9 +111,38 @@ export interface BlockMutation {
   readonly block: BlockId;
 }
 
-export const EDIT_LIGHT_BURST_BLOCKS = 8;
-/** Hold edit-region lighting until a voxel burst pauses longer than one 20 Hz tick. */
-export const EDIT_LIGHT_BURST_HOLD_MS = 80;
+/** Pending gameplay light jobs, including the one currently flooding. Distant jobs stay separate. */
+export const EDIT_LIGHT_QUEUE_LIMIT = 32;
+/**
+ * When unlit chunks and an edit are both waiting, streaming may take this many
+ * slices first. After that, or once the oldest edit is this old, the edit runs.
+ * An edit that has already started is never held for a quiet period.
+ */
+export const EDIT_LIGHT_STREAM_SLICES = 2;
+export const EDIT_LIGHT_MAX_WAIT_MS = 150;
+
+interface ScheduledLightJob extends PendingLightJob {
+  enqueuedAt: number;
+  coalesced: number;
+}
+
+function regionsIntersect(a: LightRegion, b: LightRegion): boolean {
+  return a.minX <= b.maxX && b.minX <= a.maxX
+    && a.minY <= b.maxY && b.minY <= a.maxY
+    && a.minZ <= b.maxZ && b.minZ <= a.maxZ;
+}
+
+function regionGap(a: LightRegion, b: LightRegion): number {
+  const dx = Math.max(0, a.minX - b.maxX, b.minX - a.maxX);
+  const dy = Math.max(0, a.minY - b.maxY, b.minY - a.maxY);
+  const dz = Math.max(0, a.minZ - b.maxZ, b.minZ - a.maxZ);
+  return dx + dy + dz;
+}
+
+function mergeLightOrigin(current: LightJobOrigin, next: LightJobOrigin): LightJobOrigin {
+  if (current === next) return current;
+  return current === 'edit' || next === 'edit' ? 'edit' : next;
+}
 
 export interface BlockBatchOptions {
   readonly record?: boolean;
@@ -217,7 +248,11 @@ export class VoxelWorld {
   fluidLightDirtyChunks = 0;
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
-  private pendingLight?: PendingLightJob;
+  private readonly lightJobs: ScheduledLightJob[] = [];
+  lightJobCommits = 0;
+  lightJobMerges = 0;
+  lightJobEnqueued = 0;
+  private streamSlicesAheadOfEdit = 0;
   /**
    * Host lighting mode (see `LightingAdapter`).
    * Client `Game` sets true (budgeted `processDeferredLighting`).
@@ -247,13 +282,6 @@ export class VoxelWorld {
   }) => void;
   private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
-  /**
-   * Edit-origin region floods abort and restart when a new batch merges bounds.
-   * Hold the flood while a large voxel burst is still arriving (AutoMine 20 Hz
-   * batches). Single-block edits do not use this hold.
-   */
-  private editBurstBlocks = 0;
-  private lastEditMutationAt = 0;
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
   viewChunkX = 0;
@@ -498,12 +526,16 @@ export class VoxelWorld {
 
   hasPendingLighting(chunk: Chunk): boolean {
     if (chunk.lightPending) return true;
-    const r = this.pendingLight?.region;
-    if (r && chunk.x * CHUNK_SIZE <= r.maxX && (chunk.x + 1) * CHUNK_SIZE > r.minX
-      && chunk.z * CHUNK_SIZE <= r.maxZ && (chunk.z + 1) * CHUNK_SIZE > r.minZ) return true;
+    const minX = chunk.x * CHUNK_SIZE;
+    const minZ = chunk.z * CHUNK_SIZE;
+    const maxX = minX + CHUNK_SIZE;
+    const maxZ = minZ + CHUNK_SIZE;
+    for (const job of this.lightJobs) {
+      const region = job.region;
+      if (minX <= region.maxX && maxX > region.minX && minZ <= region.maxZ && maxZ > region.minZ) return true;
+    }
     return this.pendingEmitters.some(([x, , z]) =>
-      chunk.x * CHUNK_SIZE <= x + 15 && (chunk.x + 1) * CHUNK_SIZE > x - 15
-      && chunk.z * CHUNK_SIZE <= z + 15 && (chunk.z + 1) * CHUNK_SIZE > z - 15);
+      minX <= x + 15 && maxX > x - 15 && minZ <= z + 15 && maxZ > z - 15);
   }
 
   getBlockState(x: number, y: number, z: number): BlockRenderState | undefined {
@@ -782,7 +814,6 @@ export class VoxelWorld {
     }
 
     if (committed.length > 0) {
-      this.noteEditBurst(committed.length, deferLighting && updateLighting);
       this.onCommittedBlocks?.(committed);
       for (const observer of this.committedBlockObservers) observer(committed);
     }
@@ -843,6 +874,8 @@ export class VoxelWorld {
     adoptUnknownBlockLight(previous);
     adoptUnknownBlockLight(block);
     const previousState = this.getBlockState(x, y, z);
+    if (previous === BlockId.Furnace) noteLightingBlockOverride(this, x, y, z, previous, this.blockEmissionAt(x, y, z));
+    else noteLightingBlockOverride(this, x, y, z, previous);
     // A new material/lifetime must not inherit an old pending (or in-flight) deadline.
     this.cancelFluidTick(x, y, z);
     const previousDefinition = getBlockDefinition(previous);
@@ -929,59 +962,94 @@ export class VoxelWorld {
     chunk.clearMeshDirtyRange();
   }
 
-  private noteEditBurst(applied: number, deferredEditLight: boolean): void {
-    if (!deferredEditLight || applied <= 0) return;
-    this.editBurstBlocks += applied;
-    this.lastEditMutationAt = performance.now();
-  }
-
-  private shouldHoldEditLightFlood(): boolean {
-    if (!this.pendingLight || this.pendingLight.origin !== 'edit') return false;
-    if (this.editBurstBlocks < EDIT_LIGHT_BURST_BLOCKS) return false;
-    return performance.now() - this.lastEditMutationAt < EDIT_LIGHT_BURST_HOLD_MS;
-  }
-
+  /**
+   * Enqueue a gameplay light region. Overlapping pending jobs merge.
+   * A flood that has already started is left running against the block ids it
+   * began with; the new edit becomes the next job and cannot commit a mix.
+   */
   queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): void {
     this.lightQueueMarks += 1;
     this.noteRegionLightDirty(region);
-    if (!this.pendingLight) {
-      this.pendingLight = { region: { ...region }, sky, block, origin };
+    const active = activeRegionLightJob(this);
+    for (const job of this.lightJobs) {
+      if (job === active || !regionsIntersect(job.region, region)) continue;
+      this.mergeLightJob(job, region, sky, block, origin);
       return;
     }
-    const current = this.pendingLight.region;
-    const mergedOrigin: LightJobOrigin = this.pendingLight.origin === origin
-      ? origin
-      : (this.pendingLight.origin === 'edit' || origin === 'edit' ? 'edit' : origin);
-    this.pendingLight = {
-      sky: this.pendingLight.sky || sky,
-      block: this.pendingLight.block || block,
-      origin: mergedOrigin,
-      region: {
-        minX: Math.min(current.minX, region.minX),
-        minY: Math.min(current.minY, region.minY),
-        minZ: Math.min(current.minZ, region.minZ),
-        maxX: Math.max(current.maxX, region.maxX),
-        maxY: Math.max(current.maxY, region.maxY),
-        maxZ: Math.max(current.maxZ, region.maxZ),
-      },
+    if (this.lightJobs.length >= EDIT_LIGHT_QUEUE_LIMIT) {
+      let best: ScheduledLightJob | undefined;
+      let bestGap = Infinity;
+      for (const job of this.lightJobs) {
+        if (job === active) continue;
+        const gap = regionGap(job.region, region);
+        if (gap >= bestGap) continue;
+        best = job;
+        bestGap = gap;
+      }
+      if (best) {
+        this.mergeLightJob(best, region, sky, block, origin);
+        return;
+      }
+    }
+    this.lightJobs.push({
+      region: { ...region },
+      sky,
+      block,
+      origin,
+      enqueuedAt: performance.now(),
+      coalesced: 1,
+    });
+    this.lightJobEnqueued += 1;
+  }
+
+  private mergeLightJob(job: ScheduledLightJob, region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin): void {
+    const current = job.region;
+    job.region = {
+      minX: Math.min(current.minX, region.minX),
+      minY: Math.min(current.minY, region.minY),
+      minZ: Math.min(current.minZ, region.minZ),
+      maxX: Math.max(current.maxX, region.maxX),
+      maxY: Math.max(current.maxY, region.maxY),
+      maxZ: Math.max(current.maxZ, region.maxZ),
     };
-    // An edit inside unchanged bounds can invalidate already-scanned columns too.
-    resetRegionLightFlood(this);
+    job.sky = job.sky || sky;
+    job.block = job.block || block;
+    job.origin = mergeLightOrigin(job.origin, origin);
+    job.coalesced += 1;
+    this.lightJobMerges += 1;
+  }
+
+  /**
+   * Run queued region jobs until the deadline or, when `deadline` is omitted, until the queue is empty.
+   * Each finished job commits before the next one starts, so the next flood's snapshot baseline is that commit.
+   */
+  private runEditLightQueue(deadline?: number): void {
+    while (this.lightJobs.length > 0) {
+      if (deadline !== undefined && (performance.now() >= deadline
+        || lightFrameStats.columns >= MAX_LIGHT_COLUMNS_PER_SLICE
+        || lightFrameStats.nodes >= MAX_LIGHT_NODES_PER_SLICE)) return;
+      const owner = lightingFloodOwner(this);
+      if (owner !== '' && owner !== LIGHT_FLOOD_REGION) return;
+      const job = this.lightJobs[0]!;
+      const done = continuePendingLight(this, job, deadline);
+      if (!done) return;
+      this.lightJobs.shift();
+      this.lightJobCommits += 1;
+      this.commitLightChanges();
+    }
   }
 
   flushLighting(): number {
-    const pending = this.pendingLight;
-    const emitters = this.pendingEmitters;
-    this.pendingLight = undefined;
-    this.pendingEmitters = [];
-    this.editBurstBlocks = 0;
     const start = performance.now();
-    if (emitters.length > 0) addBlockLightEmitters(this, emitters);
-
-    if (pending) {
-      relightRegion(this, pending.region, pending.sky, pending.block);
+    const regionBusy = lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
+    if (regionBusy) this.runEditLightQueue();
+    const emitters = this.pendingEmitters;
+    this.pendingEmitters = [];
+    if (emitters.length > 0) {
+      addBlockLightEmitters(this, emitters);
+      if (lightingFloodOwner(this) === '') this.commitLightChanges();
     }
-    this.commitLightChanges();
+    if (!regionBusy) this.runEditLightQueue();
     return performance.now() - start;
   }
 
@@ -1018,18 +1086,23 @@ export class VoxelWorld {
 
     const unlit = collectUnlitLightJobs(this, originX, originZ, generateRadius, unlock);
     const emitterWork = this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
-    const holdEditFlood = this.shouldHoldEditLightFlood();
-    lightFrameStats.jobsPending = unlit.length + (this.pendingLight ? 1 : 0) + Number(emitterWork);
-    this.lightOriginCounts = {
-      stream: unlit.length,
-      fluid: this.pendingLight?.origin === 'fluid' ? 1 : 0,
-      edit: this.pendingLight?.origin === 'edit' ? 1 : 0,
-      other: this.pendingLight?.origin === 'other' ? 1 : 0,
-    };
+    lightFrameStats.jobsPending = unlit.length + this.lightJobs.length + Number(emitterWork);
+    const origins = { stream: unlit.length, fluid: 0, edit: 0, other: 0 };
+    for (const job of this.lightJobs) origins[job.origin] += 1;
+    this.lightOriginCounts = origins;
     const liveOwner = lightingFloodOwner(this);
-    const resumeSharedFlood = liveOwner === LIGHT_FLOOD_REGION || liveOwner === LIGHT_FLOOD_ADD_EMITTER
-      || (liveOwner === '' && !holdEditFlood && (this.pendingLight !== undefined || this.pendingEmitters.length > 0));
-    if (!resumeSharedFlood) {
+    const regionActive = liveOwner === LIGHT_FLOOD_REGION;
+    const emitterActive = liveOwner === LIGHT_FLOOD_ADD_EMITTER;
+    const chunkFlood = liveOwner !== '' && !regionActive && !emitterActive;
+    const editQueued = this.lightJobs.length > 0;
+    const oldestAge = editQueued ? Math.max(0, start - this.lightJobs[0]!.enqueuedAt) : 0;
+    const editOverdue = editQueued && oldestAge >= EDIT_LIGHT_MAX_WAIT_MS;
+    const yieldToStream = !regionActive && !emitterActive && !chunkFlood && unlit.length > 0
+      && editQueued && !editOverdue && this.streamSlicesAheadOfEdit < EDIT_LIGHT_STREAM_SLICES;
+    const preferQueuedWork = (editQueued || this.pendingEmitters.length > 0) && !yieldToStream;
+    const runUnlit = chunkFlood || (!regionActive && !emitterActive && !preferQueuedWork && unlit.length > 0);
+    if (runUnlit) {
+      if (yieldToStream) this.streamSlicesAheadOfEdit += 1;
       for (const job of unlit) {
         if (performance.now() >= deadline || lightFrameStats.columns >= MAX_LIGHT_COLUMNS_PER_SLICE
           || lightFrameStats.nodes >= MAX_LIGHT_NODES_PER_SLICE) break;
@@ -1055,13 +1128,10 @@ export class VoxelWorld {
       addBlockLightEmitters(this, this.pendingEmitters, deadline);
       this.pendingEmitters = [];
       if (lightingFloodOwner(this) === '') this.commitLightChanges();
-    } else if (!holdEditFlood && performance.now() < deadline && this.pendingLight && (lightingFloodOwner(this) === '' || lightingFloodOwner(this) === LIGHT_FLOOD_REGION)) {
-      const done = continuePendingLight(this, this.pendingLight, deadline);
-      if (done) {
-        this.pendingLight = undefined;
-        this.editBurstBlocks = 0;
-        this.commitLightChanges();
-      }
+    } else if (!runUnlit && (regionActive || editQueued) && lightingFloodOwner(this) !== LIGHT_FLOOD_ADD_EMITTER
+      && performance.now() < deadline) {
+      this.streamSlicesAheadOfEdit = 0;
+      this.runEditLightQueue(deadline);
     } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner(this) === '') {
       const emitters = this.pendingEmitters;
       this.pendingEmitters = [];
@@ -1079,12 +1149,64 @@ export class VoxelWorld {
   }
 
   get pendingLightJobs(): number {
-    return (this.pendingLight ? 1 : 0) + this.unlitChunkCount
+    return this.lightJobs.length + this.unlitChunkCount
       + (this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER ? 1 : 0);
   }
 
   get hasQueuedRegionLight(): boolean {
-    return this.pendingLight !== undefined || lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
+    return this.lightJobs.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
+  }
+
+  get editLightQueueLength(): number {
+    return this.lightJobs.length;
+  }
+
+  get editLightCommits(): number {
+    return this.lightJobCommits;
+  }
+
+  get editLightMerges(): number {
+    return this.lightJobMerges;
+  }
+
+  get editLightEnqueued(): number {
+    return this.lightJobEnqueued;
+  }
+
+  get editLightRestarts(): number {
+    return lightSchedulerStats.restarts;
+  }
+
+  get editLightActive(): boolean {
+    return lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
+  }
+
+  editLightOldestAgeMs(now = performance.now()): number {
+    let oldest = Number.POSITIVE_INFINITY;
+    for (const job of this.lightJobs) oldest = Math.min(oldest, job.enqueuedAt);
+    return this.lightJobs.length === 0 ? 0 : Math.max(0, now - oldest);
+  }
+
+  editLightRegions(): LightRegion[] {
+    return this.lightJobs.map((job) => ({ ...job.region }));
+  }
+
+  editLightSnapshot(now = performance.now()): {
+    queued: number;
+    active: boolean;
+    oldestAgeMs: number;
+    commits: number;
+    restarts: number;
+    merges: number;
+  } {
+    return {
+      queued: this.lightJobs.length,
+      active: this.editLightActive,
+      oldestAgeMs: this.editLightOldestAgeMs(now),
+      commits: this.lightJobCommits,
+      restarts: lightSchedulerStats.restarts,
+      merges: this.lightJobMerges,
+    };
   }
 
   /** In-radius dirty/stale keys after `discardObsoletePendingMesh`. Not a historical leak. */
@@ -1530,12 +1652,13 @@ export class VoxelWorld {
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);
-      if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z);
+      if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z, wasBurning);
     }
   }
 
-  private syncFurnaceEmission(x: number, y: number, z: number): void {
+  private syncFurnaceEmission(x: number, y: number, z: number, wasBurning = false): void {
     const radius = torchBlockEmission();
+    noteLightingBlockOverride(this, x, y, z, BlockId.Furnace, wasBurning ? radius : 0);
     this.markBlockDirty(x, z);
     if (this.deferredLighting) {
       this.queueLight({ minX: x - radius, minY: y - radius, minZ: z - radius,

@@ -89,17 +89,17 @@ function addChunk(totals: EmitterCensusTotals, world: VoxelWorld, chunk: Chunk):
     + totals.fire + totals.redstoneTorch + totals.furnaceBurning + totals.other;
 }
 
-/** Gap between incremental chunk walks while a pass is open. */
+/** Gap between incremental chunk walks while a pass is open. Not an animation frame. */
 export const EMITTER_CENSUS_INTERVAL_MS = 400;
 /** How long a finished pass stays on screen before another pass may start. */
-export const EMITTER_CENSUS_HOLD_MS = 400;
+export const EMITTER_CENSUS_HOLD_MS = 4000;
 
 /**
- * DEV census of loaded emitters. A pass still walks one budget of chunks at a
- * time, and only through each chunk's occupied height. Steps are at least
- * `EMITTER_CENSUS_INTERVAL_MS` apart, and a finished pass is shown for
- * `EMITTER_CENSUS_HOLD_MS` before the next one. Animation frames in between
- * do not touch voxel arrays.
+ * DEV census of loaded emitters. A pass walks a few chunks per step, only
+ * through occupied height. Steps are at least `EMITTER_CENSUS_INTERVAL_MS`
+ * apart. A finished pass is kept for `EMITTER_CENSUS_HOLD_MS`, unless the
+ * loaded chunk set changes, which starts a new pass immediately. Frames in
+ * between do not touch voxel arrays.
  */
 export class EmitterCensusScanner {
   private world?: VoxelWorld;
@@ -132,11 +132,13 @@ export class EmitterCensusScanner {
       this.world = world;
       this.nextStepAt = nowMs;
     }
+    const chunkSetChanged = this.keys.length > 0 && this.loadedSetChanged(world);
     if (this.holding) {
-      if (nowMs < this.holdUntil) return this.view();
+      if (nowMs < this.holdUntil && !chunkSetChanged) return this.view();
       this.holding = false;
       this.keys = [];
     }
+    if (chunkSetChanged) this.nextStepAt = Math.min(this.nextStepAt, nowMs);
     if (nowMs < this.nextStepAt) return this.view();
     if (this.keys.length === 0 || this.loadedSetChanged(world)) this.startPass(world, nowMs);
     if (!this.holding) {

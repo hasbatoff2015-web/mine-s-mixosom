@@ -72,7 +72,7 @@ import {
 } from './constants';
 import { advanceFixedStep, interpolationAlpha } from './fixedStep';
 import { LocalPlayerRenderState } from './localPlayerRenderState';
-import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
+import { DevProfiler, formatEditLightLine, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
   initialReadyChunkRadius,
@@ -4468,8 +4468,13 @@ export class Game {
         dirtyLightChunks: lightFrameStats.dirtyLightChunks,
         lightOwner: session ? formatLightOwner(lightingFloodOwner(session.world), LIGHT_FLOOD_REGION, LIGHT_FLOOD_ADD_EMITTER) : 'idle',
         pendingMeshChunks: session?.world.pendingMeshJobs ?? 0,
-        // Scanner steps at EMITTER_CENSUS_INTERVAL_MS; this call does not walk voxels every frame.
-        emitterLine: session ? formatEmitterCensus(this.emitterCensus.advance(session.world, 2)) : undefined,
+        editLightLine: this.profiler.enabled && session
+          ? formatEditLightLine(session.world.editLightSnapshot())
+          : undefined,
+        // Census runs only while ?perf=1 is on. Steps are hundreds of ms apart, not every frame.
+        emitterLine: this.profiler.enabled && session
+          ? formatEmitterCensus(this.emitterCensus.advance(session.world, 2))
+          : undefined,
         dirtyChunks: session?.world.dirtyChunkCount ?? 0,
         blockMutations: session?.world.mutationMarks ?? 0,
         mobCount: session?.mobs.count ?? 0,

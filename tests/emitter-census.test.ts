@@ -73,7 +73,7 @@ describe('emitter census cadence', () => {
     expect(20 * 16).toBeLessThan(EMITTER_CENSUS_HOLD_MS);
   });
 
-  it('starts a new pass after the hold when the loaded chunk set changes', () => {
+  it('keeps a finished pass for several seconds unless the loaded chunk set changes', () => {
     const world = new VoxelWorld('census-refresh');
     addChunk(world, 0, 0).set(1, 3, 1, BlockId.Torch);
     const scanner = new EmitterCensusScanner();
@@ -81,17 +81,21 @@ describe('emitter census cadence', () => {
     expect(finished.passComplete).toBe(true);
     expect(finished.loadedChunks).toBe(1);
     const walks = scanner.chunkWalks;
-    addChunk(world, 4, 4);
-    for (let frame = 1; frame * 16 < EMITTER_CENSUS_HOLD_MS; frame += 1) {
-      const held = scanner.advance(world, 2, frame * 16);
-      expect(scanner.chunkWalks).toBe(walks);
-      expect(held.loadedChunks).toBe(1);
-      expect(held.passComplete).toBe(true);
-    }
+    const held = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS - 1);
+    expect(scanner.chunkWalks).toBe(walks);
+    expect(held.loadedChunks).toBe(1);
+    expect(held.passComplete).toBe(true);
     const refreshed = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS);
     expect(scanner.chunkWalks).toBeGreaterThan(walks);
-    expect(refreshed.loadedChunks).toBe(2);
     expect(refreshed.passComplete).toBe(true);
     expect(refreshed.torch).toBe(1);
+
+    const after = scanner.chunkWalks;
+    addChunk(world, 4, 4);
+    const interrupted = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS + 16);
+    expect(scanner.chunkWalks).toBeGreaterThan(after);
+    expect(interrupted.loadedChunks).toBe(2);
+    expect(interrupted.passComplete).toBe(true);
+    expect(interrupted.torch).toBe(1);
   });
 });

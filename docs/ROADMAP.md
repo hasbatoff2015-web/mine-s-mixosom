@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-30: continuous edit lighting queue
+
+- [x] Remove the 80 ms quiet hold that starved region floods while edits arrived every 50 ms.
+- [x] Spatial queue: merge overlapping regions, keep distant edits apart, finish the active flood before the next one, pin mid-flood block edits.
+- [x] Tests for a 20 TPS stream at 60 FPS and 30 FPS, borders, coalescing, and committed mesh light across a superseding edit.
+- [ ] Owner manual QA on DEV: hold LMB 5–10 s and confirm light updates before release, plus roof, emitters, and `?perf=1` `EDITQ`.
+
 ## 2026-09-30: lighting flicker and emitter audit
 
 - [x] Urgent geometry updates while a sliced flood is open, and the mesh reads last committed snapshot pages instead of the partial working arrays.

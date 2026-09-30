@@ -41,6 +41,7 @@ export interface PerfSnapshot {
   readonly lightOwner?: string;
   readonly pendingMeshChunks?: number;
   readonly emitterLine?: string;
+  readonly editLightLine?: string;
   readonly dirtyChunks: number;
   readonly blockMutations: number;
   readonly mobCount: number;
@@ -155,6 +156,7 @@ export class DevProfiler {
     lightOwner?: string;
     pendingMeshChunks?: number;
     emitterLine?: string;
+    editLightLine?: string;
     dirtyChunks: number;
     blockMutations: number;
     mobCount: number;
@@ -189,6 +191,7 @@ export class DevProfiler {
       lightOwner: world.lightOwner,
       pendingMeshChunks: world.pendingMeshChunks,
       emitterLine: world.emitterLine,
+      editLightLine: world.editLightLine,
       dirtyChunks: world.dirtyChunks,
       blockMutations: world.blockMutations,
       mobCount: world.mobCount,
@@ -236,6 +239,7 @@ export class DevProfiler {
       simLine,
       `JOBS  gen ${snapshot.generateJobs} mesh ${snapshot.meshJobs} waitG ${snapshot.waitingGenerate} waitM ${snapshot.waitingMesh} light ${snapshot.lightingJobs} dirty ${snapshot.dirtyChunks} mut ${snapshot.blockMutations}`,
       `LIGHT jobs ${snapshot.lightPending} owner ${snapshot.lightOwner ?? 'idle'} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | slice ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks} | meshPend ${snapshot.pendingMeshChunks ?? 0}`,
+      snapshot.editLightLine ?? '',
       snapshot.emitterLine ?? '',
       meshWaitLine,
       `CHUNK ${chunkHud}`,
@@ -249,4 +253,16 @@ export class DevProfiler {
     this.overlay?.remove();
     this.overlay = undefined;
   }
+}
+
+export function formatEditLightLine(stats: {
+  queued: number;
+  active: boolean;
+  oldestAgeMs: number;
+  commits: number;
+  restarts: number;
+  merges: number;
+}): string {
+  const active = stats.active ? ' active' : '';
+  return `EDITQ ${stats.queued}${active} age ${Math.round(stats.oldestAgeMs)}ms commits ${stats.commits} restart ${stats.restarts} merge ${stats.merges}`;
 }
