@@ -13,8 +13,13 @@ import {
 export const PLAYER_CHAT_BUBBLE_VISIBLE_MS = 5_000;
 /** Press Start 2P is nearly monospaced, so a fixed column count wraps deterministically. */
 export const PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS = 32;
-/** Gap between the painted nickname glyphs and the bubble bottom, in world units. */
-export const PLAYER_CHAT_BUBBLE_GAP = 0.06;
+/**
+ * World gap from the painted nickname top to the bubble panel.
+ * Small enough that the chat glyphs sit about as far above the nick
+ * as the nick sits above the HP line, and large enough that the panel
+ * does not touch the nick.
+ */
+export const PLAYER_CHAT_BUBBLE_GAP = 0.02;
 export const PLAYER_CHAT_BUBBLE_FONT_PX = 40;
 export const PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT = 56;
 export const PLAYER_CHAT_BUBBLE_PAD_X = 16;

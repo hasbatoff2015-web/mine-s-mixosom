@@ -3,7 +3,7 @@
 ## Последний проход: friend join chat и speech bubble — 2026-09-28
 
 - Реальный переход `connected: false → true` шлёт онлайн-друзьям system chat `<ник> зашел в игру.` Реальный `disconnect` текущего connectionId шлёт `<ник> вышел из игры.` Старый socket после takeover не считается выходом. `NotificationService` и `style: announcement` не используются.
-- Над `PlayerNameplate` чужого игрока на 5 секунд появляется `PlayerChatBubble`. Новая строка заменяет текстуру, если canvas сменил размер: Three.js не перевыделяет `texStorage2D` по одному `needsUpdate`. Источник — уже доставленный `ServerChatMessage` с `kind: 'player'`.
+- Над `PlayerNameplate` чужого игрока на 5 секунд появляется `PlayerChatBubble`. Панель на `0.02` выше глифов ника и рисует ту же чёрную подложку `0.35`, что и голограммы на спавне. Новая строка заменяет текстуру, если canvas сменил размер. Источник — уже доставленный `ServerChatMessage` с `kind: 'player'`.
 - Подробности: `docs/reports/2026-09-28_friend-join-chat-bubbles.md`.
 
 ## Последний проход: полный набор золотых инструментов — 2026-09-24

@@ -1,5 +1,9 @@
 import * as THREE from 'three';
-import { hologramCanvasFont, hologramTextCanvasScale } from '../../../shared/hologramStyle';
+import {
+  HOLOGRAM_BACKGROUND_OPACITY,
+  hologramCanvasFont,
+  hologramTextCanvasScale,
+} from '../../../shared/hologramStyle';
 import {
   configureHologramTextTexture,
   createHologramTextCanvas,
@@ -167,6 +171,9 @@ export class PlayerChatBubble {
     ensureHologramTextCanvasResolution(canvas, scale, layout.logicalWidth, layout.logicalHeight);
     context.setTransform(scale, 0, 0, scale, 0, 0);
     context.clearRect(0, 0, layout.logicalWidth, layout.logicalHeight);
+    context.globalAlpha = 1;
+    context.fillStyle = `rgba(0, 0, 0, ${HOLOGRAM_BACKGROUND_OPACITY})`;
+    context.fillRect(0, 0, layout.logicalWidth, layout.logicalHeight);
     context.textAlign = 'center';
     context.textBaseline = 'middle';
     context.lineJoin = 'round';

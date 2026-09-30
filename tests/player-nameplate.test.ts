@@ -282,6 +282,9 @@ describe('remote player chat bubble', () => {
     expect(tall.centerY - tall.worldHeight / 2).toBeCloseTo(
       playerChatBubbleNicknameVisualTop() + PLAYER_CHAT_BUBBLE_GAP,
     );
+    expect(PLAYER_CHAT_BUBBLE_GAP).toBeGreaterThan(0);
+    expect(PLAYER_CHAT_BUBBLE_GAP).toBeLessThan(0.06);
+    expect(tall.centerY - tall.worldHeight / 2).toBeLessThan(playerChatBubbleNicknameVisualTop() + 0.06);
     expect(tall.centerY).toBeGreaterThan(short.centerY);
     expect(view.chatBubble.sprite.position.y - tall.worldHeight / 2).toBeGreaterThan(
       playerChatBubbleNicknameVisualTop() - 1e-6,

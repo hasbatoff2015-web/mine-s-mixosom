@@ -57,6 +57,10 @@ None found in the targeted suite.
 
 Self bubble over the local model. Unread friend badge. Stacked bubbles.
 
+## Follow-up visual polish
+
+The panel sits `PLAYER_CHAT_BUBBLE_GAP = 0.02` above the nickname ink, so the chat glyphs line up with the nick-to-HP spacing. The bubble canvas fills `rgba(0, 0, 0, 0.35)` before the text, the same tone as `HologramRenderer`'s background mesh. Nickname and HP are unchanged.
+
 ## Next work
 
 Manual QA on `https://dev.megacraft.agariobrainrot.ru` after `dev-switch cursor/friend-join-chat-bubbles`. Do not merge before that.

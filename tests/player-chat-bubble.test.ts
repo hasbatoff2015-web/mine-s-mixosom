@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { afterEach, describe, expect, it } from 'vitest';
-import { hologramTextCanvasScale } from '../shared/hologramStyle';
+import { HOLOGRAM_BACKGROUND_OPACITY, hologramTextCanvasScale } from '../shared/hologramStyle';
 import { SERVER_MESSAGE_TYPES } from '../shared/protocol';
 import { ChatLog, CHAT_FADE_MS, CHAT_VISIBLE_MS } from '../src/chat';
 import { friendJoinChatText, friendLeaveChatText } from '../shared/friends';
@@ -9,6 +9,9 @@ import { PlayerChatBubble } from '../src/rendering/player/PlayerChatBubble';
 import {
   PLAYER_CHAT_BUBBLE_FONT_PX,
   PLAYER_CHAT_BUBBLE_GAP,
+  PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT,
+  PLAYER_CHAT_BUBBLE_PAD_X,
+  PLAYER_CHAT_BUBBLE_PAD_Y,
   PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS,
   PLAYER_CHAT_BUBBLE_VISIBLE_MS,
   PlayerChatBubbleState,
@@ -131,14 +134,23 @@ describe('server chat routes to a remote bubble without a new packet', () => {
 class FakeContext {
   readonly fillTexts: string[] = [];
   readonly strokeTexts: string[] = [];
+  readonly fillRects: Array<{ x: number; y: number; w: number; h: number; fillStyle: string }> = [];
+  readonly order: string[] = [];
   font = '';
+  fillStyle = '';
   setTransform(): void {}
   clearRect(): void {}
+  fillRect(x: number, y: number, w: number, h: number): void {
+    this.fillRects.push({ x, y, w, h, fillStyle: this.fillStyle });
+    this.order.push('fillRect');
+  }
   strokeText(text: string): void {
     this.strokeTexts.push(text);
+    this.order.push('strokeText');
   }
   fillText(text: string): void {
     this.fillTexts.push(text);
+    this.order.push('fillText');
   }
 }
 
@@ -213,6 +225,14 @@ describe('player chat bubble canvas upload', () => {
     expect(bubble.sprite.material).toBe(material);
     expect(installed.canvas.context.fillTexts.at(-1)).toBe('привет');
     expect(installed.canvas.context.strokeTexts.at(-1)).toBe('привет');
+    const panel = installed.canvas.context.fillRects.at(-1);
+    expect(panel?.fillStyle).toBe(`rgba(0, 0, 0, ${HOLOGRAM_BACKGROUND_OPACITY})`);
+    expect(panel?.w).toBe(tall.logicalWidth);
+    expect(panel?.h).toBe(tall.logicalHeight);
+    const lastPanel = installed.canvas.context.order.lastIndexOf('fillRect');
+    const lastText = installed.canvas.context.order.lastIndexOf('fillText');
+    expect(lastPanel).toBeGreaterThanOrEqual(0);
+    expect(lastText).toBeGreaterThan(lastPanel);
     bubble.dispose();
   });
 
@@ -281,8 +301,15 @@ describe('player chat bubble size and nickname gap', () => {
       const layout = playerChatBubbleLayout(lines);
       expect(layout.worldWidth / layout.worldHeight).toBeCloseTo(layout.logicalWidth / layout.logicalHeight);
       expect(bottom(lines)).toBeCloseTo(anchor);
+      expect(PLAYER_CHAT_BUBBLE_GAP).toBeGreaterThan(0);
+      expect(PLAYER_CHAT_BUBBLE_GAP).toBeLessThan(0.06);
       expect(bottom(lines)).toBeGreaterThan(playerChatBubbleNicknameVisualTop());
+      expect(bottom(lines)).toBeLessThan(playerChatBubbleNicknameVisualTop() + 0.06);
       expect(bottom(lines)).toBeLessThan(playerChatBubbleNameplateTop());
+      expect(layout.logicalWidth).toBeGreaterThan(PLAYER_CHAT_BUBBLE_PAD_X * 2);
+      expect(layout.logicalHeight).toBe(
+        lines.length * PLAYER_CHAT_BUBBLE_LINE_LOGICAL_HEIGHT + PLAYER_CHAT_BUBBLE_PAD_Y * 2,
+      );
       expect(lines.every((line) => line.length <= PLAYER_CHAT_BUBBLE_MAX_LINE_CHARS)).toBe(true);
     }
     const shortLines = wrapPlayerChatBubbleText('ку');
