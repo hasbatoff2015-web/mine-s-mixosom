@@ -180,6 +180,77 @@ if (!only) for (const radius of [2, 4, 6]) {
     naiveFullSnapshotsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT * 2,
   });
 }
+function idleLighting(world: InstanceType<typeof VoxelWorld>, frames: number) {
+  let ms = 0;
+  let nodes = 0;
+  let columns = 0;
+  let maxSlice = 0;
+  for (let frame = 0; frame < frames; frame += 1) {
+    ms += world.processLighting(2, 8, 8);
+    nodes += light.lightFrameStats.nodes;
+    columns += light.lightFrameStats.columns;
+    maxSlice = Math.max(maxSlice, light.lightFrameStats.maxSlice);
+  }
+  return {
+    frames, ms, nodes, columns, maxSlice,
+    pending: world.pendingLightJobs,
+    owner: light.lightingFloodOwner(world),
+    snapshotBytes: light.lightingMemoryUsage(world).snapshotBytes,
+  };
+}
+function emitterPositions(count: number): Array<{ x: number; y: number; z: number }> {
+  const spots = [];
+  const columns = 12;
+  const rows = 11;
+  const perLayer = columns * rows;
+  for (let i = 0; i < count; i += 1) {
+    const layer = Math.floor(i / perLayer);
+    const cell = i % perLayer;
+    spots.push({
+      x: 4 + (cell % columns) * 2,
+      z: 6 + Math.floor(cell / columns) * 2,
+      y: 41 + layer * 2,
+    });
+  }
+  return spots;
+}
+const emitterKinds = [BlockId.Torch, BlockId.Lantern, BlockId.Glowstone] as const;
+function manyEmitterTrial(count: number) {
+  const world = scene('closed');
+  world.deferredLighting = true;
+  const spots = emitterPositions(count);
+  const setup: Array<{ x: number; y: number; z: number; block: BlockId }> = [
+    { x: 5, y: 42, z: 7, block: BlockId.Stone },
+  ];
+  if (count > 0) {
+    for (let index = 0; index < spots.length; index += 1) {
+      setup.push({ ...spots[index]!, block: emitterKinds[index % emitterKinds.length]! });
+    }
+  }
+  world.applyBlockBatch(setup, { updateLighting: false, scheduleNeighbors: false, record: false });
+  const initial = measure(world);
+  const idle = idleLighting(world, 30);
+  const ordinaryBreak = measure(world, () => edit(world, [{ x: 5, y: 42, z: 7, block: BlockId.Air }]), 1);
+  const removed = count > 0
+    ? measure(world, () => edit(world, [{ ...spots[0]!, block: BlockId.Air }]), 1)
+    : null;
+  const added = count > 0
+    ? measure(world, () => edit(world, [{ ...spots[0]!, block: spots[0] ? emitterKinds[0] : BlockId.Torch }]), 1)
+    : null;
+  return {
+    count,
+    initial: { totalMs: initial.totalMs, maxSliceMs: initial.maxSliceMs, columns: initial.columns, nodes: initial.nodes, slices: initial.slices, memory: initial.memory },
+    idle,
+    ordinaryBreak: { totalMs: ordinaryBreak.totalMs, maxSliceMs: ordinaryBreak.maxSliceMs, columns: ordinaryBreak.columns, nodes: ordinaryBreak.nodes, slices: ordinaryBreak.slices },
+    emitterRemoval: removed ? { totalMs: removed.totalMs, maxSliceMs: removed.maxSliceMs, columns: removed.columns, nodes: removed.nodes, slices: removed.slices } : null,
+    emitterAdd: added ? { totalMs: added.totalMs, maxSliceMs: added.maxSliceMs, columns: added.columns, nodes: added.nodes, slices: added.slices } : null,
+  };
+}
+const manyEmitters = !only ? [0, 32, 128, 256].map((count) => {
+  const trials = [];
+  for (let trial = 0; trial < 3; trial += 1) trials.push(manyEmitterTrial(count));
+  return { count, trials };
+}) : undefined;
 const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
   meshRadius: 6, lightBudgetMs: 2, pruneEveryFrames: 80, warmupFrames: 48,
   instantLight: false, policy: 'fair', speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
@@ -187,6 +258,8 @@ const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'
 }) : undefined;
 const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming ?? {};
 const result = { runtime: 'Node CPU; no browser FPS claim', baseline, worldHeight: WORLD_HEIGHT, trials: 3, budgetMs: 2,
+  manyEmittersNote: 'CPU benchmark; not browser/GPU FPS. Idle is processLighting after settle, not a frame time.',
+  manyEmitters,
   remeshCount: 'production-gated CPU mesh acknowledgements; no GPU work',
   memoryScope: 'Typed arrays only; excludes JS object overhead, world deltas, import voxel objects, GPU and renderer caches',
   cases, memory, streaming: streamingSummary };

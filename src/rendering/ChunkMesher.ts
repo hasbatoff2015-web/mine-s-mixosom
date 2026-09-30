@@ -307,8 +307,13 @@ export class ChunkMesher {
   private lightNorthWest?: Chunk;
   private lightSouthEast?: Chunk;
   private lightSouthWest?: Chunk;
+  /** True only while any of the 3×3 samples can see an uncommitted flood. */
+  private useCommittedMeshLight = false;
+  private readonly committedLight: Array<{ skyAt(index: number): number; blockAt(index: number): number } | undefined> = new Array(9);
   private readonly surfaceLight: SurfaceLight = { sky: 0, block: 0, ao: 1 };
-  private readonly readLightCell = (x: number, y: number, z: number): number => this.packedLightCell(x, y, z);
+  private readonly readLightCellFast = (x: number, y: number, z: number): number => this.packedLightCell(x, y, z);
+  private readonly readLightCellStable = (x: number, y: number, z: number): number => this.packedLightCellCommitted(x, y, z);
+  private readLightCell: (x: number, y: number, z: number) => number = this.readLightCellFast;
   lastProfile: ChunkMeshProfile = { scanMs: 0, geometryMs: 0 };
 
   constructor(
@@ -335,6 +340,7 @@ export class ChunkMesher {
     this.lightNorthWest = world.getChunk(chunk.x - 1, chunk.z - 1, false);
     this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
     this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
+    this.bindCommittedLight(chunk, world);
     let faces = 0;
     const chests: Array<{ x: number; y: number; z: number }> = [];
     const occupiedMaxY = Math.min(
@@ -1388,7 +1394,9 @@ export class ChunkMesher {
   }
 
   private packedLight(kind: 'sky' | 'block', x: number, y: number, z: number): number {
-    const packed = this.packedLightCell(x, y, z);
+    const packed = this.useCommittedMeshLight
+      ? this.packedLightCellCommitted(x, y, z)
+      : this.packedLightCell(x, y, z);
     return kind === 'sky' ? packed & 15 : (packed >>> 4) & 15;
   }
 
@@ -1418,6 +1426,70 @@ export class ChunkMesher {
     const index = y * CHUNK_SIZE * CHUNK_SIZE + localZ * CHUNK_SIZE + localX;
     return chunk.skyLightAtIndex(index) | (chunk.blockLight[index]! << 4)
       | (getBlockDefinition(chunk.blocks[index]!).occludesFaces ? 256 : 0);
+  }
+
+  private packedLightCellCommitted(x: number, y: number, z: number): number {
+    if (y < 0) return 256;
+    if (y >= WORLD_HEIGHT) return 15;
+    let localX = x - this.columnOriginX;
+    let localZ = z - this.columnOriginZ;
+    let ox = 0;
+    let oz = 0;
+    if (localX < 0) {
+      ox = -1;
+      localX += CHUNK_SIZE;
+    } else if (localX >= CHUNK_SIZE) {
+      ox = 1;
+      localX -= CHUNK_SIZE;
+    }
+    if (localZ < 0) {
+      oz = -1;
+      localZ += CHUNK_SIZE;
+    } else if (localZ >= CHUNK_SIZE) {
+      oz = 1;
+      localZ -= CHUNK_SIZE;
+    }
+    const chunk = this.lightNeighbor(ox, oz);
+    if (!chunk || localX < 0 || localX >= CHUNK_SIZE || localZ < 0 || localZ >= CHUNK_SIZE) return 0;
+    const index = y * CHUNK_SIZE * CHUNK_SIZE + localZ * CHUNK_SIZE + localX;
+    const sample = this.committedLight[(oz + 1) * 3 + (ox + 1)];
+    const sky = sample ? sample.skyAt(index) : chunk.skyLightAtIndex(index);
+    const block = sample ? sample.blockAt(index) : chunk.blockLight[index]!;
+    return sky | (block << 4) | (getBlockDefinition(chunk.blocks[index]!).occludesFaces ? 256 : 0);
+  }
+
+  /**
+   * Light cell the last `build` would bake, including neighbor chunks.
+   * Call after `build` so the 3×3 committed readers are bound.
+   */
+  meshLightCell(x: number, y: number, z: number): number {
+    return this.useCommittedMeshLight ? this.packedLightCellCommitted(x, y, z) : this.packedLightCell(x, y, z);
+  }
+
+  private bindCommittedLight(chunk: Chunk, world: VoxelWorld): void {
+    const slots = [
+      this.lightNorthWest, this.lightNorth, this.lightNorthEast,
+      this.lightWest, chunk, this.lightEast,
+      this.lightSouthWest, this.lightSouth, this.lightSouthEast,
+    ];
+    let pending = false;
+    for (const neighbor of slots) {
+      if (neighbor?.lightPending && neighbor.lightingReady) {
+        pending = true;
+        break;
+      }
+    }
+    this.useCommittedMeshLight = pending && slots.some((neighbor) => neighbor !== undefined && world.needsCommittedMeshLight(neighbor));
+    const reader = this.useCommittedMeshLight ? this.readLightCellStable : this.readLightCellFast;
+    if (this.readLightCell !== reader) this.readLightCell = reader;
+    if (!this.useCommittedMeshLight) {
+      if (this.committedLight[4] !== undefined) this.committedLight.fill(undefined);
+      return;
+    }
+    for (let i = 0; i < slots.length; i += 1) {
+      const neighbor = slots[i];
+      this.committedLight[i] = neighbor ? world.bindMeshLight(neighbor) : undefined;
+    }
   }
 
   private lightNeighbor(ox: number, oz: number): Chunk | undefined {

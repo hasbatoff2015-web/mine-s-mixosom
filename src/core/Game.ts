@@ -207,6 +207,7 @@ import {
   inspectStreamingChunk,
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
+import { EmitterCensusScanner, formatEmitterCensus, formatLightOwner } from '../debug/emitterCensus';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { LongTaskMonitor } from '../debug/longTaskMonitor';
 import { PageVisibilityProbe } from '../debug/pageVisibilityProbe';
@@ -685,6 +686,7 @@ export class Game {
   private worldBorderRenderer?: WorldBorderRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
+  private readonly emitterCensus = new EmitterCensusScanner();
   private readonly longTasks = new LongTaskMonitor();
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
@@ -4463,6 +4465,9 @@ export class Game {
         lightFrameMs: this.lastLightMs,
         lightMaxSlice: lightFrameStats.maxSlice,
         dirtyLightChunks: lightFrameStats.dirtyLightChunks,
+        lightOwner: session ? formatLightOwner(lightingFloodOwner(session.world), LIGHT_FLOOD_REGION, LIGHT_FLOOD_ADD_EMITTER) : 'idle',
+        pendingMeshChunks: session?.world.pendingMeshJobs ?? 0,
+        emitterLine: session ? formatEmitterCensus(this.emitterCensus.advance(session.world, 2)) : undefined,
         dirtyChunks: session?.world.dirtyChunkCount ?? 0,
         blockMutations: session?.world.mutationMarks ?? 0,
         mobCount: session?.mobs.count ?? 0,

@@ -15,10 +15,14 @@ import { Chunk } from './Chunk';
 import { TerrainGenerator, type Biome, type TerrainGenJob } from './Generator';
 import { gameplayMayMutateBlock } from './worldBorder';
 import {
+  bindMeshLightSample,
+  chunkNeedsCommittedMeshLight,
   consumeLightTouched,
   continuePendingLight,
   getBlockLight,
   getSkyLight,
+  readMeshBlockLight as readMeshBlockLightAt,
+  readMeshSkyLight as readMeshSkyLightAt,
   lightingFloodOwner,
   abandonLightingFloodIfOrphaned,
   resetIncompleteBlockLighting,
@@ -565,6 +569,26 @@ export class VoxelWorld {
 
   blockLightAt(x: number, y: number, z: number): number {
     return getBlockLight(this, x, y, z);
+  }
+
+  /** Last committed sky for meshes and other visuals while a flood is still open. */
+  readMeshSkyLight(x: number, y: number, z: number): number {
+    return readMeshSkyLightAt(this, x, y, z);
+  }
+
+  /** Last committed block light for meshes and other visuals while a flood is still open. */
+  readMeshBlockLight(x: number, y: number, z: number): number {
+    return readMeshBlockLightAt(this, x, y, z);
+  }
+
+  /** Bind once per mesh build. Direct array reads when this chunk has no open flood. */
+  bindMeshLight(chunk: Chunk): ReturnType<typeof bindMeshLightSample> {
+    return bindMeshLightSample(this, chunk);
+  }
+
+  /** False for settled chunks and for a pending flag that has not copied any page yet. */
+  needsCommittedMeshLight(chunk: Chunk): boolean {
+    return chunkNeedsCommittedMeshLight(this, chunk);
   }
 
   consumeFallingBlocks(): FallingBlockSpawn[] {

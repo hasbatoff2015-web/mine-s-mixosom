@@ -17,6 +17,8 @@ const SLOT_SHIFT = Math.ceil(Math.log2(VOLUME));
 const SLOT_SIZE = 2 ** SLOT_SHIFT;
 const SLOT_MASK = SLOT_SIZE - 1;
 const SNAPSHOT_PAGE_SIZE = 4096;
+const SNAPSHOT_PAGE_SHIFT = Math.round(Math.log2(SNAPSHOT_PAGE_SIZE));
+const SNAPSHOT_PAGE_MASK = SNAPSHOT_PAGE_SIZE - 1;
 const RETAINED_FLAG_BUFFERS = 16;
 const DX = [1, -1, 0, 0, 0, 0] as const;
 const DZ = [0, 0, 0, 0, 1, -1] as const;
@@ -167,6 +169,8 @@ function touch(state: LightState, entry: Entry, index: number, channel: 'sky' | 
     const pages = snapshot[channel] ?? (snapshot[channel] = []);
     const page = Math.floor(index / SNAPSHOT_PAGE_SIZE);
     if (!pages[page]) {
+      // First mutation of this page freezes the committed logical light. Mesh
+      // reads that copy until the job commits; the working arrays may be partial.
       const values = channel === 'sky' ? chunk.skyLight : chunk.blockLight;
       pages[page] = values.slice(page * SNAPSHOT_PAGE_SIZE, (page + 1) * SNAPSHOT_PAGE_SIZE);
       if (channel === 'sky') {
@@ -660,6 +664,91 @@ export function continuePendingLight(world: VoxelWorld, job: PendingLightJob, de
   lightFrameStats.jobsActive += 1;
   return relightRegion(world, job.region, job.sky, job.block, deadline, job);
 }
+/** True only when this chunk has lazy snapshot pages the mesher must prefer. */
+export function chunkNeedsCommittedMeshLight(world: VoxelWorld, chunk: Chunk): boolean {
+  return committedPages(world, chunk, 'sky') !== undefined || committedPages(world, chunk, 'block') !== undefined;
+}
+
+function committedPages(world: VoxelWorld, chunk: Chunk, channel: 'sky' | 'block'): LightPages | undefined {
+  if (!chunk.lightPending || !chunk.lightingReady) return undefined;
+  const snapshot = states.get(world)?.touched.get(chunk);
+  if (!snapshot || snapshot.initial) return undefined;
+  return snapshot[channel];
+}
+
+/** Last committed channel byte, or undefined when this page has not been copied yet. Zero is a real level. */
+function committedLightAt(world: VoxelWorld, chunk: Chunk, index: number, channel: 'sky' | 'block'): number | undefined {
+  const pages = committedPages(world, chunk, channel);
+  const page = pages?.[index >>> SNAPSHOT_PAGE_SHIFT];
+  return page ? page[index & SNAPSHOT_PAGE_MASK] : undefined;
+}
+
+export interface MeshLightSample {
+  skyAt(index: number): number;
+  blockAt(index: number): number;
+}
+
+/**
+ * Per-chunk light reader for one mesh build.
+ * Idle chunks stay on the live arrays. A chunk inside an uncommitted flood
+ * reads lazy snapshot pages, then the live array for pages the job has not touched.
+ * Initial unlit floods (`snapshot.initial`) are not a committed view.
+ */
+export function bindMeshLightSample(world: VoxelWorld, chunk: Chunk): MeshLightSample {
+  const skyPages = committedPages(world, chunk, 'sky');
+  const blockPages = committedPages(world, chunk, 'block');
+  return {
+    skyAt: skyPages
+      ? (index) => skyPages[index >>> SNAPSHOT_PAGE_SHIFT]?.[index & SNAPSHOT_PAGE_MASK] ?? chunk.skyLightAtIndex(index)
+      : (index) => chunk.skyLightAtIndex(index),
+    blockAt: blockPages
+      ? (index) => blockPages[index >>> SNAPSHOT_PAGE_SHIFT]?.[index & SNAPSHOT_PAGE_MASK] ?? chunk.blockLight[index]!
+      : (index) => chunk.blockLight[index]!,
+  };
+}
+
+/** Mesh/visual sky. Unchanged pages and settled chunks match `skyLightAtIndex`. */
+export function readMeshSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0) return 0;
+  if (y >= WORLD_HEIGHT) return 15;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return 0;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  return committedLightAt(world, chunk, index, 'sky') ?? chunk.skyLightAtIndex(index);
+}
+
+/** Mesh/visual block light. Simulation `getBlockLight` still sees the working flood. */
+export function readMeshBlockLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0 || y >= WORLD_HEIGHT) return 0;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return 0;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  return committedLightAt(world, chunk, index, 'block') ?? chunk.blockLight[index]!;
+}
+
+function visualSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0) return 0;
+  if (y >= WORLD_HEIGHT) return 15;
+  const chunk = loadedChunk(world, x, z);
+  if (chunk) {
+    const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+    const stable = committedLightAt(world, chunk, index, 'sky');
+    if (stable !== undefined) return stable;
+  }
+  return getSkyLight(world, x, y, z);
+}
+
+function visualBlockLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0 || y >= WORLD_HEIGHT) return 0;
+  const chunk = loadedChunk(world, x, z);
+  if (chunk) {
+    const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+    const stable = committedLightAt(world, chunk, index, 'block');
+    if (stable !== undefined) return stable;
+  }
+  return getBlockLight(world, x, y, z);
+}
+
 export function getSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
   if (y < 0) return 0;
   if (y >= WORLD_HEIGHT) return 15;
@@ -710,13 +799,13 @@ export function lightingMemoryUsage(world: VoxelWorld): {
     peakFlagsBytes: state?.peakFlagsBytes ?? 0, peakQueueBytes: state?.peakQueueBytes ?? 0 };
 }
 export function sampleVoxelLightLevels(world: VoxelWorld, x: number, y: number, z: number): { sky: number; block: number } {
-  let sky = getSkyLight(world, x, y, z);
-  let block = getBlockLight(world, x, y, z);
+  let sky = visualSkyLight(world, x, y, z);
+  let block = visualBlockLight(world, x, y, z);
   if (sky || block || !getBlockDefinition(world.getBlock(x, y, z, false)).occludesFaces) return { sky, block };
   for (let dir = 0; dir < 6; dir += 1) {
     const ny = y + (dir === 2 ? 1 : dir === 3 ? -1 : 0);
-    sky = Math.max(sky, getSkyLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
-    block = Math.max(block, getBlockLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
+    sky = Math.max(sky, visualSkyLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
+    block = Math.max(block, visualBlockLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
   }
   return { sky, block };
 }

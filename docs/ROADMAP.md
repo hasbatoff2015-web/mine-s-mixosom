@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-30: lighting flicker and emitter audit
+
+- [x] Urgent geometry updates while a sliced flood is open, and the mesh reads last committed snapshot pages instead of the partial working arrays.
+- [x] Regression coverage for emitter remove/add, sky hole, borders, diagonal, high Y, edit burst, no-op relight, memory, and the initial unlit gate.
+- [x] DEV `?perf=1` emitter census and a Node CPU many-emitter benchmark. No global brightness change and no spawn-block edits.
+- [ ] Owner manual QA on DEV: rapid mining, emitter add/remove, roof, chunk border, high Y, and the spawn census checklist in the report.
+
 ## 2026-09-28: friend join notices and player chat bubbles
 
 - [x] System chat to online mutual friends only on a real offline → online edge, and the matching leave line on a real disconnect.
