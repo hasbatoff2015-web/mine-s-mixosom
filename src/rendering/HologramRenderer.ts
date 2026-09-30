@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import type { NetworkHologram } from '../../shared/protocol';
 import {
+  HOLOGRAM_BACKGROUND_COLOR_HEX,
+  HOLOGRAM_BACKGROUND_OPACITY,
   HOLOGRAM_TEXT_FONT_PX,
   HOLOGRAM_TEXT_LOGICAL_HEIGHT,
   HOLOGRAM_TEXT_LOGICAL_WIDTH,
@@ -80,8 +82,8 @@ export class HologramRenderer {
         side: THREE.FrontSide,
       });
       const backgroundMaterial = new THREE.MeshBasicMaterial({
-        color: 0x000000,
-        opacity: 0.35,
+        color: HOLOGRAM_BACKGROUND_COLOR_HEX,
+        opacity: HOLOGRAM_BACKGROUND_OPACITY,
         transparent: true,
         depthWrite: false,
         side: THREE.FrontSide,
