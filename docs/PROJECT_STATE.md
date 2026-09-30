@@ -4,7 +4,7 @@
 
 - Срочный remesh по-прежнему пишет новую геометрию, пока lighting job ещё не committed (`allowPendingLighting: true`). Меш и overlay читают последнее committed состояние: lazy snapshot page, если страница уже тронута, иначе текущий массив.
 - `lightVersion` растёт только на commit и только при реальном отличии. Начальный unlit flood (`snapshot.initial`) страницы не хранит и по-прежнему не мешится. Второго полного light buffer нет. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
-- `?perf=1` показывает owner/slice/pending mesh и DEV census источников света (2 chunk за кадр). Яркость мира не менялась.
+- `?perf=1` показывает owner/slice/pending mesh и DEV census источников света. Census шагает раз в 400 ms и после прохода держит строку ещё 400 ms. Смена мира сбрасывает scanner. Mesher отпускает snapshot readers в конце `build`. Яркость мира не менялась.
 - Подробности: `docs/reports/2026-09-30_lighting-flicker-stable-mesh-audit.md`.
 
 ## Последний проход: friend join chat и speech bubble — 2026-09-28

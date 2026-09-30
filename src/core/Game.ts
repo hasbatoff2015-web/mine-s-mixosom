@@ -3263,6 +3263,7 @@ export class Game {
     );
     this.scene.add(playerVisual.root);
 
+    this.emitterCensus.reset();
     this.session = {
       summary,
       world,
@@ -4467,6 +4468,7 @@ export class Game {
         dirtyLightChunks: lightFrameStats.dirtyLightChunks,
         lightOwner: session ? formatLightOwner(lightingFloodOwner(session.world), LIGHT_FLOOD_REGION, LIGHT_FLOOD_ADD_EMITTER) : 'idle',
         pendingMeshChunks: session?.world.pendingMeshJobs ?? 0,
+        // Scanner steps at EMITTER_CENSUS_INTERVAL_MS; this call does not walk voxels every frame.
         emitterLine: session ? formatEmitterCensus(this.emitterCensus.advance(session.world, 2)) : undefined,
         dirtyChunks: session?.world.dirtyChunkCount ?? 0,
         blockMutations: session?.world.mutationMarks ?? 0,
@@ -6421,6 +6423,7 @@ export class Game {
     resetFootsteps(this.footsteps);
     this.openChestKey = undefined;
     this.worldLoad = undefined;
+    this.emitterCensus.reset();
     this.session = undefined;
     this.chat.clear();
     this.ui.clearChat();

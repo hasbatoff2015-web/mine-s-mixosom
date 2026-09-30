@@ -89,55 +89,113 @@ function addChunk(totals: EmitterCensusTotals, world: VoxelWorld, chunk: Chunk):
     + totals.fire + totals.redstoneTorch + totals.furnaceBurning + totals.other;
 }
 
+/** Gap between incremental chunk walks while a pass is open. */
+export const EMITTER_CENSUS_INTERVAL_MS = 400;
+/** How long a finished pass stays on screen before another pass may start. */
+export const EMITTER_CENSUS_HOLD_MS = 400;
+
 /**
- * DEV census of loaded emitters. One or two chunks per animation frame, only
- * through each chunk's occupied height. The published totals update when a
- * pass finishes, so the overlay does not walk every loaded Y every frame.
+ * DEV census of loaded emitters. A pass still walks one budget of chunks at a
+ * time, and only through each chunk's occupied height. Steps are at least
+ * `EMITTER_CENSUS_INTERVAL_MS` apart, and a finished pass is shown for
+ * `EMITTER_CENSUS_HOLD_MS` before the next one. Animation frames in between
+ * do not touch voxel arrays.
  */
 export class EmitterCensusScanner {
+  private world?: VoxelWorld;
   private keys: string[] = [];
   private cursor = 0;
   private partial = emptyEmitterCensus();
   private published = emptyEmitterCensus();
+  private holding = false;
+  private nextStepAt = 0;
+  private holdUntil = 0;
+  /** Chunks whose blocks were actually read. Frames inside the hold do not increase this. */
+  chunkWalks = 0;
 
-  advance(world: VoxelWorld, chunkBudget = 1): EmitterCensusTotals {
-    const loaded = world.chunks.size;
-    if (this.keys.length !== loaded || this.cursor === 0) {
-      const next = [...world.chunks.keys()];
-      if (next.length !== this.keys.length || next.some((key, index) => key !== this.keys[index])) {
-        this.keys = next;
-        this.cursor = 0;
-        this.partial = emptyEmitterCensus(loaded);
-      }
+  /** Drop every total and the previous world. The next `advance` starts clean. */
+  reset(): void {
+    this.world = undefined;
+    this.keys = [];
+    this.cursor = 0;
+    this.partial = emptyEmitterCensus();
+    this.published = emptyEmitterCensus();
+    this.holding = false;
+    this.nextStepAt = 0;
+    this.holdUntil = 0;
+    this.chunkWalks = 0;
+  }
+
+  advance(world: VoxelWorld, chunkBudget = 1, nowMs = performance.now()): EmitterCensusTotals {
+    if (this.world !== world) {
+      this.reset();
+      this.world = world;
+      this.nextStepAt = nowMs;
     }
+    if (this.holding) {
+      if (nowMs < this.holdUntil) return this.view();
+      this.holding = false;
+      this.keys = [];
+    }
+    if (nowMs < this.nextStepAt) return this.view();
+    if (this.keys.length === 0 || this.loadedSetChanged(world)) this.startPass(world, nowMs);
+    if (!this.holding) {
+      this.scanStep(world, chunkBudget, nowMs);
+      this.nextStepAt = nowMs + EMITTER_CENSUS_INTERVAL_MS;
+    }
+    return this.view();
+  }
+
+  private startPass(world: VoxelWorld, nowMs: number): void {
+    this.holding = false;
+    this.keys = [...world.chunks.keys()];
+    this.cursor = 0;
+    this.partial = emptyEmitterCensus(world.chunks.size);
+    if (this.keys.length === 0) this.finishPass(world, nowMs);
+  }
+
+  private scanStep(world: VoxelWorld, chunkBudget: number, nowMs: number): void {
     const budget = Math.max(0, chunkBudget);
     const end = Math.min(this.keys.length, this.cursor + budget);
     for (; this.cursor < end; this.cursor += 1) {
       const chunk = world.chunks.get(this.keys[this.cursor]!);
-      if (chunk) addChunk(this.partial, world, chunk);
+      if (!chunk) continue;
+      addChunk(this.partial, world, chunk);
+      this.chunkWalks += 1;
     }
-    if (this.keys.length === 0) {
-      this.published = { ...emptyEmitterCensus(0), passComplete: true, scannedChunks: 0 };
-      return this.published;
+    if (this.cursor >= this.keys.length) this.finishPass(world, nowMs);
+  }
+
+  private finishPass(world: VoxelWorld, nowMs: number): void {
+    this.partial.scannedChunks = this.keys.length;
+    this.partial.loadedChunks = world.chunks.size;
+    this.partial.passComplete = true;
+    this.published = this.partial;
+    this.partial = emptyEmitterCensus(world.chunks.size);
+    this.holding = true;
+    this.holdUntil = nowMs + EMITTER_CENSUS_HOLD_MS;
+  }
+
+  private loadedSetChanged(world: VoxelWorld): boolean {
+    if (world.chunks.size !== this.keys.length) return true;
+    let index = 0;
+    for (const key of world.chunks.keys()) {
+      if (this.keys[index] !== key) return true;
+      index += 1;
     }
-    if (this.cursor >= this.keys.length) {
-      this.partial.scannedChunks = this.keys.length;
-      this.partial.loadedChunks = loaded;
-      this.partial.passComplete = true;
-      this.published = this.partial;
-      this.partial = emptyEmitterCensus(loaded);
-      this.cursor = 0;
-      this.keys = [...world.chunks.keys()];
-    }
+    return index !== this.keys.length;
+  }
+
+  private view(): EmitterCensusTotals {
     if (!this.published.passComplete) {
       return {
-        ...emptyEmitterCensus(loaded),
+        ...emptyEmitterCensus(this.world?.chunks.size ?? 0),
         scannedChunks: this.cursor,
-        loadedChunks: loaded,
+        loadedChunks: this.world?.chunks.size ?? 0,
         passComplete: false,
       };
     }
-    return { ...this.published, loadedChunks: loaded };
+    return this.published;
   }
 }
 

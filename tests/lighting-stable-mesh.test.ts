@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE, WORLD_HEIGHT, WORLD_LIGHT_BUDGET_MS, chunkKey } from '../src/core/constants';
-import { EmitterCensusScanner } from '../src/debug/emitterCensus';
+import { EmitterCensusScanner, EMITTER_CENSUS_INTERVAL_MS } from '../src/debug/emitterCensus';
 import { createLightingQaScene, lightingQaRoofHole, type LightingQaScene } from '../src/dev/lightingQaScenes';
-import { ChunkMesher } from '../src/rendering/ChunkMesher';
+import { ChunkMesher, disposeMeshedChunk, type MeshedChunk } from '../src/rendering/ChunkMesher';
 import type { TextureAtlas } from '../src/rendering/TextureAtlas';
 import { WorldRenderer } from '../src/rendering/WorldRenderer';
 import { Chunk } from '../src/world/Chunk';
@@ -114,16 +114,39 @@ function yieldUntil(world: VoxelWorld, pred: () => boolean): void {
   throw new Error('lighting job finished before the partial-flood predicate');
 }
 
-function meshBlock(world: VoxelWorld, chunk: Chunk, x: number, y: number, z: number): number {
+function topFaceBlockLight(meshed: MeshedChunk, x: number, y: number, z: number): number[] {
+  const found: number[] = [];
+  for (const geometry of [meshed.opaque, meshed.cutout]) {
+    const position = geometry.getAttribute('position');
+    const block = geometry.getAttribute('blockLight');
+    if (!position || !block) continue;
+    for (let index = 0; index < position.count; index += 1) {
+      const px = position.getX(index);
+      const py = position.getY(index);
+      const pz = position.getZ(index);
+      if (Math.abs(py - y) > 0.01) continue;
+      if (px < x - 0.01 || px > x + 1.01 || pz < z - 0.01 || pz > z + 1.01) continue;
+      found.push(block.getX(index));
+    }
+  }
+  return found;
+}
+
+function meshPacked(world: VoxelWorld, chunk: Chunk, x: number, y: number, z: number): number {
   const mesher = new ChunkMesher(atlas);
-  mesher.build(chunk, world, { minY: Math.max(0, y - 1), maxY: Math.min(WORLD_HEIGHT - 1, y + 1) });
-  return (mesher.meshLightCell(x, y, z) >>> 4) & 15;
+  mesher.setLightProbe([{ x, y, z }]);
+  const meshed = mesher.build(chunk, world, { minY: Math.max(0, y - 1), maxY: Math.min(WORLD_HEIGHT - 1, y + 1) });
+  expect(mesher.boundCommittedReaderCount()).toBe(0);
+  disposeMeshedChunk(meshed);
+  return mesher.lightProbePacked[0] ?? 0;
+}
+
+function meshBlock(world: VoxelWorld, chunk: Chunk, x: number, y: number, z: number): number {
+  return (meshPacked(world, chunk, x, y, z) >>> 4) & 15;
 }
 
 function meshSky(world: VoxelWorld, chunk: Chunk, x: number, y: number, z: number): number {
-  const mesher = new ChunkMesher(atlas);
-  mesher.build(chunk, world, { minY: Math.max(0, y - 1), maxY: Math.min(WORLD_HEIGHT - 1, y + 1) });
-  return mesher.meshLightCell(x, y, z) & 15;
+  return meshPacked(world, chunk, x, y, z) & 15;
 }
 
 describe('stable mesh light during a sliced flood', () => {
@@ -439,10 +462,42 @@ describe('stable mesh light during a sliced flood', () => {
     }
     expect(lightingMemoryUsage(world).snapshotBytes).toBe(0);
     const chunk = world.chunks.get(chunkKey(0, 0))!;
-    const mesher = new ChunkMesher(atlas);
-    mesher.build(chunk, world, { minY: 40, maxY: 44 });
-    expect(mesher.meshLightCell(4, 41, 6) >>> 4).toBe(world.blockLightAt(4, 41, 6));
+    expect(meshBlock(world, chunk, 4, 41, 6)).toBe(world.blockLightAt(4, 41, 6));
     expect(lightingMemoryUsage(world).snapshotBytes).toBe(0);
+  });
+
+  it('releases committed readers after the build that baked stable light', () => {
+    const world = litScene();
+    world.applyBlockBatch([
+      { x: 10, y: 41, z: 12, block: BlockId.Stone },
+      { x: 10, y: 42, z: 12, block: BlockId.Lantern },
+    ], { deferLighting: true, scheduleNeighbors: false, skipSupport: true });
+    settle(world);
+    const committed = world.blockLightAt(10, 42, 12);
+    expect(committed).toBe(15);
+    world.applyBlockBatch([{ x: 10, y: 42, z: 12, block: BlockId.Air }], {
+      deferLighting: true, scheduleNeighbors: false, skipSupport: true,
+    });
+    yieldUntil(world, () => world.blockLightAt(10, 42, 12) !== committed);
+    expect(world.readMeshBlockLight(10, 42, 12)).toBe(committed);
+    const chunk = world.chunks.get(chunkKey(0, 0))!;
+    const mesher = new ChunkMesher(atlas);
+    mesher.setLightProbe([{ x: 10, y: 42, z: 12 }]);
+    const meshed = mesher.build(chunk, world, { minY: 40, maxY: 43 });
+    expect((mesher.lightProbePacked[0]! >>> 4) & 15).toBe(committed);
+    expect(mesher.boundCommittedReaderCount()).toBe(0);
+    const raw = world.blockLightAt(10, 42, 12);
+    const baked = topFaceBlockLight(meshed, 10, 42, 12);
+    expect(baked.length).toBeGreaterThan(0);
+    for (const level of baked) {
+      const quantised = Math.round(level * 15);
+      expect(quantised).toBeGreaterThan(raw);
+      expect(quantised).toBeGreaterThanOrEqual(committed - 2);
+    }
+    disposeMeshedChunk(meshed);
+    settle(world);
+    expect(lightingMemoryUsage(world).snapshotBytes).toBe(0);
+    expect(mesher.boundCommittedReaderCount()).toBe(0);
   });
 
   it('counts loaded emitters a chunk at a time', () => {
@@ -455,12 +510,14 @@ describe('stable mesh light during a sliced flood', () => {
     ], { deferLighting: true, scheduleNeighbors: false, skipSupport: true });
     settle(world);
     const scanner = new EmitterCensusScanner();
-    const first = scanner.advance(world, 1);
+    let now = 0;
+    const first = scanner.advance(world, 1, now);
     expect(first.passComplete).toBe(false);
     expect(first.torch).toBe(0);
     let census = first;
     for (let i = 0; i < world.chunks.size + 2 && !census.passComplete; i += 1) {
-      census = scanner.advance(world, 1);
+      now += EMITTER_CENSUS_INTERVAL_MS;
+      census = scanner.advance(world, 1, now);
     }
     expect(census.passComplete).toBe(true);
     expect(census.torch).toBe(1);

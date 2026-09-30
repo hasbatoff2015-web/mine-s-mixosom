@@ -187,6 +187,12 @@ Do not raise `SKY_AMBIENT` or the other visual light constants yet. Do not repla
 
 From the code and the synthetic CPU benchmark, hundreds of settled voxel emitters do not keep `LightEngine` busy. They can increase initial flood nodes and the mesh cost of the torch/lantern models. Whether the real DEV spawn is in that saturated regime is what the `EMIT` census is for. If a later pass wants fewer lights, the options are fewer physical emitters or decorative non-propagating glow blocks. That is a separate change.
 
+## Follow-up: census cadence and reader release
+
+`EmitterCensusScanner.advance` is still called from the `?perf=1` path every animation frame. A voxel walk happens only every `EMITTER_CENSUS_INTERVAL_MS` (400). After a pass, the published line is held for `EMITTER_CENSUS_HOLD_MS` (400) and chunks are not read. A different `VoxelWorld` clears the scanner immediately; `Game` also resets it when a session is created or torn down. A changed loaded-chunk set is picked up on the next pass after the hold.
+
+`ChunkMesher.build` binds snapshot readers only inside the build and releases them in `finally`, including when the build throws. `boundCommittedReaderCount()` is 0 after return. Tests record a numeric probe during the build and read baked `blockLight` attributes. They do not keep the page closures.
+
 ## Known limitations
 
 - Simulation getters still observe the in-progress flood. Fire spread and mob spawn rules are unchanged.

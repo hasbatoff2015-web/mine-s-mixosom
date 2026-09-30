@@ -310,6 +310,9 @@ export class ChunkMesher {
   /** True only while any of the 3×3 samples can see an uncommitted flood. */
   private useCommittedMeshLight = false;
   private readonly committedLight: Array<{ skyAt(index: number): number; blockAt(index: number): number } | undefined> = new Array(9);
+  private lightProbe: ReadonlyArray<{ x: number; y: number; z: number }> = [];
+  /** Packed samples copied during the last build, before snapshot readers are dropped. */
+  lightProbePacked: number[] = [];
   private readonly surfaceLight: SurfaceLight = { sky: 0, block: 0, ao: 1 };
   private readonly readLightCellFast = (x: number, y: number, z: number): number => this.packedLightCell(x, y, z);
   private readonly readLightCellStable = (x: number, y: number, z: number): number => this.packedLightCellCommitted(x, y, z);
@@ -341,6 +344,7 @@ export class ChunkMesher {
     this.lightSouthEast = world.getChunk(chunk.x + 1, chunk.z + 1, false);
     this.lightSouthWest = world.getChunk(chunk.x - 1, chunk.z + 1, false);
     this.bindCommittedLight(chunk, world);
+    try {
     let faces = 0;
     const chests: Array<{ x: number; y: number; z: number }> = [];
     const occupiedMaxY = Math.min(
@@ -439,7 +443,11 @@ export class ChunkMesher {
     };
     const buildEnd = performance.now();
     this.lastProfile = { scanMs: scanEnd - buildStart, geometryMs: buildEnd - scanEnd };
+    this.recordLightProbe();
     return result;
+    } finally {
+      this.releaseCommittedReaders();
+    }
   }
 
   private faceVisible(adjacent: BlockId, block: BlockId, ax: number, ay: number, az: number): boolean {
@@ -1459,11 +1467,34 @@ export class ChunkMesher {
   }
 
   /**
-   * Light cell the last `build` would bake, including neighbor chunks.
-   * Call after `build` so the 3×3 committed readers are bound.
+   * Cells copied as packed light during the next `build`, while readers are still bound.
+   * The copy is numeric. Snapshot pages are released before `build` returns.
    */
-  meshLightCell(x: number, y: number, z: number): number {
-    return this.useCommittedMeshLight ? this.packedLightCellCommitted(x, y, z) : this.packedLightCell(x, y, z);
+  setLightProbe(cells: ReadonlyArray<{ x: number; y: number; z: number }>): void {
+    this.lightProbe = cells;
+  }
+
+  /** Snapshot readers still held. Zero once `build` has returned, including after a throw. */
+  boundCommittedReaderCount(): number {
+    let count = 0;
+    for (const reader of this.committedLight) if (reader) count += 1;
+    return count;
+  }
+
+  private recordLightProbe(): void {
+    const packed: number[] = [];
+    for (const cell of this.lightProbe) {
+      packed.push(this.useCommittedMeshLight
+        ? this.packedLightCellCommitted(cell.x, cell.y, cell.z)
+        : this.packedLightCell(cell.x, cell.y, cell.z));
+    }
+    this.lightProbePacked = packed;
+  }
+
+  private releaseCommittedReaders(): void {
+    this.useCommittedMeshLight = false;
+    if (this.readLightCell !== this.readLightCellFast) this.readLightCell = this.readLightCellFast;
+    if (this.boundCommittedReaderCount() > 0) this.committedLight.fill(undefined);
   }
 
   private bindCommittedLight(chunk: Chunk, world: VoxelWorld): void {
