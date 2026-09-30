@@ -140,6 +140,20 @@ Together, in one vitest process:
 
 The seam and lava failures match the existing edit-burst hold: `EDIT_LIGHT_BURST_BLOCKS = 8` and `EDIT_LIGHT_BURST_HOLD_MS = 80`. A tight `processLighting` loop on this VM finishes before the hold expires, so the region flood never starts. This branch does not change that hold. `src/world/World.ts` only adds the mesh-light wrappers.
 
+### Same-env baseline (`origin/main` `bc8b29fc`)
+
+Detached worktree `.local/main-lighting-baseline`, removed after the runs. Node v22.14.0, Vitest 3.2.7, default workers, default timeout, no flag changes. `tests/lighting-stable-mesh.test.ts` does not exist on main, so that one new file was omitted from the comparison command. The other seven files are the combined command.
+
+| failure | main run 1 | main run 2 | feature same command |
+| --- | --- | --- | --- |
+| seams: wide wall, room entrance, cave entrance (`pendingLightJobs` stays 1) | FAIL | FAIL | FAIL |
+| jobs: lava idle expected > 5, got 0 | FAIL | FAIL | FAIL |
+| height256: Y200 roof “did not settle” | FAIL | FAIL | FAIL on one of two runs, PASS on the other |
+| urgent: 2 ms wall-clock remesh | PASS | FAIL (`dirty` still true) | FAIL (rebuilt 0, or `dirty` still true) |
+| scheduler: radius-6 15 s timeout | PASS (9399 ms) | PASS | PASS (10190 ms) |
+
+SAME-ENV BASELINE reproduced for the seam, lava-idle, height256 settle, and urgent 2 ms failures. They are the same assertions on `origin/main`. An exact urgent scenario loop, 30 iterations, no sibling vitest workers: feature 30/30 pass, main 29/30 pass. The scheduler timeout from the earlier feature log was not reproduced by this vitest command on either tree; that earlier run shared the VM with `tsc`.
+
 ## Build
 
 `npm run build` PASS. Vite client bundle: `dist/assets/index-s98_AAXI.js` 1578.83 kB (gzip 451.52 kB). The existing chunk-size warning is unchanged in kind. `npm run check` was not used as a gate: it runs the full vitest suite, including the burst-hold cases above.
