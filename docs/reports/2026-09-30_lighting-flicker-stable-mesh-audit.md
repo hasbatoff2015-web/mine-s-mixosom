@@ -194,4 +194,5 @@ Owner runs the checklist above on DEV and reports the `?perf=1` lines. Only afte
 
 - Base: `bc8b29fcb31d59a8ccb91088b8b342acb6428ada`
 - Branch: `cursor/lighting-flicker-stable-mesh-audit-47e9`
+- Implementation commit: `8637d0a5d9b314e64e0557a34ca31def1f7c51e2`
 - Not merged. No production deploy.
