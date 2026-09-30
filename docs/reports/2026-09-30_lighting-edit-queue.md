@@ -1,5 +1,7 @@
 # Continuous edit lighting without a quiet hold
 
+Follow-up for add-only emitter starvation and mid-flood consistency: `docs/reports/2026-09-30_lighting-emitter-fairness.md`.
+
 Date: 2026-09-30
 Branch: `cursor/lighting-flicker-stable-mesh-audit-47e9`
 Base: `origin/main` `bc8b29fcb31d59a8ccb91088b8b342acb6428ada`

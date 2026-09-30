@@ -282,6 +282,16 @@ export class VoxelWorld {
   }) => void;
   private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
+  private readonly pendingEmitterKeys = new Set<string>();
+  /** `performance.now()` when the pending add-emitter list went from empty to non-empty. */
+  private pendingEmitterSince = 0;
+  private emitterJobCommits = 0;
+  /**
+   * Which queued kind starts next when both a region job and an add-emitter
+   * batch are waiting and neither is already flooding. One light state cannot
+   * interleave the two floods, so fairness is at job boundaries.
+   */
+  private lightTurn: 'edit' | 'emitter' = 'edit';
   meshRadius = 32;
   generationRadius = 32 + LIGHTING_HALO_CHUNKS;
   viewChunkX = 0;
@@ -791,7 +801,7 @@ export class VoxelWorld {
     if (applied > 0 && updateLighting) {
       const relightStart = performance.now();
       if (addedEmitters.length > 0 && !hasRegion) {
-        if (deferLighting) this.pendingEmitters.push(...addedEmitters);
+        if (deferLighting) this.queueEmitters(addedEmitters);
         else addBlockLightEmitters(this, addedEmitters);
       }
       if (hasRegion) {
@@ -828,7 +838,7 @@ export class VoxelWorld {
   }
 
   private invalidateImportedChunkLighting(dirtyChunks: Set<string>): void {
-    for (const emitter of restartLightingAfterImport(this)) this.pendingEmitters.push(emitter);
+    this.queueEmitters(restartLightingAfterImport(this));
     const keys = new Set(dirtyChunks);
     for (const key of dirtyChunks) {
       const [chunkX, chunkZ] = key.split(',').map(Number);
@@ -1020,8 +1030,38 @@ export class VoxelWorld {
   }
 
   /**
+   * Add-only sources wait as one immutable batch. A flood that has already
+   * started does not absorb later placements; those stay queued.
+   */
+  private queueEmitters(emitters: ReadonlyArray<readonly [number, number, number]>): void {
+    if (emitters.length === 0) return;
+    if (this.pendingEmitters.length === 0) this.pendingEmitterSince = performance.now();
+    for (const emitter of emitters) {
+      const key = `${emitter[0]},${emitter[1]},${emitter[2]}`;
+      if (this.pendingEmitterKeys.has(key)) continue;
+      this.pendingEmitterKeys.add(key);
+      this.pendingEmitters.push(emitter);
+    }
+  }
+
+  private takeEmitterBatch(): Array<readonly [number, number, number]> {
+    const batch = this.pendingEmitters;
+    this.pendingEmitters = [];
+    this.pendingEmitterKeys.clear();
+    this.pendingEmitterSince = 0;
+    return batch;
+  }
+
+  private noteEmitterBatchCommitted(): void {
+    this.commitLightChanges();
+    this.emitterJobCommits += 1;
+    this.lightTurn = this.lightJobs.length > 0 ? 'edit' : 'emitter';
+  }
+
+  /**
    * Run queued region jobs until the deadline or, when `deadline` is omitted, until the queue is empty.
    * Each finished job commits before the next one starts, so the next flood's snapshot baseline is that commit.
+   * A budgeted run stops after one commit while add-emitters are waiting, so the next slice can be theirs.
    */
   private runEditLightQueue(deadline?: number): void {
     while (this.lightJobs.length > 0) {
@@ -1036,18 +1076,25 @@ export class VoxelWorld {
       this.lightJobs.shift();
       this.lightJobCommits += 1;
       this.commitLightChanges();
+      if (deadline !== undefined && this.pendingEmitters.length > 0) {
+        this.lightTurn = 'emitter';
+        return;
+      }
     }
   }
 
   flushLighting(): number {
     const start = performance.now();
+    if (lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER) {
+      addBlockLightEmitters(this, []);
+      if (lightingFloodOwner(this) === '') this.noteEmitterBatchCommitted();
+    }
     const regionBusy = lightingFloodOwner(this) === LIGHT_FLOOD_REGION;
     if (regionBusy) this.runEditLightQueue();
-    const emitters = this.pendingEmitters;
-    this.pendingEmitters = [];
+    const emitters = this.takeEmitterBatch();
     if (emitters.length > 0) {
       addBlockLightEmitters(this, emitters);
-      if (lightingFloodOwner(this) === '') this.commitLightChanges();
+      if (lightingFloodOwner(this) === '') this.noteEmitterBatchCommitted();
     }
     if (!regionBusy) this.runEditLightQueue();
     return performance.now() - start;
@@ -1085,7 +1132,8 @@ export class VoxelWorld {
     }
 
     const unlit = collectUnlitLightJobs(this, originX, originZ, generateRadius, unlock);
-    const emitterWork = this.pendingEmitters.length > 0 || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
+    const emitterPending = this.pendingEmitters.length > 0;
+    const emitterWork = emitterPending || lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
     lightFrameStats.jobsPending = unlit.length + this.lightJobs.length + Number(emitterWork);
     const origins = { stream: unlit.length, fluid: 0, edit: 0, other: 0 };
     for (const job of this.lightJobs) origins[job.origin] += 1;
@@ -1097,9 +1145,15 @@ export class VoxelWorld {
     const editQueued = this.lightJobs.length > 0;
     const oldestAge = editQueued ? Math.max(0, start - this.lightJobs[0]!.enqueuedAt) : 0;
     const editOverdue = editQueued && oldestAge >= EDIT_LIGHT_MAX_WAIT_MS;
+    const emitterAge = emitterPending ? Math.max(0, start - this.pendingEmitterSince) : 0;
+    const emitterOverdue = emitterPending && emitterAge >= EDIT_LIGHT_MAX_WAIT_MS;
     const yieldToStream = !regionActive && !emitterActive && !chunkFlood && unlit.length > 0
-      && editQueued && !editOverdue && this.streamSlicesAheadOfEdit < EDIT_LIGHT_STREAM_SLICES;
-    const preferQueuedWork = (editQueued || this.pendingEmitters.length > 0) && !yieldToStream;
+      && editQueued && !editOverdue && !emitterOverdue && this.streamSlicesAheadOfEdit < EDIT_LIGHT_STREAM_SLICES;
+    const preferQueuedWork = (editQueued || emitterPending) && !yieldToStream;
+    // Idle choice only. An in-progress region or emitter flood is never preempted.
+    const startEmitter = emitterPending && !regionActive && (
+      !editQueued || (emitterOverdue && !editOverdue) || ((emitterOverdue === editOverdue) && this.lightTurn === 'emitter')
+    );
     const runUnlit = chunkFlood || (!regionActive && !emitterActive && !preferQueuedWork && unlit.length > 0);
     if (runUnlit) {
       if (yieldToStream) this.streamSlicesAheadOfEdit += 1;
@@ -1125,18 +1179,17 @@ export class VoxelWorld {
     }
 
     if (performance.now() < deadline && lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER) {
-      addBlockLightEmitters(this, this.pendingEmitters, deadline);
-      this.pendingEmitters = [];
-      if (lightingFloodOwner(this) === '') this.commitLightChanges();
-    } else if (!runUnlit && (regionActive || editQueued) && lightingFloodOwner(this) !== LIGHT_FLOOD_ADD_EMITTER
-      && performance.now() < deadline) {
+      addBlockLightEmitters(this, [], deadline);
+      if (lightingFloodOwner(this) === '') this.noteEmitterBatchCommitted();
+    } else if (!runUnlit && (regionActive || editQueued) && !startEmitter
+      && lightingFloodOwner(this) !== LIGHT_FLOOD_ADD_EMITTER && performance.now() < deadline) {
       this.streamSlicesAheadOfEdit = 0;
       this.runEditLightQueue(deadline);
-    } else if (performance.now() < deadline && this.pendingEmitters.length > 0 && lightingFloodOwner(this) === '') {
-      const emitters = this.pendingEmitters;
-      this.pendingEmitters = [];
+    } else if (!runUnlit && startEmitter && performance.now() < deadline && lightingFloodOwner(this) === '') {
+      this.streamSlicesAheadOfEdit = 0;
+      const emitters = this.takeEmitterBatch();
       addBlockLightEmitters(this, emitters, deadline);
-      if (lightingFloodOwner(this) === '') this.commitLightChanges();
+      if (lightingFloodOwner(this) === '') this.noteEmitterBatchCommitted();
     }
 
     let dirtyLight = 0;
@@ -1191,6 +1244,22 @@ export class VoxelWorld {
     return this.lightJobs.map((job) => ({ ...job.region }));
   }
 
+  get pendingEmitterCount(): number {
+    return this.pendingEmitters.length;
+  }
+
+  get emitterLightCommits(): number {
+    return this.emitterJobCommits;
+  }
+
+  get emitterLightActive(): boolean {
+    return lightingFloodOwner(this) === LIGHT_FLOOD_ADD_EMITTER;
+  }
+
+  emitterLightOldestAgeMs(now = performance.now()): number {
+    return this.pendingEmitters.length === 0 ? 0 : Math.max(0, now - this.pendingEmitterSince);
+  }
+
   editLightSnapshot(now = performance.now()): {
     queued: number;
     active: boolean;
@@ -1198,6 +1267,10 @@ export class VoxelWorld {
     commits: number;
     restarts: number;
     merges: number;
+    emitterQueued: number;
+    emitterActive: boolean;
+    emitterOldestAgeMs: number;
+    emitterCommits: number;
   } {
     return {
       queued: this.lightJobs.length,
@@ -1206,6 +1279,10 @@ export class VoxelWorld {
       commits: this.lightJobCommits,
       restarts: lightSchedulerStats.restarts,
       merges: this.lightJobMerges,
+      emitterQueued: this.pendingEmitters.length,
+      emitterActive: this.emitterLightActive,
+      emitterOldestAgeMs: this.emitterLightOldestAgeMs(now),
+      emitterCommits: this.emitterJobCommits,
     };
   }
 

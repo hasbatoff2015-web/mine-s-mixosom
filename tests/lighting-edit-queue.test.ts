@@ -11,7 +11,26 @@ import {
   lightFrameStats,
   readMeshBlockLight,
 } from '../src/world/LightEngine';
-import { EDIT_LIGHT_QUEUE_LIMIT, VoxelWorld } from '../src/world/World';
+import { EDIT_LIGHT_MAX_WAIT_MS, EDIT_LIGHT_QUEUE_LIMIT, VoxelWorld } from '../src/world/World';
+
+/**
+ * Frozen clock: one cap-slice per frame, then `now` jumps by a whole frame.
+ * A sky/block region in this shaft is dozens of slices, and the oldest job
+ * also waits for the flood already running. The measured peak is 75 frames
+ * at 60 FPS and 57 frames at 30 FPS. Slack is two overdue intervals, not an
+ * exact timestamp. Priced at `WORLD_LIGHT_BUDGET_MS` per slice that peak is
+ * on the order of `EDIT_LIGHT_MAX_WAIT_MS` (a few hundred ms), which is what
+ * the slice-budget assert checks. The 16–19 ms figure is the real CPU
+ * benchmark. A quiet hold for the whole stream fails both asserts.
+ */
+function streamPendingAgeLimitMs(frameMs: number): number {
+  const observedFrames = frameMs > 20 ? 57 : 75;
+  return observedFrames * frameMs + EDIT_LIGHT_MAX_WAIT_MS * 2;
+}
+
+function sliceBudgetAgeMs(maxAge: number, frameMs: number): number {
+  return (maxAge / frameMs) * WORLD_LIGHT_BUDGET_MS;
+}
 
 /**
  * Removed scheduler: once 8 edits had landed, skip region floods until 80 ms
@@ -177,7 +196,8 @@ describe('edit light queue', () => {
     expect(at60.applied).toBe(count);
     expect(at60.commitsDuring).toBeGreaterThan(1);
     expect(at60.maxQueue).toBeLessThanOrEqual(6);
-    expect(at60.maxAge).toBeLessThan(2500);
+    expect(at60.maxAge).toBeLessThan(streamPendingAgeLimitMs(1000 / 60));
+    expect(sliceBudgetAgeMs(at60.maxAge, 1000 / 60)).toBeLessThan(EDIT_LIGHT_MAX_WAIT_MS * 2);
     expect(at60.columns + at60.nodes).toBeGreaterThan(0);
     for (let step = 0; step < 8000 && (streamed.world.pendingLightJobs > 0 || lightingFloodOwner(streamed.world) !== ''); step += 1) {
       now += 16;
@@ -228,7 +248,8 @@ describe('edit light queue', () => {
     expect(applied).toBe(count);
     expect(commitsDuring).toBeGreaterThan(0);
     expect(maxQueue).toBeLessThanOrEqual(6);
-    expect(maxAge).toBeLessThan(2500);
+    expect(maxAge).toBeLessThan(streamPendingAgeLimitMs(1000 / 30));
+    expect(sliceBudgetAgeMs(maxAge, 1000 / 30)).toBeLessThan(EDIT_LIGHT_MAX_WAIT_MS * 2);
     expect(streamed.world.editLightRestarts).toBe(0);
   });
 

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-09-30: add-emitter fairness during edits
+
+- [x] Region edits and pending add-only emitters both make progress while mining continues. Fairness is at job boundaries. Budget stays 2 ms.
+- [x] An in-progress add-emitter flood commits one pinned block view. Newer sources wait for the next batch.
+- [x] Tests: torch and lantern during a 20 TPS stream, a wall edit mid-flood, torch place/break, and rapid source churn.
+- [ ] Owner manual QA on DEV: place a torch or lantern while holding LMB, and confirm the new light appears before mining stops.
+
 ## 2026-09-30: continuous edit lighting queue
 
 - [x] Remove the 80 ms quiet hold that starved region floods while edits arrived every 50 ms.

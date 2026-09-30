@@ -62,10 +62,12 @@ describe('emitter census cadence', () => {
       view = scanner.advance(world, 1, now);
     }
     const walks = scanner.chunkWalks;
+    const setChecks = scanner.loadedSetChecks;
     expect(view.glowstone).toBe(1);
     for (let frame = 1; frame <= 20; frame += 1) {
       const held = scanner.advance(world, 2, now + frame * 16);
       expect(scanner.chunkWalks).toBe(walks);
+      expect(scanner.loadedSetChecks).toBe(setChecks);
       expect(held.glowstone).toBe(1);
       expect(held.passComplete).toBe(true);
       expect(formatEmitterCensus(held)).toBe(formatEmitterCensus(view));
@@ -91,9 +93,15 @@ describe('emitter census cadence', () => {
     expect(refreshed.torch).toBe(1);
 
     const after = scanner.chunkWalks;
+    const checksAfterRefresh = scanner.loadedSetChecks;
     addChunk(world, 4, 4);
-    const interrupted = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS + 16);
+    const stillHeld = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS + 16);
+    expect(scanner.chunkWalks).toBe(after);
+    expect(scanner.loadedSetChecks).toBe(checksAfterRefresh);
+    expect(stillHeld.passComplete).toBe(true);
+    const interrupted = scanner.advance(world, 2, EMITTER_CENSUS_HOLD_MS + EMITTER_CENSUS_INTERVAL_MS);
     expect(scanner.chunkWalks).toBeGreaterThan(after);
+    expect(scanner.loadedSetChecks).toBeGreaterThan(checksAfterRefresh);
     expect(interrupted.loadedChunks).toBe(2);
     expect(interrupted.passComplete).toBe(true);
     expect(interrupted.torch).toBe(1);

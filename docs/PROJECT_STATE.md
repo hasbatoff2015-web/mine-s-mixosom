@@ -1,10 +1,17 @@
 # Состояние проекта
 
+## Последний проход: add-emitter fairness и consistent flood — 2026-09-30
+
+- Add-only источники (факел, фонарь, редстоун-факел) больше не ждут, пока опустеет очередь region edits. Один общий light state не прерывает уже идущий flood: после commit region job, если есть pending emitters, следующий старт — emitter batch, и наоборот. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
+- Активный add-emitter batch неизменяем. Правка блока во время flood пинится так же, как у region. Новый источник остаётся в следующем batch. Commit совпадает с block view на старте flood, затем следующий job дочитывает живой мир.
+- `?perf=1` строка `EDITQ` дополнена `EMITQ` (очередь, age, commits). Census по-прежнему только в perf mode; набор загруженных чанков сравнивается на шаге 400 ms, а не на каждом кадре.
+- Подробности: `docs/reports/2026-09-30_lighting-emitter-fairness.md`. Предыдущий проход очереди: `docs/reports/2026-09-30_lighting-edit-queue.md`.
+
 ## Последний проход: edit lighting queue without quiet-hold starvation — 2026-09-30
 
 - Непрерывный mining больше не ждёт 80 ms тишины. `queueLight` кладёт регион в пространственную очередь (`EDIT_LIGHT_QUEUE_LIMIT = 32`): пересекающиеся регионы сливаются, далёкие остаются отдельными jobs. Уже идущий flood не сбрасывается. Правки во время flood пиннятся sparse override и становятся следующим job. Каждый законченный job коммитит свет до старта следующего.
 - Срочный remesh по-прежнему пишет геометрию сразу (`allowPendingLighting: true`) и читает последний committed light. `lightVersion` растёт только на реальном отличии. Второго полного light buffer нет. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
-- `?perf=1` добавляет строку `EDITQ` (очередь, age, commits, restart, merge). Census источников остаётся только в perf mode, шаг 400 ms, удержание прохода 4 s, немедленный перескан при смене набора чанков.
+- `?perf=1` добавляет строку `EDITQ` (очередь, age, commits, restart, merge). Census источников остаётся только в perf mode, шаг 400 ms, удержание прохода 4 s. Следующий проход перестал сравнивать набор чанков на каждом кадре: сравнение происходит на шаге census.
 - Подробности: `docs/reports/2026-09-30_lighting-edit-queue.md`. Предыдущий проход stable mesh: `docs/reports/2026-09-30_lighting-flicker-stable-mesh-audit.md`.
 
 ## Последний проход: friend join chat и speech bubble — 2026-09-28

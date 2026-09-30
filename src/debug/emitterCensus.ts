@@ -97,9 +97,10 @@ export const EMITTER_CENSUS_HOLD_MS = 4000;
 /**
  * DEV census of loaded emitters. A pass walks a few chunks per step, only
  * through occupied height. Steps are at least `EMITTER_CENSUS_INTERVAL_MS`
- * apart. A finished pass is kept for `EMITTER_CENSUS_HOLD_MS`, unless the
- * loaded chunk set changes, which starts a new pass immediately. Frames in
- * between do not touch voxel arrays.
+ * apart. A finished pass is kept for `EMITTER_CENSUS_HOLD_MS`. The loaded
+ * chunk set is compared on the next census step, not on every animation
+ * frame. A change noticed at that step starts a new pass. Frames between
+ * steps do not walk chunk keys or voxel arrays.
  */
 export class EmitterCensusScanner {
   private world?: VoxelWorld;
@@ -112,6 +113,8 @@ export class EmitterCensusScanner {
   private holdUntil = 0;
   /** Chunks whose blocks were actually read. Frames inside the hold do not increase this. */
   chunkWalks = 0;
+  /** How often the loaded chunk keys were compared. Animation frames between steps do not increase this. */
+  loadedSetChecks = 0;
 
   /** Drop every total and the previous world. The next `advance` starts clean. */
   reset(): void {
@@ -124,6 +127,7 @@ export class EmitterCensusScanner {
     this.nextStepAt = 0;
     this.holdUntil = 0;
     this.chunkWalks = 0;
+    this.loadedSetChecks = 0;
   }
 
   advance(world: VoxelWorld, chunkBudget = 1, nowMs = performance.now()): EmitterCensusTotals {
@@ -132,14 +136,12 @@ export class EmitterCensusScanner {
       this.world = world;
       this.nextStepAt = nowMs;
     }
-    const chunkSetChanged = this.keys.length > 0 && this.loadedSetChanged(world);
+    if (nowMs < this.nextStepAt) return this.view();
     if (this.holding) {
-      if (nowMs < this.holdUntil && !chunkSetChanged) return this.view();
+      if (nowMs < this.holdUntil && !this.loadedSetChanged(world)) return this.view();
       this.holding = false;
       this.keys = [];
     }
-    if (chunkSetChanged) this.nextStepAt = Math.min(this.nextStepAt, nowMs);
-    if (nowMs < this.nextStepAt) return this.view();
     if (this.keys.length === 0 || this.loadedSetChanged(world)) this.startPass(world, nowMs);
     if (!this.holding) {
       this.scanStep(world, chunkBudget, nowMs);
@@ -179,6 +181,7 @@ export class EmitterCensusScanner {
   }
 
   private loadedSetChanged(world: VoxelWorld): boolean {
+    this.loadedSetChecks += 1;
     if (world.chunks.size !== this.keys.length) return true;
     let index = 0;
     for (const key of world.chunks.keys()) {

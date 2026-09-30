@@ -262,7 +262,14 @@ export function formatEditLightLine(stats: {
   commits: number;
   restarts: number;
   merges: number;
+  emitterQueued?: number;
+  emitterActive?: boolean;
+  emitterOldestAgeMs?: number;
+  emitterCommits?: number;
 }): string {
   const active = stats.active ? ' active' : '';
-  return `EDITQ ${stats.queued}${active} age ${Math.round(stats.oldestAgeMs)}ms commits ${stats.commits} restart ${stats.restarts} merge ${stats.merges}`;
+  const base = `EDITQ ${stats.queued}${active} age ${Math.round(stats.oldestAgeMs)}ms commits ${stats.commits} restart ${stats.restarts} merge ${stats.merges}`;
+  if (stats.emitterQueued === undefined && stats.emitterCommits === undefined) return base;
+  const emitActive = stats.emitterActive ? ' active' : '';
+  return `${base} | EMITQ ${stats.emitterQueued ?? 0}${emitActive} age ${Math.round(stats.emitterOldestAgeMs ?? 0)}ms commits ${stats.emitterCommits ?? 0}`;
 }

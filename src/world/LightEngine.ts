@@ -119,8 +119,8 @@ interface LightState {
   emitters: Array<readonly [number, number, number]>;
   emitterCursor: number;
   /**
-   * Blocks changed after the active region flood started.
-   * The flood keeps reading these ids so its commit matches the world at start.
+   * Blocks changed after the active region or add-emitter flood started.
+   * The flood keeps reading these ids so its commit matches one block view.
    * Sparse: one entry per edited cell, not a second chunk buffer.
    */
   blockView?: Map<Chunk, Map<number, number>>;
@@ -178,8 +178,9 @@ function clearBlockView(state: LightState): void {
   state.emissionView = undefined;
 }
 /**
- * Pin the pre-edit block while a region flood is already running.
+ * Pin the pre-edit block while a region or add-emitter flood is already running.
  * Later edits of the same cell keep the first pin (the id at flood start).
+ * The in-progress flood commits that one view. A later job reads the live world.
  */
 export function noteLightingBlockOverride(
   world: VoxelWorld,
@@ -190,7 +191,7 @@ export function noteLightingBlockOverride(
   emission?: number,
 ): void {
   const state = states.get(world);
-  if (!state || state.owner !== LIGHT_FLOOD_REGION) return;
+  if (!state || (state.owner !== LIGHT_FLOOD_REGION && state.owner !== LIGHT_FLOOD_ADD_EMITTER)) return;
   const chunk = loadedChunk(world, x, z);
   if (!chunk) return;
   const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
@@ -720,14 +721,16 @@ export function addBlockLightEmitters(world: VoxelWorld, emitters: ReadonlyArray
     state.entryMap.clear();
     state.targets = [];
     state.region = undefined;
+    state.job = undefined;
     state.initial = undefined;
+    clearBlockView(state);
     state.owner = LIGHT_FLOOD_ADD_EMITTER;
     state.phase = 'block-flood';
     state.channel = 'block';
-    state.emitters = [];
+    // Copy: the caller may clear its queue. Sources that arrive later are a new batch.
+    state.emitters = emitters.slice();
     state.emitterCursor = 0;
   }
-  for (const emitter of emitters) state.emitters.push(emitter);
   const done = continueWork(state, deadline);
   recordSlice(started);
   return done;
