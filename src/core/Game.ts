@@ -72,7 +72,7 @@ import {
 } from './constants';
 import { advanceFixedStep, interpolationAlpha } from './fixedStep';
 import { LocalPlayerRenderState } from './localPlayerRenderState';
-import { DevProfiler, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
+import { DevProfiler, formatEditLightLine, isChunkOverlayQueryEnabled, isPerfQueryEnabled, isWorldgenDebugQueryEnabled, readPerfScenario, type FrameCostBreakdown } from './devProfiler';
 import {
   chunksInSquareRadius,
   initialReadyChunkRadius,
@@ -207,6 +207,7 @@ import {
   inspectStreamingChunk,
   maybeSlowSnapshot,
 } from '../debug/chunkStreamingRuntime';
+import { EmitterCensusScanner, formatEmitterCensus, formatLightOwner } from '../debug/emitterCensus';
 import { ChunkStreamingTrace } from '../debug/chunkStreamingTrace';
 import { LongTaskMonitor } from '../debug/longTaskMonitor';
 import { PageVisibilityProbe } from '../debug/pageVisibilityProbe';
@@ -685,6 +686,7 @@ export class Game {
   private worldBorderRenderer?: WorldBorderRenderer;
   private readonly hurt = new HurtFeedback();
   private readonly profiler = new DevProfiler(isPerfQueryEnabled());
+  private readonly emitterCensus = new EmitterCensusScanner();
   private readonly longTasks = new LongTaskMonitor();
   private readonly perfScenario = readPerfScenario();
   private worldLoad?: {
@@ -3261,6 +3263,7 @@ export class Game {
     );
     this.scene.add(playerVisual.root);
 
+    this.emitterCensus.reset();
     this.session = {
       summary,
       world,
@@ -4463,6 +4466,15 @@ export class Game {
         lightFrameMs: this.lastLightMs,
         lightMaxSlice: lightFrameStats.maxSlice,
         dirtyLightChunks: lightFrameStats.dirtyLightChunks,
+        lightOwner: session ? formatLightOwner(lightingFloodOwner(session.world), LIGHT_FLOOD_REGION, LIGHT_FLOOD_ADD_EMITTER) : 'idle',
+        pendingMeshChunks: session?.world.pendingMeshJobs ?? 0,
+        editLightLine: this.profiler.enabled && session
+          ? formatEditLightLine(session.world.editLightSnapshot())
+          : undefined,
+        // Census runs only while ?perf=1 is on. Steps are hundreds of ms apart, not every frame.
+        emitterLine: this.profiler.enabled && session
+          ? formatEmitterCensus(this.emitterCensus.advance(session.world, 2))
+          : undefined,
         dirtyChunks: session?.world.dirtyChunkCount ?? 0,
         blockMutations: session?.world.mutationMarks ?? 0,
         mobCount: session?.mobs.count ?? 0,
@@ -6416,6 +6428,7 @@ export class Game {
     resetFootsteps(this.footsteps);
     this.openChestKey = undefined;
     this.worldLoad = undefined;
+    this.emitterCensus.reset();
     this.session = undefined;
     this.chat.clear();
     this.ui.clearChat();

@@ -1,5 +1,26 @@
 # Roadmap
 
+## 2026-09-30: add-emitter fairness during edits
+
+- [x] Region edits and pending add-only emitters both make progress while mining continues. Fairness is at job boundaries. Budget stays 2 ms.
+- [x] An in-progress add-emitter flood commits one pinned block view. Newer sources wait for the next batch.
+- [x] Tests: torch and lantern during a 20 TPS stream, a wall edit mid-flood, torch place/break, and rapid source churn.
+- [ ] Owner manual QA on DEV: place a torch or lantern while holding LMB, and confirm the new light appears before mining stops.
+
+## 2026-09-30: continuous edit lighting queue
+
+- [x] Remove the 80 ms quiet hold that starved region floods while edits arrived every 50 ms.
+- [x] Spatial queue: merge overlapping regions, keep distant edits apart, finish the active flood before the next one, pin mid-flood block edits.
+- [x] Tests for a 20 TPS stream at 60 FPS and 30 FPS, borders, coalescing, and committed mesh light across a superseding edit.
+- [ ] Owner manual QA on DEV: hold LMB 5–10 s and confirm light updates before release, plus roof, emitters, and `?perf=1` `EDITQ`.
+
+## 2026-09-30: lighting flicker and emitter audit
+
+- [x] Urgent geometry updates while a sliced flood is open, and the mesh reads last committed snapshot pages instead of the partial working arrays.
+- [x] Regression coverage for emitter remove/add, sky hole, borders, diagonal, high Y, edit burst, no-op relight, memory, and the initial unlit gate.
+- [x] DEV `?perf=1` emitter census and a Node CPU many-emitter benchmark. No global brightness change and no spawn-block edits.
+- [ ] Owner manual QA on DEV: rapid mining, emitter add/remove, roof, chunk border, high Y, and the spawn census checklist in the report.
+
 ## 2026-09-28: friend join notices and player chat bubbles
 
 - [x] System chat to online mutual friends only on a real offline → online edge, and the matching leave line on a real disconnect.

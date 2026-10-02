@@ -1,5 +1,6 @@
 /**
- * Simulation lighting queries (spawn, fire, sunlight, entity sample).
+ * Simulation lighting queries (spawn, fire, sunlight) read the working arrays.
+ * Entity samples use the mesh committed view while a flood is uncommitted.
  * Shader compose lives in `rendering/worldLighting.ts`.
  * Flood/budget work lives in `LightEngine` and is driven by `LightingAdapter`.
  */

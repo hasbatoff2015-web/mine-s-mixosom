@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import * as THREE from 'three';
 import { BlockId } from '../src/blocks';
 import { CHUNK_SIZE, chunkKey, MESH_SECTION_HEIGHT } from '../src/core/constants';
@@ -10,10 +10,7 @@ import {
   URGENT_MUTATION_MESH_BUDGET_MS,
   URGENT_MUTATION_MESH_LIMIT,
 } from '../src/world/networkBlockUpdates';
-import {
-  EDIT_LIGHT_BURST_HOLD_MS,
-  VoxelWorld,
-} from '../src/world/World';
+import { VoxelWorld } from '../src/world/World';
 import { LIGHT_FLOOD_REGION, lightingFloodOwner } from '../src/world/LightEngine';
 import { AutoMineManager, cuboidSize, fillVoxelAt } from '../server/services/autoMine';
 import { volumeFromCorners } from '../server/services/selection';
@@ -117,8 +114,8 @@ describe('AutoMine reset pipeline', () => {
     renderer.dispose();
   });
 
-  it('does not start an edit-region light flood while a large batch burst is still arriving', () => {
-    const world = new VoxelWorld('automine-light-hold');
+  it('starts coalesced edit lighting while later batches are still arriving', () => {
+    const world = new VoxelWorld('automine-light-progress');
     world.deferredLighting = true;
     markLit(world, -1, 1, -1, 1);
     const mutations = [];
@@ -127,15 +124,17 @@ describe('AutoMine reset pipeline', () => {
     }
     world.applyBlockBatch(mutations, { deferLighting: true, skipSupport: true, scheduleNeighbors: false });
     expect(world.hasQueuedRegionLight).toBe(true);
+    expect(world.editLightQueueLength).toBe(1);
     world.processLighting(8, 8, 8);
-    expect(lightingFloodOwner(world)).not.toBe(LIGHT_FLOOD_REGION);
-
-    const realNow = performance.now.bind(performance);
-    const started = realNow();
-    vi.spyOn(performance, 'now').mockImplementation(() => started + EDIT_LIGHT_BURST_HOLD_MS + 5);
-    world.processLighting(8, 8, 8);
-    expect(lightingFloodOwner(world) === LIGHT_FLOOD_REGION || !world.hasQueuedRegionLight).toBe(true);
-    vi.restoreAllMocks();
+    expect(lightingFloodOwner(world) === LIGHT_FLOOD_REGION || world.editLightCommits > 0).toBe(true);
+    world.applyBlockBatch([{ x: 1, y: 90, z: 1, block: BlockId.Air }], {
+      deferLighting: true, skipSupport: true, scheduleNeighbors: false,
+    });
+    const commitsBefore = world.editLightCommits;
+    for (let step = 0; step < 40 && world.editLightCommits === commitsBefore; step += 1) {
+      world.processLighting(8, 8, 8);
+    }
+    expect(world.editLightCommits).toBeGreaterThan(commitsBefore);
   });
 
   it('applies a 15³ AutoMine reset as aggregated batches with bounded remesh work', () => {
