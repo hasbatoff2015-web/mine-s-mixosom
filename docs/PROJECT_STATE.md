@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: mobile controls, sky gradient, play-info HUD — 2026-10-02
+
+- Сенсорный layout включается только при `(pointer: coarse)`. Узкое окно desktop больше не показывает стик и кнопки. Хотбар — `flex-direction: row; flex-wrap: nowrap` и явный `--hotbar-slot`. Вертикальный ряд был из-за невалидного `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`: число и `vw` в одном `calc` обнуляли `grid-template-columns: repeat(9, ...)`, и слоты с `aspect-ratio: 1` вставали в один столбец.
+- На телефоне остались стик, momentary jump, crouch toggle с классом `is-active`, кнопка инвентаря и верхние пауза/чат/меню. Удар, use и строительство идут через tap/hold по миру. Свайп от 18px — только камера. Удержание 200ms без свайпа — копание или held-use. Автопрыжок мобильный: следующий input sample получает обычный `jump`, creative не армится.
+- Небо — один `SkyDome` (градиент, закатная полоса, звёзды ночью, блочные облака в том же шейдере). `daylightFactor` и яркость солнца не менялись. Облака выключаются чекбоксом в настройках, по умолчанию включены.
+- Левый нижний HUD: `Игроков: N`, `X/Y/Z` через `Math.floor`. Онлайн — `remotes.size + 1`, одиночная игра — 1.
+- Подробности: `docs/reports/2026-10-02_mobile-controls-sky-hud.md`.
+
 ## Последний проход: add-emitter fairness и consistent flood — 2026-09-30
 
 - Add-only источники (факел, фонарь, редстоун-факел) больше не ждут, пока опустеет очередь region edits. Один общий light state не прерывает уже идущий flood: после commit region job, если есть pending emitters, следующий старт — emitter batch, и наоборот. `WORLD_LIGHT_BUDGET_MS` остаётся 2.

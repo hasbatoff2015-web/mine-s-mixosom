@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-02: mobile controls, sky gradient, play-info HUD
+
+- [x] Touch chrome only for `(pointer: coarse)`. Horizontal hotbar via flex nowrap and a definite `--hotbar-slot`.
+- [x] Jump is momentary, crouch toggles and highlights, world tap/hold/swipe share the existing attack, use and mine intents.
+- [x] Mobile auto-jump arms the next `jump` bit only. Creative flight is unchanged.
+- [x] One sky-dome draw: day, dawn, dusk, night, stars after sunset. Clouds are the same shader and have a settings toggle.
+- [x] Compact online + floored coordinate HUD on desktop and mobile.
+- [ ] Owner manual QA on a real phone: landscape tap/hold/swipe, hotbar after browser-chrome resize, sky at dawn and night.
+
 ## 2026-09-30: add-emitter fairness during edits
 
 - [x] Region edits and pending add-only emitters both make progress while mining continues. Fairness is at job boundaries. Budget stays 2 ms.

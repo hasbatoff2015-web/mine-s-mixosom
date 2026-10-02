@@ -127,6 +127,7 @@ import {
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
+import { readCloudSetting } from '../input/mobileTouch';
 import {
   attachItemTooltip,
   itemHoverAttributeString,
@@ -244,6 +245,8 @@ export interface HudState {
   absorption?: number;
   effects?: readonly PotionHudEntry[];
   debug?: string;
+  /** "Игроков" plus floored XYZ. Omitted updates leave the previous text. */
+  playInfo?: string;
 }
 
 export interface InventoryContext {
@@ -349,7 +352,9 @@ export class GameUI {
   private debugText = '';
   private debugVisible = false;
   private effectsHtml = '';
-  private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
+  private playInfoText = '';
+  private playInfo: HTMLElement;
+  private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75, clouds: true };
   private itemIconResolver?: (itemId: string) => string;
   private onScreenEscape?: () => void;
 
@@ -369,6 +374,7 @@ export class GameUI {
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="play-info" aria-live="polite"></div>
         <div id="offhand-hud" aria-label="Вторая рука"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
@@ -428,6 +434,7 @@ export class GameUI {
       </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
+    this.playInfo = this.root.querySelector('#play-info')!;
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
@@ -891,6 +898,7 @@ export class GameUI {
           ${this.settingRange('Чувствительность мыши', 'sensitivity', 0.0007, 0.005, 0.0001, this.settings.sensitivity)}
           ${this.settingRange('Дальность чанков', 'renderDistance', 2, 6, 1, this.settings.renderDistance)}
           ${this.settingRange('Поле зрения', 'fov', 60, 100, 1, this.settings.fov)}
+          <label class="setting-row setting-check"><span><strong>Облака</strong><small>Далёкий слой на небе</small></span><input type="checkbox" name="clouds"${this.settings.clouds ? ' checked' : ''} /></label>
         </div>
         <button class="game-button settings-controls-button" type="button" data-action="controls"><span>Управление</span><small>Посмотреть клавиши и действия</small></button>
         <footer class="menu-footer"><button class="game-button" type="submit">Применить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
@@ -911,6 +919,7 @@ export class GameUI {
         sensitivity: Number(data.get('sensitivity')),
         renderDistance: Number(data.get('renderDistance')),
         fov: Number(data.get('fov')),
+        clouds: readCloudSetting(data.get('clouds')),
       };
       onApply({ ...this.settings });
       onBack();
@@ -926,7 +935,7 @@ export class GameUI {
     this.setScreen(`
       <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
-        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
+        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик — движение и бег, прыжок — кнопка, приседание — переключатель. Свайп по экрану вращает камеру. Короткое касание бьёт, использует или ставит блок, удержание копает. Играть в landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
       </div></section>`, onBack);
     this.bindAction('back', onBack);
@@ -1033,6 +1042,10 @@ export class GameUI {
       this.effectsHtml = effectsHtml;
       this.effectHud.innerHTML = effectsHtml;
       this.effectHud.classList.toggle('hidden', effects.length === 0);
+    }
+    if (state.playInfo !== undefined && state.playInfo !== this.playInfoText) {
+      this.playInfoText = state.playInfo;
+      this.playInfo.textContent = state.playInfo;
     }
   }
 

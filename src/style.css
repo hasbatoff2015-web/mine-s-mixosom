@@ -389,7 +389,9 @@ button {
 
 #hud {
   --hud-scale: 1;
-  --hud-slot-size: calc(50px * var(--hud-scale));
+  /* Definite slot length. The hotbar reads this directly so a bad scale cannot drop its tracks. */
+  --hotbar-slot: calc(50px * var(--hud-scale));
+  --hud-slot-size: var(--hotbar-slot);
   --hud-slot-gap: calc(2px * var(--hud-scale));
   --hud-status-icon-size: calc(18px * var(--hud-scale));
   --hud-status-icon-gap: calc(1px * var(--hud-scale));
@@ -502,11 +504,32 @@ button {
   position: absolute;
   bottom: max(10px, env(safe-area-inset-bottom));
   left: 50%;
-  display: grid;
-  grid-template-columns: repeat(9, var(--hud-slot-size));
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: flex-end;
+  justify-content: center;
+  width: max-content;
+  max-width: calc(100vw - 12px);
   gap: var(--hud-slot-gap);
   transform: translateX(-50%);
   pointer-events: auto;
+}
+
+#play-info {
+  position: absolute;
+  z-index: 4;
+  left: max(8px, env(safe-area-inset-left));
+  bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + var(--hud-status-icon-size) + 18px);
+  max-width: 168px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.48);
+  color: #f4f7ff;
+  font: 600 12px/1.35 var(--font-ui);
+  white-space: pre-line;
+  text-shadow: 0 1px 2px #000;
+  pointer-events: none;
 }
 
 #offhand-hud {
@@ -526,6 +549,15 @@ button {
   border-radius: 2px;
   background: rgba(15, 20, 23, 0.88);
   box-shadow: inset 2px 2px rgba(255, 255, 255, 0.12), inset -2px -2px rgba(0, 0, 0, 0.62), 0 2px 5px rgba(0, 0, 0, 0.48);
+}
+
+#hotbar .slot {
+  flex: 0 0 var(--hotbar-slot);
+  width: var(--hotbar-slot);
+  height: var(--hotbar-slot);
+  min-width: var(--hotbar-slot);
+  max-width: var(--hotbar-slot);
+  aspect-ratio: auto;
 }
 
 #hotbar .slot.selected {
@@ -3744,19 +3776,19 @@ button {
   text-shadow: 0 5px #4c1515;
 }
 
-@media (pointer: coarse), (max-width: 900px) {
+@media (pointer: coarse) {
   #hud {
-    --hud-scale: clamp(0.72, calc(0.52 + 0.03vw), 0.86);
+    --hud-scale: clamp(0.78, 0.82, 0.86);
+    --hotbar-slot: clamp(30px, 8vw, 42px);
+    --hud-slot-size: var(--hotbar-slot);
   }
 
   #touch-look-zone {
     position: absolute;
     z-index: 3;
-    top: 0;
-    right: 0;
-    bottom: 0;
-    left: 42%;
+    inset: 0;
     display: block;
+    touch-action: none;
   }
 
   #touch-joystick {
@@ -3767,6 +3799,7 @@ button {
     display: block;
     width: clamp(92px, 18vw, 132px);
     aspect-ratio: 1;
+    touch-action: none;
   }
 
   .joystick-ring {
@@ -3790,42 +3823,61 @@ button {
   #touch-actions {
     position: absolute;
     z-index: 5;
-    right: max(12px, env(safe-area-inset-right));
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 54px);
-    display: grid;
-    grid-template-columns: repeat(3, clamp(46px, 9vw, 64px));
-    gap: 8px;
+    right: max(16px, env(safe-area-inset-right));
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 16px);
+    display: flex;
+    flex-direction: column-reverse;
+    align-items: center;
+    gap: 10px;
+    width: auto;
+    touch-action: none;
   }
 
   #touch-actions button {
-    width: 100%;
-    aspect-ratio: 1;
+    width: 52px;
+    height: 52px;
     border: 2px solid rgba(255, 255, 255, 0.38);
     border-radius: 50%;
     color: white;
     background: rgba(11, 25, 29, 0.62);
-    font-size: clamp(18px, 4vw, 28px);
+    font-size: 22px;
     font-weight: 800;
     text-shadow: 0 2px #000;
   }
 
-  #touch-actions button[data-action="inventory"],
-  #touch-actions button[data-action="pause"] {
-    position: fixed;
-    top: max(9px, env(safe-area-inset-top));
-    width: 44px;
-    height: 44px;
+  #touch-actions button[data-action="jump"] {
+    width: 68px;
+    height: 68px;
+    font-size: 28px;
   }
 
-  #touch-actions button[data-action="inventory"] { right: calc(max(9px, env(safe-area-inset-right)) + 52px); }
-  #touch-actions button[data-action="pause"] { right: max(9px, env(safe-area-inset-right)); }
+  #touch-actions button[data-action="sneak"].is-active {
+    border-color: #ffe0a3;
+    background: rgba(232, 168, 62, 0.92);
+    box-shadow: 0 0 0 3px rgba(255, 196, 84, 0.55);
+  }
+
+  #touch-actions button[data-action="inventory"] {
+    position: fixed;
+    top: max(10px, env(safe-area-inset-top));
+    right: calc(max(10px, env(safe-area-inset-right)) + 84px);
+    width: 48px;
+    height: 48px;
+  }
 
   #hotbar {
-    grid-template-columns: repeat(9, var(--hud-slot-size));
     bottom: max(5px, env(safe-area-inset-bottom));
-    gap: var(--hud-slot-gap);
   }
   #offhand-hud { bottom: max(5px, env(safe-area-inset-bottom)); }
+
+  #play-info {
+    left: max(12px, env(safe-area-inset-left));
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 54px + clamp(92px, 18vw, 132px) + 8px);
+    max-width: 190px;
+    padding: 8px 10px;
+    background: rgba(0, 0, 0, 0.55);
+    font-size: 14px;
+  }
 
   #status-bars {
     bottom: calc(max(5px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + 6px);
@@ -3834,7 +3886,7 @@ button {
 
   #effect-hud {
     right: calc(10px + env(safe-area-inset-right, 0px));
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 54px + clamp(46px, 9vw, 64px) + 10px);
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 68px + 52px + 36px);
   }
 
   #selected-item { display: none; }
@@ -3872,13 +3924,16 @@ button {
   .loading-detail { min-height: 16px; font-size: 11px; }
 }
 
-@media (orientation: portrait) and (pointer: coarse),
-  (orientation: portrait) and (max-width: 900px) {
+@media (orientation: portrait) and (pointer: coarse) {
   #rotate-overlay { display: grid; }
 }
 
 @media (max-height: 430px) and (orientation: landscape) {
-  #hud { --hud-scale: 0.7; }
+  #hud {
+    --hud-scale: clamp(0.7, 0.74, 0.78);
+    --hotbar-slot: 30px;
+    --hud-slot-size: var(--hotbar-slot);
+  }
   .screen { padding: 6px; }
   .menu-card { max-height: calc(100vh - 12px); }
   #loading-screen .loading-card {
@@ -3917,13 +3972,14 @@ button {
     font-size: 10px;
   }
   #touch-joystick { bottom: 47px; width: 88px; }
-  #touch-actions { bottom: 47px; grid-template-columns: repeat(3, 45px); gap: 5px; }
-  #hotbar { grid-template-columns: repeat(9, var(--hud-slot-size)); }
+  #touch-actions { bottom: calc(47px + var(--hotbar-slot)); gap: 6px; }
+  #touch-actions button[data-action="jump"] { width: 58px; height: 58px; }
+  #play-info { bottom: calc(47px + 88px + 8px); font-size: 13px; }
   #status-bars {
     bottom: calc(max(5px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + 5px);
     max-width: var(--hud-hotbar-width);
   }
-  #effect-hud { bottom: calc(47px + 45px + 8px); }
+  #effect-hud { bottom: calc(47px + var(--hotbar-slot) + 58px + 52px + 18px); }
 }
 /* Frontier menu redesign */
 .menu-screen {
@@ -4671,6 +4727,18 @@ button {
   accent-color: #aab884;
   cursor: pointer;
   touch-action: manipulation;
+}
+
+.setting-row input[type='checkbox'] {
+  width: 22px;
+  height: 22px;
+  justify-self: start;
+  accent-color: #aab884;
+}
+
+.setting-row small {
+  color: #b7b7b7;
+  font-size: 11px;
 }
 
 .settings-controls-button {

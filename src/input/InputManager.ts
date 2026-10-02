@@ -12,6 +12,20 @@ import {
 import { PointerMotionFilter } from './pointerMotion';
 import { shouldBlurStaleTextField, shouldCaptureGameplayKey } from './gameplayKeys';
 import type { MoveInput } from './MoveInput';
+import {
+  TOUCH_HOLD_MS,
+  TOUCH_LOOK_SCALE,
+  advanceTouchTrack,
+  beginTouchTrack,
+  finishTouchTrack,
+  swipeLookDelta,
+  type TouchTrack,
+} from './touchGesture';
+import {
+  sprintFromStick,
+  toggleCrouch,
+  type MobileTouchDecision,
+} from './mobileTouch';
 
 export type { MoveInput } from './MoveInput';
 
@@ -34,6 +48,7 @@ export interface InputCallbacks {
   selectHotbar(index: number): void;
   cyclePerspective?(): void;
   toggleMenu?(): void;
+  classifyWorldTouch?(clientX: number, clientY: number, phase: 'tap' | 'hold'): MobileTouchDecision;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
@@ -70,9 +85,15 @@ export class InputManager {
   private touchJump = false;
   private touchSprint = false;
   private touchSneak = false;
-  private activeLookPointer?: number;
-  private lastLookX = 0;
-  private lastLookY = 0;
+  private touchLayout = false;
+  private autoJumpArmed = false;
+  private worldTouch?: TouchTrack;
+  private worldPointer?: number;
+  private holdTimer?: number;
+  private holdingWorldTouch = false;
+  private interactionAim: { yaw: number; pitch: number } | null = null;
+  private sneakButton?: HTMLButtonElement;
+  private coarseMedia?: MediaQueryList;
   private sensitivity = 0.0022;
   private lockedToCanvas = false;
   private programmaticReleasePending = false;
@@ -110,6 +131,26 @@ export class InputManager {
     this.sensitivity = clamp(value, 0.0005, 0.006);
   }
 
+  isTouchLayout(): boolean {
+    return this.touchLayout;
+  }
+
+  /** Next movement sample only. Desktop never arms this. */
+  armAutoJump(armed: boolean): void {
+    this.autoJumpArmed = armed;
+  }
+
+  /** Locked touch ray. Camera yaw stays independent. */
+  interactionLook(): { yaw: number; pitch: number } | null {
+    return this.interactionAim;
+  }
+
+  /** Drop a finished tap aim after attack/use has been sampled. Holds keep the ray. */
+  dismissTapAim(): void {
+    if (this.holdingWorldTouch || this.usePressed || this.using) return;
+    this.interactionAim = null;
+  }
+
   movement(): MoveInput {
     const forward = Number(this.keys.has('KeyW')) - Number(this.keys.has('KeyS')) + this.touchForward;
     const right = Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')) + this.touchRight;
@@ -117,7 +158,7 @@ export class InputManager {
     return {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
-      jump: this.keys.has('Space') || this.touchJump,
+      jump: this.keys.has('Space') || this.touchJump || this.autoJumpArmed,
       sprint: this.touchSprint,
       sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
       descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)),
@@ -168,6 +209,7 @@ export class InputManager {
   }
 
   releaseActions(): void {
+    this.cancelWorldTouch();
     this.mining = false;
     this.using = false;
     this.attackPressed = false;
@@ -175,6 +217,8 @@ export class InputManager {
     this.useReleased = false;
     this.miningReleased = false;
     this.touchJump = false;
+    this.interactionAim = null;
+    this.holdingWorldTouch = false;
   }
 
   /** Drop held WASD/Space/Shift so a lost keyup cannot stick, and so chat cannot leave W=true. */
@@ -185,7 +229,9 @@ export class InputManager {
     this.touchJump = false;
     this.touchSprint = false;
     this.touchSneak = false;
+    this.autoJumpArmed = false;
     this.releaseActions();
+    this.syncSneakButton();
   }
 
   isPointerLocked(): boolean {
@@ -363,17 +409,19 @@ export class InputManager {
     const actions = document.createElement('div');
     actions.id = 'touch-actions';
     actions.innerHTML = [
-      '<button data-action="mine" aria-label="Ломать или атаковать">⛏</button>',
-      '<button data-action="use" aria-label="Использовать или поставить">▣</button>',
-      '<button data-action="jump" aria-label="Прыжок">↑</button>',
-      '<button data-action="sneak" aria-label="Присесть">⌄</button>',
-      '<button data-action="sprint" aria-label="Бег">»</button>',
-      '<button data-action="inventory" aria-label="Инвентарь">▦</button>',
-      '<button data-action="pause" aria-label="Пауза">Ⅱ</button>',
+      '<button type="button" data-action="jump" aria-label="Прыжок">↑</button>',
+      '<button type="button" data-action="sneak" aria-label="Присесть" aria-pressed="false">⌄</button>',
+      '<button type="button" data-action="inventory" aria-label="Инвентарь">▦</button>',
     ].join('');
     const look = document.createElement('div');
     look.id = 'touch-look-zone';
     document.querySelector('#app')?.append(look, joystick, actions);
+    this.sneakButton = actions.querySelector<HTMLButtonElement>('button[data-action="sneak"]') ?? undefined;
+    this.coarseMedia = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : undefined;
+    this.touchLayout = this.coarseMedia?.matches === true;
+    this.coarseMedia?.addEventListener?.('change', () => {
+      this.touchLayout = this.coarseMedia?.matches === true;
+    });
 
     let joystickPointer: number | undefined;
     const knob = joystick.querySelector<HTMLElement>('.joystick-knob')!;
@@ -388,6 +436,7 @@ export class InputManager {
       knob.style.transform = `translate(${x}px, ${y}px)`;
       this.touchRight = x / radius;
       this.touchForward = -y / radius;
+      this.touchSprint = sprintFromStick(this.touchRight, this.touchForward);
     };
     joystick.addEventListener('pointerdown', (event) => {
       joystickPointer = event.pointerId;
@@ -402,26 +451,27 @@ export class InputManager {
       joystickPointer = undefined;
       this.touchForward = 0;
       this.touchRight = 0;
+      this.touchSprint = false;
       knob.style.transform = '';
     };
     joystick.addEventListener('pointerup', releaseJoystick);
     joystick.addEventListener('pointercancel', releaseJoystick);
 
     look.addEventListener('pointerdown', (event) => {
-      if (!this.callbacks.canCapture()) return;
-      this.activeLookPointer = event.pointerId;
-      this.lastLookX = event.clientX;
-      this.lastLookY = event.clientY;
+      if (!this.callbacks.canCapture() || !this.touchLayout) return;
+      if (this.worldPointer !== undefined) return;
+      this.worldPointer = event.pointerId;
+      this.worldTouch = beginTouchTrack(event.clientX, event.clientY, performance.now());
       look.setPointerCapture(event.pointerId);
+      this.armHoldTimer();
     });
     look.addEventListener('pointermove', (event) => {
-      if (event.pointerId !== this.activeLookPointer) return;
-      this.rotate((event.clientX - this.lastLookX) * 1.35, (event.clientY - this.lastLookY) * 1.35);
-      this.lastLookX = event.clientX;
-      this.lastLookY = event.clientY;
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.advanceWorldTouch(event.clientX, event.clientY, performance.now());
     });
     const stopLook = (event: PointerEvent) => {
-      if (event.pointerId === this.activeLookPointer) this.activeLookPointer = undefined;
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.finishWorldTouch(performance.now());
     };
     look.addEventListener('pointerup', stopLook);
     look.addEventListener('pointercancel', stopLook);
@@ -431,31 +481,113 @@ export class InputManager {
       const down = (event: PointerEvent) => {
         event.preventDefault();
         button.setPointerCapture(event.pointerId);
-        if (action === 'mine') {
-          this.mining = true;
-          this.attackPressed = true;
-        } else if (action === 'use') {
-          this.using = true;
-          this.usePressed = true;
-        } else if (action === 'jump') this.touchJump = true;
-        else if (action === 'sneak') this.touchSneak = !this.touchSneak;
-        else if (action === 'sprint') this.touchSprint = !this.touchSprint;
-        else if (action === 'inventory') this.callbacks.toggleInventory();
-        else if (action === 'pause') this.callbacks.togglePause();
+        if (action === 'jump') this.touchJump = true;
+        else if (action === 'sneak') {
+          this.touchSneak = toggleCrouch(this.touchSneak);
+          this.syncSneakButton();
+        } else if (action === 'inventory') this.callbacks.toggleInventory();
       };
       const up = () => {
-        if (action === 'mine') {
-          if (this.mining) this.miningReleased = true;
-          this.mining = false;
-        } else if (action === 'use') {
-          if (this.using) this.useReleased = true;
-          this.using = false;
-        } else if (action === 'jump') this.touchJump = false;
+        if (action === 'jump') this.touchJump = false;
       };
       button.addEventListener('pointerdown', down);
       button.addEventListener('pointerup', up);
       button.addEventListener('pointercancel', up);
     }
+  }
+
+  private armHoldTimer(): void {
+    this.clearHoldTimer();
+    this.holdTimer = window.setTimeout(() => {
+      this.holdTimer = undefined;
+      if (!this.worldTouch || this.worldTouch.phase !== 'pending') return;
+      const now = Math.max(performance.now(), this.worldTouch.startedAt + TOUCH_HOLD_MS);
+      this.advanceWorldTouch(this.worldTouch.x, this.worldTouch.y, now);
+    }, TOUCH_HOLD_MS);
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer === undefined) return;
+    window.clearTimeout(this.holdTimer);
+    this.holdTimer = undefined;
+  }
+
+  private advanceWorldTouch(x: number, y: number, now: number): void {
+    const previous = this.worldTouch;
+    if (!previous) return;
+    let next = advanceTouchTrack(previous, x, y, now);
+    if (next.phase === 'swipe') {
+      this.clearHoldTimer();
+      const delta = swipeLookDelta(previous, x, y);
+      if (delta) this.rotate(delta.dx * TOUCH_LOOK_SCALE, delta.dy * TOUCH_LOOK_SCALE);
+      next = { ...next, lastX: x, lastY: y };
+      if (previous.phase !== 'swipe') this.interactionAim = null;
+    } else if (previous.phase === 'pending' && next.phase === 'hold') {
+      this.clearHoldTimer();
+      this.beginWorldHold(next);
+    }
+    this.worldTouch = next;
+  }
+
+  private beginWorldHold(track: TouchTrack): void {
+    this.holdingWorldTouch = true;
+    const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'hold');
+    this.applyWorldDecision(decision, 'hold');
+  }
+
+  private finishWorldTouch(now: number): void {
+    const track = this.worldTouch;
+    this.clearHoldTimer();
+    this.worldPointer = undefined;
+    this.worldTouch = undefined;
+    if (!track) return;
+    const kind = finishTouchTrack(track, now);
+    if (kind === 'tap') {
+      const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'tap');
+      this.applyWorldDecision(decision, 'tap');
+      return;
+    }
+    if (kind === 'hold-end') this.endWorldHold();
+  }
+
+  private applyWorldDecision(decision: MobileTouchDecision | undefined, phase: 'tap' | 'hold'): void {
+    if (!decision || decision.intent === 'none') {
+      if (phase === 'tap') this.interactionAim = null;
+      return;
+    }
+    this.interactionAim = { yaw: decision.yaw, pitch: decision.pitch };
+    if (decision.intent === 'attack') this.attackPressed = true;
+    else if (decision.intent === 'use') this.usePressed = true;
+    else if (decision.intent === 'use-hold') {
+      this.using = true;
+      this.usePressed = true;
+    } else if (decision.intent === 'mine') {
+      this.mining = true;
+      this.attackPressed = true;
+    }
+  }
+
+  private endWorldHold(): void {
+    this.holdingWorldTouch = false;
+    if (this.mining) this.miningReleased = true;
+    this.mining = false;
+    if (this.using) this.useReleased = true;
+    this.using = false;
+    this.interactionAim = null;
+  }
+
+  private cancelWorldTouch(): void {
+    this.clearHoldTimer();
+    this.worldTouch = undefined;
+    this.worldPointer = undefined;
+    this.holdingWorldTouch = false;
+  }
+
+  private syncSneakButton(): void {
+    const button = this.sneakButton;
+    if (!button) return;
+    button.classList.toggle('is-active', this.touchSneak);
+    button.setAttribute('aria-pressed', this.touchSneak ? 'true' : 'false');
   }
 
   private bindPointerLock(): void {

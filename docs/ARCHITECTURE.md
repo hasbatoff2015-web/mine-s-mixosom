@@ -1,5 +1,19 @@
 # Архитектура
 
+## Mobile touch, sky dome, play-info — 2026-10-02
+
+Touch layout follows `matchMedia('(pointer: coarse)')` in `InputManager` and the same media query in CSS. A narrow desktop window does not mount the stick or the action buttons. Portrait coarse still shows the existing rotate overlay; there is no portrait gameplay layout.
+
+`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length (`50px` on desktop, `clamp(30px, 8vw, 42px)` on coarse, `30px` under 430px landscape). Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
+
+World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`. The resulting intent is still `attackPressed` / `usePressed` / `mining` plus `interactionLook()`, which `sampleLocalAim` prefers over the camera. Camera yaw on the input command is unchanged. Reach stays `PLAYER_REACH` (5) and melee 3. The server still validates the eye ray.
+
+Mobile auto-jump calls `armAutoJump` for the next `movement()` sample only, and that sample is cleared at the start of the following tick. It is not a new protocol field and it is not armed in creative.
+
+`SkyDome` is one inside-out sphere, `depthTest` false, `renderOrder` -1000. `skySample` colors the zenith, horizon and sunset band. `daylightFactor`, ambient and sunlight intensities are the previous formulas. Stars use `starOpacity`, which is 0 at noon. Clouds are a second hash in that fragment, gated by `uClouds` and the settings checkbox. Default is on.
+
+`#play-info` prints `formatPlayInfo`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`.
+
 ## Golden tools — 2026-09-24
 
 Gold is a row in the same `TierStats` list as wood, stone, iron, diamond, ruby and titanium. Prefix is `golden` (item ids `golden_pickaxe` / `golden_axe` / `golden_shovel` / `golden_hoe` / `golden_sword`). Tier value stays `gold`. Stats: durability 32, miningSpeed 12, damageBonus 0. Hoe attack is `1 + damageBonus`; other tools and the sword use the existing base-damage tables. There is no second golden-hoe definition.
