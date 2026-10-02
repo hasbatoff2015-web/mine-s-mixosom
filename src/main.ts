@@ -1,5 +1,6 @@
 import './uiTokens.css';
 import './style.css';
+import { bindVisualViewport } from './ui/visualViewport';
 import { Game } from './core/Game';
 import type { MobKind } from './entities/mobDefinitions';
 import type { MobQaView } from './dev/MobQaHarness';
@@ -10,6 +11,8 @@ const canvas = document.querySelector<HTMLCanvasElement>('#game-canvas');
 const uiRoot = document.querySelector<HTMLElement>('#ui-root');
 
 if (!canvas || !uiRoot) throw new Error('Required application roots are missing.');
+
+bindVisualViewport();
 
 let disposeApplication = (): void => {};
 let runningDevHarness = false;

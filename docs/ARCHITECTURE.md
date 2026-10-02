@@ -1,12 +1,26 @@
 # Архитектура
 
+## Mobile HUD, touch aim, clouds, sunset — 2026-10-02
+
+`#app` is `position: fixed` and its height is `--app-height`, filled by `bindVisualViewport()` from `visualViewport.height` (fallback `100dvh`). `100vh` is the layout viewport. On a phone it stays tall while the browser bar covers the bottom, so `bottom: 0` controls and menu footers sat under that bar. Requesting the desktop site uses a wide layout viewport that the browser scales onto the screen, which is why that mode looked aligned and the real mobile viewport did not. Menu shells use `dvh` for the same reason.
+
+In-game menus keep the desktop grid, type, padding and close/back metrics. The old `max-width` / `max-height` queries that turned `.mc-menu-grid-row-4` into two columns, stacked `.main-menu-center`, forced `.menu-window` to `100vh`, and shrank pause buttons are gone. A short or narrow screen sets `zoom` on `.mc-stage`. Under 520px tall, `.main-menu-layout`, `.menu-window` and `.pause-window` use `--menu-fit` (`0.5`, or `0.42` under 430px) so the same desktop structure fits the visual viewport. `--mc-ui-scale` stays 3.
+
+Touch layout is still only `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`). Portrait coarse still shows the rotate overlay. `#hotbar` stays one non-wrapping row. On coarse, `--hotbar-slot` and `--hud-hotbar-half-width` are set on both `#app` and `#hud` because the touch buttons are not inside `#hud`. The inventory button's left edge is `50% + half-width + 20px` and its bottom matches the hotbar. That is the same 20px gap as `#offhand-hud`, mirrored to the right. Jump and crouch are absolute in the bottom-right. `#play-info` is the bottom-left corner on desktop and on coarse. The joystick sits above that block and 40px to the right. `#hud-corner` stays a top-right row. `selectstart` / `contextmenu` / `dragstart` on `#app` run only while `touchLayout` is on, and they still ignore `input`, `textarea` and `[contenteditable="true"]`.
+
+A hold classifies `track.x` / `track.y`, not the pointerdown origin. While the hold is `mine` or `use-hold`, `refreshHoldAim` re-samples that finger every simulation tick and every render, after the camera matrix is current, so a broken block does not keep the old ray. Singleplayer still resets progress when `targetKey` changes. Online still uses `resolveOnlineMiningTick`. Reach is unchanged. `endWorldHold` keeps `interactionAim` when it sets `useReleased` (`releaseAimPending`). `dismissTapAim` does not clear that aim. Singleplayer calls `consumeReleaseAim` after `updateFoodUse`. Online calls it after `sendOnlineBowRelease`. Both `pointerup` and `pointercancel` write the final finger point into the track before that sample.
+
+`CloudLayer` is one fogless plane. `PlaneGeometry` rotated by `-PI/2` maps local +Y to world -Z, so the V offset is `-cameraZ / span`. The previous `+cameraZ` made the mask slide with the player only on Z. X was already world-locked. Drift is `0.35` blocks/second on X. Altitude is `max(118, cameraY + 64)`, so the sheet stays above the 80-block world and above the camera. The mask is a set of small silhouettes, 2 world units per texel. No shadows, no collision, no lighting. The checkbox still toggles `object.visible`.
+
+`skySample` keeps noon blue and midnight dark. The sunset band is a tight gaussian in `SkyDome` (`(dir.y - 0.035) * 8.6`, mix cap `0.98`) with a saturated orange horizon and a cool zenith. `daylightFactor`, ambient and sunlight intensities are unchanged.
+
 ## Mobile touch, sky dome, play-info — 2026-10-02
 
 Touch layout follows `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`) in `InputManager`, `isCoarsePointerMedia`, and the same media query in CSS. `(any-pointer: coarse)` and `navigator.maxTouchPoints` also match a laptop whose touchscreen is secondary, so those stay desktop. Viewport width is not part of the query. Portrait coarse still shows the existing rotate overlay; there is no portrait gameplay layout.
 
-`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length (`50px` on desktop, `clamp(30px, 8vw, 42px)` on coarse, `30px` under 430px landscape). The same variable is set on `#app`, because `#touch-actions` is a sibling of `#hud` and would not inherit it. Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
+`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length. The same variable is set on `#app`, because `#touch-actions` is a sibling of `#hud` and would not inherit it. Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
 
-World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`, so that finger does not rotate the camera. `pointermove` during a mine or `use-hold` still updates `interactionAim` from the current screen point via `aimAtClientPoint`. `sampleLocalAim` prefers that aim over the camera. Reach stays `PLAYER_REACH` (5) and melee 3. Singleplayer resets mining progress when `targetKey` changes. Online uses `resolveOnlineMiningTick` (`start` or `abandon-start`). The server still validates the eye ray.
+World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`, so that finger does not rotate the camera. `sampleLocalAim` prefers `interactionAim` over the camera. Reach stays `PLAYER_REACH` (5) and melee 3.
 
 `pointerup` uses `finishWorldTouch`. `pointercancel` uses `cancelWorldTouchGesture`: a pending or swipe cancel produces no tap, and a hold cancel ends mining/use with a release edge only if that flag was actually on. `releaseActions()` (blur, hidden tab) still clears the flags without inventing that edge.
 
@@ -14,13 +28,9 @@ Hold priority is bow and food (including milk) first, then attack, entity use, i
 
 Touch crouch toggles `touchSneak` and also sets `movement.descend`. `PlayerController` reads `descend` only inside `updateFlyVelocity`, which runs while `isFlying`. On the ground the same flag stays the crouch toggle.
 
-On coarse landscape, `#touch-actions` is a grid: inventory above crouch, jump to the right of crouch, above the hotbar. `#hud-corner` is a row in the top-right. Short landscape (`max-height: 430px` and `360px`) shrinks the buttons and does not hide them. Gameplay chrome sets `user-select: none` and `-webkit-touch-callout: none`. `#chat-input`, text fields and `[contenteditable="true"]` set `user-select: text`. `selectstart` / `contextmenu` / `dragstart` on `#app` skip those fields.
-
 Mobile auto-jump calls `armAutoJump` for the next `movement()` sample only, and that sample is cleared at the start of the following tick. It is not a new protocol field and it is not armed in creative.
 
-`SkyDome` is one inside-out sphere, `depthTest` false, `renderOrder` -1000. `skySample` colors the zenith, horizon and sunset band. `daylightFactor`, ambient and sunlight intensities are the previous formulas. Stars use `starOpacity`, which is 0 at noon. Clouds are a separate `CloudLayer`: one 720×720 plane at world Y=84, a 96×96 nearest-filter mask built once, and a UV offset. The plane recenters on camera X/Z; the offset includes that position so the pattern stays world-locked and drifts with time. Night darkens the color from `starOpacity` and does not hide the mesh. The settings checkbox calls `setEnabled`, which sets `object.visible`. Default is on. One extra draw when visible.
-
-`#play-info` prints `formatPlayInfo`: `Игроков: N` and one coordinate line `X: n  Y: n  Z: n`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`. Desktop anchors it to the viewport's bottom-left. Coarse places it above the joystick.
+`#play-info` prints `formatPlayInfo`: `Игроков: N` and one coordinate line `X: n  Y: n  Z: n`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`.
 
 ## Golden tools — 2026-09-24
 

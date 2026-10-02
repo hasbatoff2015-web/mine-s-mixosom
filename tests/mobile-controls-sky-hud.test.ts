@@ -28,8 +28,8 @@ import {
 } from '../src/input/touchGesture';
 import { lookFromDirection, viewDirectionFromLook } from '../src/player/localAim';
 import { resolveOnlineMiningTick } from '../src/net/onlineMining';
-import { CloudLayer } from '../src/rendering/CloudLayer';
-import { cloudCoverage, cloudMaskAlpha } from '../src/rendering/cloudMask';
+import { CloudLayer, CLOUD_WORLD_PER_TEXEL, cloudAltitude, cloudWorldSample } from '../src/rendering/CloudLayer';
+import { CLOUD_MASK_SIZE, cloudCoverage, cloudMaskAlpha } from '../src/rendering/cloudMask';
 import { skySample } from '../src/rendering/skyPalette';
 import { floorCoord, formatPlayInfo } from '../src/ui/playInfoHud';
 
@@ -161,7 +161,8 @@ describe('touch classification', () => {
     expect(inputSource).toContain('this.cancelWorldTouchGesture()');
     expect(inputSource).toContain("resolvePointerEnd(track, 'cancel'");
     expect(inputSource).toContain('if (this.mining) this.miningReleased = true');
-    expect(inputSource).toContain('if (this.using) this.useReleased = true');
+    expect(inputSource).toContain('this.useReleased = true');
+    expect(inputSource).toContain('this.releaseAimPending = true');
     const release = inputSource.slice(inputSource.indexOf('releaseActions()'), inputSource.indexOf('clearHeldKeys()'));
     expect(release).toContain('this.miningReleased = false');
     expect(release).toContain('this.useReleased = false');
@@ -188,6 +189,14 @@ describe('touch classification', () => {
     expect(follow).not.toContain('usePressed');
     expect(gameSource).toContain('aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY)');
     expect(gameSource).toContain('if (session.miningTarget !== targetKey)');
+    const begin = inputSource.slice(inputSource.indexOf('private beginWorldHold'), inputSource.indexOf('private finishWorldTouch'));
+    expect(begin).toContain('track.x, track.y');
+    expect(begin).not.toContain('originX');
+    expect(inputSource).toContain('refreshHoldAim');
+    expect(inputSource).toContain('consumeReleaseAim');
+    expect(inputSource).toContain('if (!this.touchLayout) return');
+    expect(gameSource).toContain('this.refreshHeldTouchAim()');
+    expect(gameSource).toContain('this.input.consumeReleaseAim()');
     expect(resolveOnlineMiningTick({
       buttonDown: true,
       targetKey: '2,64,0',
@@ -324,14 +333,19 @@ describe('sky palette', () => {
     expect(noon.zenith.b).toBeGreaterThan(noon.zenith.r);
     expect(dusk.rising).toBe(false);
     expect(dawn.rising).toBe(true);
-    expect(dusk.bandStrength).toBeGreaterThan(0.5);
-    expect(dawn.bandStrength).toBeGreaterThan(0.5);
+    expect(dusk.bandStrength).toBeGreaterThan(0.85);
+    expect(dawn.bandStrength).toBeGreaterThan(0.85);
+    expect(dusk.band.r).toBeGreaterThan(0.95);
+    expect(dusk.band.g).toBeLessThan(0.35);
+    expect(dusk.horizon.r - dusk.horizon.b).toBeGreaterThan(0.55);
+    expect(dusk.zenith.b).toBeGreaterThan(dusk.zenith.r);
     expect(dusk.horizon.r).toBeGreaterThan(dusk.horizon.b);
     expect(dawn.horizon.r).toBeGreaterThan(noon.horizon.r);
     expect(midnight.starOpacity).toBeGreaterThan(0.9);
     expect(midnight.zenith.b).toBeLessThan(0.15);
     expect(dusk.starOpacity).toBeLessThan(0.2);
     expect(noon.fog.b).toBeGreaterThan(midnight.fog.b);
+    expect(skySource).toContain('(dir.y - 0.035) * 8.6');
   });
 
   it('reads the clouds checkbox without treating a missing value as on', () => {
@@ -357,9 +371,21 @@ describe('sky palette', () => {
     expect(clouds.isEnabled).toBe(false);
     clouds.setEnabled(true);
     expect(clouds.object.visible).toBe(true);
-    clouds.update(12, -4, 3, 1);
-    expect(clouds.object.position.y).toBeGreaterThan(70);
+    clouds.update(12, 66, -4, 3, 0);
+    expect(clouds.object.position.y).toBe(cloudAltitude(66));
+    expect(clouds.object.position.y).toBeGreaterThan(110);
     expect(clouds.object.position.x).toBe(12);
+    expect(clouds.object.position.z).toBe(-4);
+    expect(cloudAltitude(200)).toBeGreaterThan(250);
+    const span = CLOUD_MASK_SIZE * CLOUD_WORLD_PER_TEXEL;
+    const still = cloudWorldSample(40, -15, 0, 0, 0, span);
+    const movedX = cloudWorldSample(40, -15, 120, 0, 0, span);
+    const movedZ = cloudWorldSample(40, -15, 0, 80, 0, span);
+    expect(movedX.u).toBeCloseTo(still.u, 5);
+    expect(movedX.v).toBeCloseTo(still.v, 5);
+    expect(movedZ.u).toBeCloseTo(still.u, 5);
+    expect(movedZ.v).toBeCloseTo(still.v, 5);
+    expect(cloudWorldSample(40, -15, 0, 0, 10, span).u).not.toBeCloseTo(still.u, 3);
     expect(gameSource).toContain('this.clouds.setEnabled(settings.clouds)');
     expect(gameSource).toContain('this.clouds.update(');
   });
@@ -383,9 +409,13 @@ describe('play info and hotbar layout', () => {
     expect(chat).toContain('user-select: text');
     expect(chat).toContain('-webkit-user-select: text');
     expect(style).toContain('[contenteditable="true"]');
-    expect(style).toContain('grid-template-areas:');
-    expect(style).toContain('"inventory ."');
-    expect(style).toContain('"crouch jump"');
+    expect(style).toContain('left: calc(50% + var(--hud-hotbar-half-width) + 20px)');
+    expect(style).toContain('--app-height');
+    expect(style).toContain('100dvh');
+    expect(style).not.toContain('"inventory ."');
+    expect(style).not.toContain('min-height: calc(100vh - 12px)');
+    expect(style).not.toContain('min-height: calc(100vh - 24px)');
+    expect(style).not.toContain('grid-template-columns: repeat(2, minmax(0, 1fr));\n    width: 100%');
     expect(style).not.toContain('position: fixed;\n    top: max(10px, env(safe-area-inset-top));\n    right: calc(max(10px, env(safe-area-inset-right)) + 84px)');
     expect(style).toContain('bottom: max(10px, env(safe-area-inset-bottom))');
     expect(inputSource).toContain("target.closest('input, textarea, [contenteditable=\"true\"]')");

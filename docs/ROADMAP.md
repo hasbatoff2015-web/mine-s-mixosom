@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-10-02: mobile HUD root cause, retarget, clouds, sunset
+
+- [x] `#app` tracks `visualViewport` / `100dvh` so real-phone bottom anchors are not the tall `100vh` layout viewport.
+- [x] Play-info is the bottom-left corner. The joystick is above it and shifted right. Inventory mirrors the offhand 20px gap on the right of the hotbar. Jump and crouch are bottom-right.
+- [x] In-game menus keep the desktop grid and type. Short screens only zoom `.mc-stage`.
+- [x] Hold starts at the current finger. Mining re-aims every tick. Bow release keeps the last touch aim until it is sampled.
+- [x] Cloud V offset subtracts camera Z. The layer stays above the world and the camera. Drift is 0.35 blocks/second.
+- [x] Sunset band is a tight saturated horizon stripe. Daylight and sunlight formulas are unchanged.
+- [ ] Owner QA on a real phone: browser bars shown and hidden, menus, mine-then-drag, bow release, run on X and on Z, sunrise and sunset.
+
 ## 2026-10-02: mobile hold aim, buttons, visible clouds
 
 - [x] `pointercancel` does not become a tap. A cancelled hold releases mining or a drawn use and does not press again.

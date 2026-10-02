@@ -22,9 +22,9 @@ uniform float uCloudTime;
 void main() {
   vec3 dir = normalize(vDir);
   float up = clamp(dir.y, 0.0, 1.0);
-  vec3 color = mix(uHorizon, uZenith, pow(up, 0.48));
-  float band = exp(-pow((dir.y - 0.02) * 3.4, 2.0)) * uBandStrength;
-  color = mix(color, uBand, clamp(band, 0.0, 0.82));
+  vec3 color = mix(uHorizon, uZenith, pow(up, 0.62));
+  float band = exp(-pow((dir.y - 0.035) * 8.6, 2.0)) * uBandStrength;
+  color = mix(color, uBand, clamp(band, 0.0, 0.98));
   if (uStarOpacity > 0.001 && dir.y > 0.12) {
     vec3 cell = floor(dir * 58.0);
     float n = fract(sin(dot(cell, vec3(127.1, 311.7, 74.7))) * 43758.5453);

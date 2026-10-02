@@ -2249,7 +2249,10 @@ export class Game {
     const online = session.online;
     if (!online) return;
     if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
-    if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
+    if (this.input.consumeUseReleased()) {
+      this.sendOnlineBowRelease(session);
+      this.input.consumeReleaseAim();
+    }
     if (this.input.consumeMiningReleased()) {
       noteMiningReleased(online);
       if (session.miningTarget && shouldSendBreakAbort({
@@ -4783,6 +4786,7 @@ export class Game {
         if (gameplayAllowed) {
           this.updateTargetAndActions();
           this.updateFoodUse();
+          if (!session.online) this.input.consumeReleaseAim();
         } else {
           this.input.consumeAttackPressed();
           this.input.consumeUsePressed();
@@ -4978,6 +4982,7 @@ export class Game {
   ): { yaw: number; pitch: number } | undefined {
     const rect = this.canvas.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return undefined;
+    this.camera.updateMatrixWorld();
     const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
     const ndcY = -(((clientY - rect.top) / rect.height) * 2 - 1);
     this.touchNdc.set(ndcX, ndcY, 0.5);
@@ -5120,8 +5125,14 @@ export class Game {
     return { remoteCloser, remoteTarget: remoteCloser ? remoteHit : undefined, attack, mobTarget, aim };
   }
 
+  /** While a finger is held, sample the block under that finger before the mining tick. */
+  private refreshHeldTouchAim(): void {
+    this.input.refreshHoldAim((clientX, clientY) => this.aimAtClientPoint(clientX, clientY));
+  }
+
   private updateTargetAndActions(): void {
     const session = this.session!;
+    this.refreshHeldTouchAim();
     const { remoteCloser, remoteTarget, attack, mobTarget, aim } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
@@ -6252,6 +6263,7 @@ export class Game {
       const position = this.interpolatedPlayerPosition.set(sampled.x, sampled.y, sampled.z);
       this.lastRenderAlpha = sampled.alpha;
       this.updatePlayerPresentation(session, position, now);
+      this.refreshHeldTouchAim();
       if (playerGameplayAllowed(this.lifecycle.state, this.ui.isBlockingOverlay())) {
         this.refreshLocalCrosshair(session);
         if (session.online) this.pollOnlineActionEdges(session);
@@ -6476,6 +6488,7 @@ export class Game {
     this.sky.update(skyVisual, this.skyCloudTime);
     this.clouds.update(
       this.camera.position.x,
+      this.camera.position.y,
       this.camera.position.z,
       this.skyCloudTime,
       skyVisual.starOpacity,

@@ -98,6 +98,8 @@ export class InputManager {
   private holdingWorldTouch = false;
   private activeHoldIntent: MobileTouchIntent | null = null;
   private interactionAim: { yaw: number; pitch: number } | null = null;
+  /** Kept through bow/use release until the sample that fires the shot. */
+  private releaseAimPending = false;
   private sneakButton?: HTMLButtonElement;
   private coarseMedia?: MediaQueryList;
   private sensitivity = 0.0022;
@@ -151,10 +153,25 @@ export class InputManager {
     return this.interactionAim;
   }
 
-  /** Drop a finished tap aim after attack/use has been sampled. Holds keep the ray. */
+  /** Drop a finished tap aim after attack/use has been sampled. Holds and an unsampled release keep the ray. */
   dismissTapAim(): void {
-    if (this.holdingWorldTouch || this.usePressed || this.using) return;
+    if (this.holdingWorldTouch || this.usePressed || this.using || this.releaseAimPending) return;
     this.interactionAim = null;
+  }
+
+  /** Last finger aim for an in-progress mine or held use. Does not press attack or use. */
+  refreshHoldAim(aimAt: (x: number, y: number) => { yaw: number; pitch: number } | undefined): void {
+    if (!this.holdingWorldTouch || !this.worldTouch) return;
+    if (!this.activeHoldIntent || !shouldFollowHoldAim(this.activeHoldIntent)) return;
+    const aim = aimAt(this.worldTouch.x, this.worldTouch.y);
+    if (aim) this.interactionAim = aim;
+  }
+
+  /** Call after the release sample. A stale touch aim must not stick to the next action. */
+  consumeReleaseAim(): void {
+    if (!this.releaseAimPending) return;
+    this.releaseAimPending = false;
+    if (!this.holdingWorldTouch && !this.using && !this.usePressed) this.interactionAim = null;
   }
 
   movement(): MoveInput {
@@ -223,6 +240,7 @@ export class InputManager {
     this.useReleased = false;
     this.miningReleased = false;
     this.touchJump = false;
+    this.releaseAimPending = false;
     this.interactionAim = null;
     this.holdingWorldTouch = false;
   }
@@ -424,6 +442,7 @@ export class InputManager {
     const app = document.querySelector('#app');
     app?.append(look, joystick, actions);
     const blockGameplayCallout = (event: Event) => {
+      if (!this.touchLayout) return;
       const target = event.target;
       if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]')) return;
       event.preventDefault();
@@ -475,6 +494,7 @@ export class InputManager {
     look.addEventListener('pointerdown', (event) => {
       if (!this.callbacks.canCapture() || !this.touchLayout) return;
       if (this.worldPointer !== undefined) return;
+      event.preventDefault();
       this.worldPointer = event.pointerId;
       this.worldTouch = beginTouchTrack(event.clientX, event.clientY, performance.now());
       look.setPointerCapture(event.pointerId);
@@ -482,14 +502,18 @@ export class InputManager {
     });
     look.addEventListener('pointermove', (event) => {
       if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      event.preventDefault();
       this.advanceWorldTouch(event.clientX, event.clientY, performance.now());
     });
     look.addEventListener('pointerup', (event) => {
       if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      event.preventDefault();
+      this.worldTouch = { ...this.worldTouch, x: event.clientX, y: event.clientY };
       this.finishWorldTouch(performance.now());
     });
     look.addEventListener('pointercancel', (event) => {
       if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.worldTouch = { ...this.worldTouch, x: event.clientX, y: event.clientY };
       this.cancelWorldTouchGesture();
     });
 
@@ -558,7 +582,7 @@ export class InputManager {
 
   private beginWorldHold(track: TouchTrack): void {
     this.holdingWorldTouch = true;
-    const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'hold');
+    const decision = this.callbacks.classifyWorldTouch?.(track.x, track.y, 'hold');
     this.activeHoldIntent = decision?.intent ?? 'none';
     this.applyWorldDecision(decision, 'hold');
   }
@@ -569,6 +593,7 @@ export class InputManager {
     this.worldPointer = undefined;
     this.worldTouch = undefined;
     if (!track) return;
+    if (track.phase === 'hold') this.followHoldAim(track.x, track.y);
     this.completePointerEnd(track, resolvePointerEnd(track, 'up', now));
   }
 
@@ -581,6 +606,7 @@ export class InputManager {
     if (!track) return;
     const kind = resolvePointerEnd(track, 'cancel', performance.now());
     if (kind === 'hold-end') {
+      this.followHoldAim(track.x, track.y);
       this.endWorldHold();
       return;
     }
@@ -620,9 +646,12 @@ export class InputManager {
     this.activeHoldIntent = null;
     if (this.mining) this.miningReleased = true;
     this.mining = false;
-    if (this.using) this.useReleased = true;
+    if (this.using) {
+      this.useReleased = true;
+      this.releaseAimPending = true;
+    }
     this.using = false;
-    this.interactionAim = null;
+    if (!this.releaseAimPending) this.interactionAim = null;
   }
 
   private cancelWorldTouch(): void {
