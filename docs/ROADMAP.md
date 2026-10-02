@@ -1,13 +1,25 @@
 # Roadmap
 
+## 2026-10-02: mobile hold aim, buttons, visible clouds
+
+- [x] `pointercancel` does not become a tap. A cancelled hold releases mining or a drawn use and does not press again.
+- [x] A mining hold follows the finger. The camera stays put. Existing target-key mining retargets.
+- [x] Bow, food and milk hold as `use-hold` over a block or a player. Milk is not a tap-use tool. Placement does not require a breakable face.
+- [x] Touch crouch also sets creative `descend`.
+- [x] Jump, crouch and inventory sit in the bottom-right cluster. The top-right stays `#hud-corner`.
+- [x] Gameplay chrome does not select text. Chat and text fields still do.
+- [x] Play-info is bottom-left on desktop, above the stick on mobile, with coordinates on one line.
+- [x] Clouds are one plane. The sky fragment no longer draws them. The checkbox hides the plane.
+- [ ] Owner manual QA on a real phone: hold-mine then slide to the next block, bow/food hold, creative down, long-press callout, browser-bar resize.
+
 ## 2026-10-02: mobile controls, sky gradient, play-info HUD
 
 - [x] Touch chrome only for `(pointer: coarse)`. Horizontal hotbar via flex nowrap and a definite `--hotbar-slot`.
 - [x] Jump is momentary, crouch toggles and highlights, world tap/hold/swipe share the existing attack, use and mine intents.
 - [x] Mobile auto-jump arms the next `jump` bit only. Creative flight is unchanged.
-- [x] One sky-dome draw: day, dawn, dusk, night, stars after sunset. Clouds are the same shader and have a settings toggle.
+- [x] One sky-dome draw: day, dawn, dusk, night, stars after sunset. Clouds moved to a separate plane in the follow-up above.
 - [x] Compact online + floored coordinate HUD on desktop and mobile.
-- [ ] Owner manual QA on a real phone: landscape tap/hold/swipe, hotbar after browser-chrome resize, sky at dawn and night.
+- [ ] Owner manual QA on a real phone remains open; see the follow-up checklist.
 
 ## 2026-09-30: add-emitter fairness during edits
 

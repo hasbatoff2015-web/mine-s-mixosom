@@ -1,5 +1,18 @@
 # Состояние проекта
 
+## Последний проход: mobile hold aim, кнопки, облака — 2026-10-02
+
+- `pointercancel` больше не заканчивается как tap. Отмена pending/swipe не жмёт attack/use. Отмена hold снимает mining/use и ставит release edge только если кнопка реально была зажата. `blur` / `visibilitychange` по-прежнему идут через `releaseActions()` и release edge не выдумывают.
+- Hold копания и held-use следит за пальцем: камера этим пальцем не крутится, `interactionAim` пересчитывается из текущего `clientX/clientY`. Старый ray после сдвига пальца не остаётся. Ретаргет — существующий `targetKey` / `resolveOnlineMiningTick`, без server shortcut.
+- Bow, еда и молоко на hold всегда `use-hold`, даже над блоком или игроком. Tap по игроку с луком остаётся одним ударом. Молоко убрано из tap-use. Поставить блок можно и на неразрушаемую грань; копать её нельзя.
+- Touch crouch в полёте даёт `descend`, как Shift. На земле это по-прежнему toggle.
+- Кнопки: jump справа над хотбаром, crouch левее, инвентарь выше crouch. `#hud-corner` на coarse — ряд в правом верхнем углу. Короткий landscape уменьшает кнопки, не прячет. `--hotbar-slot` продублирован на `#app`, потому что touch controls не наследники `#hud`.
+- Выделение текста и callout на gameplay surface выключены. Чат, textarea и contenteditable остаются `user-select: text`.
+- `#play-info` на desktop в левом нижнем углу. На телефоне — над стиком. Строка координат одна: `X: n  Y: n  Z: n`, `Math.floor`.
+- Облака — одна плоскость `CloudLayer` на Y=84, маска один раз, сдвиг UV. Шейдер неба больше не рисует облачный шум. Ночью слой темнеет и не пропадает. Чекбокс «Облака» скрывает mesh.
+- Touch layout по-прежнему только `(pointer: coarse)`, одна константа `TOUCH_LAYOUT_QUERY` для CSS, `InputManager` и `isCoarsePointerMedia`. Узкий desktop со мышью стик не получает.
+- Подробности: `docs/reports/2026-10-02_mobile-hold-aim-clouds.md`.
+
 ## Последний проход: mobile controls, sky gradient, play-info HUD — 2026-10-02
 
 - Сенсорный layout включается только при `(pointer: coarse)`. Узкое окно desktop больше не показывает стик и кнопки. Хотбар — `flex-direction: row; flex-wrap: nowrap` и явный `--hotbar-slot`. Вертикальный ряд был из-за невалидного `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`: число и `vw` в одном `calc` обнуляли `grid-template-columns: repeat(9, ...)`, и слоты с `aspect-ratio: 1` вставали в один столбец.

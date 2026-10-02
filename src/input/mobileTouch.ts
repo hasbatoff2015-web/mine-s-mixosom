@@ -20,10 +20,14 @@ export interface MobileTouchFacts {
   /** Pet or rideable cart. Maps to the existing use intent, not a wider hit. */
   readonly useEntity: boolean;
   readonly interactiveBlock: boolean;
+  /** Any selected block, including bedrock and other unbreakable surfaces. */
+  readonly hasBlockTarget: boolean;
   readonly breakableBlock: boolean;
-  /** Block item, hoe, bucket, flint, minecart — a single use, not sustained mining. */
+  /** Block item, hoe, empty bucket, flint, minecart — one use. Milk is not in this set. */
   readonly tapUseItem: boolean;
-  /** Food, bow, or sword. Sustained only when the finger is not on a breakable block. */
+  /** Bow or food, including milk. Hold draws or eats even when a block is under the finger. */
+  readonly priorityHeldUse: boolean;
+  /** Sword block on empty space. Checked after a breakable block so a sword can still mine. */
   readonly continuousUse: boolean;
 }
 
@@ -62,17 +66,26 @@ export function isTapUseItem(itemId: string | undefined): boolean {
   if (item.placesBlockId !== undefined) return true;
   if (item.kind === 'tool' && item.tool === 'hoe') return true;
   return itemId === ItemId.Bucket
-    || itemId === ItemId.MilkBucket
     || itemId === ItemId.FlintAndSteel
     || itemId === ItemId.Minecart;
 }
 
-export function isContinuousUseItem(itemId: string | undefined): boolean {
+/** Bow draw and food/milk. These win a hold over mining and over a melee tap-target. */
+export function isPriorityHeldUseItem(itemId: string | undefined): boolean {
   if (!itemId) return false;
   if (itemId === ItemId.Bow) return true;
-  const item = tryGetItemDefinition(itemId);
-  if (!item) return false;
-  return item.kind === 'food' || item.kind === 'weapon';
+  return tryGetItemDefinition(itemId)?.kind === 'food';
+}
+
+export function isContinuousUseItem(itemId: string | undefined): boolean {
+  if (isPriorityHeldUseItem(itemId)) return true;
+  const item = itemId ? tryGetItemDefinition(itemId) : undefined;
+  return item?.kind === 'weapon';
+}
+
+/** Mining and a drawn bow keep following the finger. The camera stays put. */
+export function shouldFollowHoldAim(intent: MobileTouchIntent): boolean {
+  return intent === 'mine' || intent === 'use-hold';
 }
 
 /**
@@ -84,10 +97,11 @@ export function resolveMobileTouchIntent(facts: MobileTouchFacts): MobileTouchIn
     if (facts.attackEntity) return 'attack';
     if (facts.useEntity) return 'use';
     if (facts.interactiveBlock) return 'use';
-    if (facts.breakableBlock && facts.tapUseItem) return 'use';
+    if (facts.hasBlockTarget && facts.tapUseItem) return 'use';
     if (facts.breakableBlock) return 'attack';
     return 'none';
   }
+  if (facts.priorityHeldUse) return 'use-hold';
   if (facts.attackEntity) return 'attack';
   if (facts.useEntity) return 'use';
   if (facts.interactiveBlock) return 'use';

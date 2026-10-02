@@ -2,17 +2,25 @@
 
 ## Mobile touch, sky dome, play-info — 2026-10-02
 
-Touch layout follows `matchMedia('(pointer: coarse)')` in `InputManager` and the same media query in CSS. A narrow desktop window does not mount the stick or the action buttons. Portrait coarse still shows the existing rotate overlay; there is no portrait gameplay layout.
+Touch layout follows `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`) in `InputManager`, `isCoarsePointerMedia`, and the same media query in CSS. `(any-pointer: coarse)` and `navigator.maxTouchPoints` also match a laptop whose touchscreen is secondary, so those stay desktop. Viewport width is not part of the query. Portrait coarse still shows the existing rotate overlay; there is no portrait gameplay layout.
 
-`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length (`50px` on desktop, `clamp(30px, 8vw, 42px)` on coarse, `30px` under 430px landscape). Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
+`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length (`50px` on desktop, `clamp(30px, 8vw, 42px)` on coarse, `30px` under 430px landscape). The same variable is set on `#app`, because `#touch-actions` is a sibling of `#hud` and would not inherit it. Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
 
-World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`. The resulting intent is still `attackPressed` / `usePressed` / `mining` plus `interactionLook()`, which `sampleLocalAim` prefers over the camera. Camera yaw on the input command is unchanged. Reach stays `PLAYER_REACH` (5) and melee 3. The server still validates the eye ray.
+World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`, so that finger does not rotate the camera. `pointermove` during a mine or `use-hold` still updates `interactionAim` from the current screen point via `aimAtClientPoint`. `sampleLocalAim` prefers that aim over the camera. Reach stays `PLAYER_REACH` (5) and melee 3. Singleplayer resets mining progress when `targetKey` changes. Online uses `resolveOnlineMiningTick` (`start` or `abandon-start`). The server still validates the eye ray.
+
+`pointerup` uses `finishWorldTouch`. `pointercancel` uses `cancelWorldTouchGesture`: a pending or swipe cancel produces no tap, and a hold cancel ends mining/use with a release edge only if that flag was actually on. `releaseActions()` (blur, hidden tab) still clears the flags without inventing that edge.
+
+Hold priority is bow and food (including milk) first, then attack, entity use, interactive block, breakable mine, then a sword's `use-hold`. A tap still attacks a player. Placement is `hasBlockTarget && tapUseItem`, including an unbreakable face. Mining requires `breakableBlock`.
+
+Touch crouch toggles `touchSneak` and also sets `movement.descend`. `PlayerController` reads `descend` only inside `updateFlyVelocity`, which runs while `isFlying`. On the ground the same flag stays the crouch toggle.
+
+On coarse landscape, `#touch-actions` is a grid: inventory above crouch, jump to the right of crouch, above the hotbar. `#hud-corner` is a row in the top-right. Short landscape (`max-height: 430px` and `360px`) shrinks the buttons and does not hide them. Gameplay chrome sets `user-select: none` and `-webkit-touch-callout: none`. `#chat-input`, text fields and `[contenteditable="true"]` set `user-select: text`. `selectstart` / `contextmenu` / `dragstart` on `#app` skip those fields.
 
 Mobile auto-jump calls `armAutoJump` for the next `movement()` sample only, and that sample is cleared at the start of the following tick. It is not a new protocol field and it is not armed in creative.
 
-`SkyDome` is one inside-out sphere, `depthTest` false, `renderOrder` -1000. `skySample` colors the zenith, horizon and sunset band. `daylightFactor`, ambient and sunlight intensities are the previous formulas. Stars use `starOpacity`, which is 0 at noon. Clouds are a second hash in that fragment, gated by `uClouds` and the settings checkbox. Default is on.
+`SkyDome` is one inside-out sphere, `depthTest` false, `renderOrder` -1000. `skySample` colors the zenith, horizon and sunset band. `daylightFactor`, ambient and sunlight intensities are the previous formulas. Stars use `starOpacity`, which is 0 at noon. Clouds are a separate `CloudLayer`: one 720×720 plane at world Y=84, a 96×96 nearest-filter mask built once, and a UV offset. The plane recenters on camera X/Z; the offset includes that position so the pattern stays world-locked and drifts with time. Night darkens the color from `starOpacity` and does not hide the mesh. The settings checkbox calls `setEnabled`, which sets `object.visible`. Default is on. One extra draw when visible.
 
-`#play-info` prints `formatPlayInfo`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`.
+`#play-info` prints `formatPlayInfo`: `Игроков: N` and one coordinate line `X: n  Y: n  Z: n`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`. Desktop anchors it to the viewport's bottom-left. Coarse places it above the joystick.
 
 ## Golden tools — 2026-09-24
 

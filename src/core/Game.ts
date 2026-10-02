@@ -117,16 +117,19 @@ import {
   MOBILE_AUTO_JUMP_MIN_WISH,
   isContinuousUseItem,
   isFullHeightObstacle,
+  isPriorityHeldUseItem,
   isTapUseItem,
   resolveMobileTouchIntent,
   shouldArmMobileAutoJump,
   type MobileTouchDecision,
 } from '../input/mobileTouch';
+import { CloudLayer } from '../rendering/CloudLayer';
 import { SkyDome } from '../rendering/SkyDome';
 import { skySample } from '../rendering/skyPalette';
 import { formatPlayInfo } from '../ui/playInfoHud';
 import { desiredHorizontalWish } from '../player/ladderMotion';
 import {
+  isCoarsePointerMedia,
   shouldOpenPauseOnUnlock,
   shouldShowPointerLockFallback,
   type PointerUnlockReason,
@@ -575,7 +578,7 @@ interface RuntimeSettings {
   clouds: boolean;
 }
 
-const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+const isCoarsePointer = isCoarsePointerMedia;
 
 function raycastRemotePlayers(
   remotes: Map<string, RemotePlayerView>,
@@ -632,6 +635,7 @@ export class Game {
   private lastLocalAim: LocalAim | undefined;
   private readonly currentSkyColor = new THREE.Color(0x7fb6d5);
   private readonly sky = new SkyDome();
+  private readonly clouds = new CloudLayer();
   private skyCloudTime = 0;
   private readonly touchAimOrigin = new Vec3();
   private readonly touchAimDirection = new Vec3();
@@ -776,6 +780,7 @@ export class Game {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
     this.scene.background = this.currentSkyColor;
     this.scene.add(this.sky.object);
+    this.scene.add(this.clouds.object);
     this.sky.update(skySample(6_000), 0);
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
     this.ambient.intensity = 0.22;
@@ -806,6 +811,7 @@ export class Game {
       },
       isChatOpen: () => this.ui.isChatOpen(),
       classifyWorldTouch: (clientX, clientY, phase) => this.classifyWorldTouch(clientX, clientY, phase),
+      aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY),
     });
     this.lifecycle.setBlurContext(() => ({
       pointerLocked: this.input.isPointerLocked(),
@@ -4283,7 +4289,7 @@ export class Game {
       this.input.setSensitivity(settings.sensitivity);
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
-      this.sky.setClouds(settings.clouds);
+      this.clouds.setEnabled(settings.clouds);
       if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
     }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
@@ -4933,8 +4939,9 @@ export class Game {
       (blockInFront && blockHit && isUseTargetBlock(blockHit.block))
       || liquidUse,
     );
+    const hasBlockTarget = Boolean(blockInFront && blockHit);
     const breakableBlock = Boolean(
-      blockInFront
+      hasBlockTarget
       && !interactiveBlock
       && definition
       && definition.breakable !== false
@@ -4948,11 +4955,19 @@ export class Game {
         attackEntity,
         useEntity,
         interactiveBlock,
+        hasBlockTarget,
         breakableBlock,
         tapUseItem: isTapUseItem(itemId),
+        priorityHeldUse: isPriorityHeldUseItem(itemId),
         continuousUse: isContinuousUseItem(itemId),
       }),
     };
+  }
+
+  private aimAtClientPoint(clientX: number, clientY: number): { yaw: number; pitch: number } | undefined {
+    const session = this.session;
+    if (!session?.player || this.lifecycle.state !== 'PLAYING' || this.ui.isBlockingOverlay()) return undefined;
+    return this.lookFromClientPoint(session, clientX, clientY);
   }
 
   /** Screen point → eye look. The camera ray only picks the point; reach stays the eye ray. */
@@ -6459,6 +6474,12 @@ export class Game {
     const skyVisual = skySample(time);
     const sky = this.currentSkyColor.setRGB(skyVisual.fog.r, skyVisual.fog.g, skyVisual.fog.b);
     this.sky.update(skyVisual, this.skyCloudTime);
+    this.clouds.update(
+      this.camera.position.x,
+      this.camera.position.z,
+      this.skyCloudTime,
+      skyVisual.starOpacity,
+    );
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
     this.ambient.intensity = 0.14 + daylight * 0.32;
     this.sunlight.intensity = 0.18 + daylight * 1.55;

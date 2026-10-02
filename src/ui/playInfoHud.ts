@@ -6,5 +6,5 @@ export function floorCoord(value: number): number {
 
 export function formatPlayInfo(online: number, x: number, y: number, z: number): string {
   const count = Number.isFinite(online) ? Math.max(0, Math.floor(online)) : 0;
-  return `Игроков: ${count}\nX: ${floorCoord(x)}\nY: ${floorCoord(y)}\nZ: ${floorCoord(z)}`;
+  return `Игроков: ${count}\nX: ${floorCoord(x)}  Y: ${floorCoord(y)}  Z: ${floorCoord(z)}`;
 }

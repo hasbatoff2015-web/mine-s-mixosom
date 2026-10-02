@@ -1,5 +1,7 @@
 # 2026-10-02 — mobile controls, sky gradient, play-info HUD
 
+Follow-up (hold aim, pointercancel, button cluster, cloud plane): `docs/reports/2026-10-02_mobile-hold-aim-clouds.md`. Sentences below that say a hold ignores the finger, or that clouds live in the sky fragment, describe the first commit only.
+
 ## Goal
 
 Make touch play usable without changing desktop controls: a horizontal hotbar, fewer buttons, tap/hold/swipe that become the existing attack/use/mine intents, a cheap day-night sky, and a small online + coordinate readout.

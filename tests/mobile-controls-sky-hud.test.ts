@@ -5,28 +5,54 @@ import {
   MOBILE_AUTO_JUMP_STEP,
   isContinuousUseItem,
   isFullHeightObstacle,
+  isPriorityHeldUseItem,
   isTapUseItem,
   readCloudSetting,
   resolveMobileTouchIntent,
   shouldArmMobileAutoJump,
+  shouldFollowHoldAim,
   sprintFromStick,
   toggleCrouch,
+  type MobileTouchFacts,
 } from '../src/input/mobileTouch';
+import { TOUCH_LAYOUT_QUERY } from '../src/input/touchLayout';
 import {
   TOUCH_HOLD_MS,
   TOUCH_SWIPE_THRESHOLD_PX,
   advanceTouchTrack,
   beginTouchTrack,
   finishTouchTrack,
+  moveHeldTouch,
+  resolvePointerEnd,
   swipeLookDelta,
 } from '../src/input/touchGesture';
 import { lookFromDirection, viewDirectionFromLook } from '../src/player/localAim';
+import { resolveOnlineMiningTick } from '../src/net/onlineMining';
+import { CloudLayer } from '../src/rendering/CloudLayer';
+import { cloudCoverage, cloudMaskAlpha } from '../src/rendering/cloudMask';
 import { skySample } from '../src/rendering/skyPalette';
 import { floorCoord, formatPlayInfo } from '../src/ui/playInfoHud';
 
 const style = readFileSync('src/style.css', 'utf8');
 const inputSource = readFileSync('src/input/InputManager.ts', 'utf8');
+const gameSource = readFileSync('src/core/Game.ts', 'utf8');
+const playerSource = readFileSync('src/player/PlayerController.ts', 'utf8');
+const skySource = readFileSync('src/rendering/SkyDome.ts', 'utf8');
 const gameUi = readFileSync('src/ui/GameUI.ts', 'utf8');
+
+function facts(partial: Partial<MobileTouchFacts> & Pick<MobileTouchFacts, 'phase'>): MobileTouchFacts {
+  return {
+    attackEntity: false,
+    useEntity: false,
+    interactiveBlock: false,
+    hasBlockTarget: false,
+    breakableBlock: false,
+    tapUseItem: false,
+    priorityHeldUse: false,
+    continuousUse: false,
+    ...partial,
+  };
+}
 
 const idleProbe = {
   touchLayout: true,
@@ -73,87 +99,107 @@ describe('touch classification', () => {
   });
 
   it('maps tap and hold onto the same attack, use and mine intents', () => {
-    expect(resolveMobileTouchIntent({
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
       attackEntity: true,
-      useEntity: false,
-      interactiveBlock: false,
       breakableBlock: true,
-      tapUseItem: false,
-      continuousUse: false,
-    })).toBe('attack');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('attack');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
-      attackEntity: false,
       useEntity: true,
-      interactiveBlock: false,
       breakableBlock: true,
       tapUseItem: true,
       continuousUse: true,
-    })).toBe('use');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('use');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
-      attackEntity: false,
-      useEntity: false,
       interactiveBlock: true,
       breakableBlock: true,
-      tapUseItem: false,
-      continuousUse: false,
-    })).toBe('use');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('use');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
-      attackEntity: false,
-      useEntity: false,
-      interactiveBlock: false,
+      hasBlockTarget: true,
       breakableBlock: true,
       tapUseItem: true,
-      continuousUse: false,
-    })).toBe('use');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('use');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
-      attackEntity: false,
-      useEntity: false,
-      interactiveBlock: false,
       breakableBlock: true,
-      tapUseItem: false,
       continuousUse: true,
-    })).toBe('attack');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('attack');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'hold',
-      attackEntity: false,
-      useEntity: false,
-      interactiveBlock: false,
       breakableBlock: true,
       tapUseItem: true,
       continuousUse: true,
-    })).toBe('mine');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('mine');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'hold',
-      attackEntity: false,
-      useEntity: false,
-      interactiveBlock: false,
-      breakableBlock: false,
-      tapUseItem: false,
       continuousUse: true,
-    })).toBe('use-hold');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('use-hold');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'hold',
       attackEntity: true,
-      useEntity: false,
-      interactiveBlock: false,
-      breakableBlock: false,
-      tapUseItem: false,
       continuousUse: true,
-    })).toBe('attack');
-    expect(resolveMobileTouchIntent({
+    }))).toBe('attack');
+    expect(resolveMobileTouchIntent(facts({
       phase: 'tap',
-      attackEntity: false,
-      useEntity: false,
-      interactiveBlock: false,
-      breakableBlock: false,
-      tapUseItem: false,
       continuousUse: true,
-    })).toBe('none');
+    }))).toBe('none');
+  });
+
+  it('does not turn pointercancel into a tap', () => {
+    const pending = beginTouchTrack(20, 30, 0);
+    expect(resolvePointerEnd(pending, 'cancel', 40)).toBe('ignore');
+    expect(resolvePointerEnd(pending, 'up', 40)).toBe('tap');
+    const swiped = advanceTouchTrack(pending, 20 + TOUCH_SWIPE_THRESHOLD_PX, 30, 50);
+    expect(resolvePointerEnd(swiped, 'cancel', 80)).toBe('ignore');
+    expect(resolvePointerEnd(swiped, 'up', 80)).toBe('swipe');
+    const held = advanceTouchTrack(pending, 22, 31, TOUCH_HOLD_MS);
+    expect(resolvePointerEnd(held, 'cancel', TOUCH_HOLD_MS + 10)).toBe('hold-end');
+    expect(inputSource).toContain('this.finishWorldTouch(performance.now())');
+    expect(inputSource).toContain('this.cancelWorldTouchGesture()');
+    expect(inputSource).toContain("resolvePointerEnd(track, 'cancel'");
+    expect(inputSource).toContain('if (this.mining) this.miningReleased = true');
+    expect(inputSource).toContain('if (this.using) this.useReleased = true');
+    const release = inputSource.slice(inputSource.indexOf('releaseActions()'), inputSource.indexOf('clearHeldKeys()'));
+    expect(release).toContain('this.miningReleased = false');
+    expect(release).toContain('this.useReleased = false');
+  });
+
+  it('keeps a mining hold on the finger without rotating the camera', () => {
+    const started = beginTouchTrack(100, 80, 0);
+    const held = advanceTouchTrack(started, 100, 80, TOUCH_HOLD_MS);
+    const moved = moveHeldTouch(held, 180, 84, TOUCH_HOLD_MS + 40);
+    expect(held.phase).toBe('hold');
+    expect(moved.track.phase).toBe('hold');
+    expect(moved.cameraDelta).toBeUndefined();
+    expect(moved.aimX).toBe(180);
+    expect(moved.aimY).toBe(84);
+    expect(moved.track.x).toBe(180);
+    expect(shouldFollowHoldAim('mine')).toBe(true);
+    expect(shouldFollowHoldAim('use-hold')).toBe(true);
+    expect(shouldFollowHoldAim('attack')).toBe(false);
+    expect(shouldFollowHoldAim('use')).toBe(false);
+    const follow = inputSource.slice(inputSource.indexOf('private followHoldAim'), inputSource.indexOf('private beginWorldHold'));
+    expect(follow).toContain('aimAtClientPoint');
+    expect(follow).toContain('this.interactionAim = aim');
+    expect(follow).not.toContain('attackPressed');
+    expect(follow).not.toContain('usePressed');
+    expect(gameSource).toContain('aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY)');
+    expect(gameSource).toContain('if (session.miningTarget !== targetKey)');
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '2,64,0',
+      miningTarget: '1,64,0',
+    })).toEqual({ type: 'start', targetKey: '2,64,0' });
+    expect(resolveOnlineMiningTick({
+      buttonDown: true,
+      targetKey: '2,64,0',
+      miningTarget: '1,64,0',
+      finishKey: '1,64,0',
+      clientWaitFinish: false,
+    })).toEqual({ type: 'abandon-start', targetKey: '2,64,0' });
   });
 });
 
@@ -196,9 +242,74 @@ describe('mobile movement helpers', () => {
     expect(isTapUseItem(ItemId.WoodenHoe)).toBe(true);
     expect(isTapUseItem(ItemId.Bucket)).toBe(true);
     expect(isTapUseItem(ItemId.Bow)).toBe(false);
+    expect(isTapUseItem(ItemId.MilkBucket)).toBe(false);
+    expect(isPriorityHeldUseItem(ItemId.Bow)).toBe(true);
+    expect(isPriorityHeldUseItem(ItemId.Bread)).toBe(true);
+    expect(isPriorityHeldUseItem(ItemId.MilkBucket)).toBe(true);
+    expect(isPriorityHeldUseItem(ItemId.WoodenPickaxe)).toBe(false);
     expect(isContinuousUseItem(ItemId.Bow)).toBe(true);
     expect(isContinuousUseItem(ItemId.Bread)).toBe(true);
+    expect(isContinuousUseItem(ItemId.MilkBucket)).toBe(true);
     expect(isContinuousUseItem(ItemId.Stick)).toBe(false);
+  });
+
+  it('draws a bow and eats on hold even when a block or player is under the finger', () => {
+    for (const item of [ItemId.Bow, ItemId.Bread, ItemId.MilkBucket]) {
+      expect(isPriorityHeldUseItem(item)).toBe(true);
+      expect(resolveMobileTouchIntent(facts({
+        phase: 'hold',
+        priorityHeldUse: true,
+        attackEntity: true,
+        hasBlockTarget: true,
+        breakableBlock: true,
+      }))).toBe('use-hold');
+      expect(resolveMobileTouchIntent(facts({
+        phase: 'hold',
+        priorityHeldUse: true,
+      }))).toBe('use-hold');
+    }
+    expect(resolveMobileTouchIntent(facts({
+      phase: 'tap',
+      attackEntity: true,
+      priorityHeldUse: true,
+      hasBlockTarget: true,
+      breakableBlock: true,
+    }))).toBe('attack');
+    expect(resolveMobileTouchIntent(facts({
+      phase: 'hold',
+      breakableBlock: true,
+      hasBlockTarget: true,
+    }))).toBe('mine');
+  });
+
+  it('places on any block face and refuses to mine an unbreakable surface', () => {
+    expect(isTapUseItem('dirt')).toBe(true);
+    expect(resolveMobileTouchIntent(facts({
+      phase: 'tap',
+      hasBlockTarget: true,
+      breakableBlock: true,
+      tapUseItem: true,
+    }))).toBe('use');
+    expect(resolveMobileTouchIntent(facts({
+      phase: 'tap',
+      hasBlockTarget: true,
+      breakableBlock: false,
+      tapUseItem: true,
+    }))).toBe('use');
+    expect(resolveMobileTouchIntent(facts({
+      phase: 'hold',
+      hasBlockTarget: true,
+      breakableBlock: false,
+    }))).toBe('none');
+  });
+
+  it('sends touch crouch as creative descend and keeps jump momentary', () => {
+    expect(inputSource).toContain('descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak');
+    expect(playerSource).toContain('if (this.isFlying) this.updateFlyVelocity(movement, stepDt)');
+    const fly = playerSource.slice(playerSource.indexOf('private updateFlyVelocity'), playerSource.indexOf('private updateStance'));
+    expect(fly).toContain('if (movement.descend) desiredY -= CREATIVE_VERTICAL_SPEED');
+    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = true');
+    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = false');
   });
 });
 
@@ -230,6 +341,28 @@ describe('sky palette', () => {
     expect(readCloudSetting(null)).toBe(false);
     expect(readCloudSetting('off')).toBe(false);
   });
+
+  it('draws clouds on one plane and hides that plane when the checkbox is off', () => {
+    const alpha = cloudMaskAlpha();
+    const coverage = cloudCoverage(alpha);
+    expect(coverage).toBeGreaterThan(0.04);
+    expect(coverage).toBeLessThan(0.28);
+    expect(skySource).not.toContain('uClouds');
+    expect(skySource).toContain('uStarOpacity');
+    const clouds = new CloudLayer();
+    expect(clouds.object.visible).toBe(true);
+    expect(clouds.isEnabled).toBe(true);
+    clouds.setEnabled(false);
+    expect(clouds.object.visible).toBe(false);
+    expect(clouds.isEnabled).toBe(false);
+    clouds.setEnabled(true);
+    expect(clouds.object.visible).toBe(true);
+    clouds.update(12, -4, 3, 1);
+    expect(clouds.object.position.y).toBeGreaterThan(70);
+    expect(clouds.object.position.x).toBe(12);
+    expect(gameSource).toContain('this.clouds.setEnabled(settings.clouds)');
+    expect(gameSource).toContain('this.clouds.update(');
+  });
 });
 
 describe('play info and hotbar layout', () => {
@@ -237,7 +370,30 @@ describe('play info and hotbar layout', () => {
     expect(floorCoord(4.9)).toBe(4);
     expect(floorCoord(-1.2)).toBe(-2);
     expect(floorCoord(Number.NaN)).toBe(0);
-    expect(formatPlayInfo(3, 10.8, 64.2, -3.1)).toBe('Игроков: 3\nX: 10\nY: 64\nZ: -4');
+    expect(formatPlayInfo(3, 10.8, 64.2, -3.1)).toBe('Игроков: 3\nX: 10  Y: 64  Z: -4');
+    expect(formatPlayInfo(1, -1.2, 68, 25.9)).toBe('Игроков: 1\nX: -2  Y: 68  Z: 25');
+  });
+
+  it('keeps gameplay chrome from selecting and leaves chat and text fields editable', () => {
+    expect(style).toContain('-webkit-user-select: none');
+    expect(style).toContain('-webkit-touch-callout: none');
+    expect(style).toContain('-webkit-user-drag: none');
+    expect(style).toContain('#chat-input');
+    const chat = style.slice(style.indexOf('#chat-input {'), style.indexOf('#chat-input:disabled'));
+    expect(chat).toContain('user-select: text');
+    expect(chat).toContain('-webkit-user-select: text');
+    expect(style).toContain('[contenteditable="true"]');
+    expect(style).toContain('grid-template-areas:');
+    expect(style).toContain('"inventory ."');
+    expect(style).toContain('"crouch jump"');
+    expect(style).not.toContain('position: fixed;\n    top: max(10px, env(safe-area-inset-top));\n    right: calc(max(10px, env(safe-area-inset-right)) + 84px)');
+    expect(style).toContain('bottom: max(10px, env(safe-area-inset-bottom))');
+    expect(inputSource).toContain("target.closest('input, textarea, [contenteditable=\"true\"]')");
+    expect(inputSource).toContain("addEventListener('selectstart'");
+    expect(TOUCH_LAYOUT_QUERY).toBe('(pointer: coarse)');
+    expect(style).toContain(`@media ${TOUCH_LAYOUT_QUERY}`);
+    expect(inputSource).toContain('TOUCH_LAYOUT_QUERY');
+    expect(style).not.toContain('@media (max-width: 900px)');
   });
 
   it('locks the hotbar to a horizontal row and shows touch controls only for a coarse pointer', () => {

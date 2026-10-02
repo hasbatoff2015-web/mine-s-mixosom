@@ -26,7 +26,9 @@ body,
   overflow: hidden;
   overscroll-behavior: none;
   touch-action: none;
+  -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 
 body {
@@ -58,6 +60,10 @@ button {
   width: 100%;
   height: 100%;
   outline: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
 }
 
 #ui-root {
@@ -213,8 +219,17 @@ button {
   color: #fff;
   background: rgba(0, 0, 0, 0.26);
   outline: none;
+  -webkit-user-select: text;
   user-select: text;
+  -webkit-touch-callout: default;
   touch-action: manipulation;
+}
+
+textarea,
+[contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
 }
 
 .field input:focus,
@@ -519,17 +534,20 @@ button {
 #play-info {
   position: absolute;
   z-index: 4;
-  left: max(8px, env(safe-area-inset-left));
-  bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + var(--hud-status-icon-size) + 18px);
-  max-width: 168px;
-  padding: 6px 8px;
+  left: max(10px, env(safe-area-inset-left));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  max-width: none;
+  padding: 4px 7px;
   border-radius: 4px;
   background: rgba(0, 0, 0, 0.48);
   color: #f4f7ff;
   font: 600 12px/1.35 var(--font-ui);
-  white-space: pre-line;
+  white-space: pre;
   text-shadow: 0 1px 2px #000;
   pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 #offhand-hud {
@@ -1049,7 +1067,9 @@ button {
   font: calc(18px * var(--hud-scale))/1.3 var(--font-ui);
   outline: none;
   caret-color: #fff;
+  -webkit-user-select: text;
   user-select: text;
+  -webkit-touch-callout: default;
 }
 
 #chat-input:disabled {
@@ -3777,9 +3797,14 @@ button {
 }
 
 @media (pointer: coarse) {
+  /* Touch controls are siblings of #hud, so the slot length has to live on #app too. */
+  #app,
+  #hud {
+    --hotbar-slot: clamp(30px, 8vw, 42px);
+  }
+
   #hud {
     --hud-scale: clamp(0.78, 0.82, 0.86);
-    --hotbar-slot: clamp(30px, 8vw, 42px);
     --hud-slot-size: var(--hotbar-slot);
   }
 
@@ -3789,6 +3814,9 @@ button {
     inset: 0;
     display: block;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
   }
 
   #touch-joystick {
@@ -3800,6 +3828,10 @@ button {
     width: clamp(92px, 18vw, 132px);
     aspect-ratio: 1;
     touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
   }
 
   .joystick-ring {
@@ -3820,17 +3852,32 @@ button {
     background: rgba(124, 183, 157, 0.48);
   }
 
+  #hud-corner {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  #hud-corner button {
+    width: 52px;
+    height: 52px;
+  }
+
   #touch-actions {
     position: absolute;
     z-index: 5;
-    right: max(16px, env(safe-area-inset-right));
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 16px);
-    display: flex;
-    flex-direction: column-reverse;
-    align-items: center;
-    gap: 10px;
+    right: max(14px, env(safe-area-inset-right));
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 12px);
+    display: grid;
+    grid-template-columns: 52px 68px;
+    grid-template-areas:
+      "inventory ."
+      "crouch jump";
+    column-gap: 12px;
+    row-gap: 10px;
     width: auto;
     touch-action: none;
+    pointer-events: none;
   }
 
   #touch-actions button {
@@ -3843,12 +3890,28 @@ button {
     font-size: 22px;
     font-weight: 800;
     text-shadow: 0 2px #000;
+    pointer-events: auto;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-user-drag: none;
   }
 
   #touch-actions button[data-action="jump"] {
+    grid-area: jump;
+    justify-self: end;
+    align-self: end;
     width: 68px;
     height: 68px;
     font-size: 28px;
+  }
+
+  #touch-actions button[data-action="sneak"] {
+    grid-area: crouch;
+    justify-self: end;
+    align-self: end;
+    width: 52px;
+    height: 52px;
   }
 
   #touch-actions button[data-action="sneak"].is-active {
@@ -3858,11 +3921,13 @@ button {
   }
 
   #touch-actions button[data-action="inventory"] {
-    position: fixed;
-    top: max(10px, env(safe-area-inset-top));
-    right: calc(max(10px, env(safe-area-inset-right)) + 84px);
-    width: 48px;
-    height: 48px;
+    position: static;
+    grid-area: inventory;
+    justify-self: start;
+    align-self: end;
+    width: 46px;
+    height: 46px;
+    font-size: 18px;
   }
 
   #hotbar {
@@ -3872,11 +3937,11 @@ button {
 
   #play-info {
     left: max(12px, env(safe-area-inset-left));
-    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 54px + clamp(92px, 18vw, 132px) + 8px);
-    max-width: 190px;
-    padding: 8px 10px;
-    background: rgba(0, 0, 0, 0.55);
-    font-size: 14px;
+    bottom: calc(max(16px, env(safe-area-inset-bottom)) + 54px + clamp(92px, 18vw, 132px) + 6px);
+    max-width: none;
+    padding: 3px 6px;
+    background: rgba(0, 0, 0, 0.5);
+    font-size: 13px;
   }
 
   #status-bars {
@@ -3886,7 +3951,7 @@ button {
 
   #effect-hud {
     right: calc(10px + env(safe-area-inset-right, 0px));
-    bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 68px + 52px + 36px);
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 12px + 46px + 10px + 68px + 8px);
   }
 
   #selected-item { display: none; }
@@ -3971,15 +4036,50 @@ button {
     margin-top: 1px;
     font-size: 10px;
   }
-  #touch-joystick { bottom: 47px; width: 88px; }
-  #touch-actions { bottom: calc(47px + var(--hotbar-slot)); gap: 6px; }
-  #touch-actions button[data-action="jump"] { width: 58px; height: 58px; }
-  #play-info { bottom: calc(47px + 88px + 8px); font-size: 13px; }
   #status-bars {
     bottom: calc(max(5px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + 5px);
     max-width: var(--hud-hotbar-width);
   }
-  #effect-hud { bottom: calc(47px + var(--hotbar-slot) + 58px + 52px + 18px); }
+}
+
+@media (max-height: 430px) and (orientation: landscape) and (pointer: coarse) {
+  #app,
+  #hud {
+    --hotbar-slot: 30px;
+    --hud-slot-size: var(--hotbar-slot);
+  }
+  #touch-joystick {
+    bottom: max(8px, env(safe-area-inset-bottom));
+    width: 88px;
+  }
+  #touch-actions {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(max(6px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 8px);
+    grid-template-columns: 48px 58px;
+    column-gap: 8px;
+    row-gap: 6px;
+  }
+  #touch-actions button[data-action="jump"] { width: 58px; height: 58px; }
+  #touch-actions button[data-action="sneak"] { width: 48px; height: 48px; }
+  #touch-actions button[data-action="inventory"] { width: 44px; height: 44px; }
+  #hud-corner button { width: 44px; height: 44px; }
+  #play-info {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + 88px + 6px);
+    font-size: 12px;
+    padding: 2px 5px;
+  }
+  #effect-hud {
+    bottom: calc(max(6px, env(safe-area-inset-bottom)) + var(--hotbar-slot) + 8px + 44px + 6px + 58px + 6px);
+  }
+}
+
+@media (max-height: 360px) and (orientation: landscape) and (pointer: coarse) {
+  #touch-joystick { width: 80px; }
+  #touch-actions { grid-template-columns: 46px 56px; }
+  #touch-actions button[data-action="jump"] { width: 56px; height: 56px; }
+  #touch-actions button[data-action="sneak"] { width: 46px; height: 46px; }
+  #touch-actions button[data-action="inventory"] { width: 42px; height: 42px; }
+  #play-info { bottom: calc(max(8px, env(safe-area-inset-bottom)) + 80px + 6px); }
 }
 /* Frontier menu redesign */
 .menu-screen {

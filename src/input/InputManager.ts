@@ -17,15 +17,18 @@ import {
   TOUCH_LOOK_SCALE,
   advanceTouchTrack,
   beginTouchTrack,
-  finishTouchTrack,
+  resolvePointerEnd,
   swipeLookDelta,
   type TouchTrack,
 } from './touchGesture';
 import {
+  shouldFollowHoldAim,
   sprintFromStick,
   toggleCrouch,
   type MobileTouchDecision,
+  type MobileTouchIntent,
 } from './mobileTouch';
+import { TOUCH_LAYOUT_QUERY } from './touchLayout';
 
 export type { MoveInput } from './MoveInput';
 
@@ -49,6 +52,8 @@ export interface InputCallbacks {
   cyclePerspective?(): void;
   toggleMenu?(): void;
   classifyWorldTouch?(clientX: number, clientY: number, phase: 'tap' | 'hold'): MobileTouchDecision;
+  /** Current finger position during a hold. Does not start a new action. */
+  aimAtClientPoint?(clientX: number, clientY: number): { yaw: number; pitch: number } | undefined;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
@@ -91,6 +96,7 @@ export class InputManager {
   private worldPointer?: number;
   private holdTimer?: number;
   private holdingWorldTouch = false;
+  private activeHoldIntent: MobileTouchIntent | null = null;
   private interactionAim: { yaw: number; pitch: number } | null = null;
   private sneakButton?: HTMLButtonElement;
   private coarseMedia?: MediaQueryList;
@@ -161,7 +167,7 @@ export class InputManager {
       jump: this.keys.has('Space') || this.touchJump || this.autoJumpArmed,
       sprint: this.touchSprint,
       sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
-      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)),
+      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
       flySprint: DESKTOP_FLY_SPRINT_CODES.some((code) => this.keys.has(code)),
     };
   }
@@ -415,9 +421,18 @@ export class InputManager {
     ].join('');
     const look = document.createElement('div');
     look.id = 'touch-look-zone';
-    document.querySelector('#app')?.append(look, joystick, actions);
+    const app = document.querySelector('#app');
+    app?.append(look, joystick, actions);
+    const blockGameplayCallout = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]')) return;
+      event.preventDefault();
+    };
+    app?.addEventListener('selectstart', blockGameplayCallout);
+    app?.addEventListener('contextmenu', blockGameplayCallout);
+    app?.addEventListener('dragstart', blockGameplayCallout);
     this.sneakButton = actions.querySelector<HTMLButtonElement>('button[data-action="sneak"]') ?? undefined;
-    this.coarseMedia = typeof matchMedia === 'function' ? matchMedia('(pointer: coarse)') : undefined;
+    this.coarseMedia = typeof matchMedia === 'function' ? matchMedia(TOUCH_LAYOUT_QUERY) : undefined;
     this.touchLayout = this.coarseMedia?.matches === true;
     this.coarseMedia?.addEventListener?.('change', () => {
       this.touchLayout = this.coarseMedia?.matches === true;
@@ -469,12 +484,14 @@ export class InputManager {
       if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
       this.advanceWorldTouch(event.clientX, event.clientY, performance.now());
     });
-    const stopLook = (event: PointerEvent) => {
+    look.addEventListener('pointerup', (event) => {
       if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
       this.finishWorldTouch(performance.now());
-    };
-    look.addEventListener('pointerup', stopLook);
-    look.addEventListener('pointercancel', stopLook);
+    });
+    look.addEventListener('pointercancel', (event) => {
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.cancelWorldTouchGesture();
+    });
 
     for (const button of actions.querySelectorAll<HTMLButtonElement>('button')) {
       const action = button.dataset.action;
@@ -522,16 +539,27 @@ export class InputManager {
       if (delta) this.rotate(delta.dx * TOUCH_LOOK_SCALE, delta.dy * TOUCH_LOOK_SCALE);
       next = { ...next, lastX: x, lastY: y };
       if (previous.phase !== 'swipe') this.interactionAim = null;
+      this.activeHoldIntent = null;
     } else if (previous.phase === 'pending' && next.phase === 'hold') {
       this.clearHoldTimer();
       this.beginWorldHold(next);
+    } else if (previous.phase === 'hold') {
+      this.followHoldAim(x, y);
     }
     this.worldTouch = next;
+  }
+
+  /** Mining and held use track the finger. This sample does not press attack or use again. */
+  private followHoldAim(x: number, y: number): void {
+    if (!this.activeHoldIntent || !shouldFollowHoldAim(this.activeHoldIntent)) return;
+    const aim = this.callbacks.aimAtClientPoint?.(x, y);
+    if (aim) this.interactionAim = aim;
   }
 
   private beginWorldHold(track: TouchTrack): void {
     this.holdingWorldTouch = true;
     const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'hold');
+    this.activeHoldIntent = decision?.intent ?? 'none';
     this.applyWorldDecision(decision, 'hold');
   }
 
@@ -541,7 +569,27 @@ export class InputManager {
     this.worldPointer = undefined;
     this.worldTouch = undefined;
     if (!track) return;
-    const kind = finishTouchTrack(track, now);
+    this.completePointerEnd(track, resolvePointerEnd(track, 'up', now));
+  }
+
+  /** Browser/OS cancelled the finger. A pending gesture must not become a tap. */
+  private cancelWorldTouchGesture(): void {
+    const track = this.worldTouch;
+    this.clearHoldTimer();
+    this.worldPointer = undefined;
+    this.worldTouch = undefined;
+    if (!track) return;
+    const kind = resolvePointerEnd(track, 'cancel', performance.now());
+    if (kind === 'hold-end') {
+      this.endWorldHold();
+      return;
+    }
+    this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
+    this.interactionAim = null;
+  }
+
+  private completePointerEnd(track: TouchTrack, kind: ReturnType<typeof resolvePointerEnd>): void {
     if (kind === 'tap') {
       const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'tap');
       this.applyWorldDecision(decision, 'tap');
@@ -569,6 +617,7 @@ export class InputManager {
 
   private endWorldHold(): void {
     this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
     if (this.mining) this.miningReleased = true;
     this.mining = false;
     if (this.using) this.useReleased = true;
@@ -581,6 +630,7 @@ export class InputManager {
     this.worldTouch = undefined;
     this.worldPointer = undefined;
     this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
   }
 
   private syncSneakButton(): void {

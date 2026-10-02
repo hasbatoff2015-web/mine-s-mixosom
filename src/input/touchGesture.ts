@@ -29,6 +29,7 @@ export interface TouchTrack {
 }
 
 export type TouchFinish = 'tap' | 'swipe' | 'hold-end' | 'ignore';
+export type PointerEndKind = 'up' | 'cancel';
 
 export function beginTouchTrack(x: number, y: number, now: number): TouchTrack {
   return {
@@ -71,6 +72,31 @@ export function finishTouchTrack(track: TouchTrack, now: number): TouchFinish {
   const travel = touchTravel(track);
   if (now - track.startedAt <= TOUCH_HOLD_MS && travel < TOUCH_SWIPE_THRESHOLD_PX) return 'tap';
   return 'ignore';
+}
+
+/**
+ * `pointerup` can become a tap. `pointercancel` is the browser aborting the
+ * gesture, so a pending finger never attacks or places. A hold still ends
+ * so mining and a drawn bow release.
+ */
+export function resolvePointerEnd(track: TouchTrack, kind: PointerEndKind, now: number): TouchFinish {
+  if (kind === 'cancel') return track.phase === 'hold' ? 'hold-end' : 'ignore';
+  return finishTouchTrack(track, now);
+}
+
+/** Hold keeps its phase and its screen point. The camera delta stays empty. */
+export function moveHeldTouch(
+  track: TouchTrack,
+  x: number,
+  y: number,
+  now: number,
+): { track: TouchTrack; cameraDelta: { dx: number; dy: number } | undefined; aimX: number; aimY: number } {
+  return {
+    track: advanceTouchTrack(track, x, y, now),
+    cameraDelta: swipeLookDelta(track, x, y),
+    aimX: x,
+    aimY: y,
+  };
 }
 
 /** Camera delta for an in-progress swipe. The classifying sample itself is zero. */
