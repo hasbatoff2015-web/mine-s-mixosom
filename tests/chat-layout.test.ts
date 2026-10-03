@@ -186,8 +186,9 @@ describe('chat layout and controls', () => {
     expect(GAME_UI).toContain('title="Закрыть чат (Tab)"');
     expect(GAME_UI).not.toContain('Закрыть чат (E)');
     const closePng = readFileSync(join(root, '../public/ui/chat/close.png'));
-    expect(closePng.readUInt32BE(16)).toBe(102);
-    expect(closePng.readUInt32BE(20)).toBe(96);
+    expect(closePng.readUInt32BE(16)).toBe(1283);
+    expect(closePng.readUInt32BE(20)).toBe(1226);
+    expect(closePng[25]).toBe(6);
     expect(GAME_UI).toContain('class="chat-sr"');
     expect(GAME_UI).toContain("this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.())");
     expect(GAME_UI).toContain("event.key === 'Tab'");

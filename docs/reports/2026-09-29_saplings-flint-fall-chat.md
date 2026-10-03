@@ -16,7 +16,7 @@ Implemented on `cursor/saplings-flint-fall-chat-3e3c`. No production deploy.
 - Gravel drops flint at chance 0.1, otherwise gravel. One stack per break, including hand and shovel.
 - Walking on glass, ice, and glowstone plays nothing. Glass break and place still use the glass sample.
 - Fall damage is `floor(ceil(distance - 3) / 2)`, computed once in `PlayerController`. If that hit would leave 0 HP, health becomes 1. Melee, lava, and void can still kill. A lethal fall does not consume death protection.
-- `public/ui/chat/close.png` stays 102×96. The corner caption is TAB. Close is still Tab / the button click. Menu close art was not changed.
+- `public/ui/chat/close.png` is the attached RGBA PNG (1283×1226), used as-is. The CSS button box is unchanged. Close is still Tab and the click. `public/ui/menu/close.png` was not changed.
 - Sapling sprites in `public/textures/block/` are byte copies of `assets/minecraft/textures/blocks/sapling_oak.png`, `sapling_birch.png`, and `sapling_spruce.png`.
 
 ## Changed files
@@ -63,7 +63,7 @@ Growth is capped at 4 trees per tick and skips unloaded chunks. Blocks without a
 
 ## Known issues
 
-The first attached chat PNG was not present as a file, so the 102×96 close button was edited in place for the TAB caption. A later follow-up asked to swap that file for a new transparent PNG; that file was not in the workspace either, so the chat sprite was left unchanged rather than redrawn.
+`public/ui/chat/close.png` is a byte copy of the attached chat-close PNG. The menu close sprite is a different file.
 
 ## Deferred
 
