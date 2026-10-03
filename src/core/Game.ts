@@ -124,7 +124,16 @@ import {
   type MobileTouchDecision,
 } from '../input/mobileTouch';
 import { CloudLayer } from '../rendering/CloudLayer';
-import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial, createMoonMesh } from '../rendering/SkyDome';
+import { applyDistanceFog } from '../rendering/distanceFog';
+import {
+  CELESTIAL_RENDER_ORDER,
+  SkyDome,
+  celestialPositions,
+  createMoonMesh,
+  createSunMesh,
+  orientCelestialBillboard,
+  sunlightPosition,
+} from '../rendering/SkyDome';
 import { skySample, sunDirection } from '../rendering/skyPalette';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
@@ -624,7 +633,7 @@ export class Game {
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
   private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
-  private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), createCelestialMaterial(0xffed9b));
+  private readonly sun = createSunMesh();
   private readonly moon = createMoonMesh();
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
   private readonly localRender = new LocalPlayerRenderState();
@@ -785,10 +794,13 @@ export class Game {
     this.scene.add(this.sky.object);
     this.scene.add(this.clouds.object);
     this.sky.update(skySample(6_000), 0, sunDirection(6_000));
-    this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
+    this.scene.fog = new THREE.Fog(0x7fb6d5, 1, 2);
+    applyDistanceFog(this.scene.fog, this.settings.renderDistance);
     this.ambient.intensity = 0.22;
     this.sunlight.intensity = 1.35;
-    this.sunlight.position.set(40, 70, 25);
+    const menuSun = sunlightPosition(sunDirection(6_000));
+    this.sunlight.position.set(menuSun.x, menuSun.y, menuSun.z);
+    this.sunlight.target.position.set(0, 0, 0);
     this.scene.add(this.ambient, this.sunlight, this.sun, this.moon);
     this.scene.add(this.chunkGrid.group);
     this.chunkGrid.setVisible(this.chunkGridVisible);
@@ -4296,7 +4308,7 @@ export class Game {
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
       this.clouds.setEnabled(settings.clouds);
-      if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
+      if (this.scene.fog instanceof THREE.Fog) applyDistanceFog(this.scene.fog, settings.renderDistance);
     }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
@@ -6488,7 +6500,8 @@ export class Game {
     const daylight = daylightFactor(time);
     const skyVisual = skySample(time);
     const sky = this.currentSkyColor.setRGB(skyVisual.fog.r, skyVisual.fog.g, skyVisual.fog.b);
-    this.sky.update(skyVisual, this.skyCloudTime, sunDirection(time));
+    const dir = sunDirection(time);
+    this.sky.update(skyVisual, this.skyCloudTime, dir);
     this.clouds.update(
       this.camera.position.x,
       this.camera.position.y,
@@ -6501,12 +6514,16 @@ export class Game {
     this.sunlight.intensity = 0.18 + daylight * 1.55;
     this.sunlight.color.set(daylight > 0.45 ? 0xffe2b3 : 0x8ea7d4);
     const session = this.session!;
-    const center = session.player.position;
-    this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
-    this.sunlight.position.copy(this.sun.position);
+    const places = celestialPositions(this.camera.position, dir);
+    this.sun.position.set(places.sun.x, places.sun.y, places.sun.z);
+    this.moon.position.set(places.moon.x, places.moon.y, places.moon.z);
+    orientCelestialBillboard(this.sun, this.camera.position);
+    orientCelestialBillboard(this.moon, this.camera.position);
+    const light = sunlightPosition(dir);
+    this.sunlight.position.set(light.x, light.y, light.z);
+    this.sunlight.target.position.set(0, 0, 0);
+    this.sunlight.target.updateMatrixWorld();
     session.worldRenderer.setDaylight(daylight);
-    this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
-    this.moon.lookAt(this.camera.position);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
   }

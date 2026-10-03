@@ -56,6 +56,137 @@ export function createMoonMesh(): THREE.Mesh {
   return mesh;
 }
 
+/**
+ * 16×16 pixel sun. Same nearest billboard as the moon, with a warm gold rim,
+ * a yellow body, and a cream core. A few tone pixels break the flat fill.
+ * They are not craters, rays, or a face.
+ */
+export function createSunTexture(): THREE.DataTexture {
+  const size = 16;
+  const data = new Uint8Array(size * size * 4);
+  const specks = new Set(['3,8', '12,7', '8,12', '5,5']);
+  const radius = 6.55;
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      const distance2 = dx * dx + dy * dy;
+      if (distance2 > radius * radius) continue;
+      let red = 255;
+      let green = 237;
+      let blue = 160;
+      if (specks.has(`${x},${y}`)) {
+        red = 240;
+        green = 213;
+        blue = 106;
+      } else if (distance2 >= 5.15 * 5.15) {
+        red = 241;
+        green = 207;
+        blue = 98;
+      } else if (distance2 <= 2.85 * 2.85) {
+        red = 255;
+        green = 246;
+        blue = 200;
+      }
+      const index = (y * size + x) * 4;
+      data[index] = red;
+      data[index + 1] = green;
+      data[index + 2] = blue;
+      data[index + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** Pixel sun quad. Width matches the old sphere diameter so the disc stays the same size. */
+export function createSunMesh(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(6.4, 6.4),
+    createCelestialMaterial(0xffffff, createSunTexture()),
+  );
+  mesh.renderOrder = CELESTIAL_RENDER_ORDER;
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+/**
+ * Length of the old visual orbit `(70 cos θ, 70 sin θ, 15)`.
+ * `sunDirection` is that vector normalized, so scaling by this distance
+ * restores the same angles.
+ */
+export const CELESTIAL_DISTANCE = Math.hypot(70, 15);
+
+/** DirectionalLight sits on the sun direction, far from the world origin. */
+export const SUNLIGHT_DIRECTION_SCALE = 100;
+
+export interface CelestialPoint {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/** Sun offset from the camera. The moon uses the opposite vector. */
+export function celestialOffset(sunDir: CelestialPoint, distance = CELESTIAL_DISTANCE): CelestialPoint {
+  return {
+    x: sunDir.x * distance,
+    y: sunDir.y * distance,
+    z: sunDir.z * distance,
+  };
+}
+
+/** Camera-relative sun and moon. Translating the camera does not change the offset. */
+export function celestialPositions(
+  cameraPosition: CelestialPoint,
+  sunDir: CelestialPoint,
+  distance = CELESTIAL_DISTANCE,
+): { readonly sun: CelestialPoint; readonly moon: CelestialPoint } {
+  const offset = celestialOffset(sunDir, distance);
+  return {
+    sun: {
+      x: cameraPosition.x + offset.x,
+      y: cameraPosition.y + offset.y,
+      z: cameraPosition.z + offset.z,
+    },
+    moon: {
+      x: cameraPosition.x - offset.x,
+      y: cameraPosition.y - offset.y,
+      z: cameraPosition.z - offset.z,
+    },
+  };
+}
+
+/** Both discs use the same camera-facing path. */
+export function orientCelestialBillboard(mesh: THREE.Object3D, cameraPosition: THREE.Vector3): void {
+  mesh.lookAt(cameraPosition);
+}
+
+/** Light position on the sun direction. The target stays at the origin. */
+export function sunlightPosition(sunDir: CelestialPoint, scale = SUNLIGHT_DIRECTION_SCALE): CelestialPoint {
+  return {
+    x: sunDir.x * scale,
+    y: sunDir.y * scale,
+    z: sunDir.z * scale,
+  };
+}
+
+/** Unit vector from the light position toward its target. */
+export function directionalLightTravel(
+  lightPosition: CelestialPoint,
+  target: CelestialPoint = { x: 0, y: 0, z: 0 },
+): CelestialPoint {
+  const x = target.x - lightPosition.x;
+  const y = target.y - lightPosition.y;
+  const z = target.z - lightPosition.z;
+  const length = Math.hypot(x, y, z) || 1;
+  return { x: x / length, y: y / length, z: z / length };
+}
+
 const vertexShader = /* glsl */ `
 out vec3 vDir;
 void main() {

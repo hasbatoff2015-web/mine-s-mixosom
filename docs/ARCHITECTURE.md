@@ -1,5 +1,15 @@
 # Архитектура
 
+## Pixel sun, camera anchor, distance haze — 2026-10-03
+
+`createSunMesh` follows `createMoonMesh`: one `PlaneGeometry`, one 16×16 `DataTexture`, nearest filters, no mipmaps, `depthWrite: false`, `depthTest: true`, render order `-750`. The sun quad is 6.4, the moon stays 5.6. The sun disc is a stepped gold / yellow / cream fill. It is not a tinted moon.
+
+`celestialPositions(camera, sunDirection)` places both discs. `CELESTIAL_DISTANCE` is `hypot(70, 15)`, so the offset is the old orbit `(70 cos θ, 70 sin θ, 15)`. The camera is the interpolated render camera. The simulation position is not the anchor. Both meshes call `orientCelestialBillboard`, which is `lookAt(camera)`.
+
+`DirectionalLight` does not follow the mesh. `sunlight.position` is `sunDirection * 100` and `target` stays at the origin. The travel direction is `-sunDirection` for any camera translation. Chunk color still comes from `setDaylight`. Ambient and sun intensities are the same formulas. Lambert mobs and the first-person arm do use this light. Their direction vector length is now constant 100. It used to be the distance from the origin to the sun mesh, so it grew as the player left the origin.
+
+`distanceFogRange` replaces the fixed near of 38. The visible edge is `(renderDistance + 1) * 16 * sqrt(2)`. Near is `max(24, edge * 0.55)`. Far is set so the linear blend at that edge is 0.12. Settings recompute both near and far. Fog color is still `skyVisual.fog`.
+
 ## Cloud field, night sky, touch size — 2026-10-03
 
 `cloudMask.ts` builds one 512×512 binary tile from a toroidal two-scale field. A 4-cell weather noise gates large clear regions. An 8-cell region noise and a ~18 texel detail lattice cut the blocky edge. The mix is `macro * 0.7 + detail * 0.3`, then a threshold. A 5×3 window removes spikes without bridging neighbors into one slab. Components smaller than 18 texels, and bars whose short side is 1–2 texels, are deleted. A blob wider than 52 texels or taller than 28 is split on the detail valleys. There is no blur and no `Math.random`. On the current seed: coverage 6.29%, 40 wrapped components, 32 of 64 macro sectors empty. At 2 blocks per texel the tile spans 1024 blocks.

@@ -402,7 +402,9 @@ describe('sky palette', () => {
     expect(gameSource).toContain('session.worldRenderer.setDaylight(daylight)');
     expect(gameSource).toContain('skyVisual.visualNight');
     expect(gameSource).toContain('createMoonMesh');
-    expect(gameSource).toContain('this.moon.lookAt(this.camera.position)');
+    expect(gameSource).toContain('createSunMesh');
+    expect(gameSource).toContain('orientCelestialBillboard(this.moon, this.camera.position)');
+    expect(gameSource).toContain('celestialPositions(this.camera.position, dir)');
     expect(daylightSource).toContain('(Math.sin(phase) + 0.22) / 0.75');
     expect(daylightFactor(6_000)).toBeCloseTo(1, 5);
     expect(daylightFactor(18_000)).toBeCloseTo(0.08, 5);
@@ -530,7 +532,9 @@ describe('sky palette', () => {
     expect(sunMaterial.depthTest).toBe(true);
     expect(moonMaterial.depthTest).toBe(true);
     expect(CELESTIAL_RENDER_ORDER).toBe(-750);
-    expect(gameSource).toContain('createCelestialMaterial');
+    expect(gameSource).toContain('createSunMesh()');
+    expect(gameSource).not.toContain('new THREE.SphereGeometry(3.2');
+    expect(gameSource).not.toContain('this.sunlight.position.copy(this.sun.position)');
     expect(gameSource).toContain('CELESTIAL_RENDER_ORDER');
     expect(gameSource).toContain('this.clouds.setEnabled(settings.clouds)');
     expect(gameSource).toContain('this.clouds.update(');

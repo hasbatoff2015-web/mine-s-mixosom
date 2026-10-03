@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-03: pixel sun, camera-locked sky, light distance haze
+
+- [x] Sun is a 16×16 nearest quad, 6.4 units, same depth order as the moon. The moon texture is unchanged.
+- [x] Sun and moon offsets come from the render camera. `CELESTIAL_DISTANCE` keeps the old `(70 cos, 70 sin, 15)` orbit.
+- [x] Directional light uses `sunDirection * 100` and an origin target. Intensity formulas are unchanged.
+- [x] Distance fog blend at the far chunk corner is 12% for render distances 2, 4, and 8.
+- [ ] Owner QA: run under the sun and the moon, first and third person, and check a forest at the render-distance edge by day and night.
+
 ## 2026-10-03: cloud field, night sky, larger touch controls
 
 - [x] Cloud mask is a 512×512 two-scale field, 6.29% coverage, 40 components, large empty sectors. No full-width body stamp.
