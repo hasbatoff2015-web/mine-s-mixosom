@@ -29,6 +29,31 @@ import {
   type MobileTouchIntent,
 } from './mobileTouch';
 import { TOUCH_LAYOUT_QUERY } from './touchLayout';
+import { CROUCH_ICON, INVENTORY_ICON, JUMP_ICON } from './touchIcons';
+
+/**
+ * A held bow or food keeps the finger aim until the release sample.
+ * Camera yaw is not a substitute. `pointerup` and `pointercancel` both end here.
+ */
+export function aimAfterHoldEnd(state: {
+  readonly mining: boolean;
+  readonly using: boolean;
+  readonly releaseAimPending: boolean;
+  readonly aim: { readonly yaw: number; readonly pitch: number } | null;
+}): {
+  readonly miningReleased: boolean;
+  readonly useReleased: boolean;
+  readonly releaseAimPending: boolean;
+  readonly aim: { readonly yaw: number; readonly pitch: number } | null;
+} {
+  const releaseAimPending = state.using ? true : state.releaseAimPending;
+  return {
+    miningReleased: state.mining,
+    useReleased: state.using,
+    releaseAimPending,
+    aim: releaseAimPending ? state.aim : null,
+  };
+}
 
 export type { MoveInput } from './MoveInput';
 
@@ -433,9 +458,9 @@ export class InputManager {
     const actions = document.createElement('div');
     actions.id = 'touch-actions';
     actions.innerHTML = [
-      '<button type="button" data-action="jump" aria-label="Прыжок">↑</button>',
-      '<button type="button" data-action="sneak" aria-label="Присесть" aria-pressed="false">⌄</button>',
-      '<button type="button" data-action="inventory" aria-label="Инвентарь">▦</button>',
+      `<button type="button" data-action="jump" aria-label="Прыжок">${JUMP_ICON}</button>`,
+      `<button type="button" data-action="sneak" aria-label="Присесть" aria-pressed="false">${CROUCH_ICON}</button>`,
+      `<button type="button" data-action="inventory" aria-label="Инвентарь" title="Инвентарь">${INVENTORY_ICON}</button>`,
     ].join('');
     const look = document.createElement('div');
     look.id = 'touch-look-zone';
@@ -644,14 +669,18 @@ export class InputManager {
   private endWorldHold(): void {
     this.holdingWorldTouch = false;
     this.activeHoldIntent = null;
-    if (this.mining) this.miningReleased = true;
+    const finished = aimAfterHoldEnd({
+      mining: this.mining,
+      using: this.using,
+      releaseAimPending: this.releaseAimPending,
+      aim: this.interactionAim,
+    });
     this.mining = false;
-    if (this.using) {
-      this.useReleased = true;
-      this.releaseAimPending = true;
-    }
     this.using = false;
-    if (!this.releaseAimPending) this.interactionAim = null;
+    if (finished.miningReleased) this.miningReleased = true;
+    if (finished.useReleased) this.useReleased = true;
+    this.releaseAimPending = finished.releaseAimPending;
+    this.interactionAim = finished.aim;
   }
 
   private cancelWorldTouch(): void {

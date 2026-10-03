@@ -1,5 +1,19 @@
 # Архитектура
 
+## Vertical actions, hotbar, clouds, sunset — 2026-10-03
+
+Jump and crouch share `--touch-action-size` and the same `right` inset, so their centers match. Crouch sits on the bottom safe edge. Jump's bottom is that edge plus the button size plus `--touch-action-gap`. There is no diagonal `-16/-18` offset. Short landscape only shrinks the action size (58px under 430px tall, 56px under 360px). It does not force the hotbar back to 30px.
+
+Coarse hotbar slots use one rule, `clamp(38px, 5vw, 42px)`, on both `#app` and `#hud`. `--hud-hotbar-half-width` is still `4.5 * slot + 4 * gap`, so the offhand and the inventory button stay 20px off the hotbar. The inventory control is a Minecraft-style slot shell with a 16×16 crisp-edge backpack SVG (`shape-rendering="crispEdges"`), `aria-label="Инвентарь"` and `title="Инвентарь"`.
+
+`viewportMetrics()` is the single width/height. It prefers `visualViewport` and falls back to the layout viewport. `bindVisualViewport` writes `--app-width`, `--app-height` and the offsets. `Game.resize` uses the same helper for `renderer.setSize(..., false)` and `camera.aspect`, and it listens to `visualViewport` resize and scroll as well as `window` resize.
+
+`cloudMask.ts` builds one 256×256 tile from a seeded generator (no `Math.random`). About 120 centers are placed with a toroidal minimum distance. Each cloud is 2–6 overlapping axis-aligned lobes, wrapped with modulo when a lobe crosses the tile edge, then a pass removes 1px spikes and fills single-pixel holes. There is no blur. Coverage on the current seed is 11.71%. At 2 blocks per texel the tile spans 512 blocks, so the 960-block plane repeats it 1.875 times per axis. Drift stays on +X at 0.16 blocks/second. Altitude is `cameraY + 96`. The V offset is still `-cameraZ / span`.
+
+Draw order: sky dome renderOrder -1000, depth test off, depth write off. Sun and moon are opaque meshes at -750 with `depthWrite: false` and `depthTest: true`, so they do not occlude the later cloud sheet. `CloudLayer` stays one transparent plane at -500, depth test on, depth write off, one `DataTexture` built once. World geometry is the normal opaque pass and still covers both the sun and the clouds.
+
+`SkyDome` takes `uSunDir` from the same day-cycle phase as the sun mesh. The warm weight is `verticalBand * mix(0.16, 1, sunFacing²) * bandStrength`, where `sunFacing` is the horizontal dot. `skySample` keeps the horizon only partly warm and feeds fog an even smaller share, so the far world does not take the full sun-facing orange. `daylightFactor` and the light intensities are unchanged.
+
 ## Mobile HUD, touch aim, clouds, sunset — 2026-10-02
 
 `#app` is `position: fixed` and its height is `--app-height`, filled by `bindVisualViewport()` from `visualViewport.height` (fallback `100dvh`). `100vh` is the layout viewport. On a phone it stays tall while the browser bar covers the bottom, so `bottom: 0` controls and menu footers sat under that bar. Requesting the desktop site uses a wide layout viewport that the browser scales onto the screen, which is why that mode looked aligned and the real mobile viewport did not. Menu shells use `dvh` for the same reason.

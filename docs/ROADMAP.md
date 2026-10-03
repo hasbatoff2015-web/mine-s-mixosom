@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-03: vertical actions, larger hotbar, tileable clouds, directional sunset
+
+- [x] Jump sits directly above crouch. Same center X, shared action size and gap. No diagonal offset.
+- [x] Coarse hotbar uses one clamp and stays 42px at 844×390 and 40px at 800×360. Inventory keeps the 20px mirror and a pixel backpack.
+- [x] Renderer and camera use `viewportMetrics()`, the same visual viewport as `#app`.
+- [x] Cloud mask is one 256×256 lobe tile, 11.71% coverage, 0.16 blocks/second, `cameraY + 96`. Sun and moon do not write depth.
+- [x] Sunset warmth is stronger toward the sun. Fog uses the milder horizon.
+- [ ] Owner QA on a phone: vertical buttons, larger hotbar, backpack, browser-bar resize, cloud drift, sun behind a cloud, tree in front, sunset vs opposite horizon.
+
 ## 2026-10-02: mobile HUD root cause, retarget, clouds, sunset
 
 - [x] `#app` tracks `visualViewport` / `100dvh` so real-phone bottom anchors are not the tall `100vh` layout viewport.

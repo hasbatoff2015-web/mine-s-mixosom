@@ -34,8 +34,9 @@ body {
 
 #app {
   position: fixed;
-  left: 0;
+  left: var(--app-offset-left, 0px);
   top: var(--app-offset-top, 0px);
+  width: var(--app-width, 100%);
   height: var(--app-height, 100dvh);
 }
 
@@ -3801,11 +3802,11 @@ textarea,
    */
   #app,
   #hud {
-    --hotbar-slot: clamp(26px, 5.4vw, 40px);
+    --hotbar-slot: clamp(38px, 5vw, 42px);
     --hud-slot-gap: 2px;
     --hud-hotbar-half-width: calc(4.5 * var(--hotbar-slot) + 4 * var(--hud-slot-gap));
-    --touch-jump: 70px;
-    --touch-crouch: 54px;
+    --touch-action-size: 62px;
+    --touch-action-gap: 8px;
     --touch-stick: 108px;
   }
 
@@ -3886,6 +3887,8 @@ textarea,
 
   #touch-actions button {
     position: absolute;
+    display: grid;
+    place-items: center;
     margin: 0;
     padding: 0;
     border: 3px solid #161616;
@@ -3908,24 +3911,33 @@ textarea,
     -webkit-user-drag: none;
   }
 
+  #touch-actions button svg {
+    display: block;
+    width: 62%;
+    height: 62%;
+    pointer-events: none;
+    image-rendering: pixelated;
+    image-rendering: crispEdges;
+  }
+
   #touch-actions button:active {
     transform: translate(1px, 1px);
     filter: brightness(0.9);
   }
 
-  #touch-actions button[data-action="jump"] {
+  #touch-actions button[data-action="jump"],
+  #touch-actions button[data-action="sneak"] {
     right: max(10px, env(safe-area-inset-right));
-    bottom: max(8px, env(safe-area-inset-bottom));
-    width: var(--touch-jump);
-    height: var(--touch-jump);
-    font-size: 28px;
+    width: var(--touch-action-size);
+    height: var(--touch-action-size);
   }
 
   #touch-actions button[data-action="sneak"] {
-    right: calc(max(10px, env(safe-area-inset-right)) + var(--touch-jump) - 16px);
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-jump) - 18px);
-    width: var(--touch-crouch);
-    height: var(--touch-crouch);
+    bottom: max(8px, env(safe-area-inset-bottom));
+  }
+
+  #touch-actions button[data-action="jump"] {
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-size) + var(--touch-action-gap));
   }
 
   #touch-actions button[data-action="sneak"].is-active {
@@ -3950,6 +3962,11 @@ textarea,
     font-size: 16px;
   }
 
+  #touch-actions button[data-action="inventory"] svg {
+    width: 74%;
+    height: 74%;
+  }
+
   #hotbar,
   #offhand-hud {
     bottom: max(6px, env(safe-area-inset-bottom));
@@ -3972,7 +3989,7 @@ textarea,
 
   #effect-hud {
     right: calc(10px + env(safe-area-inset-right, 0px));
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-jump) + var(--touch-crouch) - 8px);
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + (2 * var(--touch-action-size)) + var(--touch-action-gap) + 8px);
   }
 
   #selected-item { display: none; }
@@ -4011,8 +4028,6 @@ textarea,
 @media (max-height: 430px) and (orientation: landscape) {
   #hud {
     --hud-scale: clamp(0.7, 0.74, 0.78);
-    --hotbar-slot: 30px;
-    --hud-slot-size: var(--hotbar-slot);
   }
   #loading-screen .loading-card {
     overflow: hidden;
@@ -4058,10 +4073,8 @@ textarea,
 @media (max-height: 430px) and (orientation: landscape) and (pointer: coarse) {
   #app,
   #hud {
-    --hotbar-slot: 30px;
-    --hud-slot-size: var(--hotbar-slot);
-    --touch-jump: 60px;
-    --touch-crouch: 46px;
+    --touch-action-size: 58px;
+    --touch-action-gap: 8px;
     --touch-stick: 92px;
   }
   #hud-corner button { width: 44px; height: 44px; }
@@ -4075,8 +4088,8 @@ textarea,
 @media (max-height: 360px) and (orientation: landscape) and (pointer: coarse) {
   #app,
   #hud {
-    --touch-jump: 56px;
-    --touch-crouch: 44px;
+    --touch-action-size: 56px;
+    --touch-action-gap: 8px;
     --touch-stick: 84px;
   }
 }

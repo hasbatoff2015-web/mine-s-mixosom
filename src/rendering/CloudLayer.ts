@@ -1,23 +1,25 @@
 import * as THREE from 'three';
 import { CLOUD_MASK_SIZE, cloudMaskAlpha } from './cloudMask';
 
-/** World units per mask texel. Smaller than the old 4-block texels. */
+/** World units per mask texel. */
 export const CLOUD_WORLD_PER_TEXEL = 2;
-/** Blocks per second along +X. Slow enough to read as sky drift. */
-export const CLOUD_DRIFT_BLOCKS_PER_SECOND = 0.35;
-/** Never drop the layer into the 80-block world. */
-export const CLOUD_SKY_FLOOR = 118;
-/** Stay this far above the camera so flight cannot catch the layer. */
-export const CLOUD_ABOVE_CAMERA = 64;
-
-const CLOUD_PLANE = 960;
+/** Blocks per second along +X. About 10 blocks a minute. */
+export const CLOUD_DRIFT_BLOCKS_PER_SECOND = 0.16;
+/**
+ * Camera-relative sky decoration. The sheet rises with the camera, so flight
+ * cannot catch it. It is not a world-space ceiling and it does not use a
+ * fixed floor to avoid terrain.
+ */
+export const CLOUD_ABOVE_CAMERA = 96;
+/** Finite plane recentered on the camera. One 512-block tile repeats under twice. */
+export const CLOUD_PLANE_SIZE = 960;
 
 /**
  * Decorative sky sheet. It recenters on the camera so the finite plane has no edge,
  * but the mask is sampled in world X/Z. There is no collision and no light contribution.
  */
 export function cloudAltitude(cameraY: number): number {
-  return Math.max(CLOUD_SKY_FLOOR, cameraY + CLOUD_ABOVE_CAMERA);
+  return cameraY + CLOUD_ABOVE_CAMERA;
 }
 
 /**
@@ -78,7 +80,8 @@ export class CloudLayer {
     this.texture.colorSpace = THREE.NoColorSpace;
     this.texture.needsUpdate = true;
     const span = size * CLOUD_WORLD_PER_TEXEL;
-    this.texture.repeat.set(CLOUD_PLANE / span, CLOUD_PLANE / span);
+    this.texture.generateMipmaps = false;
+    this.texture.repeat.set(CLOUD_PLANE_SIZE / span, CLOUD_PLANE_SIZE / span);
     this.material = new THREE.MeshBasicMaterial({
       map: this.texture,
       transparent: true,
@@ -88,11 +91,11 @@ export class CloudLayer {
       side: THREE.DoubleSide,
       fog: false,
     });
-    this.object = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_PLANE, CLOUD_PLANE), this.material);
+    this.object = new THREE.Mesh(new THREE.PlaneGeometry(CLOUD_PLANE_SIZE, CLOUD_PLANE_SIZE), this.material);
     this.object.rotation.x = -Math.PI / 2;
     this.object.frustumCulled = false;
     this.object.renderOrder = -500;
-    this.object.position.y = CLOUD_SKY_FLOOR;
+    this.object.position.y = CLOUD_ABOVE_CAMERA;
   }
 
   setEnabled(enabled: boolean): void {
@@ -106,7 +109,7 @@ export class CloudLayer {
 
   /**
    * `night` is the sky star opacity, 0 at noon. Clouds darken but stay drawn.
-   * Horizontal motion is world-locked. Vertical position stays above the camera and the world.
+   * Horizontal motion is world-locked. Vertical position is cameraY + CLOUD_ABOVE_CAMERA.
    */
   update(cameraX: number, cameraY: number, cameraZ: number, timeSeconds: number, night: number): void {
     const span = CLOUD_MASK_SIZE * CLOUD_WORLD_PER_TEXEL;

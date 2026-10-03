@@ -124,8 +124,9 @@ import {
   type MobileTouchDecision,
 } from '../input/mobileTouch';
 import { CloudLayer } from '../rendering/CloudLayer';
-import { SkyDome } from '../rendering/SkyDome';
-import { skySample } from '../rendering/skyPalette';
+import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial } from '../rendering/SkyDome';
+import { skySample, sunDirection } from '../rendering/skyPalette';
+import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
 import { desiredHorizontalWish } from '../player/ladderMotion';
 import {
@@ -623,8 +624,8 @@ export class Game {
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
   private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
-  private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
-  private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
+  private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), createCelestialMaterial(0xffed9b));
+  private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), createCelestialMaterial(0xb9d4e5));
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
   private readonly localRender = new LocalPlayerRenderState();
   private readonly cameraPivot = new THREE.Vector3();
@@ -779,9 +780,11 @@ export class Game {
     this.renderer.info.autoReset = false;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
     this.scene.background = this.currentSkyColor;
+    this.sun.renderOrder = CELESTIAL_RENDER_ORDER;
+    this.moon.renderOrder = CELESTIAL_RENDER_ORDER;
     this.scene.add(this.sky.object);
     this.scene.add(this.clouds.object);
-    this.sky.update(skySample(6_000), 0);
+    this.sky.update(skySample(6_000), 0, sunDirection(6_000));
     this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
     this.ambient.intensity = 0.22;
     this.sunlight.intensity = 1.35;
@@ -6485,7 +6488,7 @@ export class Game {
     const daylight = daylightFactor(time);
     const skyVisual = skySample(time);
     const sky = this.currentSkyColor.setRGB(skyVisual.fog.r, skyVisual.fog.g, skyVisual.fog.b);
-    this.sky.update(skyVisual, this.skyCloudTime);
+    this.sky.update(skyVisual, this.skyCloudTime, sunDirection(time));
     this.clouds.update(
       this.camera.position.x,
       this.camera.position.y,
@@ -6829,7 +6832,10 @@ export class Game {
   }
 
   private bindWindowEvents(): void {
-    window.addEventListener('resize', () => this.resize());
+    const resize = (): void => this.resize();
+    window.addEventListener('resize', resize);
+    window.visualViewport?.addEventListener('resize', resize);
+    window.visualViewport?.addEventListener('scroll', resize);
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
@@ -6880,8 +6886,7 @@ export class Game {
   }
 
   private resize(): void {
-    const width = Math.max(1, window.innerWidth);
-    const height = Math.max(1, window.innerHeight);
+    const { width, height } = viewportMetrics();
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();

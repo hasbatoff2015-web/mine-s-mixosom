@@ -26,18 +26,38 @@ import {
   resolvePointerEnd,
   swipeLookDelta,
 } from '../src/input/touchGesture';
+import { aimAfterHoldEnd } from '../src/input/InputManager';
 import { lookFromDirection, viewDirectionFromLook } from '../src/player/localAim';
 import { resolveOnlineMiningTick } from '../src/net/onlineMining';
-import { CloudLayer, CLOUD_WORLD_PER_TEXEL, cloudAltitude, cloudWorldSample } from '../src/rendering/CloudLayer';
-import { CLOUD_MASK_SIZE, cloudCoverage, cloudMaskAlpha } from '../src/rendering/cloudMask';
-import { skySample } from '../src/rendering/skyPalette';
+import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial } from '../src/rendering/SkyDome';
+import {
+  CLOUD_ABOVE_CAMERA,
+  CLOUD_DRIFT_BLOCKS_PER_SECOND,
+  CLOUD_PLANE_SIZE,
+  CLOUD_WORLD_PER_TEXEL,
+  CloudLayer,
+  cloudAltitude,
+  cloudWorldSample,
+} from '../src/rendering/CloudLayer';
+import {
+  CLOUD_MASK_SIZE,
+  cloudCoverage,
+  cloudMaskAlpha,
+  cloudStamps,
+  interiorHoleCount,
+  paintWrappedRect,
+} from '../src/rendering/cloudMask';
+import { skySample, sunDirection, sunsetGlowWeight } from '../src/rendering/skyPalette';
 import { floorCoord, formatPlayInfo } from '../src/ui/playInfoHud';
+import { viewportMetrics } from '../src/ui/visualViewport';
+import * as THREE from 'three';
 
 const style = readFileSync('src/style.css', 'utf8');
 const inputSource = readFileSync('src/input/InputManager.ts', 'utf8');
 const gameSource = readFileSync('src/core/Game.ts', 'utf8');
 const playerSource = readFileSync('src/player/PlayerController.ts', 'utf8');
 const skySource = readFileSync('src/rendering/SkyDome.ts', 'utf8');
+const maskSource = readFileSync('src/rendering/cloudMask.ts', 'utf8');
 const gameUi = readFileSync('src/ui/GameUI.ts', 'utf8');
 
 function facts(partial: Partial<MobileTouchFacts> & Pick<MobileTouchFacts, 'phase'>): MobileTouchFacts {
@@ -160,9 +180,10 @@ describe('touch classification', () => {
     expect(inputSource).toContain('this.finishWorldTouch(performance.now())');
     expect(inputSource).toContain('this.cancelWorldTouchGesture()');
     expect(inputSource).toContain("resolvePointerEnd(track, 'cancel'");
-    expect(inputSource).toContain('if (this.mining) this.miningReleased = true');
-    expect(inputSource).toContain('this.useReleased = true');
-    expect(inputSource).toContain('this.releaseAimPending = true');
+    expect(inputSource).toContain('if (finished.miningReleased) this.miningReleased = true');
+    expect(inputSource).toContain('if (finished.useReleased) this.useReleased = true');
+    expect(inputSource).toContain('this.releaseAimPending = finished.releaseAimPending');
+    expect(inputSource).toContain('aimAfterHoldEnd');
     const release = inputSource.slice(inputSource.indexOf('releaseActions()'), inputSource.indexOf('clearHeldKeys()'));
     expect(release).toContain('this.miningReleased = false');
     expect(release).toContain('this.useReleased = false');
@@ -337,15 +358,26 @@ describe('sky palette', () => {
     expect(dawn.bandStrength).toBeGreaterThan(0.85);
     expect(dusk.band.r).toBeGreaterThan(0.95);
     expect(dusk.band.g).toBeLessThan(0.35);
-    expect(dusk.horizon.r - dusk.horizon.b).toBeGreaterThan(0.55);
     expect(dusk.zenith.b).toBeGreaterThan(dusk.zenith.r);
     expect(dusk.horizon.r).toBeGreaterThan(dusk.horizon.b);
+    expect(dusk.band.r).toBeGreaterThan(dusk.horizon.r);
+    expect(dusk.fog.r).toBeLessThan(dusk.horizon.r);
     expect(dawn.horizon.r).toBeGreaterThan(noon.horizon.r);
     expect(midnight.starOpacity).toBeGreaterThan(0.9);
     expect(midnight.zenith.b).toBeLessThan(0.15);
     expect(dusk.starOpacity).toBeLessThan(0.2);
     expect(noon.fog.b).toBeGreaterThan(midnight.fog.b);
     expect(skySource).toContain('(dir.y - 0.035) * 8.6');
+    expect(skySource).toContain('uSunDir');
+    expect(skySource).toContain('sunFacing');
+    const sun = sunDirection(12_000);
+    const opposite = sunsetGlowWeight(0.035, 0, dusk.bandStrength);
+    const facing = sunsetGlowWeight(0.035, 1, dusk.bandStrength);
+    expect(facing).toBeGreaterThan(opposite * 4);
+    expect(Math.hypot(sun.x, sun.y, sun.z)).toBeCloseTo(1, 5);
+    const dome = new SkyDome();
+    dome.update(dusk, 0, sun);
+    expect(dome.object.renderOrder).toBe(-1000);
   });
 
   it('reads the clouds checkbox without treating a missing value as on', () => {
@@ -356,14 +388,49 @@ describe('sky palette', () => {
     expect(readCloudSetting('off')).toBe(false);
   });
 
-  it('draws clouds on one plane and hides that plane when the checkbox is off', () => {
+  it('draws one tileable cloud plane above the camera and keeps the pattern world-locked', () => {
     const alpha = cloudMaskAlpha();
+    const again = cloudMaskAlpha();
+    expect(again).toEqual(alpha);
     const coverage = cloudCoverage(alpha);
-    expect(coverage).toBeGreaterThan(0.04);
-    expect(coverage).toBeLessThan(0.28);
+    expect(coverage).toBeGreaterThanOrEqual(0.08);
+    expect(coverage).toBeLessThanOrEqual(0.22);
+    expect(interiorHoleCount(alpha)).toBe(0);
+    expect(maskSource).not.toContain('CLOUD_SHAPES');
+    expect(maskSource).not.toMatch(/Math\.random\s*\(/);
+    const stamps = cloudStamps();
+    expect(stamps.length).toBeGreaterThanOrEqual(24);
+    const widths = new Set(stamps.map((stamp) => stamp.widthTexels));
+    expect(widths.size).toBeGreaterThan(4);
+    expect(stamps.some((stamp) => stamp.sizeClass === 'small')).toBe(true);
+    expect(stamps.some((stamp) => stamp.sizeClass === 'medium')).toBe(true);
+    expect(stamps.some((stamp) => stamp.sizeClass === 'large')).toBe(true);
+    for (const stamp of stamps) {
+      const worldWidth = stamp.widthTexels * CLOUD_WORLD_PER_TEXEL;
+      const ratio = stamp.widthTexels / stamp.heightTexels;
+      expect(ratio).toBeGreaterThanOrEqual(1.7);
+      expect(ratio).toBeLessThanOrEqual(3.5);
+      if (stamp.sizeClass === 'small') expect(worldWidth).toBeGreaterThanOrEqual(12);
+      if (stamp.sizeClass === 'small') expect(worldWidth).toBeLessThanOrEqual(22);
+      if (stamp.sizeClass === 'medium') expect(worldWidth).toBeGreaterThanOrEqual(20);
+      if (stamp.sizeClass === 'medium') expect(worldWidth).toBeLessThanOrEqual(34);
+      if (stamp.sizeClass === 'large') expect(worldWidth).toBeGreaterThanOrEqual(30);
+      if (stamp.sizeClass === 'large') expect(worldWidth).toBeLessThanOrEqual(46);
+    }
+    const wrapped = new Uint8Array(16 * 16);
+    paintWrappedRect(wrapped, 16, 13, 2, 6, 3);
+    expect(wrapped[2 * 16 + 15]).toBe(255);
+    expect(wrapped[2 * 16 + 0]).toBe(255);
+    expect(wrapped[2 * 16 + 2]).toBe(255);
+    expect(wrapped[2 * 16 + 3]).toBe(0);
     expect(skySource).not.toContain('uClouds');
     expect(skySource).toContain('uStarOpacity');
     const clouds = new CloudLayer();
+    const material = clouds.object.material as THREE.MeshBasicMaterial;
+    expect(material.depthWrite).toBe(false);
+    expect(material.depthTest).toBe(true);
+    expect(material.transparent).toBe(true);
+    expect(clouds.object.renderOrder).toBe(-500);
     expect(clouds.object.visible).toBe(true);
     expect(clouds.isEnabled).toBe(true);
     clouds.setEnabled(false);
@@ -373,21 +440,83 @@ describe('sky palette', () => {
     expect(clouds.object.visible).toBe(true);
     clouds.update(12, 66, -4, 3, 0);
     expect(clouds.object.position.y).toBe(cloudAltitude(66));
-    expect(clouds.object.position.y).toBeGreaterThan(110);
+    expect(cloudAltitude(66)).toBe(66 + CLOUD_ABOVE_CAMERA);
+    expect(cloudAltitude(66 + 40) - cloudAltitude(66)).toBe(40);
     expect(clouds.object.position.x).toBe(12);
     expect(clouds.object.position.z).toBe(-4);
-    expect(cloudAltitude(200)).toBeGreaterThan(250);
+    expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeGreaterThanOrEqual(0.12);
+    expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeLessThanOrEqual(0.2);
     const span = CLOUD_MASK_SIZE * CLOUD_WORLD_PER_TEXEL;
+    expect(span).toBe(512);
+    expect(CLOUD_PLANE_SIZE / span).toBeLessThan(2);
     const still = cloudWorldSample(40, -15, 0, 0, 0, span);
     const movedX = cloudWorldSample(40, -15, 120, 0, 0, span);
+    const movedNegX = cloudWorldSample(40, -15, -90, 0, 0, span);
     const movedZ = cloudWorldSample(40, -15, 0, 80, 0, span);
-    expect(movedX.u).toBeCloseTo(still.u, 5);
-    expect(movedX.v).toBeCloseTo(still.v, 5);
-    expect(movedZ.u).toBeCloseTo(still.u, 5);
-    expect(movedZ.v).toBeCloseTo(still.v, 5);
-    expect(cloudWorldSample(40, -15, 0, 0, 10, span).u).not.toBeCloseTo(still.u, 3);
+    const movedNegZ = cloudWorldSample(40, -15, 0, -70, 0, span);
+    const diagonal = cloudWorldSample(40, -15, 50, -30, 0, span);
+    for (const sample of [movedX, movedNegX, movedZ, movedNegZ, diagonal]) {
+      expect(sample.u).toBeCloseTo(still.u, 5);
+      expect(sample.v).toBeCloseTo(still.v, 5);
+    }
+    const later = cloudWorldSample(40, -15, 0, 0, 10, span);
+    expect(later.u).toBeCloseTo(still.u + (10 * CLOUD_DRIFT_BLOCKS_PER_SECOND) / span, 5);
+    expect(later.v).toBeCloseTo(still.v, 5);
+    const sunMaterial = createCelestialMaterial(0xffed9b);
+    const moonMaterial = createCelestialMaterial(0xb9d4e5);
+    expect(sunMaterial.depthWrite).toBe(false);
+    expect(moonMaterial.depthWrite).toBe(false);
+    expect(sunMaterial.depthTest).toBe(true);
+    expect(moonMaterial.depthTest).toBe(true);
+    expect(CELESTIAL_RENDER_ORDER).toBe(-750);
+    expect(gameSource).toContain('createCelestialMaterial');
+    expect(gameSource).toContain('CELESTIAL_RENDER_ORDER');
     expect(gameSource).toContain('this.clouds.setEnabled(settings.clouds)');
     expect(gameSource).toContain('this.clouds.update(');
+  });
+});
+
+describe('bow release keeps the finger aim', () => {
+  it('samples the held yaw after pointerup and pointercancel, not the camera yaw', () => {
+    const finger = { yaw: 0.6, pitch: 0.05 };
+    for (const kind of ['up', 'cancel'] as const) {
+      const held = advanceTouchTrack(beginTouchTrack(40, 50, 0), 41, 50, TOUCH_HOLD_MS);
+      expect(resolvePointerEnd(held, kind, TOUCH_HOLD_MS + 5)).toBe('hold-end');
+      const ended = aimAfterHoldEnd({
+        mining: false,
+        using: true,
+        releaseAimPending: false,
+        aim: finger,
+      });
+      const cameraYaw = 0;
+      const sampledYaw = ended.aim?.yaw ?? cameraYaw;
+      expect(sampledYaw).toBeCloseTo(0.6, 5);
+      expect(sampledYaw).not.toBe(cameraYaw);
+      expect(ended.releaseAimPending).toBe(true);
+    }
+    expect(inputSource).toContain('x: event.clientX, y: event.clientY');
+    expect(inputSource).toContain('this.finishWorldTouch(performance.now())');
+    expect(inputSource).toContain('this.cancelWorldTouchGesture()');
+  });
+});
+
+describe('visual viewport is the renderer size', () => {
+  it('prefers the visual viewport over the taller layout viewport', () => {
+    const phone = viewportMetrics({
+      visualViewport: { width: 844, height: 390 },
+      innerWidth: 844,
+      innerHeight: 430,
+    });
+    expect(phone).toEqual({ width: 844, height: 390 });
+    expect(phone.width / phone.height).toBeCloseTo(844 / 390, 5);
+    const desktop = viewportMetrics({
+      visualViewport: null,
+      innerWidth: 1280,
+      innerHeight: 720,
+    });
+    expect(desktop).toEqual({ width: 1280, height: 720 });
+    expect(gameSource).toContain('viewportMetrics()');
+    expect(gameSource).toContain("visualViewport?.addEventListener('resize'");
   });
 });
 
@@ -436,6 +565,14 @@ describe('play info and hotbar layout', () => {
     expect(style).not.toContain('calc(0.52 + 0.03vw)');
     expect(style).not.toContain('@media (pointer: coarse), (max-width: 900px)');
     expect(style).toContain('@media (pointer: coarse)');
+    expect(style).toContain('--touch-action-size');
+    expect(style).toContain('--touch-action-gap');
+    expect(style).not.toContain('--hotbar-slot: 30px');
+    expect(style).not.toContain('--touch-jump');
+    expect(style).toContain('button[data-action="jump"],');
+    expect(inputSource).toContain('title="Инвентарь"');
+    expect(inputSource).not.toContain('▦');
+    expect(inputSource).toContain('INVENTORY_ICON');
     expect(style).toContain('--hud-scale: clamp(');
     expect(style).toContain('#play-info');
     expect(style).toContain('#touch-actions button[data-action="sneak"].is-active');
