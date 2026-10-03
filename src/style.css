@@ -1052,6 +1052,9 @@ button {
 
 #chat-send {
   aspect-ratio: 198 / 96;
+  /* Visible frame sits 6px inside a 96px-tall canvas. TAB's frame is inset
+     further, so this keeps ENTER's right edge on TAB's right edge. */
+  margin-right: calc(104px * (94 / 96 * 157 / 940 - 6 / 96) * var(--hud-scale));
   background-image: var(--chat-enter-img);
 }
 
@@ -1068,6 +1071,7 @@ button {
 
 #chat-visibility {
   aspect-ratio: 106 / 96;
+  margin-right: calc(104px * (94 / 96 * 157 / 940 - 6 / 96) * var(--hud-scale));
   background-image: var(--chat-on-img);
 }
 
@@ -1189,6 +1193,11 @@ button {
     height: calc(88px * 94 / 96 * 1226 / 940 * var(--hud-scale));
     margin-top: calc(-88px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
     margin-bottom: calc(-88px * (6 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
+  }
+
+  #chat-send,
+  #chat-visibility {
+    margin-right: calc(88px * (94 / 96 * 157 / 940 - 6 / 96) * var(--hud-scale));
   }
 
   #chat-tabs button {
