@@ -25,6 +25,7 @@ import {
   shouldFollowHoldAim,
   sprintFromStick,
   toggleCrouch,
+  touchStickRadius,
   type MobileTouchDecision,
   type MobileTouchIntent,
 } from './mobileTouch';
@@ -488,7 +489,7 @@ export class InputManager {
       const rect = joystick.getBoundingClientRect();
       const dx = event.clientX - (rect.left + rect.width / 2);
       const dy = event.clientY - (rect.top + rect.height / 2);
-      const radius = rect.width * 0.34;
+      const radius = touchStickRadius(rect.width);
       const scale = Math.min(1, radius / Math.max(radius, Math.hypot(dx, dy)));
       const x = dx * scale;
       const y = dy * scale;

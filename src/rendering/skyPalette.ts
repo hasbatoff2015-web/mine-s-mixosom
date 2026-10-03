@@ -12,15 +12,24 @@ export interface SkySample {
   readonly band: SkyRgb;
   readonly bandStrength: number;
   readonly starOpacity: number;
+  /** Sky-only night amount. Gameplay daylight does not read this. */
+  readonly visualNight: number;
   readonly fog: SkyRgb;
   readonly sunHeight: number;
   readonly rising: boolean;
 }
 
-const DAY_ZENITH: SkyRgb = { r: 0.43, g: 0.67, b: 0.93 };
-const DAY_HORIZON: SkyRgb = { r: 0.74, g: 0.86, b: 0.96 };
-const NIGHT_ZENITH: SkyRgb = { r: 0.015, g: 0.02, b: 0.07 };
-const NIGHT_HORIZON: SkyRgb = { r: 0.07, g: 0.09, b: 0.16 };
+const DAY_ZENITH: SkyRgb = { r: 0.18, g: 0.41, b: 0.93 };
+const DAY_HORIZON: SkyRgb = { r: 0.55, g: 0.74, b: 0.95 };
+const NIGHT_ZENITH: SkyRgb = { r: 0.008, g: 0.02, b: 0.095 };
+const NIGHT_HORIZON: SkyRgb = { r: 0.03, g: 0.064, b: 0.175 };
+/**
+ * Fog is its own pair. Day is a light blue, less saturated than the zenith.
+ * Night stays near the previous midnight luminance so the ground does not
+ * drop with the darker sky.
+ */
+const DAY_FOG: SkyRgb = { r: 0.58, g: 0.83, b: 0.95 };
+const NIGHT_FOG: SkyRgb = { r: 0.062, g: 0.088, b: 0.178 };
 const DUSK_ZENITH: SkyRgb = { r: 0.15, g: 0.18, b: 0.46 };
 const DAWN_ZENITH: SkyRgb = { r: 0.28, g: 0.24, b: 0.50 };
 const DUSK_HORIZON: SkyRgb = { r: 0.99, g: 0.30, b: 0.07 };
@@ -29,7 +38,7 @@ const DUSK_BAND: SkyRgb = { r: 1, g: 0.20, b: 0.03 };
 const DAWN_BAND: SkyRgb = { r: 1, g: 0.38, b: 0.10 };
 
 /** Weak warm share of the whole horizon. The strong orange stays in the sun-facing band. */
-const HORIZON_WARM = 0.28;
+const HORIZON_WARM = 0.36;
 /** Fog has no direction, so it takes an even smaller share of the dusk color. */
 const FOG_WARM = 0.16;
 
@@ -39,6 +48,11 @@ function mix(a: SkyRgb, b: SkyRgb, t: number): SkyRgb {
     g: a.g + (b.g - a.g) * t,
     b: a.b + (b.b - a.b) * t,
   };
+}
+
+/** Rec. 709 luminance. Used to keep night fog from going darker than the old sky. */
+export function skyLuminance(color: SkyRgb): number {
+  return 0.2126 * color.r + 0.7152 * color.g + 0.0722 * color.b;
 }
 
 function smoothstep(edge0: number, edge1: number, x: number): number {
@@ -57,25 +71,29 @@ export function skySample(timeOfDay: number): SkySample {
   const phase = (time / DAY_TICKS) * Math.PI * 2;
   const sunHeight = Math.sin(phase);
   const rising = Math.cos(phase) >= 0;
-  const night = smoothstep(0.08, -0.5, sunHeight);
+  const visualNight = smoothstep(0.03, -0.22, sunHeight);
+  // Fog keeps the slower curve. The sky may already be navy while the world
+  // distance color stays at the old brightness.
+  const fogNight = smoothstep(0.08, -0.5, sunHeight);
   const low = 1 - smoothstep(0, 0.34, Math.abs(sunHeight));
-  const bandStrength = clamp(low * (1 - night * 0.28), 0, 1);
-  const dayMix = 1 - night;
+  const bandStrength = clamp(low * (1 - visualNight * 0.28), 0, 1);
+  const dayMix = 1 - visualNight;
   const zenithBase = mix(NIGHT_ZENITH, DAY_ZENITH, dayMix);
   const horizonBase = mix(NIGHT_HORIZON, DAY_HORIZON, dayMix);
   const warm = clamp(bandStrength, 0, 1);
   const duskOrDawnHorizon = rising ? DAWN_HORIZON : DUSK_HORIZON;
   const zenith = mix(zenithBase, rising ? DAWN_ZENITH : DUSK_ZENITH, bandStrength * 0.26);
   const horizon = mix(horizonBase, duskOrDawnHorizon, warm * HORIZON_WARM);
-  const fogHorizon = mix(horizonBase, duskOrDawnHorizon, warm * FOG_WARM);
-  const starOpacity = smoothstep(0.02, -0.42, sunHeight);
+  const fogBase = mix(NIGHT_FOG, DAY_FOG, 1 - fogNight);
+  const fog = mix(fogBase, duskOrDawnHorizon, warm * FOG_WARM);
   return {
     zenith,
     horizon,
     band: rising ? DAWN_BAND : DUSK_BAND,
     bandStrength,
-    starOpacity,
-    fog: mix(fogHorizon, zenith, 0.15),
+    starOpacity: visualNight,
+    visualNight,
+    fog,
     sunHeight,
     rising,
   };

@@ -10,6 +10,16 @@ export const MOBILE_SPRINT_STICK_THRESHOLD = 0.82;
 export const MOBILE_AUTO_JUMP_AHEAD = 0.52;
 export const MOBILE_AUTO_JUMP_MIN_WISH = 0.35;
 export const MOBILE_AUTO_JUMP_STEP = 0.6;
+/**
+ * Full stick deflection stays near the old 92px thumb travel (~31px).
+ * A larger hit target must not make sprint a longer push.
+ */
+export const TOUCH_STICK_TRAVEL_CAP = 36;
+
+export function touchStickRadius(width: number): number {
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return Math.min(width * 0.34, TOUCH_STICK_TRAVEL_CAP);
+}
 
 export type MobileTouchIntent = 'attack' | 'use' | 'use-hold' | 'mine' | 'none';
 

@@ -1,5 +1,17 @@
 # Архитектура
 
+## Cloud field, night sky, touch size — 2026-10-03
+
+`cloudMask.ts` builds one 512×512 binary tile from a toroidal two-scale field. A 4-cell weather noise gates large clear regions. An 8-cell region noise and a ~18 texel detail lattice cut the blocky edge. The mix is `macro * 0.7 + detail * 0.3`, then a threshold. A 5×3 window removes spikes without bridging neighbors into one slab. Components smaller than 18 texels, and bars whose short side is 1–2 texels, are deleted. A blob wider than 52 texels or taller than 28 is split on the detail valleys. There is no blur and no `Math.random`. On the current seed: coverage 6.29%, 40 wrapped components, 32 of 64 macro sectors empty. At 2 blocks per texel the tile spans 1024 blocks.
+
+`CloudLayer` is still one plane, one `DataTexture`, one draw. The plane is 6144 blocks and sits at `cameraY + 128`, so the edge is `atan(128 / 3072) ≈ 2.39°` above the horizon. The fragment fades only past 86% of the half-extent. UV offset is still `(cameraX + wind) / span` and `-cameraZ / span`. Both shaders set `glslVersion: GLSL3` so the custom `fragColor` is the only fragment output. Day tint is a warm light grey. Night tint follows `visualNight` and stays a dark blue-grey.
+
+`skySample` splits the sky curve from the fog curve. `visualNight = smoothstep(0.03, -0.22, sunHeight)` drives zenith, horizon, stars and cloud tint. Fog still uses `smoothstep(0.08, -0.5, sunHeight)` and its own light-blue / navy endpoints, so night fog luminance does not follow the darker sky. `daylightFactor`, `0.14 + daylight * 0.32`, `0.18 + daylight * 1.55` and `worldRenderer.setDaylight` are unchanged.
+
+Stars are two hash layers. Each star is a point inside the cell (`1 - smoothstep(0, radius, length(local))`), not a filled cell. A cheap night haze is `exp(-(dot(dir, axis) * 3)^2)`. The moon mesh is a camera-facing 5.6 quad with a 16×16 nearest texture. It keeps `depthWrite: false` and render order -750.
+
+Touch size lives in the coarse custom properties. `--touch-stick` is 124 / 116 / 108. `touchStickRadius` is `min(width * 0.34, 36)`, so the larger hit target does not lengthen the sprint push. Jump and crouch share `--touch-action-size` (72 / 68 / 64) and the same right inset: `safe + --touch-action-right-offset`. Crouch bottom is `safe + --touch-action-bottom-offset`. Jump sits one size plus the gap above that. `#effect-hud` uses the same offsets, so it stays above the stack.
+
 ## Vertical actions, hotbar, clouds, sunset — 2026-10-03
 
 Jump and crouch share `--touch-action-size` and the same `right` inset, so their centers match. Crouch sits on the bottom safe edge. Jump's bottom is that edge plus the button size plus `--touch-action-gap`. There is no diagonal `-16/-18` offset. Short landscape only shrinks the action size (58px under 430px tall, 56px under 360px). It does not force the hotbar back to 30px.

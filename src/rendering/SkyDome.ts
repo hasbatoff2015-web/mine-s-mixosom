@@ -9,12 +9,51 @@ export const CELESTIAL_RENDER_ORDER = -750;
  * into an occluder, so a cloud fragment behind the sprite fails the depth
  * test. World geometry still wins: it is opaque, closer, and writes depth.
  */
-export function createCelestialMaterial(color: number): THREE.MeshBasicMaterial {
+export function createCelestialMaterial(color: number, map?: THREE.Texture): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color,
+    ...(map ? { map, transparent: true } : {}),
     depthWrite: false,
     depthTest: true,
   });
+}
+
+/** 16×16 pixel moon. Transparent corners, a pale disc, a few darker craters. */
+export function createMoonTexture(): THREE.DataTexture {
+  const size = 16;
+  const data = new Uint8Array(size * size * 4);
+  const crater = new Set(['5,6', '6,6', '6,7', '10,9', '9,4', '11,11']);
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const dx = x - 7.5;
+      const dy = y - 7.5;
+      if (dx * dx + dy * dy > 6.35 * 6.35) continue;
+      const dark = crater.has(`${x},${y}`);
+      const index = (y * size + x) * 4;
+      data[index] = dark ? 168 : 226;
+      data[index + 1] = dark ? 186 : 232;
+      data[index + 2] = dark ? 204 : 238;
+      data[index + 3] = 255;
+    }
+  }
+  const texture = new THREE.DataTexture(data, size, size);
+  texture.magFilter = THREE.NearestFilter;
+  texture.minFilter = THREE.NearestFilter;
+  texture.generateMipmaps = false;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.needsUpdate = true;
+  return texture;
+}
+
+/** Replaces the smooth moon sphere with one camera-facing pixel quad. */
+export function createMoonMesh(): THREE.Mesh {
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(5.6, 5.6),
+    createCelestialMaterial(0xffffff, createMoonTexture()),
+  );
+  mesh.renderOrder = CELESTIAL_RENDER_ORDER;
+  mesh.frustumCulled = false;
+  return mesh;
 }
 
 const vertexShader = /* glsl */ `
@@ -36,6 +75,22 @@ uniform float uBandStrength;
 uniform float uStarOpacity;
 uniform float uCloudTime;
 
+float hashCell(vec3 cell) {
+  vec3 p = fract(cell * 0.1031);
+  p += dot(p, p.yzx + 33.33);
+  return fract((p.x + p.y) * p.z);
+}
+
+float starLayer(vec3 dir, float scale, float threshold, float radius) {
+  vec3 p = dir * scale;
+  vec3 cell = floor(p);
+  vec3 local = fract(p) - 0.5;
+  float seed = hashCell(cell);
+  // edge0 must be below edge1. The inverted form is undefined in GLSL.
+  float core = 1.0 - smoothstep(0.0, radius, length(local));
+  return step(threshold, seed) * core;
+}
+
 void main() {
   vec3 dir = normalize(vDir);
   float up = clamp(dir.y, 0.0, 1.0);
@@ -52,12 +107,15 @@ void main() {
   float localWarm = mix(0.16, 1.0, sunFacing * sunFacing);
   float band = verticalBand * uBandStrength * localWarm;
   color = mix(color, uBand, clamp(band, 0.0, 0.98));
-  if (uStarOpacity > 0.001 && dir.y > 0.12) {
-    vec3 cell = floor(dir * 58.0);
-    float n = fract(sin(dot(cell, vec3(127.1, 311.7, 74.7))) * 43758.5453);
-    float star = step(0.986, n);
-    float twinkle = 0.78 + 0.22 * sin(dot(cell.xy, vec2(1.3, 0.7)) + uCloudTime * 0.35);
-    color += star * twinkle * uStarOpacity * vec3(0.86, 0.91, 1.0);
+  vec3 hazeAxis = normalize(vec3(0.2, 0.42, 0.88));
+  float hazeAlign = dot(dir, hazeAxis) * 3.0;
+  float nightHaze = exp(-(hazeAlign * hazeAlign));
+  color += nightHaze * uStarOpacity * vec3(0.015, 0.032, 0.052);
+  if (uStarOpacity > 0.001 && dir.y > 0.08) {
+    float small = starLayer(dir, 70.0, 0.968, 0.2);
+    float bright = starLayer(dir, 32.0, 0.994, 0.26);
+    float twinkle = 0.9 + 0.1 * sin(uCloudTime * 0.35 + bright * 12.0);
+    color += uStarOpacity * (small * vec3(0.72, 0.78, 0.9) + bright * twinkle * vec3(1.0, 0.97, 0.88));
   }
   fragColor = vec4(color, 1.0);
 }
@@ -81,8 +139,8 @@ export class SkyDome {
 
   constructor() {
     this.uniforms = {
-      uZenith: { value: new THREE.Color(0.43, 0.67, 0.93) },
-      uHorizon: { value: new THREE.Color(0.74, 0.86, 0.96) },
+      uZenith: { value: new THREE.Color(0.18, 0.41, 0.93) },
+      uHorizon: { value: new THREE.Color(0.55, 0.74, 0.95) },
       uBand: { value: new THREE.Color(0.98, 0.42, 0.18) },
       uSunDir: { value: new THREE.Vector3(1, 0, 0) },
       uBandStrength: { value: 0 },
@@ -93,6 +151,7 @@ export class SkyDome {
       uniforms: this.uniforms,
       vertexShader,
       fragmentShader,
+      glslVersion: THREE.GLSL3,
       side: THREE.BackSide,
       depthWrite: false,
       depthTest: false,

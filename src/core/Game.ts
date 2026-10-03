@@ -124,7 +124,7 @@ import {
   type MobileTouchDecision,
 } from '../input/mobileTouch';
 import { CloudLayer } from '../rendering/CloudLayer';
-import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial } from '../rendering/SkyDome';
+import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial, createMoonMesh } from '../rendering/SkyDome';
 import { skySample, sunDirection } from '../rendering/skyPalette';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
@@ -625,7 +625,7 @@ export class Game {
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
   private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
   private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), createCelestialMaterial(0xffed9b));
-  private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), createCelestialMaterial(0xb9d4e5));
+  private readonly moon = createMoonMesh();
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
   private readonly localRender = new LocalPlayerRenderState();
   private readonly cameraPivot = new THREE.Vector3();
@@ -6494,7 +6494,7 @@ export class Game {
       this.camera.position.y,
       this.camera.position.z,
       this.skyCloudTime,
-      skyVisual.starOpacity,
+      skyVisual.visualNight,
     );
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
     this.ambient.intensity = 0.14 + daylight * 0.32;
@@ -6506,6 +6506,7 @@ export class Game {
     this.sunlight.position.copy(this.sun.position);
     session.worldRenderer.setDaylight(daylight);
     this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
+    this.moon.lookAt(this.camera.position);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
   }

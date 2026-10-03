@@ -28,6 +28,9 @@ interface LayoutSnapshot {
   readonly slot: Box;
   readonly offhand: Box;
   readonly corner: Box;
+  readonly stick: Box;
+  readonly effect: Box;
+  readonly playInfo: Box;
   readonly slotVar: string;
 }
 
@@ -59,7 +62,9 @@ function pageHtml(): string {
     </div>
     <div id="play-info">Игроков: 1
 X: 0  Y: 64  Z: 0</div>
+    <div id="effect-hud"><div class="effect-chip">Night</div></div>
   </div>
+  <div id="touch-joystick"><div class="joystick-ring"><div class="joystick-knob"></div></div></div>
   <div id="touch-actions">
     <button type="button" data-action="jump" aria-label="Прыжок">${JUMP_ICON}</button>
     <button type="button" data-action="sneak" aria-label="Присесть">${CROUCH_ICON}</button>
@@ -221,6 +226,9 @@ describe('coarse mobile layout rects', () => {
           slot: box(slot),
           offhand: box(document.querySelector('#offhand-hud')),
           corner: box(document.querySelector('#hud-corner')),
+          stick: box(document.querySelector('#touch-joystick')),
+          effect: box(document.querySelector('#effect-hud')),
+          playInfo: box(document.querySelector('#play-info')),
           slotVar: getComputedStyle(app).getPropertyValue('--hotbar-slot').trim(),
           inventoryLabel: document.querySelector('[data-action="inventory"]')?.getAttribute('aria-label'),
           backpack: document.querySelector('[data-action="inventory"] svg')?.getAttribute('shape-rendering'),
@@ -260,8 +268,8 @@ describe('coarse mobile layout rects', () => {
     const pageUrl = `http://127.0.0.1:${address.port}/`;
     const wide = await measure(844, 390, pageUrl);
     const narrow = await measure(800, 360, pageUrl);
-    assertStack(wide, 40);
-    assertStack(narrow, 38);
+    assertStack(wide, 40, 68, 116);
+    assertStack(narrow, 38, 64, 108);
   }, 60_000);
 });
 
@@ -269,7 +277,7 @@ function overlaps(a: Box, b: Box): boolean {
   return a.left < b.right - 0.5 && a.right > b.left + 0.5 && a.top < b.bottom - 0.5 && a.bottom > b.top + 0.5;
 }
 
-function assertStack(layout: LayoutSnapshot, minSlot: number): void {
+function assertStack(layout: LayoutSnapshot, minSlot: number, actionSize: number, stickSize: number): void {
   const center = (box: Box): number => (box.left + box.right) / 2;
   expect(Math.abs(center(layout.jump) - center(layout.crouch))).toBeLessThanOrEqual(1);
   expect(layout.jump.bottom).toBeLessThanOrEqual(layout.crouch.top);
@@ -300,4 +308,18 @@ function assertStack(layout: LayoutSnapshot, minSlot: number): void {
   expect(overlaps(layout.crouch, layout.corner)).toBe(false);
   expect(overlaps(layout.inventory, layout.hotbar)).toBe(false);
   expect(overlaps(layout.offhand, layout.hotbar)).toBe(false);
+  expect(layout.jump.width).toBeGreaterThanOrEqual(actionSize - 1);
+  expect(layout.jump.width).toBeLessThanOrEqual(actionSize + 1);
+  expect(layout.crouch.width).toBeGreaterThanOrEqual(actionSize - 1);
+  expect(layout.stick.width).toBeGreaterThanOrEqual(stickSize - 1);
+  expect(layout.stick.height).toBeGreaterThanOrEqual(stickSize - 1);
+  expect(layout.viewport.width - layout.crouch.right).toBeGreaterThanOrEqual(50);
+  expect(layout.viewport.height - layout.crouch.bottom).toBeGreaterThanOrEqual(36);
+  expect(layout.jump.left - layout.inventory.right).toBeGreaterThanOrEqual(20);
+  expect(layout.effect.bottom).toBeLessThanOrEqual(layout.jump.top + 1);
+  expect(overlaps(layout.effect, layout.jump)).toBe(false);
+  expect(overlaps(layout.effect, layout.crouch)).toBe(false);
+  expect(overlaps(layout.stick, layout.hotbar)).toBe(false);
+  expect(overlaps(layout.stick, layout.playInfo)).toBe(false);
+  expect(overlaps(layout.stick, layout.jump)).toBe(false);
 }

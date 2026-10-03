@@ -13,6 +13,8 @@ import {
   shouldFollowHoldAim,
   sprintFromStick,
   toggleCrouch,
+  TOUCH_STICK_TRAVEL_CAP,
+  touchStickRadius,
   type MobileTouchFacts,
 } from '../src/input/mobileTouch';
 import { TOUCH_LAYOUT_QUERY } from '../src/input/touchLayout';
@@ -29,7 +31,7 @@ import {
 import { aimAfterHoldEnd } from '../src/input/InputManager';
 import { lookFromDirection, viewDirectionFromLook } from '../src/player/localAim';
 import { resolveOnlineMiningTick } from '../src/net/onlineMining';
-import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial } from '../src/rendering/SkyDome';
+import { CELESTIAL_RENDER_ORDER, SkyDome, createCelestialMaterial, createMoonMesh } from '../src/rendering/SkyDome';
 import {
   CLOUD_ABOVE_CAMERA,
   CLOUD_DRIFT_BLOCKS_PER_SECOND,
@@ -37,17 +39,22 @@ import {
   CLOUD_WORLD_PER_TEXEL,
   CloudLayer,
   cloudAltitude,
+  cloudEdgeElevationDeg,
+  cloudTint,
   cloudWorldSample,
 } from '../src/rendering/CloudLayer';
 import {
   CLOUD_MASK_SIZE,
+  cloudComponents,
   cloudCoverage,
+  cloudMacroSectors,
   cloudMaskAlpha,
-  cloudStamps,
+  cloudScalarField,
   interiorHoleCount,
   paintWrappedRect,
 } from '../src/rendering/cloudMask';
-import { skySample, sunDirection, sunsetGlowWeight } from '../src/rendering/skyPalette';
+import { skyLuminance, skySample, sunDirection, sunsetGlowWeight } from '../src/rendering/skyPalette';
+import { daylightFactor } from '../src/gameplay/daylight';
 import { floorCoord, formatPlayInfo } from '../src/ui/playInfoHud';
 import { viewportMetrics } from '../src/ui/visualViewport';
 import * as THREE from 'three';
@@ -57,7 +64,9 @@ const inputSource = readFileSync('src/input/InputManager.ts', 'utf8');
 const gameSource = readFileSync('src/core/Game.ts', 'utf8');
 const playerSource = readFileSync('src/player/PlayerController.ts', 'utf8');
 const skySource = readFileSync('src/rendering/SkyDome.ts', 'utf8');
+const cloudSource = readFileSync('src/rendering/CloudLayer.ts', 'utf8');
 const maskSource = readFileSync('src/rendering/cloudMask.ts', 'utf8');
+const daylightSource = readFileSync('src/gameplay/daylight.ts', 'utf8');
 const gameUi = readFileSync('src/ui/GameUI.ts', 'utf8');
 
 function facts(partial: Partial<MobileTouchFacts> & Pick<MobileTouchFacts, 'phase'>): MobileTouchFacts {
@@ -348,10 +357,21 @@ describe('sky palette', () => {
     const noon = skySample(6_000);
     const dusk = skySample(12_000);
     const midnight = skySample(18_000);
+    const night = skySample(13_000);
     const dawn = skySample(0);
     expect(noon.starOpacity).toBe(0);
+    expect(noon.visualNight).toBe(0);
     expect(noon.sunHeight).toBeGreaterThan(0.9);
+    expect(noon.zenith.b).toBeGreaterThan(0.85);
+    expect(noon.zenith.r).toBeLessThan(0.25);
     expect(noon.zenith.b).toBeGreaterThan(noon.zenith.r);
+    expect(noon.horizon.b).toBeGreaterThan(noon.horizon.r);
+    expect(night.visualNight).toBeGreaterThan(0.9);
+    expect(night.starOpacity).toBeGreaterThan(0.9);
+    expect(night.zenith.b).toBeGreaterThan(night.zenith.r * 4);
+    expect(night.zenith.b).toBeGreaterThan(night.zenith.g);
+    expect(skyLuminance(night.fog)).toBeGreaterThan(0.35513 * 0.95);
+    expect(skyLuminance(midnight.fog)).toBeGreaterThan(0.08056 * 0.95);
     expect(dusk.rising).toBe(false);
     expect(dawn.rising).toBe(true);
     expect(dusk.bandStrength).toBeGreaterThan(0.85);
@@ -364,12 +384,28 @@ describe('sky palette', () => {
     expect(dusk.fog.r).toBeLessThan(dusk.horizon.r);
     expect(dawn.horizon.r).toBeGreaterThan(noon.horizon.r);
     expect(midnight.starOpacity).toBeGreaterThan(0.9);
+    expect(midnight.visualNight).toBe(1);
     expect(midnight.zenith.b).toBeLessThan(0.15);
+    expect(midnight.zenith.b).toBeGreaterThan(midnight.zenith.r * 4);
     expect(dusk.starOpacity).toBeLessThan(0.2);
     expect(noon.fog.b).toBeGreaterThan(midnight.fog.b);
     expect(skySource).toContain('(dir.y - 0.035) * 8.6');
     expect(skySource).toContain('uSunDir');
     expect(skySource).toContain('sunFacing');
+    expect(skySource).toContain('fract(p) - 0.5');
+    expect(skySource).toContain('starLayer');
+    expect(skySource).toContain('nightHaze');
+    expect(skySource).toContain('glslVersion: THREE.GLSL3');
+    expect(cloudSource).toContain('glslVersion: THREE.GLSL3');
+    expect(gameSource).toContain('this.ambient.intensity = 0.14 + daylight * 0.32');
+    expect(gameSource).toContain('this.sunlight.intensity = 0.18 + daylight * 1.55');
+    expect(gameSource).toContain('session.worldRenderer.setDaylight(daylight)');
+    expect(gameSource).toContain('skyVisual.visualNight');
+    expect(gameSource).toContain('createMoonMesh');
+    expect(gameSource).toContain('this.moon.lookAt(this.camera.position)');
+    expect(daylightSource).toContain('(Math.sin(phase) + 0.22) / 0.75');
+    expect(daylightFactor(6_000)).toBeCloseTo(1, 5);
+    expect(daylightFactor(18_000)).toBeCloseTo(0.08, 5);
     const sun = sunDirection(12_000);
     const opposite = sunsetGlowWeight(0.035, 0, dusk.bandStrength);
     const facing = sunsetGlowWeight(0.035, 1, dusk.bandStrength);
@@ -393,30 +429,36 @@ describe('sky palette', () => {
     const again = cloudMaskAlpha();
     expect(again).toEqual(alpha);
     const coverage = cloudCoverage(alpha);
-    expect(coverage).toBeGreaterThanOrEqual(0.08);
-    expect(coverage).toBeLessThanOrEqual(0.22);
+    expect(coverage).toBeGreaterThanOrEqual(0.05);
+    expect(coverage).toBeLessThanOrEqual(0.1);
     expect(interiorHoleCount(alpha)).toBe(0);
     expect(maskSource).not.toContain('CLOUD_SHAPES');
     expect(maskSource).not.toMatch(/Math\.random\s*\(/);
-    const stamps = cloudStamps();
-    expect(stamps.length).toBeGreaterThanOrEqual(24);
-    const widths = new Set(stamps.map((stamp) => stamp.widthTexels));
-    expect(widths.size).toBeGreaterThan(4);
-    expect(stamps.some((stamp) => stamp.sizeClass === 'small')).toBe(true);
-    expect(stamps.some((stamp) => stamp.sizeClass === 'medium')).toBe(true);
-    expect(stamps.some((stamp) => stamp.sizeClass === 'large')).toBe(true);
-    for (const stamp of stamps) {
-      const worldWidth = stamp.widthTexels * CLOUD_WORLD_PER_TEXEL;
-      const ratio = stamp.widthTexels / stamp.heightTexels;
-      expect(ratio).toBeGreaterThanOrEqual(1.7);
-      expect(ratio).toBeLessThanOrEqual(3.5);
-      if (stamp.sizeClass === 'small') expect(worldWidth).toBeGreaterThanOrEqual(12);
-      if (stamp.sizeClass === 'small') expect(worldWidth).toBeLessThanOrEqual(22);
-      if (stamp.sizeClass === 'medium') expect(worldWidth).toBeGreaterThanOrEqual(20);
-      if (stamp.sizeClass === 'medium') expect(worldWidth).toBeLessThanOrEqual(34);
-      if (stamp.sizeClass === 'large') expect(worldWidth).toBeGreaterThanOrEqual(30);
-      if (stamp.sizeClass === 'large') expect(worldWidth).toBeLessThanOrEqual(46);
+    expect(cloudScalarField(0, 17)).toBeCloseTo(cloudScalarField(CLOUD_MASK_SIZE, 17), 6);
+    expect(cloudScalarField(-1, 9)).toBeCloseTo(cloudScalarField(CLOUD_MASK_SIZE - 1, 9), 6);
+    expect(cloudScalarField(12, -3)).toBeCloseTo(cloudScalarField(12, CLOUD_MASK_SIZE - 3), 6);
+    const parts = cloudComponents(alpha);
+    expect(parts.length).toBeGreaterThanOrEqual(20);
+    expect(parts.length).toBeLessThanOrEqual(50);
+    const wide = parts.filter((part) => {
+      const ratio = Math.max(part.widthTexels, part.heightTexels) / Math.min(part.widthTexels, part.heightTexels);
+      return ratio > 4;
+    });
+    expect(wide.length / parts.length).toBeLessThan(0.35);
+    let banded = 0;
+    for (const part of parts) {
+      expect(part.area).toBeGreaterThanOrEqual(18);
+      const shortSide = Math.min(part.widthTexels, part.heightTexels);
+      const longSide = Math.max(part.widthTexels, part.heightTexels);
+      expect(shortSide <= 2 && longSide / shortSide >= 4).toBe(false);
+      const worldWidth = part.widthTexels * CLOUD_WORLD_PER_TEXEL;
+      const worldDepth = part.heightTexels * CLOUD_WORLD_PER_TEXEL;
+      if (worldWidth >= 20 && worldWidth <= 120 && worldDepth >= 10 && worldDepth <= 80) banded += 1;
     }
+    expect(banded / parts.length).toBeGreaterThan(0.5);
+    const sectors = cloudMacroSectors(alpha);
+    expect(sectors.total).toBe(64);
+    expect(sectors.empty).toBeGreaterThanOrEqual(8);
     const wrapped = new Uint8Array(16 * 16);
     paintWrappedRect(wrapped, 16, 13, 2, 6, 3);
     expect(wrapped[2 * 16 + 15]).toBe(255);
@@ -426,10 +468,12 @@ describe('sky palette', () => {
     expect(skySource).not.toContain('uClouds');
     expect(skySource).toContain('uStarOpacity');
     const clouds = new CloudLayer();
-    const material = clouds.object.material as THREE.MeshBasicMaterial;
+    const material = clouds.object.material as THREE.ShaderMaterial;
+    expect(material).toBeInstanceOf(THREE.ShaderMaterial);
     expect(material.depthWrite).toBe(false);
     expect(material.depthTest).toBe(true);
     expect(material.transparent).toBe(true);
+    expect(material.fragmentShader).toContain('smoothstep(0.86, 0.98, edge)');
     expect(clouds.object.renderOrder).toBe(-500);
     expect(clouds.object.visible).toBe(true);
     expect(clouds.isEnabled).toBe(true);
@@ -442,13 +486,25 @@ describe('sky palette', () => {
     expect(clouds.object.position.y).toBe(cloudAltitude(66));
     expect(cloudAltitude(66)).toBe(66 + CLOUD_ABOVE_CAMERA);
     expect(cloudAltitude(66 + 40) - cloudAltitude(66)).toBe(40);
+    const dayTint = cloudTint(0);
+    const nightTint = cloudTint(1);
+    expect(dayTint.r).toBeGreaterThan(0.9);
+    expect(nightTint.b).toBeGreaterThan(nightTint.r);
+    expect(nightTint.r).toBeGreaterThan(0.1);
+    clouds.update(12, 66, -4, 3, 1);
+    const tinted = (clouds.object.material as THREE.ShaderMaterial).uniforms['uColor']?.value as THREE.Color;
+    expect(tinted.b).toBeGreaterThan(tinted.r);
     expect(clouds.object.position.x).toBe(12);
     expect(clouds.object.position.z).toBe(-4);
     expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeGreaterThanOrEqual(0.12);
     expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeLessThanOrEqual(0.2);
     const span = CLOUD_MASK_SIZE * CLOUD_WORLD_PER_TEXEL;
-    expect(span).toBe(512);
-    expect(CLOUD_PLANE_SIZE / span).toBeLessThan(2);
+    expect(span).toBe(1024);
+    expect(CLOUD_PLANE_SIZE / span).toBe(6);
+    expect(cloudEdgeElevationDeg(96, 960)).toBeCloseTo(11.31, 1);
+    expect(cloudEdgeElevationDeg()).toBeLessThan(4);
+    expect(cloudEdgeElevationDeg()).toBeCloseTo(2.39, 1);
+    expect(cloudSource).toContain('smoothstep(0.86, 0.98, edge)');
     const still = cloudWorldSample(40, -15, 0, 0, 0, span);
     const movedX = cloudWorldSample(40, -15, 120, 0, 0, span);
     const movedNegX = cloudWorldSample(40, -15, -90, 0, 0, span);
@@ -464,6 +520,11 @@ describe('sky palette', () => {
     expect(later.v).toBeCloseTo(still.v, 5);
     const sunMaterial = createCelestialMaterial(0xffed9b);
     const moonMaterial = createCelestialMaterial(0xb9d4e5);
+    const moon = createMoonMesh();
+    expect(moon.geometry).toBeInstanceOf(THREE.PlaneGeometry);
+    expect((moon.material as THREE.MeshBasicMaterial).map).toBeTruthy();
+    expect((moon.material as THREE.MeshBasicMaterial).depthWrite).toBe(false);
+    expect(moon.renderOrder).toBe(CELESTIAL_RENDER_ORDER);
     expect(sunMaterial.depthWrite).toBe(false);
     expect(moonMaterial.depthWrite).toBe(false);
     expect(sunMaterial.depthTest).toBe(true);
@@ -567,6 +628,18 @@ describe('play info and hotbar layout', () => {
     expect(style).toContain('@media (pointer: coarse)');
     expect(style).toContain('--touch-action-size');
     expect(style).toContain('--touch-action-gap');
+    expect(style).toContain('--touch-action-right-offset');
+    expect(style).toContain('--touch-action-bottom-offset');
+    expect(style).toContain('--touch-stick: 124px');
+    expect(style).toContain('--touch-stick: 116px');
+    expect(style).toContain('--touch-stick: 108px');
+    expect(style).toContain('--touch-action-size: 72px');
+    expect(style).toContain('--touch-action-size: 68px');
+    expect(style).toContain('--touch-action-size: 64px');
+    expect(inputSource).toContain('touchStickRadius(rect.width)');
+    expect(touchStickRadius(92)).toBeCloseTo(92 * 0.34, 5);
+    expect(touchStickRadius(116)).toBe(TOUCH_STICK_TRAVEL_CAP);
+    expect(touchStickRadius(124)).toBe(TOUCH_STICK_TRAVEL_CAP);
     expect(style).not.toContain('--hotbar-slot: 30px');
     expect(style).not.toContain('--touch-jump');
     expect(style).toContain('button[data-action="jump"],');

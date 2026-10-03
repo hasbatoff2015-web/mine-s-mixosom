@@ -3805,9 +3805,11 @@ textarea,
     --hotbar-slot: clamp(38px, 5vw, 42px);
     --hud-slot-gap: 2px;
     --hud-hotbar-half-width: calc(4.5 * var(--hotbar-slot) + 4 * var(--hud-slot-gap));
-    --touch-action-size: 62px;
+    --touch-action-size: 72px;
     --touch-action-gap: 8px;
-    --touch-stick: 108px;
+    --touch-stick: 124px;
+    --touch-action-right-offset: 48px;
+    --touch-action-bottom-offset: 28px;
   }
 
   #hud {
@@ -3927,17 +3929,17 @@ textarea,
 
   #touch-actions button[data-action="jump"],
   #touch-actions button[data-action="sneak"] {
-    right: max(10px, env(safe-area-inset-right));
+    right: calc(max(10px, env(safe-area-inset-right)) + var(--touch-action-right-offset));
     width: var(--touch-action-size);
     height: var(--touch-action-size);
   }
 
   #touch-actions button[data-action="sneak"] {
-    bottom: max(8px, env(safe-area-inset-bottom));
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-bottom-offset));
   }
 
   #touch-actions button[data-action="jump"] {
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-size) + var(--touch-action-gap));
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-bottom-offset) + var(--touch-action-size) + var(--touch-action-gap));
   }
 
   #touch-actions button[data-action="sneak"].is-active {
@@ -3988,8 +3990,8 @@ textarea,
   }
 
   #effect-hud {
-    right: calc(10px + env(safe-area-inset-right, 0px));
-    bottom: calc(max(8px, env(safe-area-inset-bottom)) + (2 * var(--touch-action-size)) + var(--touch-action-gap) + 8px);
+    right: calc(max(10px, env(safe-area-inset-right)) + var(--touch-action-right-offset));
+    bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-bottom-offset) + (2 * var(--touch-action-size)) + var(--touch-action-gap) + 8px);
   }
 
   #selected-item { display: none; }
@@ -4073,9 +4075,11 @@ textarea,
 @media (max-height: 430px) and (orientation: landscape) and (pointer: coarse) {
   #app,
   #hud {
-    --touch-action-size: 58px;
+    --touch-action-size: 68px;
     --touch-action-gap: 8px;
-    --touch-stick: 92px;
+    --touch-stick: 116px;
+    --touch-action-right-offset: 58px;
+    --touch-action-bottom-offset: 38px;
   }
   #hud-corner button { width: 44px; height: 44px; }
   #play-info {
@@ -4088,9 +4092,11 @@ textarea,
 @media (max-height: 360px) and (orientation: landscape) and (pointer: coarse) {
   #app,
   #hud {
-    --touch-action-size: 56px;
+    --touch-action-size: 64px;
     --touch-action-gap: 8px;
-    --touch-stick: 84px;
+    --touch-stick: 108px;
+    --touch-action-right-offset: 54px;
+    --touch-action-bottom-offset: 36px;
   }
 }
 /* Frontier menu redesign */

@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-03: cloud field, night sky, larger touch controls
+
+- [x] Cloud mask is a 512×512 two-scale field, 6.29% coverage, 40 components, large empty sectors. No full-width body stamp.
+- [x] Cloud plane is 6144 blocks at `cameraY + 128`. Edge elevation is 2.39°. Outer 14% fades. Drift stays 0.16 blocks/second and world-locked.
+- [x] Day zenith is saturated blue. Visual night is already night at tick 13000. Fog keeps the old curve and does not get darker. Gameplay daylight formulas are unchanged.
+- [x] Stars are two point layers. The moon is a 16×16 billboard. Sun and moon still do not write depth.
+- [x] Coarse stick is 124/116/108 px with travel capped at 36 px. Actions are 72/68/64 px, shifted left and up together. Inventory gap stays at least 20 px.
+- [ ] Owner QA on a phone: stick travel, jump/crouch stack, `/time night` stars, clouds to the horizon, tree in front of a cloud.
+
 ## 2026-10-03: vertical actions, larger hotbar, tileable clouds, directional sunset
 
 - [x] Jump sits directly above crouch. Same center X, shared action size and gap. No diagonal offset.
