@@ -1,5 +1,89 @@
 # Архитектура
 
+## Mobile polish — 2026-10-03
+
+`CLOUD_DRIFT_BLOCKS_PER_SECOND` is `0.16 * 4`. `cloudScrollOffset` still adds that wind only to U. Camera X/Z still cancel in `cloudWorldSample`.
+
+`createCelestialMaterial` is alpha-tested, not blended. `transparent: false`, `alphaTest: 0.5` when a map is set, `depthWrite: false`, `depthTest: true`. Both discs use it and stay at render order -750. Opaque world geometry is order 0 and is drawn later, so it covers the disc even when the tree is farther than `CELESTIAL_DISTANCE`. Clouds stay a transparent pass at -500.
+
+Coarse bow hold is `bow-hold`, not `use-hold`. `heldPointerEffect` rotates through the existing `rotate()` and clears `interactionAim`. `sampleLocalAim` therefore uses the camera. Mining and food still call `shouldFollowHoldAim` and do not rotate. `captureBowRelease` and `resolveBowReleaseCommandSeq` are unchanged; they receive whatever aim the sample produced.
+
+Container scale is `containerUiScaleWithClose(viewportMetrics())`. There is no second `.mc-stage { zoom }`. `#cursor-stack` starts at `-9999px`. `pointerdown` stores the point, and `syncCursorStackElement` applies `cursorStackClientPosition` before the next move. Touch and pen are offset by `+18, -36`.
+
+`movement().jump` is `jumpInputActive`: Space, physical jump, jump lock, or `autoJumpArmed`. Lock state is `jumpLockAfterRelease` on the jump button only. `releaseActions` clears it, and inventory, chat, session teardown and platform pause all call that. `mobileAutoJumpArmed` does not read gamemode. `isFlying` still blocks it. The arm is sampled, cleared, then set again after the player tick, and that sampled bit is what `PlayerController` jumps on.
+
+`TOUCH_LOOK_SCALE` is `1.35 * 2`. It is applied once on swipe and once on bow drag. Desktop `mousemove` calls `rotate(dx, dy)` without it. The sensitivity slider and `setSensitivity` clamp are unchanged.
+
+`bindBrowserZoomLock` prevents `gesturestart` / `gesturechange` / `gestureend` and a `touchmove` with two or more touches. A one-finger event is not cancelled. The viewport meta sets `maximum-scale=1` and `user-scalable=no`.
+
+## Pixel sun, camera anchor, distance haze — 2026-10-03
+
+`createSunMesh` follows `createMoonMesh`: one `PlaneGeometry`, one 16×16 `DataTexture`, nearest filters, no mipmaps, `depthWrite: false`, `depthTest: true`, render order `-750`. The sun quad is 6.4, the moon stays 5.6. The sun disc is a stepped gold / yellow / cream fill. It is not a tinted moon.
+
+`celestialPositions(camera, sunDirection)` places both discs. `CELESTIAL_DISTANCE` is `hypot(70, 15)`, so the offset is the old orbit `(70 cos θ, 70 sin θ, 15)`. The camera is the interpolated render camera. The simulation position is not the anchor. Both meshes call `orientCelestialBillboard`, which is `lookAt(camera)`.
+
+`DirectionalLight` does not follow the mesh. `sunlight.position` is `sunDirection * 100` and `target` stays at the origin. The travel direction is `-sunDirection` for any camera translation. Chunk color still comes from `setDaylight`. Ambient and sun intensities are the same formulas. Lambert mobs and the first-person arm do use this light. Their direction vector length is now constant 100. It used to be the distance from the origin to the sun mesh, so it grew as the player left the origin.
+
+`distanceFogRange` replaces the fixed near of 38. The visible edge is `(renderDistance + 1) * 16 * sqrt(2)`. Near is `max(24, edge * 0.55)`. Far is set so the linear blend at that edge is 0.12. Settings recompute both near and far. Fog color is still `skyVisual.fog`.
+
+## Cloud field, night sky, touch size — 2026-10-03
+
+`cloudMask.ts` builds one 512×512 binary tile from a toroidal two-scale field. A 4-cell weather noise gates large clear regions. An 8-cell region noise and a ~18 texel detail lattice cut the blocky edge. The mix is `macro * 0.7 + detail * 0.3`, then a threshold. A 5×3 window removes spikes without bridging neighbors into one slab. Components smaller than 18 texels, and bars whose short side is 1–2 texels, are deleted. A blob wider than 52 texels or taller than 28 is split on the detail valleys. There is no blur and no `Math.random`. On the current seed: coverage 6.29%, 40 wrapped components, 32 of 64 macro sectors empty. At 2 blocks per texel the tile spans 1024 blocks.
+
+`CloudLayer` is still one plane, one `DataTexture`, one draw. The plane is 6144 blocks and sits at `cameraY + 128`, so the edge is `atan(128 / 3072) ≈ 2.39°` above the horizon. The fragment fades only past 86% of the half-extent. UV offset is still `(cameraX + wind) / span` and `-cameraZ / span`. Both shaders set `glslVersion: GLSL3` so the custom `fragColor` is the only fragment output. Day tint is a warm light grey. Night tint follows `visualNight` and stays a dark blue-grey.
+
+`skySample` splits the sky curve from the fog curve. `visualNight = smoothstep(0.03, -0.22, sunHeight)` drives zenith, horizon, stars and cloud tint. Fog still uses `smoothstep(0.08, -0.5, sunHeight)` and its own light-blue / navy endpoints, so night fog luminance does not follow the darker sky. `daylightFactor`, `0.14 + daylight * 0.32`, `0.18 + daylight * 1.55` and `worldRenderer.setDaylight` are unchanged.
+
+Stars are two hash layers. Each star is a point inside the cell (`1 - smoothstep(0, radius, length(local))`), not a filled cell. A cheap night haze is `exp(-(dot(dir, axis) * 3)^2)`. The moon mesh is a camera-facing 5.6 quad with a 16×16 nearest texture. It keeps `depthWrite: false` and render order -750.
+
+Touch size lives in the coarse custom properties. `--touch-stick` is 124 / 116 / 108. `touchStickRadius` is `min(width * 0.34, 36)`, so the larger hit target does not lengthen the sprint push. Jump and crouch share `--touch-action-size` (72 / 68 / 64) and the same right inset: `safe + --touch-action-right-offset`. Crouch bottom is `safe + --touch-action-bottom-offset`. Jump sits one size plus the gap above that. `#effect-hud` uses the same offsets, so it stays above the stack.
+
+## Vertical actions, hotbar, clouds, sunset — 2026-10-03
+
+Jump and crouch share `--touch-action-size` and the same `right` inset, so their centers match. Crouch sits on the bottom safe edge. Jump's bottom is that edge plus the button size plus `--touch-action-gap`. There is no diagonal `-16/-18` offset. Short landscape only shrinks the action size (58px under 430px tall, 56px under 360px). It does not force the hotbar back to 30px.
+
+Coarse hotbar slots use one rule, `clamp(38px, 5vw, 42px)`, on both `#app` and `#hud`. `--hud-hotbar-half-width` is still `4.5 * slot + 4 * gap`, so the offhand and the inventory button stay 20px off the hotbar. The inventory control is a Minecraft-style slot shell with a 16×16 crisp-edge backpack SVG (`shape-rendering="crispEdges"`), `aria-label="Инвентарь"` and `title="Инвентарь"`.
+
+`viewportMetrics()` is the single width/height. It prefers `visualViewport` and falls back to the layout viewport. `bindVisualViewport` writes `--app-width`, `--app-height` and the offsets. `Game.resize` uses the same helper for `renderer.setSize(..., false)` and `camera.aspect`, and it listens to `visualViewport` resize and scroll as well as `window` resize.
+
+`cloudMask.ts` builds one 256×256 tile from a seeded generator (no `Math.random`). About 120 centers are placed with a toroidal minimum distance. Each cloud is 2–6 overlapping axis-aligned lobes, wrapped with modulo when a lobe crosses the tile edge, then a pass removes 1px spikes and fills single-pixel holes. There is no blur. Coverage on the current seed is 11.71%. At 2 blocks per texel the tile spans 512 blocks, so the 960-block plane repeats it 1.875 times per axis. Drift stays on +X at 0.16 blocks/second. Altitude is `cameraY + 96`. The V offset is still `-cameraZ / span`.
+
+Draw order: sky dome renderOrder -1000, depth test off, depth write off. Sun and moon are opaque meshes at -750 with `depthWrite: false` and `depthTest: true`, so they do not occlude the later cloud sheet. `CloudLayer` stays one transparent plane at -500, depth test on, depth write off, one `DataTexture` built once. World geometry is the normal opaque pass and still covers both the sun and the clouds.
+
+`SkyDome` takes `uSunDir` from the same day-cycle phase as the sun mesh. The warm weight is `verticalBand * mix(0.16, 1, sunFacing²) * bandStrength`, where `sunFacing` is the horizontal dot. `skySample` keeps the horizon only partly warm and feeds fog an even smaller share, so the far world does not take the full sun-facing orange. `daylightFactor` and the light intensities are unchanged.
+
+## Mobile HUD, touch aim, clouds, sunset — 2026-10-02
+
+`#app` is `position: fixed` and its height is `--app-height`, filled by `bindVisualViewport()` from `visualViewport.height` (fallback `100dvh`). `100vh` is the layout viewport. On a phone it stays tall while the browser bar covers the bottom, so `bottom: 0` controls and menu footers sat under that bar. Requesting the desktop site uses a wide layout viewport that the browser scales onto the screen, which is why that mode looked aligned and the real mobile viewport did not. Menu shells use `dvh` for the same reason.
+
+In-game menus keep the desktop grid, type, padding and close/back metrics. The old `max-width` / `max-height` queries that turned `.mc-menu-grid-row-4` into two columns, stacked `.main-menu-center`, forced `.menu-window` to `100vh`, and shrank pause buttons are gone. A short or narrow screen sets `zoom` on `.mc-stage`. Under 520px tall, `.main-menu-layout`, `.menu-window` and `.pause-window` use `--menu-fit` (`0.5`, or `0.42` under 430px) so the same desktop structure fits the visual viewport. `--mc-ui-scale` stays 3.
+
+Touch layout is still only `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`). Portrait coarse still shows the rotate overlay. `#hotbar` stays one non-wrapping row. On coarse, `--hotbar-slot` and `--hud-hotbar-half-width` are set on both `#app` and `#hud` because the touch buttons are not inside `#hud`. The inventory button's left edge is `50% + half-width + 20px` and its bottom matches the hotbar. That is the same 20px gap as `#offhand-hud`, mirrored to the right. Jump and crouch are absolute in the bottom-right. `#play-info` is the bottom-left corner on desktop and on coarse. The joystick sits above that block and 40px to the right. `#hud-corner` stays a top-right row. `selectstart` / `contextmenu` / `dragstart` on `#app` run only while `touchLayout` is on, and they still ignore `input`, `textarea` and `[contenteditable="true"]`.
+
+A hold classifies `track.x` / `track.y`, not the pointerdown origin. While the hold is `mine` or `use-hold`, `refreshHoldAim` re-samples that finger every simulation tick and every render, after the camera matrix is current, so a broken block does not keep the old ray. Singleplayer still resets progress when `targetKey` changes. Online still uses `resolveOnlineMiningTick`. Reach is unchanged. `endWorldHold` keeps `interactionAim` when it sets `useReleased` (`releaseAimPending`). `dismissTapAim` does not clear that aim. Singleplayer calls `consumeReleaseAim` after `updateFoodUse`. Online calls it after `sendOnlineBowRelease`. Both `pointerup` and `pointercancel` write the final finger point into the track before that sample.
+
+`CloudLayer` is one fogless plane. `PlaneGeometry` rotated by `-PI/2` maps local +Y to world -Z, so the V offset is `-cameraZ / span`. The previous `+cameraZ` made the mask slide with the player only on Z. X was already world-locked. Drift is `0.35` blocks/second on X. Altitude is `max(118, cameraY + 64)`, so the sheet stays above the 80-block world and above the camera. The mask is a set of small silhouettes, 2 world units per texel. No shadows, no collision, no lighting. The checkbox still toggles `object.visible`.
+
+`skySample` keeps noon blue and midnight dark. The sunset band is a tight gaussian in `SkyDome` (`(dir.y - 0.035) * 8.6`, mix cap `0.98`) with a saturated orange horizon and a cool zenith. `daylightFactor`, ambient and sunlight intensities are unchanged.
+
+## Mobile touch, sky dome, play-info — 2026-10-02
+
+Touch layout follows `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`) in `InputManager`, `isCoarsePointerMedia`, and the same media query in CSS. `(any-pointer: coarse)` and `navigator.maxTouchPoints` also match a laptop whose touchscreen is secondary, so those stay desktop. Viewport width is not part of the query. Portrait coarse still shows the existing rotate overlay; there is no portrait gameplay layout.
+
+`#hotbar` is a non-wrapping row. `--hotbar-slot` is a length. The same variable is set on `#app`, because `#touch-actions` is a sibling of `#hud` and would not inherit it. Slots set `aspect-ratio: auto` and a fixed flex basis. The previous `repeat(9, var(--hud-slot-size))` dropped its tracks when `--hud-scale` was `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`, because a unitless number cannot be added to `vw`. With no columns, the grid auto-placed the nine `aspect-ratio: 1` slots into one column.
+
+World touches are classified in `touchGesture.ts`: 10px deadzone, 18px swipe, 200ms hold. A swipe never calls `classifyWorldTouch`. A hold never feeds `swipeLookDelta`, so that finger does not rotate the camera. `sampleLocalAim` prefers `interactionAim` over the camera. Reach stays `PLAYER_REACH` (5) and melee 3.
+
+`pointerup` uses `finishWorldTouch`. `pointercancel` uses `cancelWorldTouchGesture`: a pending or swipe cancel produces no tap, and a hold cancel ends mining/use with a release edge only if that flag was actually on. `releaseActions()` (blur, hidden tab) still clears the flags without inventing that edge.
+
+Hold priority is bow and food (including milk) first, then attack, entity use, interactive block, breakable mine, then a sword's `use-hold`. A tap still attacks a player. Placement is `hasBlockTarget && tapUseItem`, including an unbreakable face. Mining requires `breakableBlock`.
+
+Touch crouch toggles `touchSneak` and also sets `movement.descend`. `PlayerController` reads `descend` only inside `updateFlyVelocity`, which runs while `isFlying`. On the ground the same flag stays the crouch toggle.
+
+Mobile auto-jump calls `armAutoJump` for the next `movement()` sample only, and that sample is cleared at the start of the following tick. It is not a new protocol field and it is not armed in creative.
+
+`#play-info` prints `formatPlayInfo`: `Игроков: N` and one coordinate line `X: n  Y: n  Z: n`. Online count is `session.online.remotes.size + 1`. Singleplayer is 1. Coordinates use `Math.floor`.
+
 ## Golden tools — 2026-09-24
 
 Gold is a row in the same `TierStats` list as wood, stone, iron, diamond, ruby and titanium. Prefix is `golden` (item ids `golden_pickaxe` / `golden_axe` / `golden_shovel` / `golden_hoe` / `golden_sword`). Tier value stays `gold`. Stats: durability 32, miningSpeed 12, damageBonus 0. Hoe attack is `1 + damageBonus`; other tools and the sword use the existing base-damage tables. There is no second golden-hoe definition.

@@ -12,6 +12,56 @@ import {
 import { PointerMotionFilter } from './pointerMotion';
 import { shouldBlurStaleTextField, shouldCaptureGameplayKey } from './gameplayKeys';
 import type { MoveInput } from './MoveInput';
+import {
+  JUMP_LOCK_IDLE,
+  TOUCH_HOLD_MS,
+  TOUCH_LOOK_SCALE,
+  advanceTouchTrack,
+  beginTouchTrack,
+  jumpInputActive,
+  jumpLockAfterRelease,
+  resolvePointerEnd,
+  swipeLookDelta,
+  type JumpLockState,
+  type TouchTrack,
+} from './touchGesture';
+import {
+  heldPointerEffect,
+  shouldFollowHoldAim,
+  shouldRotateCameraDuringHold,
+  sprintFromStick,
+  toggleCrouch,
+  touchStickRadius,
+  type MobileTouchDecision,
+  type MobileTouchIntent,
+} from './mobileTouch';
+import { TOUCH_LAYOUT_QUERY } from './touchLayout';
+import { CROUCH_ICON, INVENTORY_ICON, JUMP_ICON } from './touchIcons';
+
+/**
+ * A stored finger aim (mining, food) is kept until the release sample.
+ * A bow draw stores no ray, so the sample falls through to the camera.
+ * `pointerup` and `pointercancel` both end here.
+ */
+export function aimAfterHoldEnd(state: {
+  readonly mining: boolean;
+  readonly using: boolean;
+  readonly releaseAimPending: boolean;
+  readonly aim: { readonly yaw: number; readonly pitch: number } | null;
+}): {
+  readonly miningReleased: boolean;
+  readonly useReleased: boolean;
+  readonly releaseAimPending: boolean;
+  readonly aim: { readonly yaw: number; readonly pitch: number } | null;
+} {
+  const releaseAimPending = state.using ? true : state.releaseAimPending;
+  return {
+    miningReleased: state.mining,
+    useReleased: state.using,
+    releaseAimPending,
+    aim: releaseAimPending ? state.aim : null,
+  };
+}
 
 export type { MoveInput } from './MoveInput';
 
@@ -34,6 +84,9 @@ export interface InputCallbacks {
   selectHotbar(index: number): void;
   cyclePerspective?(): void;
   toggleMenu?(): void;
+  classifyWorldTouch?(clientX: number, clientY: number, phase: 'tap' | 'hold'): MobileTouchDecision;
+  /** Current finger position during a hold. Does not start a new action. */
+  aimAtClientPoint?(clientX: number, clientY: number): { yaw: number; pitch: number } | undefined;
   onPointerLockAcquired(): void;
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
@@ -67,12 +120,24 @@ export class InputManager {
   private readonly keys = new Set<string>();
   private touchForward = 0;
   private touchRight = 0;
-  private touchJump = false;
+  private touchJumpPressed = false;
+  private jumpLock: JumpLockState = JUMP_LOCK_IDLE;
+  private jumpDownAt = 0;
   private touchSprint = false;
   private touchSneak = false;
-  private activeLookPointer?: number;
-  private lastLookX = 0;
-  private lastLookY = 0;
+  private touchLayout = false;
+  private autoJumpArmed = false;
+  private worldTouch?: TouchTrack;
+  private worldPointer?: number;
+  private holdTimer?: number;
+  private holdingWorldTouch = false;
+  private activeHoldIntent: MobileTouchIntent | null = null;
+  private interactionAim: { yaw: number; pitch: number } | null = null;
+  /** Kept through bow/use release until the sample that fires the shot. */
+  private releaseAimPending = false;
+  private sneakButton?: HTMLButtonElement;
+  private jumpButton?: HTMLButtonElement;
+  private coarseMedia?: MediaQueryList;
   private sensitivity = 0.0022;
   private lockedToCanvas = false;
   private programmaticReleasePending = false;
@@ -110,6 +175,41 @@ export class InputManager {
     this.sensitivity = clamp(value, 0.0005, 0.006);
   }
 
+  isTouchLayout(): boolean {
+    return this.touchLayout;
+  }
+
+  /** Next movement sample only. Desktop never arms this. */
+  armAutoJump(armed: boolean): void {
+    this.autoJumpArmed = armed;
+  }
+
+  /** Locked touch ray. Camera yaw stays independent. */
+  interactionLook(): { yaw: number; pitch: number } | null {
+    return this.interactionAim;
+  }
+
+  /** Drop a finished tap aim after attack/use has been sampled. Holds and an unsampled release keep the ray. */
+  dismissTapAim(): void {
+    if (this.holdingWorldTouch || this.usePressed || this.using || this.releaseAimPending) return;
+    this.interactionAim = null;
+  }
+
+  /** Last finger aim for an in-progress mine or held use. Does not press attack or use. */
+  refreshHoldAim(aimAt: (x: number, y: number) => { yaw: number; pitch: number } | undefined): void {
+    if (!this.holdingWorldTouch || !this.worldTouch) return;
+    if (!this.activeHoldIntent || !shouldFollowHoldAim(this.activeHoldIntent)) return;
+    const aim = aimAt(this.worldTouch.x, this.worldTouch.y);
+    if (aim) this.interactionAim = aim;
+  }
+
+  /** Call after the release sample. A stale touch aim must not stick to the next action. */
+  consumeReleaseAim(): void {
+    if (!this.releaseAimPending) return;
+    this.releaseAimPending = false;
+    if (!this.holdingWorldTouch && !this.using && !this.usePressed) this.interactionAim = null;
+  }
+
   movement(): MoveInput {
     const forward = Number(this.keys.has('KeyW')) - Number(this.keys.has('KeyS')) + this.touchForward;
     const right = Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')) + this.touchRight;
@@ -117,10 +217,15 @@ export class InputManager {
     return {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
-      jump: this.keys.has('Space') || this.touchJump,
+      jump: jumpInputActive({
+        space: this.keys.has('Space'),
+        pressed: this.touchJumpPressed,
+        locked: this.jumpLock.locked,
+        autoJump: this.autoJumpArmed,
+      }),
       sprint: this.touchSprint,
       sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
-      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)),
+      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
       flySprint: DESKTOP_FLY_SPRINT_CODES.some((code) => this.keys.has(code)),
     };
   }
@@ -168,13 +273,20 @@ export class InputManager {
   }
 
   releaseActions(): void {
+    this.cancelWorldTouch();
     this.mining = false;
     this.using = false;
     this.attackPressed = false;
     this.usePressed = false;
     this.useReleased = false;
     this.miningReleased = false;
-    this.touchJump = false;
+    this.touchJumpPressed = false;
+    this.jumpLock = JUMP_LOCK_IDLE;
+    this.jumpDownAt = 0;
+    this.releaseAimPending = false;
+    this.interactionAim = null;
+    this.holdingWorldTouch = false;
+    this.syncJumpButton();
   }
 
   /** Drop held WASD/Space/Shift so a lost keyup cannot stick, and so chat cannot leave W=true. */
@@ -182,10 +294,12 @@ export class InputManager {
     this.keys.clear();
     this.touchForward = 0;
     this.touchRight = 0;
-    this.touchJump = false;
+    this.touchJumpPressed = false;
     this.touchSprint = false;
     this.touchSneak = false;
+    this.autoJumpArmed = false;
     this.releaseActions();
+    this.syncSneakButton();
   }
 
   isPointerLocked(): boolean {
@@ -363,17 +477,30 @@ export class InputManager {
     const actions = document.createElement('div');
     actions.id = 'touch-actions';
     actions.innerHTML = [
-      '<button data-action="mine" aria-label="Ломать или атаковать">⛏</button>',
-      '<button data-action="use" aria-label="Использовать или поставить">▣</button>',
-      '<button data-action="jump" aria-label="Прыжок">↑</button>',
-      '<button data-action="sneak" aria-label="Присесть">⌄</button>',
-      '<button data-action="sprint" aria-label="Бег">»</button>',
-      '<button data-action="inventory" aria-label="Инвентарь">▦</button>',
-      '<button data-action="pause" aria-label="Пауза">Ⅱ</button>',
+      `<button type="button" data-action="jump" aria-label="Прыжок" aria-pressed="false">${JUMP_ICON}</button>`,
+      `<button type="button" data-action="sneak" aria-label="Присесть" aria-pressed="false">${CROUCH_ICON}</button>`,
+      `<button type="button" data-action="inventory" aria-label="Инвентарь" title="Инвентарь">${INVENTORY_ICON}</button>`,
     ].join('');
     const look = document.createElement('div');
     look.id = 'touch-look-zone';
-    document.querySelector('#app')?.append(look, joystick, actions);
+    const app = document.querySelector('#app');
+    app?.append(look, joystick, actions);
+    const blockGameplayCallout = (event: Event) => {
+      if (!this.touchLayout) return;
+      const target = event.target;
+      if (target instanceof Element && target.closest('input, textarea, [contenteditable="true"]')) return;
+      event.preventDefault();
+    };
+    app?.addEventListener('selectstart', blockGameplayCallout);
+    app?.addEventListener('contextmenu', blockGameplayCallout);
+    app?.addEventListener('dragstart', blockGameplayCallout);
+    this.sneakButton = actions.querySelector<HTMLButtonElement>('button[data-action="sneak"]') ?? undefined;
+    this.jumpButton = actions.querySelector<HTMLButtonElement>('button[data-action="jump"]') ?? undefined;
+    this.coarseMedia = typeof matchMedia === 'function' ? matchMedia(TOUCH_LAYOUT_QUERY) : undefined;
+    this.touchLayout = this.coarseMedia?.matches === true;
+    this.coarseMedia?.addEventListener?.('change', () => {
+      this.touchLayout = this.coarseMedia?.matches === true;
+    });
 
     let joystickPointer: number | undefined;
     const knob = joystick.querySelector<HTMLElement>('.joystick-knob')!;
@@ -381,13 +508,14 @@ export class InputManager {
       const rect = joystick.getBoundingClientRect();
       const dx = event.clientX - (rect.left + rect.width / 2);
       const dy = event.clientY - (rect.top + rect.height / 2);
-      const radius = rect.width * 0.34;
+      const radius = touchStickRadius(rect.width);
       const scale = Math.min(1, radius / Math.max(radius, Math.hypot(dx, dy)));
       const x = dx * scale;
       const y = dy * scale;
       knob.style.transform = `translate(${x}px, ${y}px)`;
       this.touchRight = x / radius;
       this.touchForward = -y / radius;
+      this.touchSprint = sprintFromStick(this.touchRight, this.touchForward);
     };
     joystick.addEventListener('pointerdown', (event) => {
       joystickPointer = event.pointerId;
@@ -402,60 +530,240 @@ export class InputManager {
       joystickPointer = undefined;
       this.touchForward = 0;
       this.touchRight = 0;
+      this.touchSprint = false;
       knob.style.transform = '';
     };
     joystick.addEventListener('pointerup', releaseJoystick);
     joystick.addEventListener('pointercancel', releaseJoystick);
 
     look.addEventListener('pointerdown', (event) => {
-      if (!this.callbacks.canCapture()) return;
-      this.activeLookPointer = event.pointerId;
-      this.lastLookX = event.clientX;
-      this.lastLookY = event.clientY;
+      if (!this.callbacks.canCapture() || !this.touchLayout) return;
+      if (this.worldPointer !== undefined) return;
+      event.preventDefault();
+      this.worldPointer = event.pointerId;
+      this.worldTouch = beginTouchTrack(event.clientX, event.clientY, performance.now());
       look.setPointerCapture(event.pointerId);
+      this.armHoldTimer();
     });
     look.addEventListener('pointermove', (event) => {
-      if (event.pointerId !== this.activeLookPointer) return;
-      this.rotate((event.clientX - this.lastLookX) * 1.35, (event.clientY - this.lastLookY) * 1.35);
-      this.lastLookX = event.clientX;
-      this.lastLookY = event.clientY;
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      event.preventDefault();
+      this.advanceWorldTouch(event.clientX, event.clientY, performance.now());
     });
-    const stopLook = (event: PointerEvent) => {
-      if (event.pointerId === this.activeLookPointer) this.activeLookPointer = undefined;
-    };
-    look.addEventListener('pointerup', stopLook);
-    look.addEventListener('pointercancel', stopLook);
+    look.addEventListener('pointerup', (event) => {
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      event.preventDefault();
+      this.worldTouch = { ...this.worldTouch, x: event.clientX, y: event.clientY };
+      this.finishWorldTouch(performance.now());
+    });
+    look.addEventListener('pointercancel', (event) => {
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.worldTouch = { ...this.worldTouch, x: event.clientX, y: event.clientY };
+      this.cancelWorldTouchGesture();
+    });
 
     for (const button of actions.querySelectorAll<HTMLButtonElement>('button')) {
       const action = button.dataset.action;
       const down = (event: PointerEvent) => {
         event.preventDefault();
-        button.setPointerCapture(event.pointerId);
-        if (action === 'mine') {
-          this.mining = true;
-          this.attackPressed = true;
-        } else if (action === 'use') {
-          this.using = true;
-          this.usePressed = true;
-        } else if (action === 'jump') this.touchJump = true;
-        else if (action === 'sneak') this.touchSneak = !this.touchSneak;
-        else if (action === 'sprint') this.touchSprint = !this.touchSprint;
-        else if (action === 'inventory') this.callbacks.toggleInventory();
-        else if (action === 'pause') this.callbacks.togglePause();
+        try { button.setPointerCapture(event.pointerId); } catch { /* lost pointer still counts as a press */ }
+        if (action === 'jump') this.pressJump(performance.now());
+        else if (action === 'sneak') {
+          this.touchSneak = toggleCrouch(this.touchSneak);
+          this.syncSneakButton();
+        } else if (action === 'inventory') this.callbacks.toggleInventory();
       };
-      const up = () => {
-        if (action === 'mine') {
-          if (this.mining) this.miningReleased = true;
-          this.mining = false;
-        } else if (action === 'use') {
-          if (this.using) this.useReleased = true;
-          this.using = false;
-        } else if (action === 'jump') this.touchJump = false;
+      const up = (event: PointerEvent) => {
+        if (action === 'jump') this.releaseJump(performance.now(), event.type === 'pointercancel');
       };
       button.addEventListener('pointerdown', down);
       button.addEventListener('pointerup', up);
       button.addEventListener('pointercancel', up);
     }
+  }
+
+  private armHoldTimer(): void {
+    this.clearHoldTimer();
+    this.holdTimer = window.setTimeout(() => {
+      this.holdTimer = undefined;
+      if (!this.worldTouch || this.worldTouch.phase !== 'pending') return;
+      const now = Math.max(performance.now(), this.worldTouch.startedAt + TOUCH_HOLD_MS);
+      this.advanceWorldTouch(this.worldTouch.x, this.worldTouch.y, now);
+    }, TOUCH_HOLD_MS);
+  }
+
+  private clearHoldTimer(): void {
+    if (this.holdTimer === undefined) return;
+    window.clearTimeout(this.holdTimer);
+    this.holdTimer = undefined;
+  }
+
+  private advanceWorldTouch(x: number, y: number, now: number): void {
+    const previous = this.worldTouch;
+    if (!previous) return;
+    let next = advanceTouchTrack(previous, x, y, now);
+    if (next.phase === 'swipe') {
+      this.clearHoldTimer();
+      const delta = swipeLookDelta(previous, x, y);
+      if (delta) this.rotate(delta.dx * TOUCH_LOOK_SCALE, delta.dy * TOUCH_LOOK_SCALE);
+      next = { ...next, lastX: x, lastY: y };
+      if (previous.phase !== 'swipe') this.interactionAim = null;
+      this.activeHoldIntent = null;
+    } else if (previous.phase === 'pending' && next.phase === 'hold') {
+      this.clearHoldTimer();
+      this.beginWorldHold(next);
+      next = this.applyHeldPointer(previous, next, x, y);
+    } else if (previous.phase === 'hold') {
+      next = this.applyHeldPointer(previous, next, x, y);
+    }
+    this.worldTouch = next;
+  }
+
+  /** Bow rotates the camera. Mining and food keep the finger ray and the camera still. */
+  private applyHeldPointer(previous: TouchTrack, next: TouchTrack, x: number, y: number): TouchTrack {
+    const effect = heldPointerEffect({
+      intent: this.activeHoldIntent,
+      lastX: previous.lastX,
+      lastY: previous.lastY,
+      x,
+      y,
+      fingerAim: shouldFollowHoldAim(this.activeHoldIntent ?? 'none')
+        ? this.callbacks.aimAtClientPoint?.(x, y) ?? null
+        : null,
+      interactionAim: this.interactionAim,
+    });
+    if (effect.lookDx !== 0 || effect.lookDy !== 0) {
+      this.rotate(effect.lookDx * TOUCH_LOOK_SCALE, effect.lookDy * TOUCH_LOOK_SCALE);
+    }
+    this.interactionAim = effect.interactionAim;
+    if (shouldRotateCameraDuringHold(this.activeHoldIntent ?? 'none')) {
+      return { ...next, lastX: x, lastY: y };
+    }
+    return next;
+  }
+
+  /** Mining and held use track the finger. This sample does not press attack or use again. */
+  private followHoldAim(x: number, y: number): void {
+    if (!this.activeHoldIntent || !shouldFollowHoldAim(this.activeHoldIntent)) return;
+    const aim = this.callbacks.aimAtClientPoint?.(x, y);
+    if (aim) this.interactionAim = aim;
+  }
+
+  private beginWorldHold(track: TouchTrack): void {
+    this.holdingWorldTouch = true;
+    const decision = this.callbacks.classifyWorldTouch?.(track.x, track.y, 'hold');
+    this.activeHoldIntent = decision?.intent ?? 'none';
+    this.applyWorldDecision(decision, 'hold');
+  }
+
+  private finishWorldTouch(now: number): void {
+    const track = this.worldTouch;
+    this.clearHoldTimer();
+    this.worldPointer = undefined;
+    this.worldTouch = undefined;
+    if (!track) return;
+    if (track.phase === 'hold' && this.activeHoldIntent && shouldFollowHoldAim(this.activeHoldIntent)) {
+      this.followHoldAim(track.x, track.y);
+    }
+    this.completePointerEnd(track, resolvePointerEnd(track, 'up', now));
+  }
+
+  /** Browser/OS cancelled the finger. A pending gesture must not become a tap. */
+  private cancelWorldTouchGesture(): void {
+    const track = this.worldTouch;
+    this.clearHoldTimer();
+    this.worldPointer = undefined;
+    this.worldTouch = undefined;
+    if (!track) return;
+    const kind = resolvePointerEnd(track, 'cancel', performance.now());
+    if (kind === 'hold-end') {
+      if (this.activeHoldIntent && shouldFollowHoldAim(this.activeHoldIntent)) {
+        this.followHoldAim(track.x, track.y);
+      }
+      this.endWorldHold();
+      return;
+    }
+    this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
+    this.interactionAim = null;
+  }
+
+  private completePointerEnd(track: TouchTrack, kind: ReturnType<typeof resolvePointerEnd>): void {
+    if (kind === 'tap') {
+      const decision = this.callbacks.classifyWorldTouch?.(track.originX, track.originY, 'tap');
+      this.applyWorldDecision(decision, 'tap');
+      return;
+    }
+    if (kind === 'hold-end') this.endWorldHold();
+  }
+
+  private applyWorldDecision(decision: MobileTouchDecision | undefined, phase: 'tap' | 'hold'): void {
+    if (!decision || decision.intent === 'none') {
+      if (phase === 'tap') this.interactionAim = null;
+      return;
+    }
+    this.interactionAim = decision.intent === 'bow-hold'
+      ? null
+      : { yaw: decision.yaw, pitch: decision.pitch };
+    if (decision.intent === 'attack') this.attackPressed = true;
+    else if (decision.intent === 'use') this.usePressed = true;
+    else if (decision.intent === 'use-hold' || decision.intent === 'bow-hold') {
+      this.using = true;
+      this.usePressed = true;
+    } else if (decision.intent === 'mine') {
+      this.mining = true;
+      this.attackPressed = true;
+    }
+  }
+
+  private endWorldHold(): void {
+    this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
+    const finished = aimAfterHoldEnd({
+      mining: this.mining,
+      using: this.using,
+      releaseAimPending: this.releaseAimPending,
+      aim: this.interactionAim,
+    });
+    this.mining = false;
+    this.using = false;
+    if (finished.miningReleased) this.miningReleased = true;
+    if (finished.useReleased) this.useReleased = true;
+    this.releaseAimPending = finished.releaseAimPending;
+    this.interactionAim = finished.aim;
+  }
+
+  private cancelWorldTouch(): void {
+    this.clearHoldTimer();
+    this.worldTouch = undefined;
+    this.worldPointer = undefined;
+    this.holdingWorldTouch = false;
+    this.activeHoldIntent = null;
+  }
+
+  private pressJump(now: number): void {
+    this.touchJumpPressed = true;
+    this.jumpDownAt = now;
+  }
+
+  private releaseJump(now: number, cancelled: boolean): void {
+    this.touchJumpPressed = false;
+    this.jumpLock = jumpLockAfterRelease(this.jumpLock, this.jumpDownAt, now, cancelled);
+    this.syncJumpButton();
+  }
+
+  private syncJumpButton(): void {
+    const button = this.jumpButton;
+    if (!button) return;
+    button.classList.toggle('is-active', this.jumpLock.locked);
+    button.setAttribute('aria-pressed', this.jumpLock.locked ? 'true' : 'false');
+  }
+
+  private syncSneakButton(): void {
+    const button = this.sneakButton;
+    if (!button) return;
+    button.classList.toggle('is-active', this.touchSneak);
+    button.setAttribute('aria-pressed', this.touchSneak ? 'true' : 'false');
   }
 
   private bindPointerLock(): void {
