@@ -150,7 +150,8 @@ describe('chat layout and controls', () => {
     expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('background-size: contain;');
     expect(cssRule('#chat-tabs button')).toContain('background-size: contain;');
     expect(cssRule('#chat-send')).toContain('aspect-ratio: 198 / 96;');
-    expect(cssRule('#chat-close')).toContain('aspect-ratio: 102 / 96;');
+    expect(cssRule('#chat-close')).toContain('aspect-ratio: 1283 / 1226;');
+    expect(cssRule('#chat-close')).toContain('height: calc(104px * 94 / 96 * 1226 / 940 * var(--hud-scale));');
     expect(STYLE).toContain('aspect-ratio: 106 / 96;');
     expect(STYLE).toContain('aspect-ratio: 104 / 96;');
     expect(cssRule('#chat-send')).toContain('background-image: var(--chat-enter-img);');
