@@ -40,7 +40,7 @@ The old fog was `near = 38`, `far = renderDistance * 16 + 28`. At desktop distan
 
 ## Visual QA
 
-Not run in a generated world in this pass. The texture math and the fog numbers are covered by the unit tests. A running look at the sun, the moon while sprinting, and a forest at the chunk edge is still owner QA.
+A survival world at render distance 4 was loaded in the browser. The sun is a blocky gold disc and a cloud draws in front of it. Trees at the horizon keep leaf and trunk texture. At night the moon is still the pale pixel disc, stars are present, and the ground stays textured. A recorded run with the sun in view did not show the disc stepping against the clouds. Pressing C cycles third person. While the look was steeply up, the back camera sat in the head and the front camera went high. That is the existing look offset. The sun did not stick to the player. Render distances 2 and 6 were not changed in that session. The range formula is covered for 2, 4, and 8 by tests.
 
 ## Performance
 
