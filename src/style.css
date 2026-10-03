@@ -841,7 +841,7 @@ button {
   flex: 0 0 auto;
   flex-direction: column;
   align-items: stretch;
-  gap: calc(8px * var(--hud-scale));
+  gap: 0;
 }
 
 #chat.open #chat-side {
@@ -1056,10 +1056,13 @@ button {
 }
 
 #chat-close {
-  /* PNG is 1283×1226 with centered transparent padding. Match the opaque
-     artwork to CHAT ON (on.png fills 104×94 of its 106×96 frame). */
+  /* PNG is 1283×1226. The gray frame starts at y=177; ENTER's frame ends
+     9px above its 96px canvas and CHAT ON's frame starts at y=6.
+     Margins close those pads so the frames touch. Size is unchanged. */
   aspect-ratio: 1283 / 1226;
   height: calc(104px * 94 / 96 * 1226 / 940 * var(--hud-scale));
+  margin-top: calc(-104px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
+  margin-bottom: calc(-104px * (6 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
   background-image: var(--chat-close-img);
 }
 
@@ -1184,6 +1187,8 @@ button {
 
   #chat-close {
     height: calc(88px * 94 / 96 * 1226 / 940 * var(--hud-scale));
+    margin-top: calc(-88px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
+    margin-bottom: calc(-88px * (6 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
   }
 
   #chat-tabs button {

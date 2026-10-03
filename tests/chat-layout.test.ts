@@ -66,6 +66,7 @@ describe('chat layout and controls', () => {
   it('hides compose and side controls when closed without an empty open-sized frame', () => {
     expect(cssRule('#chat-compose')).toContain('display: none;');
     expect(cssRule('#chat.open #chat-compose')).toContain('display: flex;');
+    expect(cssRule('#chat-side')).toContain('gap: 0;');
     expect(cssRule('#chat-side')).toContain('display: none;');
     expect(cssRule('#chat.open #chat-side')).toContain('display: flex;');
     const closed = cssRule('#chat');
