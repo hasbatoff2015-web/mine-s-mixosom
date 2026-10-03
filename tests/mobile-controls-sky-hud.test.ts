@@ -88,7 +88,6 @@ const idleProbe = {
   onGround: true,
   sneaking: false,
   flying: false,
-  creative: false,
   inWater: false,
   inLava: false,
   onLadder: false,
@@ -254,8 +253,8 @@ describe('mobile movement helpers', () => {
     expect(inputSource).toContain('data-action="jump"');
     expect(inputSource).toContain('data-action="sneak"');
     expect(inputSource).toContain('data-action="inventory"');
-    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = true');
-    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = false');
+    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(performance.now())');
+    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(performance.now(), event.type === \'pointercancel\')');
     expect(inputSource).not.toContain('data-action="mine"');
     expect(inputSource).not.toContain('data-action="use"');
     expect(inputSource).not.toContain('data-action="sprint"');
@@ -268,7 +267,7 @@ describe('mobile movement helpers', () => {
   it('arms auto-jump only for a grounded mobile step and not for creative flight', () => {
     expect(shouldArmMobileAutoJump(idleProbe)).toBe(true);
     expect(shouldArmMobileAutoJump({ ...idleProbe, touchLayout: false })).toBe(false);
-    expect(shouldArmMobileAutoJump({ ...idleProbe, creative: true })).toBe(false);
+    expect(shouldArmMobileAutoJump({ ...idleProbe, flying: true })).toBe(false);
     expect(shouldArmMobileAutoJump({ ...idleProbe, sneaking: true })).toBe(false);
     expect(shouldArmMobileAutoJump({ ...idleProbe, landingClear: false })).toBe(false);
     const feet = 10;
@@ -347,8 +346,8 @@ describe('mobile movement helpers', () => {
     expect(playerSource).toContain('if (this.isFlying) this.updateFlyVelocity(movement, stepDt)');
     const fly = playerSource.slice(playerSource.indexOf('private updateFlyVelocity'), playerSource.indexOf('private updateStance'));
     expect(fly).toContain('if (movement.descend) desiredY -= CREATIVE_VERTICAL_SPEED');
-    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = true');
-    expect(inputSource).toContain('if (action === \'jump\') this.touchJump = false');
+    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(performance.now())');
+    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(performance.now(), event.type === \'pointercancel\')');
   });
 });
 
@@ -498,8 +497,7 @@ describe('sky palette', () => {
     expect(tinted.b).toBeGreaterThan(tinted.r);
     expect(clouds.object.position.x).toBe(12);
     expect(clouds.object.position.z).toBe(-4);
-    expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeGreaterThanOrEqual(0.12);
-    expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeLessThanOrEqual(0.2);
+    expect(CLOUD_DRIFT_BLOCKS_PER_SECOND).toBeCloseTo(0.64, 5);
     const span = CLOUD_MASK_SIZE * CLOUD_WORLD_PER_TEXEL;
     expect(span).toBe(1024);
     expect(CLOUD_PLANE_SIZE / span).toBe(6);
@@ -541,7 +539,7 @@ describe('sky palette', () => {
   });
 });
 
-describe('bow release keeps the finger aim', () => {
+describe('held food keeps a stored finger aim', () => {
   it('samples the held yaw after pointerup and pointercancel, not the camera yaw', () => {
     const finger = { yaw: 0.6, pitch: 0.05 };
     for (const kind of ['up', 'cancel'] as const) {

@@ -5,14 +5,20 @@ import type { SkySample } from './skyPalette';
 export const CELESTIAL_RENDER_ORDER = -750;
 
 /**
- * Sun and moon must not write depth. An opaque depth write turns the disc
- * into an occluder, so a cloud fragment behind the sprite fails the depth
- * test. World geometry still wins: it is opaque, closer, and writes depth.
+ * Cutout, not a blended transparent sprite. A transparent disc is drawn after
+ * the world, and at ~72 blocks it is closer than a far tree, so the depth
+ * test lets it paint over that tree. Alpha-test stays in the opaque pass,
+ * does not write depth, and lets later world fragments cover the disc.
+ * Clouds stay transparent and still draw after this.
  */
+export const CELESTIAL_ALPHA_TEST = 0.5;
+
 export function createCelestialMaterial(color: number, map?: THREE.Texture): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color,
-    ...(map ? { map, transparent: true } : {}),
+    ...(map ? { map } : {}),
+    transparent: false,
+    alphaTest: map ? CELESTIAL_ALPHA_TEST : 0,
     depthWrite: false,
     depthTest: true,
   });

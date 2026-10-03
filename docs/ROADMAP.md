@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-03: mobile polish — bow, inventory, jump, look
+
+- [x] Cloud drift is exactly 4× the previous 0.16 blocks/second. World lock is unchanged.
+- [x] Sun and moon are alpha-cutout, so world geometry covers them. Clouds still draw afterwards.
+- [x] A mobile bow draw rotates the camera and releases through the center crosshair. Mining and food still use the finger ray.
+- [x] Container UI has one viewport scale. A creative tap places the cursor stack on the pointer immediately.
+- [x] Jump and crouch sit further right. Grounded auto-jump works in survival and creative. Double-tap jump latches. Mobile look is 2× the old touch baseline. Page zoom is blocked.
+- [ ] Owner QA on a phone: distant tree over the sun, bow while dragging, inventory size, double-tap jump, pinch zoom.
+
 ## 2026-10-03: pixel sun, camera-locked sky, light distance haze
 
 - [x] Sun is a 16×16 nearest quad, 6.4 units, same depth order as the moon. The moon texture is unchanged.

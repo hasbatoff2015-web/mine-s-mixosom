@@ -75,6 +75,8 @@ describe('pixel sun billboard', () => {
     const material = sun.material as THREE.MeshBasicMaterial;
     expect(material.depthWrite).toBe(false);
     expect(material.depthTest).toBe(true);
+    expect(material.transparent).toBe(false);
+    expect(material.alphaTest).toBeCloseTo(0.5, 5);
     expect(material.map).toBeTruthy();
   });
 
@@ -87,7 +89,11 @@ describe('pixel sun billboard', () => {
     expect(geometry.parameters.width).toBeCloseTo(5.6, 5);
     expect(geometry.parameters.height).toBeCloseTo(5.6, 5);
     expect(moon.renderOrder).toBe(CELESTIAL_RENDER_ORDER);
-    expect((moon.material as THREE.MeshBasicMaterial).depthWrite).toBe(false);
+    const moonMaterial = moon.material as THREE.MeshBasicMaterial;
+    expect(moonMaterial.depthWrite).toBe(false);
+    expect(moonMaterial.depthTest).toBe(true);
+    expect(moonMaterial.transparent).toBe(false);
+    expect(moonMaterial.alphaTest).toBeCloseTo(0.5, 5);
     const crater = (6 * 16 + 5) * 4;
     expect([data[crater], data[crater + 1], data[crater + 2], data[crater + 3]]).toEqual([168, 186, 204, 255]);
     const body = (8 * 16 + 8) * 4;

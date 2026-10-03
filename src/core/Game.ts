@@ -113,14 +113,11 @@ import {
 import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { InputManager } from '../input/InputManager';
 import {
-  MOBILE_AUTO_JUMP_AHEAD,
-  MOBILE_AUTO_JUMP_MIN_WISH,
   isContinuousUseItem,
-  isFullHeightObstacle,
   isPriorityHeldUseItem,
   isTapUseItem,
+  mobileAutoJumpArmed,
   resolveMobileTouchIntent,
-  shouldArmMobileAutoJump,
   type MobileTouchDecision,
 } from '../input/mobileTouch';
 import { CloudLayer } from '../rendering/CloudLayer';
@@ -137,7 +134,6 @@ import {
 import { skySample, sunDirection } from '../rendering/skyPalette';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
-import { desiredHorizontalWish } from '../player/ladderMotion';
 import {
   isCoarsePointerMedia,
   shouldOpenPauseOnUnlock,
@@ -4978,6 +4974,7 @@ export class Game {
         breakableBlock,
         tapUseItem: isTapUseItem(itemId),
         priorityHeldUse: isPriorityHeldUseItem(itemId),
+        bow: itemId === ItemId.Bow,
         continuousUse: isContinuousUseItem(itemId),
       }),
     };
@@ -5071,34 +5068,21 @@ export class Game {
       return;
     }
     const movement = this.input.movement();
-    const wish = desiredHorizontalWish(session.player.yaw, movement.forward, movement.right);
-    const moving = wish.length >= MOBILE_AUTO_JUMP_MIN_WISH;
-    let obstacle = false;
-    let landingClear = false;
-    if (moving) {
-      const len = Math.max(wish.length, 1e-6);
-      const aheadX = session.player.position.x + (wish.x / len) * MOBILE_AUTO_JUMP_AHEAD;
-      const aheadZ = session.player.position.z + (wish.z / len) * MOBILE_AUTO_JUMP_AHEAD;
-      const feet = session.player.position.y;
-      const bx = Math.floor(aheadX);
-      const by = Math.floor(feet + 0.001);
-      const bz = Math.floor(aheadZ);
-      obstacle = isFullHeightObstacle(blockCollisionBoxes(session.world, bx, by, bz), feet);
-      landingClear = blockCollisionBoxes(session.world, bx, by + 1, bz).length === 0
-        && blockCollisionBoxes(session.world, bx, by + 2, bz).length === 0;
-    }
-    this.input.armAutoJump(shouldArmMobileAutoJump({
+    this.input.armAutoJump(mobileAutoJumpArmed({
       touchLayout: true,
       onGround: session.player.onGround,
       sneaking: session.player.sneaking,
       flying: session.player.isFlying,
-      creative: session.player.creativeFlightAllowed || session.summary.mode === 'creative',
       inWater: session.player.inWater,
       inLava: session.player.inLava,
       onLadder: session.player.onLadder,
-      moving,
-      obstacle,
-      landingClear,
+      yaw: session.player.yaw,
+      forward: movement.forward,
+      right: movement.right,
+      feetX: session.player.position.x,
+      feetY: session.player.position.y,
+      feetZ: session.player.position.z,
+      boxesAt: (x, y, z) => blockCollisionBoxes(session.world, x, y, z),
     }));
   }
 

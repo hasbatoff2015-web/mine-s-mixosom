@@ -1,5 +1,6 @@
 import './uiTokens.css';
 import './style.css';
+import { bindBrowserZoomLock } from './ui/browserZoom';
 import { bindVisualViewport } from './ui/visualViewport';
 import { Game } from './core/Game';
 import type { MobKind } from './entities/mobDefinitions';
@@ -13,6 +14,7 @@ const uiRoot = document.querySelector<HTMLElement>('#ui-root');
 if (!canvas || !uiRoot) throw new Error('Required application roots are missing.');
 
 bindVisualViewport();
+bindBrowserZoomLock();
 
 let disposeApplication = (): void => {};
 let runningDevHarness = false;

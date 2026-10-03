@@ -3,8 +3,11 @@ import { CLOUD_MASK_SIZE, cloudMaskAlpha } from './cloudMask';
 
 /** World units per mask texel. */
 export const CLOUD_WORLD_PER_TEXEL = 2;
-/** Blocks per second along +X. About 10 blocks a minute. */
-export const CLOUD_DRIFT_BLOCKS_PER_SECOND = 0.16;
+/** Previous drift. The live speed is exactly four times this. */
+export const CLOUD_DRIFT_BASELINE_BLOCKS_PER_SECOND = 0.16;
+export const CLOUD_DRIFT_SPEED_MULTIPLIER = 4;
+/** Blocks per second along +X. Four times the old 0.16. */
+export const CLOUD_DRIFT_BLOCKS_PER_SECOND = CLOUD_DRIFT_BASELINE_BLOCKS_PER_SECOND * CLOUD_DRIFT_SPEED_MULTIPLIER;
 /**
  * Camera-relative sky decoration. The sheet rises with the camera, so flight
  * cannot catch it. It is not a world-space ceiling.

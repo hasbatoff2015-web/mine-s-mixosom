@@ -1421,6 +1421,8 @@ textarea,
 #cursor-stack {
   position: fixed;
   z-index: 60;
+  left: -9999px;
+  top: -9999px;
   width: 48px;
   height: 48px;
   pointer-events: none;
@@ -2418,15 +2420,6 @@ textarea,
 
 .mc-craft-do:not(:disabled) {
   background: var(--mc-btn-positive);
-}
-
-/* Short screens scale the whole Minecraft panel. Column counts stay the desktop grid. */
-@media (max-height: 720px), (max-width: 900px) {
-  .mc-stage { zoom: 0.74; }
-}
-
-@media (max-height: 520px), (max-width: 700px) {
-  .mc-stage { zoom: 0.58; }
 }
 
 .mc-trade-boards {
@@ -3808,7 +3801,7 @@ textarea,
     --touch-action-size: 72px;
     --touch-action-gap: 8px;
     --touch-stick: 124px;
-    --touch-action-right-offset: 48px;
+    --touch-action-right-offset: 30px;
     --touch-action-bottom-offset: 28px;
   }
 
@@ -3942,7 +3935,8 @@ textarea,
     bottom: calc(max(8px, env(safe-area-inset-bottom)) + var(--touch-action-bottom-offset) + var(--touch-action-size) + var(--touch-action-gap));
   }
 
-  #touch-actions button[data-action="sneak"].is-active {
+  #touch-actions button[data-action="sneak"].is-active,
+  #touch-actions button[data-action="jump"].is-active {
     border-color: #6a4a12;
     color: #fff8e4;
     background: linear-gradient(#e2b44c, #a56b16);
@@ -4078,7 +4072,7 @@ textarea,
     --touch-action-size: 68px;
     --touch-action-gap: 8px;
     --touch-stick: 116px;
-    --touch-action-right-offset: 58px;
+    --touch-action-right-offset: 40px;
     --touch-action-bottom-offset: 38px;
   }
   #hud-corner button { width: 44px; height: 44px; }
@@ -4095,7 +4089,7 @@ textarea,
     --touch-action-size: 64px;
     --touch-action-gap: 8px;
     --touch-stick: 108px;
-    --touch-action-right-offset: 54px;
+    --touch-action-right-offset: 36px;
     --touch-action-bottom-offset: 36px;
   }
 }

@@ -1,5 +1,21 @@
 # Архитектура
 
+## Mobile polish — 2026-10-03
+
+`CLOUD_DRIFT_BLOCKS_PER_SECOND` is `0.16 * 4`. `cloudScrollOffset` still adds that wind only to U. Camera X/Z still cancel in `cloudWorldSample`.
+
+`createCelestialMaterial` is alpha-tested, not blended. `transparent: false`, `alphaTest: 0.5` when a map is set, `depthWrite: false`, `depthTest: true`. Both discs use it and stay at render order -750. Opaque world geometry is order 0 and is drawn later, so it covers the disc even when the tree is farther than `CELESTIAL_DISTANCE`. Clouds stay a transparent pass at -500.
+
+Coarse bow hold is `bow-hold`, not `use-hold`. `heldPointerEffect` rotates through the existing `rotate()` and clears `interactionAim`. `sampleLocalAim` therefore uses the camera. Mining and food still call `shouldFollowHoldAim` and do not rotate. `captureBowRelease` and `resolveBowReleaseCommandSeq` are unchanged; they receive whatever aim the sample produced.
+
+Container scale is `containerUiScaleWithClose(viewportMetrics())`. There is no second `.mc-stage { zoom }`. `#cursor-stack` starts at `-9999px`. `pointerdown` stores the point, and `syncCursorStackElement` applies `cursorStackClientPosition` before the next move. Touch and pen are offset by `+18, -36`.
+
+`movement().jump` is `jumpInputActive`: Space, physical jump, jump lock, or `autoJumpArmed`. Lock state is `jumpLockAfterRelease` on the jump button only. `releaseActions` clears it, and inventory, chat, session teardown and platform pause all call that. `mobileAutoJumpArmed` does not read gamemode. `isFlying` still blocks it. The arm is sampled, cleared, then set again after the player tick, and that sampled bit is what `PlayerController` jumps on.
+
+`TOUCH_LOOK_SCALE` is `1.35 * 2`. It is applied once on swipe and once on bow drag. Desktop `mousemove` calls `rotate(dx, dy)` without it. The sensitivity slider and `setSensitivity` clamp are unchanged.
+
+`bindBrowserZoomLock` prevents `gesturestart` / `gesturechange` / `gestureend` and a `touchmove` with two or more touches. A one-finger event is not cancelled. The viewport meta sets `maximum-scale=1` and `user-scalable=no`.
+
 ## Pixel sun, camera anchor, distance haze — 2026-10-03
 
 `createSunMesh` follows `createMoonMesh`: one `PlaneGeometry`, one 16×16 `DataTexture`, nearest filters, no mipmaps, `depthWrite: false`, `depthTest: true`, render order `-750`. The sun quad is 6.4, the moon stays 5.6. The sun disc is a stepped gold / yellow / cream fill. It is not a tinted moon.
