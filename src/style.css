@@ -1064,7 +1064,7 @@ button {
      Margins close those pads so the frames touch. Size is unchanged. */
   aspect-ratio: 1283 / 1226;
   height: calc(104px * 94 / 96 * 1226 / 940 * var(--hud-scale));
-  margin-top: calc(-104px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
+  margin-top: calc(-104px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale) + 16px * var(--hud-scale));
   margin-bottom: calc(-104px * (6 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
   background-image: var(--chat-close-img);
 }
@@ -1191,7 +1191,7 @@ button {
 
   #chat-close {
     height: calc(88px * 94 / 96 * 1226 / 940 * var(--hud-scale));
-    margin-top: calc(-88px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
+    margin-top: calc(-88px * (9 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale) + 16px * var(--hud-scale));
     margin-bottom: calc(-88px * (6 / 96 + 94 / 96 * 177 / 940) * var(--hud-scale));
   }
 
