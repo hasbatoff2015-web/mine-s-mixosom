@@ -157,6 +157,9 @@ describe('protocol validation', () => {
     expect(parseClientMessage({ type: 'join', protocol: 2, name: 'v2' })).toEqual({
       error: 'unsupported protocol 2',
     });
+    expect(parseClientMessage({ type: 'join', protocol: 3, name: 'v3' })).toEqual({
+      error: 'unsupported protocol 3',
+    });
     expect(parseClientMessage({ type: 'join', protocol: PROTOCOL_VERSION, name: 'ok' })).toMatchObject({
       type: 'join',
       protocol: PROTOCOL_VERSION,
@@ -755,7 +758,8 @@ describe('WorldInstance foundation simulation', () => {
       world.applyInput(player, moveInput(seq, { forward: seq === 20 ? 0 : 1 }));
     }
     world.tick();
-    expect(player.snapshot().inputSeq).toBe(9);
+    // Continuous seq 9..20 compacts to the latency budget, so the next tick applies 17.
+    expect(player.snapshot().inputSeq).toBe(17);
     for (let i = 0; i < 11; i += 1) world.tick();
     expect(player.lastInput.forward).toBe(0);
     expect(player.snapshot().inputSeq).toBe(20);

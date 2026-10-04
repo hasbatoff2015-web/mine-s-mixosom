@@ -364,4 +364,134 @@ describe('lossless skipped prediction ranges', () => {
     );
     expect(buffer.entries.find((entry) => entry.seq === 10)?.input.jump).toBe(true);
   });
+
+  it('discards exact ranges and the overflow suffix without a false min..max', () => {
+    const buffer = predictionEntries(1, 40, 18);
+    inspectPredictedPlayer(buffer, {
+      queueCompacted: { fromCommandSeq: 1, toCommandSeq: 35 },
+      queueSkippedRanges: [
+        { fromCommandSeq: 1, toCommandSeq: 3 },
+        { fromCommandSeq: 10, toCommandSeq: 12 },
+        { fromCommandSeq: 17, toCommandSeq: 17 },
+        { fromCommandSeq: 19, toCommandSeq: 19 },
+        { fromCommandSeq: 21, toCommandSeq: 21 },
+        { fromCommandSeq: 23, toCommandSeq: 23 },
+        { fromCommandSeq: 25, toCommandSeq: 25 },
+        { fromCommandSeq: 27, toCommandSeq: 27 },
+      ],
+      queueSkippedOverflow: { fromCommandSeq: 30, toCommandSeq: 35 },
+    } as unknown as PlayerSnapshot);
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual([
+      4, 5, 6, 7, 8, 9,
+      13, 14, 15, 16,
+      18, 20, 22, 24, 26, 28, 29,
+      36, 37, 38, 39, 40,
+    ]);
+    expect(buffer.entries.find((entry) => entry.seq === 18)?.input.jump).toBe(true);
+  });
+});
+
+/** Fill 32 edges, then alternate reject/accept until the exact notify list is full. */
+function openRejectSuffix(queue: PlayerCommandQueue): number {
+  for (let seq = 1; seq <= COMMAND_QUEUE_MAX; seq += 1) {
+    expect(queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }))).toBe('ok');
+  }
+  let seq = COMMAND_QUEUE_MAX + 1;
+  while (queue.skippedRanges.length < MAX_SKIPPED_RANGES_PER_SNAPSHOT) {
+    expect(queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }))).toBe('overload');
+    seq += 1;
+    queue.takeForTick();
+    expect(queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }))).toBe('ok');
+    seq += 1;
+  }
+  return seq;
+}
+
+describe('skipped-range overflow suffix', () => {
+  it('keeps the 9th disjoint skip in one suffix instead of dropping it', () => {
+    const queue = new PlayerCommandQueue();
+    const ninth = openRejectSuffix(queue);
+    expect(queue.skippedRanges).toHaveLength(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+    expect(queue.enqueue(cmd(ninth, { jump: ninth % 2 === 0 }))).toBe('overload');
+    expect(queue.skippedRanges).toHaveLength(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+    expect(queue.skippedOverflow).toEqual({ fromCommandSeq: ninth, toCommandSeq: ninth });
+    expect(queue.isQueued(ninth)).toBe(false);
+    expect(queue.wasOverloadSkipped(ninth)).toBe(true);
+    expect(queue.enqueue(cmd(ninth, { jump: true }))).toBe('duplicate');
+  });
+
+  it('refuses later commands into the same suffix even after a slot frees', () => {
+    const queue = new PlayerCommandQueue();
+    const ninth = openRejectSuffix(queue);
+    expect(queue.enqueue(cmd(ninth, { jump: false }))).toBe('overload');
+    queue.takeForTick();
+    expect(queue.length).toBeLessThan(COMMAND_QUEUE_MAX);
+    expect(queue.enqueue(cmd(ninth + 1, { jump: true }))).toBe('overload');
+    expect(queue.enqueue(cmd(ninth + 2, { jump: false }))).toBe('overload');
+    expect(queue.enqueue(cmd(ninth + 3, { jump: true }))).toBe('overload');
+    expect(queue.skippedOverflow).toEqual({ fromCommandSeq: ninth, toCommandSeq: ninth + 3 });
+    expect(queue.isQueued(ninth)).toBe(false);
+    expect(queue.isQueued(ninth + 1)).toBe(false);
+    expect(queue.isQueued(ninth + 3)).toBe(false);
+    expect(queue.length).toBeLessThanOrEqual(COMMAND_QUEUE_MAX);
+  });
+
+  it('admits again after the notification flush and still classifies the suffix', () => {
+    const queue = new PlayerCommandQueue();
+    const ninth = openRejectSuffix(queue);
+    expect(queue.enqueue(cmd(ninth, { jump: false }))).toBe('overload');
+    queue.takeForTick();
+    queue.clearNotifiedSkips();
+    expect(queue.skippedOverflow).toBeUndefined();
+    expect(queue.skippedRanges).toHaveLength(0);
+    expect(queue.enqueue(cmd(ninth + 1, { jump: true }))).toBe('ok');
+    expect(queue.isQueued(ninth + 1)).toBe(true);
+    expect(queue.wasOverloadSkipped(ninth)).toBe(true);
+    expect(queue.wasOverloadSkipped(ninth + 1)).toBe(false);
+  });
+
+  it('clears the suffix on teleport without rewinding the seq high-water', () => {
+    const queue = new PlayerCommandQueue();
+    const ninth = openRejectSuffix(queue);
+    expect(queue.enqueue(cmd(ninth, { jump: false }))).toBe('overload');
+    const highWater = queue.lastEnqueuedSeq;
+    queue.discardQueuedMovement();
+    expect(queue.length).toBe(0);
+    expect(queue.skippedOverflow).toBeUndefined();
+    expect(queue.skippedRanges).toHaveLength(0);
+    expect(queue.wasOverloadSkipped(ninth)).toBe(false);
+    expect(queue.lastEnqueuedSeq).toBe(highWater);
+    expect(queue.enqueue(cmd(highWater, { jump: false }))).toBe('duplicate');
+    expect(queue.enqueue(cmd(highWater + 1, { forward: 1 }))).toBe('ok');
+  });
+
+  it('keeps a 1000-command accept/reject pattern bounded and lossless', () => {
+    const queue = new PlayerCommandQueue();
+    const rejected: number[] = [];
+    const started = performance.now();
+    for (let seq = 1; seq <= 32; seq += 1) queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }));
+    for (let seq = 33; seq <= 1032; seq += 1) {
+      const status = queue.enqueue(cmd(seq, { jump: seq % 2 === 0, sneak: seq % 3 === 0 }));
+      if (status === 'overload') rejected.push(seq);
+      if (seq % 2 === 0) queue.takeForTick();
+    }
+    expect(performance.now() - started).toBeLessThan(250);
+    expect(queue.length).toBeLessThanOrEqual(COMMAND_QUEUE_MAX);
+    expect(queue.skippedRanges.length).toBeLessThanOrEqual(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+    expect(rejected.length).toBeGreaterThan(8);
+    const overflow = queue.skippedOverflow;
+    expect(overflow).toBeDefined();
+    for (const seq of rejected) {
+      const inRange = queue.skippedRanges.some(
+        (range) => seq >= range.fromCommandSeq && seq <= range.toCommandSeq,
+      );
+      const inSuffix = seq >= overflow!.fromCommandSeq && seq <= overflow!.toCommandSeq;
+      expect(inRange || inSuffix).toBe(true);
+      expect(queue.isQueued(seq)).toBe(false);
+      expect(queue.wasOverloadSkipped(seq)).toBe(true);
+    }
+    for (let seq = overflow!.fromCommandSeq; seq <= overflow!.toCommandSeq; seq += 1) {
+      expect(queue.isQueued(seq)).toBe(false);
+    }
+  });
 });

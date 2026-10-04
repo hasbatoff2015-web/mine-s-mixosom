@@ -249,15 +249,23 @@ const IDLE_INPUT: ClientInputMessage = {
 function skippedCommandFields(queue: PlayerCommandQueue): {
   queueCompacted?: { fromCommandSeq: number; toCommandSeq: number };
   queueSkippedRanges?: { fromCommandSeq: number; toCommandSeq: number }[];
+  queueSkippedOverflow?: { fromCommandSeq: number; toCommandSeq: number };
 } {
   const skipped = queue.skippedRanges.map((range) => ({
     fromCommandSeq: range.fromCommandSeq,
     toCommandSeq: range.toCommandSeq,
   }));
-  if (skipped.length === 0) return {};
+  const overflow = queue.skippedOverflow
+    ? {
+      fromCommandSeq: queue.skippedOverflow.fromCommandSeq,
+      toCommandSeq: queue.skippedOverflow.toCommandSeq,
+    }
+    : undefined;
+  if (skipped.length === 0 && !overflow) return {};
   return {
-    ...(skipped.length === 1 ? { queueCompacted: skipped[0] } : {}),
-    queueSkippedRanges: skipped,
+    ...(skipped.length === 1 && !overflow ? { queueCompacted: skipped[0] } : {}),
+    ...(skipped.length > 0 ? { queueSkippedRanges: skipped } : {}),
+    ...(overflow ? { queueSkippedOverflow: overflow } : {}),
   };
 }
 

@@ -131,6 +131,14 @@ Admission is now:
 
 `MAX_PENDING_MELEE_TICKS` remains 8. `MAX_PVP_REWIND_TICKS` remains 5. Settings, remote interpolation, reach, armor, Claims, and hurt resistance were not changed.
 
+## Follow-up — skipped-range overflow
+
+`recordDroppedRange` stops at 8 disjoint spans and returns false. `noteOverload` ignored that false. The command stayed out of the FIFO, the seq high-water moved past it, and the client was never told. A 1000-packet edge burst did not show this: those rejects are adjacent and merge into one span.
+
+When the exact list cannot take another disjoint skip, the queue sets `notifyOverflow` to that seq. Until `clearNotifiedSkips` (the snapshot flush), every newer command is also `overload`, even if a tick freed a slot, and the span grows as one suffix. The snapshot sends `queueSkippedRanges` (max 8) and `queueSkippedOverflow`. The client discards both and does not join them across the gap. `queueCompacted` is omitted while the suffix is present.
+
+Action classification keeps the suffix after the flush (`actionRejectSuffixes`, cap 8, oldest dropped). Teleport and reconnect clear it. `PROTOCOL_VERSION` is 4. A v3 join is `unsupported protocol 3`.
+
 ## Next work
 
 Manual QA on DEV for jump+wheel, settings reload, post-teleport melee, and two-client sprint. Do not merge from this report.

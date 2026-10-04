@@ -10,6 +10,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { MAX_PENDING_MELEE_TICKS } from '../../server/combatPoseHistory';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import { MAX_SKIPPED_RANGES_PER_SNAPSHOT } from '../../shared/commandCompaction';
 import { COMMAND_QUEUE_MAX } from '../../shared/playerCommand';
 import type { AttackAction, BowReleaseAction, EntityUseAction } from '../../shared/playerActions';
 import type { ClientInputMessage, PlayerSnapshot, ServerActionResultMessage } from '../../shared/protocol';
@@ -52,6 +53,22 @@ function lookAt(attacker: ServerPlayer, target: ServerPlayer) {
     yaw: Math.atan2(-direction.x, -direction.z),
     pitch: Math.asin(direction.y),
   };
+}
+
+function openRejectSuffix(world: WorldInstance, player: ServerPlayer): number {
+  let seq = player.lastInputSeq + 1;
+  const fillTo = seq + COMMAND_QUEUE_MAX - 1;
+  for (; seq <= fillTo; seq += 1) {
+    world.applyInput(player, input(seq, { jump: seq % 2 === 0 }));
+  }
+  while (player.commandQueue.skippedRanges.length < MAX_SKIPPED_RANGES_PER_SNAPSHOT) {
+    world.applyInput(player, input(seq, { jump: seq % 2 === 0 }));
+    seq += 1;
+    player.commandQueue.takeForTick();
+    world.applyInput(player, input(seq, { jump: seq % 2 === 0 }));
+    seq += 1;
+  }
+  return seq;
 }
 
 function results(sink: MemorySink, kind: string): ServerActionResultMessage[] {
@@ -276,5 +293,93 @@ describe('command queue overload on WorldInstance', { timeout: 30_000 }, () => {
     expect(player.lastInputSeq).toBe(highWater + 1);
     const flushed = player.snapshot() as PlayerSnapshot;
     expect(flushed.movementEpoch).toBe(epoch + 1);
+  });
+
+  it('puts a ninth disjoint skip on the snapshot suffix and clears it after flush', async () => {
+    const world = await bootWorld();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Suffix' });
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const ninth = openRejectSuffix(world, player);
+    expect(world.applyInput(player, input(ninth, { jump: true }))).toBe(true);
+    expect(player.commandQueue.length).toBeLessThanOrEqual(COMMAND_QUEUE_MAX);
+    const snapshot = player.snapshot();
+    expect(snapshot.queueSkippedRanges).toHaveLength(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+    expect(snapshot.queueSkippedOverflow).toEqual({ fromCommandSeq: ninth, toCommandSeq: ninth });
+    expect(snapshot.queueCompacted).toBeUndefined();
+    const kept = snapshot.queueSkippedRanges![0]!.toCommandSeq + 1;
+    expect(kept).toBeLessThan(snapshot.queueSkippedOverflow!.fromCommandSeq);
+    expect(player.commandQueue.find(kept)?.commandSeq).toBe(kept);
+    world.tick();
+    expect(player.commandQueue.skippedRanges).toHaveLength(0);
+    expect(player.commandQueue.skippedOverflow).toBeUndefined();
+    expect(player.commandQueue.wasOverloadSkipped(ninth)).toBe(true);
+    expect(world.applyInput(player, input(ninth + 1, { jump: false }))).toBe(true);
+    expect(player.commandQueue.isQueued(ninth + 1) || player.appliedCommandSeq === ninth + 1).toBe(true);
+  });
+
+  it('classifies melee and entity-use inside the suffix as command_overload', async () => {
+    const { world, attacker, victim, attackerSink, look } = await bootFight();
+    const ninth = openRejectSuffix(world, attacker);
+    expect(world.applyInput(attacker, input(ninth, look))).toBe(true);
+    expect(attacker.commandQueue.wasOverloadSkipped(ninth)).toBe(true);
+    attackerSink.payloads.length = 0;
+    world.handleSequencedAttack(attacker, {
+      kind: 'attack', actionSeq: 4, commandSeq: ninth, selectedSlot: 0,
+      yaw: look.yaw, pitch: look.pitch, targetId: victim.id, targetRenderTick: world.tickNumber,
+    });
+    expect(attacker.pendingAttacks).toHaveLength(0);
+    expect(results(attackerSink, 'attack')[0]?.combat?.result).toBe('command_overload');
+
+    const wolf = world.gameplay.mobs.spawn('wolf', new Vec3(20.5, 100, 22), { force: true });
+    expect(wolf).toBeDefined();
+    const use: EntityUseAction = {
+      kind: 'entity_use', actionSeq: 5, commandSeq: ninth, selectedSlot: 0, targetId: wolf!.id,
+    };
+    expect(world.handleSequencedEntityUse(attacker, use)).toMatchObject({
+      ok: false,
+      reason: 'command_overload',
+    });
+    expect(attacker.pendingEntityUses).toHaveLength(0);
+  });
+
+  it('closes a bow that was waiting when its command falls into the suffix', async () => {
+    const { world, player, sink } = await bootArcher();
+    const ninth = openRejectSuffix(world, player);
+    world.handleSequencedBowRelease(player, {
+      kind: 'bow_release', actionSeq: 4, commandSeq: ninth, selectedSlot: 0, yaw: 0.2, pitch: 0,
+    });
+    expect(player.pendingBowReleases).toHaveLength(1);
+    sink.payloads.length = 0;
+    expect(world.applyInput(player, input(ninth, { use: false }))).toBe(true);
+    expect(player.commandQueue.skippedOverflow).toEqual({ fromCommandSeq: ninth, toCommandSeq: ninth });
+    expect(player.pendingBowReleases).toHaveLength(0);
+    expect(results(sink, 'bow_release')[0]?.bow?.rejectReason).toBe('command_overload');
+    expect(world.gameplay.arrows.count).toBe(0);
+    for (let tick = 0; tick < 3; tick += 1) world.tick();
+    expect(world.gameplay.arrows.count).toBe(0);
+    expect(results(sink, 'bow_release').some((entry) => entry.bow?.rejectReason === 'pending_timeout')).toBe(false);
+  });
+
+  it('drops an active suffix on hard relocate and accepts the next epoch seq', async () => {
+    const world = await bootWorld();
+    const joined = world.join({ sink: new MemorySink(), name: 'Teleport' });
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const ninth = openRejectSuffix(world, player);
+    expect(world.applyInput(player, input(ninth, { jump: true }))).toBe(true);
+    const epoch = player.movementEpoch;
+    const highWater = player.lastInputSeq;
+    expect(world.hardRelocatePlayer(player, 30.5, 80, 30.5)).toBe(true);
+    expect(player.movementEpoch).toBe(epoch + 1);
+    expect(player.commandQueue.length).toBe(0);
+    expect(player.commandQueue.skippedOverflow).toBeUndefined();
+    expect(player.commandQueue.skippedRanges).toHaveLength(0);
+    expect(player.commandQueue.wasOverloadSkipped(ninth)).toBe(false);
+    expect(player.lastInputSeq).toBe(highWater);
+    expect(world.applyInput(player, input(ninth, { movementEpoch: player.movementEpoch }))).toBe(false);
+    expect(world.applyInput(player, input(highWater + 1, { movementEpoch: player.movementEpoch }))).toBe(true);
+    expect(player.commandQueue.isQueued(highWater + 1)).toBe(true);
   });
 });

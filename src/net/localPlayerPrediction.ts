@@ -410,7 +410,7 @@ export function discardSkippedPredictions(
   world?: VoxelWorld,
   dt = FIXED_DT,
 ): number {
-  const spans = ranges.slice(0, MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+  const spans = ranges.slice(0, MAX_SKIPPED_RANGES_PER_SNAPSHOT + 1);
   if (spans.length === 0) return 0;
   const before = buffer.entries.length;
   buffer.entries = buffer.entries.filter((entry) => !spans.some(
@@ -789,9 +789,13 @@ export function inspectPredictedPlayer(
     readonly dt?: number;
   },
 ): SnapshotInspect {
-  const skipped = snapshot.queueSkippedRanges
-    ?? (snapshot.queueCompacted ? [snapshot.queueCompacted] : undefined);
-  if (skipped && skipped.length > 0) {
+  const skipped = [
+    ...(snapshot.queueSkippedRanges
+      ?? (snapshot.queueCompacted ? [snapshot.queueCompacted] : [])
+    ).slice(0, MAX_SKIPPED_RANGES_PER_SNAPSHOT),
+    ...(snapshot.queueSkippedOverflow ? [snapshot.queueSkippedOverflow] : []),
+  ];
+  if (skipped.length > 0) {
     discardSkippedPredictions(buffer, skipped, player, options?.world, options?.dt);
   }
   const physicsTicks = Math.max(1, Math.floor(options?.physicsTicks ?? 1));

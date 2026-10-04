@@ -11,6 +11,11 @@ export { COMMAND_QUEUE_LATENCY_BUDGET, COMMAND_QUEUE_MAX };
 
 /** Snapshot payload cap. Adjacent skips merge, so a burst stays one range. */
 export const MAX_SKIPPED_RANGES_PER_SNAPSHOT = 8;
+/**
+ * Action-classification suffixes that did not fit in the exact overload list.
+ * One object per overflow episode. Older episodes drop when the cap is hit.
+ */
+export const MAX_ACTION_REJECT_SUFFIXES = 8;
 
 export interface DroppedCommandRange {
   readonly fromCommandSeq: number;

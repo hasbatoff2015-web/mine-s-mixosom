@@ -118,12 +118,21 @@ export interface PlayerSnapshot {
   /**
    * Every contiguous span the server intentionally did not simulate since the
    * previous snapshot. Adjacent seqs are merged. A gap is a separate entry.
-   * At most 8 ranges.
+   * At most 8 ranges. A further disjoint skip is `queueSkippedOverflow`, not a 9th entry.
    */
   readonly queueSkippedRanges?: readonly {
     readonly fromCommandSeq: number;
     readonly toCommandSeq: number;
   }[];
+  /**
+   * One contiguous tail of commands refused after `queueSkippedRanges` was full.
+   * Until the snapshot that carries this span, every newer movement command
+   * extends it and is not simulated. It is not merged across the gap into the ranges above.
+   */
+  readonly queueSkippedOverflow?: {
+    readonly fromCommandSeq: number;
+    readonly toCommandSeq: number;
+  };
   /** DEV localhost RTT trace for the input seq this pose used. */
   readonly netTiming?: {
     readonly clientSentAt?: number;
