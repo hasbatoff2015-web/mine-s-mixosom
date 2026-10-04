@@ -245,7 +245,7 @@ describe('mobile movement helpers', () => {
   it('toggles crouch and highlights only while it is on', () => {
     expect(toggleCrouch(false)).toBe(true);
     expect(toggleCrouch(true)).toBe(false);
-    expect(inputSource).toContain('button.classList.toggle(\'is-active\', this.touchSneak)');
+    expect(inputSource).toContain('sneakButtonActive(this.sneak)');
     expect(inputSource).toContain('aria-pressed');
   });
 
@@ -342,7 +342,9 @@ describe('mobile movement helpers', () => {
   });
 
   it('sends touch crouch as creative descend and keeps jump momentary', () => {
-    expect(inputSource).toContain('descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak');
+    expect(inputSource).toContain('mobileSneakIntent(this.sneak, desktopSneak)');
+    expect(inputSource).toContain('descend: touchSneak.descend');
+    expect(inputSource).not.toContain('|| this.touchSneak');
     expect(playerSource).toContain('if (this.isFlying) this.updateFlyVelocity(movement, stepDt)');
     const fly = playerSource.slice(playerSource.indexOf('private updateFlyVelocity'), playerSource.indexOf('private updateStance'));
     expect(fly).toContain('if (movement.descend) desiredY -= CREATIVE_VERTICAL_SPEED');

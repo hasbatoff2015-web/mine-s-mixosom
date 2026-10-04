@@ -71,6 +71,78 @@ export function toggleCrouch(active: boolean): boolean {
   return !active;
 }
 
+/** Ground crouch latches. Creative Flight holds the same button only while the finger is down. */
+export type MobileSneakMode = 'toggle' | 'flight-hold';
+
+export interface MobileSneakState {
+  readonly pressed: boolean;
+  readonly latched: boolean;
+  readonly mode: MobileSneakMode;
+  readonly pointerId: number | undefined;
+}
+
+export const MOBILE_SNEAK_IDLE: MobileSneakState = {
+  pressed: false,
+  latched: false,
+  mode: 'toggle',
+  pointerId: undefined,
+};
+
+/** Flight-hold is actual flight, not merely creative gamemode. A grounded creative player still toggles. */
+export function mobileSneakFlightHold(gamemode: string | undefined, isFlying: boolean): boolean {
+  return gamemode === 'creative' && isFlying;
+}
+
+/** Gold button: the latch on the ground, the finger while flying. */
+export function sneakButtonActive(state: MobileSneakState): boolean {
+  return state.mode === 'flight-hold' ? state.pressed : state.latched;
+}
+
+/**
+ * Latched crouch never feeds descend. A stale ground latch cannot fly the player down
+ * even if the flight-hold mode arrives a tick late.
+ */
+export function mobileSneakIntent(
+  state: MobileSneakState,
+  desktopSneak: boolean,
+): { readonly sneak: boolean; readonly descend: boolean } {
+  return {
+    sneak: desktopSneak || (state.mode === 'toggle' && state.latched),
+    descend: desktopSneak || state.pressed,
+  };
+}
+
+export function mobileSneakAfterPointer(
+  state: MobileSneakState,
+  event: { readonly type: 'down' | 'up'; readonly pointerId: number },
+): MobileSneakState {
+  if (event.type === 'down') {
+    if (state.pointerId !== undefined && state.pointerId !== event.pointerId) return state;
+    if (state.pointerId === event.pointerId && state.pressed) return state;
+    return {
+      ...state,
+      pressed: true,
+      pointerId: event.pointerId,
+      latched: state.mode === 'toggle' ? toggleCrouch(state.latched) : state.latched,
+    };
+  }
+  if (state.pointerId !== undefined && state.pointerId !== event.pointerId) return state;
+  return { ...state, pressed: false, pointerId: undefined };
+}
+
+/** Entering or leaving flight drops the ground latch. A held finger stays a press, not a new toggle. */
+export function mobileSneakAfterFlight(state: MobileSneakState, flying: boolean): MobileSneakState {
+  const mode: MobileSneakMode = flying ? 'flight-hold' : 'toggle';
+  if (mode === state.mode) return state;
+  return { ...state, mode, latched: false };
+}
+
+/** Overlay, pause, blur, and session teardown drop both the finger and the latch. */
+export function mobileSneakRelease(state: MobileSneakState): MobileSneakState {
+  if (!state.pressed && !state.latched && state.pointerId === undefined) return state;
+  return { ...state, pressed: false, latched: false, pointerId: undefined };
+}
+
 export function isTapUseItem(itemId: string | undefined): boolean {
   if (!itemId) return false;
   const item = tryGetItemDefinition(itemId);

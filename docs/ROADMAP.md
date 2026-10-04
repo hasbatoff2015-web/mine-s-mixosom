@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-04: mobile flight descend
+
+- [x] Ground crouch, including grounded creative, stays a toggle.
+- [x] Creative Flight crouch is momentary. Releasing or cancelling the finger stops descend.
+- [x] A ground latch cannot descend, and it is cleared when flight starts. Landing does not turn the in-air press into a crouch latch.
+- [x] The existing `descend` bit stays server-authoritative. Compaction keeps the release.
+- [ ] Owner QA on a phone: flight descend tap, hold, release, and crouch-then-fly.
+
 ## 2026-10-04: jump lock vs Creative Flight
 
 - [x] Survival double-tap still latches jump. Creative double-tap toggles flight and does not latch.

@@ -87,6 +87,7 @@ No new meshes, passes, or per-frame raycasts. Cloud motion is the same offset mu
 
 - A swipe that crosses 18px before the 200ms hold still becomes a camera swipe and does not start the bow draw. That is the existing swipe contract.
 - The jump-lock / Creative Flight overlap is fixed in `docs/reports/2026-10-04_jump-lock-creative-flight.md`. Auto-jump no longer counts as a flight tap.
+- Flight descend no longer stays on after the crouch finger lifts. See `docs/reports/2026-10-04_mobile-flight-descend.md`.
 - `setPointerCapture` is best-effort. The press still counts if capture throws.
 
 ## Deferred

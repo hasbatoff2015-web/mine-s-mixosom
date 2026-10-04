@@ -117,6 +117,7 @@ import {
   isPriorityHeldUseItem,
   isTapUseItem,
   mobileAutoJumpArmed,
+  mobileSneakFlightHold,
   resolveMobileTouchIntent,
   type MobileTouchDecision,
 } from '../input/mobileTouch';
@@ -1821,6 +1822,7 @@ export class Game {
         serverTick: message.tick,
       });
     }
+    this.syncMobileSneakMode(session);
     const afterReconcile = captureMotionFull(player);
     const reconcileChanged = diffMotionFull(before, afterReconcile);
     logMotionFieldMutations({
@@ -3131,6 +3133,7 @@ export class Game {
     player.teleport([safeSpawn.x, safeSpawn.y, safeSpawn.z]);
     syncCreativeFlightAllowed(player, summary.mode);
     this.input.setJumpLockAllowed(summary.mode !== 'creative');
+    this.input.setMobileSneakFlightHold(mobileSneakFlightHold(summary.mode, player.isFlying));
     if (restored) {
       player.restore({
         position: restored.player.position,
@@ -4632,6 +4635,7 @@ export class Game {
     const prevZ = session.player.position.z;
     predictLocalMove(session.player, session.world, online.prediction,
       session.restingBed ? { ...predicted, resting: true } : predicted);
+    this.syncMobileSneakMode(session);
     if (gameplayAllowed) {
       this.updateFootsteps(session, Math.hypot(
         session.player.position.x - prevX,
@@ -4775,6 +4779,7 @@ export class Game {
           : session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
+        this.syncMobileSneakMode(session);
         this.refreshMobileAutoJump(session);
         motionProbe.notePredictionTick();
         this.updateFootsteps(session, playerResult.horizontalDistance);
@@ -6079,11 +6084,19 @@ export class Game {
     this.input.setJumpLockAllowed(gamemode !== 'creative');
   }
 
+  /** Crouch latches on the ground and holds only while this player is actually flying. */
+  private syncMobileSneakMode(session: GameSession): void {
+    this.input.setMobileSneakFlightHold(
+      mobileSneakFlightHold(session.summary.mode, session.player.isFlying),
+    );
+  }
+
   private setGameMode(mode: GameMode): void {
     const session = this.session!;
     session.summary.mode = mode;
     this.syncLocalCreativeFlight(session, mode);
     if (mode !== 'creative') session.player.isFlying = false;
+    this.syncMobileSneakMode(session);
     this.refreshHud();
   }
 
@@ -6176,6 +6189,7 @@ export class Game {
     this.deathShown = false;
     this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
+    this.syncMobileSneakMode(session);
     this.clearMinecartRide(session);
     session.miningProgress = 0;
     session.miningTarget = undefined;
@@ -6228,6 +6242,7 @@ export class Game {
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    this.input.releaseActions();
     if (session.online) {
       this.ui.showDeath(
         () => this.requestOnlineRespawn(),

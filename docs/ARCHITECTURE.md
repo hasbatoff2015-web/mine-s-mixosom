@@ -1,5 +1,13 @@
 # Архитектура
 
+## Mobile crouch and flight descend — 2026-10-04
+
+Ground crouch and flight descend are different bits. `MobileSneakState.latched` toggles on sneak `pointerdown` only while the mode is `toggle`. `pressed` is the finger, set on `pointerdown` and cleared on `pointerup`, `pointercancel`, `releaseActions`, and `clearHeldKeys`. A second pointer does not steal the first.
+
+`mobileSneakIntent` sets `movement.sneak` from desktop Shift or the latch. `movement.descend` is desktop Shift or `pressed`. The latch is not an input to descend. `sneakButtonActive` is the latch on the ground and the finger in flight. The button still uses `.is-active`.
+
+`Game.syncMobileSneakMode` calls `setMobileSneakFlightHold(gamemode === 'creative' && player.isFlying)` after the singleplayer tick, after `predictLocalMove`, and after reconciliation. Entering or leaving that mode clears the latch. The existing `descend` command field is unchanged and stays edge-sensitive, so a press and its release both survive compaction. The server still integrates that bit in `updateFlyVelocity`.
+
 ## Jump lock and Creative Flight — 2026-10-04
 
 Survival may latch the jump button. Creative may not. `InputManager.setJumpLockAllowed` follows gamemode, and `syncLocalCreativeFlight` is the call site for session start, local `/gamemode`, inventory, player state, respawn, and the online tick. A change in either direction clears `jumpLock` and the pending tap time, then `syncJumpButton` drops `.is-active` and `aria-pressed`.

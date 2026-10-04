@@ -110,6 +110,34 @@ describe('server creative flight uses the manual jump edge', { timeout: 20_000 }
     expect(player.controller.isFlying).toBe(false);
   });
 
+  it('descends only while the descend command is held, then climbs back toward hover', async () => {
+    const { world, player } = await boot('creative');
+    player.controller.isFlying = true;
+    player.controller.position.y = 200;
+    player.controller.previousPosition.y = 200;
+    player.controller.velocity.set(0, 0, 0);
+
+    expect(world.applyInput(player, input(1, { descend: false }))).toBe(true);
+    world.tick();
+    const hover = player.controller.velocity.y;
+    expect(player.controller.isFlying).toBe(true);
+
+    expect(world.applyInput(player, input(2, { descend: true }))).toBe(true);
+    world.tick();
+    const falling = player.controller.velocity.y;
+    expect(falling).toBeLessThan(0);
+    expect(falling).toBeLessThan(hover);
+
+    expect(world.applyInput(player, input(3, { descend: false }))).toBe(true);
+    world.tick();
+    const released = player.controller.velocity.y;
+    expect(released).toBeGreaterThan(falling);
+    expect(world.applyInput(player, input(3, { descend: true }))).toBe(false);
+    world.tick();
+    expect(player.controller.velocity.y).toBeGreaterThan(released);
+    expect(player.controller.isFlying).toBe(true);
+  });
+
   it('does not fly in survival when the same two manual presses arrive', async () => {
     const { world, player } = await boot('survival');
     for (let i = 0; i < 40; i += 1) world.tick();

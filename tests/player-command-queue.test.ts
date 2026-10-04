@@ -74,6 +74,19 @@ describe('continuous command compaction', () => {
       cmd(2, { jump: true, manualJump: true }),
     )).toBe(true);
     expect(commandEdgeSensitive(cmd(1, { forward: 1 }), cmd(2, { forward: 0, yaw: 1 }))).toBe(false);
+    expect(commandEdgeSensitive(cmd(1, { descend: false }), cmd(2, { descend: true }))).toBe(true);
+    expect(commandEdgeSensitive(cmd(1, { descend: true }), cmd(2, { descend: false }))).toBe(true);
+  });
+
+  it('keeps a descend press and its release when look and walk do not change', () => {
+    const items = [
+      cmd(1, { descend: false, forward: 1, yaw: 0.2 }),
+      cmd(2, { descend: true, forward: 1, yaw: 0.2 }),
+      cmd(3, { descend: false, forward: 1, yaw: 0.2 }),
+    ];
+    expect(compactContinuousCommands(items)).toBeUndefined();
+    expect(items.map((item) => item.descend)).toEqual([false, true, false]);
+    expect(items.map((item) => item.commandSeq)).toEqual([1, 2, 3]);
   });
 
   it('keeps a manual-jump edge while locomotion jump stays true', () => {

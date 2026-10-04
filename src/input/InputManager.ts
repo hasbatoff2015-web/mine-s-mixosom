@@ -28,11 +28,17 @@ import {
 } from './touchGesture';
 import {
   heldPointerEffect,
+  MOBILE_SNEAK_IDLE,
+  mobileSneakAfterFlight,
+  mobileSneakAfterPointer,
+  mobileSneakIntent,
+  mobileSneakRelease,
   shouldFollowHoldAim,
   shouldRotateCameraDuringHold,
+  sneakButtonActive,
   sprintFromStick,
-  toggleCrouch,
   touchStickRadius,
+  type MobileSneakState,
   type MobileTouchDecision,
   type MobileTouchIntent,
 } from './mobileTouch';
@@ -127,7 +133,8 @@ export class InputManager {
   /** Survival latches a double tap. Creative leaves the button as a flight tap. */
   private jumpLockAllowed = true;
   private touchSprint = false;
-  private touchSneak = false;
+  /** Ground latch and the physical crouch finger are separate. Descend reads only the finger. */
+  private sneak: MobileSneakState = MOBILE_SNEAK_IDLE;
   private touchLayout = false;
   private autoJumpArmed = false;
   private worldTouch?: TouchTrack;
@@ -188,6 +195,17 @@ export class InputManager {
   }
 
   /**
+   * Creative Flight holds crouch. Ground, including grounded creative, keeps the toggle.
+   * A change either way clears the latch so a crouch that was on cannot descend.
+   */
+  setMobileSneakFlightHold(flying: boolean): void {
+    const next = mobileSneakAfterFlight(this.sneak, flying);
+    if (next === this.sneak) return;
+    this.sneak = next;
+    this.syncSneakButton();
+  }
+
+  /**
    * Survival may latch the jump button. Creative must not: the same double
    * tap is the flight toggle. A change in either direction drops a pending
    * tap so the other mode cannot inherit it.
@@ -233,6 +251,8 @@ export class InputManager {
     const length = Math.hypot(forward, right);
     const space = this.keys.has('Space');
     const manualJump = space || this.touchJumpPressed;
+    const desktopSneak = DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code));
+    const touchSneak = mobileSneakIntent(this.sneak, desktopSneak);
     return {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
@@ -244,8 +264,8 @@ export class InputManager {
       }),
       manualJump,
       sprint: this.touchSprint,
-      sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
-      descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
+      sneak: touchSneak.sneak,
+      descend: touchSneak.descend,
       flySprint: DESKTOP_FLY_SPRINT_CODES.some((code) => this.keys.has(code)),
     };
   }
@@ -303,10 +323,12 @@ export class InputManager {
     this.touchJumpPressed = false;
     this.jumpLock = JUMP_LOCK_IDLE;
     this.jumpDownAt = 0;
+    this.sneak = mobileSneakRelease(this.sneak);
     this.releaseAimPending = false;
     this.interactionAim = null;
     this.holdingWorldTouch = false;
     this.syncJumpButton();
+    this.syncSneakButton();
   }
 
   /** Drop held WASD/Space/Shift so a lost keyup cannot stick, and so chat cannot leave W=true. */
@@ -316,7 +338,6 @@ export class InputManager {
     this.touchRight = 0;
     this.touchJumpPressed = false;
     this.touchSprint = false;
-    this.touchSneak = false;
     this.autoJumpArmed = false;
     this.releaseActions();
     this.syncSneakButton();
@@ -588,13 +609,12 @@ export class InputManager {
         event.preventDefault();
         try { button.setPointerCapture(event.pointerId); } catch { /* lost pointer still counts as a press */ }
         if (action === 'jump') this.pressJump(performance.now());
-        else if (action === 'sneak') {
-          this.touchSneak = toggleCrouch(this.touchSneak);
-          this.syncSneakButton();
-        } else if (action === 'inventory') this.callbacks.toggleInventory();
+        else if (action === 'sneak') this.pressSneak(event.pointerId);
+        else if (action === 'inventory') this.callbacks.toggleInventory();
       };
       const up = (event: PointerEvent) => {
         if (action === 'jump') this.releaseJump(performance.now(), event.type === 'pointercancel');
+        else if (action === 'sneak') this.releaseSneak(event.pointerId);
       };
       button.addEventListener('pointerdown', down);
       button.addEventListener('pointerup', up);
@@ -787,11 +807,26 @@ export class InputManager {
     button.setAttribute('aria-pressed', this.jumpLock.locked ? 'true' : 'false');
   }
 
+  private pressSneak(pointerId: number): void {
+    const next = mobileSneakAfterPointer(this.sneak, { type: 'down', pointerId });
+    if (next === this.sneak) return;
+    this.sneak = next;
+    this.syncSneakButton();
+  }
+
+  private releaseSneak(pointerId: number): void {
+    const next = mobileSneakAfterPointer(this.sneak, { type: 'up', pointerId });
+    if (next === this.sneak) return;
+    this.sneak = next;
+    this.syncSneakButton();
+  }
+
   private syncSneakButton(): void {
     const button = this.sneakButton;
     if (!button) return;
-    button.classList.toggle('is-active', this.touchSneak);
-    button.setAttribute('aria-pressed', this.touchSneak ? 'true' : 'false');
+    const active = sneakButtonActive(this.sneak);
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
   }
 
   private bindPointerLock(): void {
