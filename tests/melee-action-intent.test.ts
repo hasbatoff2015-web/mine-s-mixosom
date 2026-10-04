@@ -34,7 +34,7 @@ describe('online melee action intent', () => {
       type: 'action', kind: 'attack', actionSeq: 1, commandSeq: 4,
       selectedSlot: 0, yaw: 0, pitch: 0,
     });
-    expect(PROTOCOL_VERSION).toBe(3);
+    expect(PROTOCOL_VERSION).toBe(4);
   });
 
   it('parses fractional render ticks and rejects malformed target hints', () => {

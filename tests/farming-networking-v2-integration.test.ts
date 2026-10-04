@@ -35,12 +35,14 @@ function command(seq: number, extra: Partial<PlayerCommand> = {}): PlayerCommand
 }
 
 describe('Farming V1 + Networking V2 union', () => {
-  it('speaks protocol 3 and rejects protocol 1 joins', () => {
-    expect(PROTOCOL_VERSION).toBe(3);
+  it('speaks protocol 4 and rejects protocol 1 and 3 joins', () => {
+    expect(PROTOCOL_VERSION).toBe(4);
     const rejected = parseClientMessage({ type: 'join', protocol: 1, name: 'old' });
     expect(rejected).toMatchObject({ error: expect.stringMatching(/protocol/i) });
-    const ok = parseClientMessage({ type: 'join', protocol: 3, name: 'ok' });
-    expect(ok).toMatchObject({ type: 'join', protocol: 3 });
+    const v3 = parseClientMessage({ type: 'join', protocol: 3, name: 'v3' });
+    expect(v3).toEqual({ error: 'unsupported protocol 3' });
+    const ok = parseClientMessage({ type: 'join', protocol: PROTOCOL_VERSION, name: 'ok' });
+    expect(ok).toMatchObject({ type: 'join', protocol: 4 });
   });
 
   it('keeps Networking V2 modules on disk', () => {

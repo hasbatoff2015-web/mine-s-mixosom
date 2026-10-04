@@ -203,6 +203,11 @@ export interface SequencedMeleeOptions {
    * Omit to use the command-boundary look (legacy / non-sequenced path).
    */
   readonly clickLook?: { readonly yaw: number; readonly pitch: number };
+  /**
+   * Click-time hotbar slot. The server reads its own inventory there.
+   * Geometry stays on `attackerPose`; this does not trust a client item id.
+   */
+  readonly itemSlot?: number;
 }
 
 export class ServerGameplay {
@@ -1141,7 +1146,7 @@ export class ServerGameplay {
       if (blockHit && blockHit.distance + 1e-7 < distance) {
         return { result: 'occluded', distance, ...timeline };
       }
-      const result = this.meleePlayer(player, target, options.attackerPose);
+      const result = this.meleePlayer(player, target, options.attackerPose, options.itemSlot);
       return { result, distance, ...timeline };
     }
 
@@ -1156,7 +1161,7 @@ export class ServerGameplay {
       if (blockHit && blockHit.distance + 1e-7 < distance) {
         return { result: 'occluded', distance, ...timeline };
       }
-      return { result: this.meleeMob(player, targetMob, options.attackerPose), distance, ...timeline };
+      return { result: this.meleeMob(player, targetMob, options.attackerPose, options.itemSlot), distance, ...timeline };
     }
 
     const blockHit = this.world.raycast(origin, direction, PLAYER_REACH);
@@ -1779,8 +1784,9 @@ export class ServerGameplay {
     attacker: GameplayPlayer,
     mob: MobEntity,
     pose?: CombatPoseSample,
+    itemSlot?: number,
   ): 'hit' | 'immune' | 'blocked' {
-    const selectedSlot = pose?.selectedSlot ?? attacker.selectedSlot;
+    const selectedSlot = itemSlot ?? pose?.selectedSlot ?? attacker.selectedSlot;
     const stack = attacker.inventory.getSlot(selectedSlot);
     const result = attacker.combat.performMeleeAttack(stack?.itemId ?? null, {
       critical: {
@@ -1837,8 +1843,9 @@ export class ServerGameplay {
     attacker: GameplayPlayer,
     victim: GameplayPlayer,
     pose?: CombatPoseSample,
+    itemSlot?: number,
   ): 'hit' | 'immune' | 'blocked' {
-    const selectedSlot = pose?.selectedSlot ?? attacker.selectedSlot;
+    const selectedSlot = itemSlot ?? pose?.selectedSlot ?? attacker.selectedSlot;
     const stack = attacker.inventory.getSlot(selectedSlot);
     const result = attacker.combat.performMeleeAttack(stack?.itemId ?? null, {
       critical: {

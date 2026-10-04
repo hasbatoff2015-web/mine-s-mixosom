@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COMBAT_HISTORY_TICKS,
   MAX_PVP_REWIND_TICKS,
+  combatPoseAtTick,
   combatPoseForCommand,
   recordCombatPose,
   rewindCombatPose,
@@ -65,5 +66,15 @@ describe('authoritative combat pose history', () => {
     expect(rewindCombatPose(history, 11.99, 17)).toBeUndefined();
     expect(rewindCombatPose(history, 17.01, 17)).toBeUndefined();
     expect(rewindCombatPose(history, 12, 17)?.rewindTicks).toBe(5);
+  });
+
+  it('does not interpolate a pose across a movement epoch', () => {
+    const history = [
+      { ...sample(10, 1, 10), movementEpoch: 0 },
+      { ...sample(11, 2, 100), movementEpoch: 1 },
+    ];
+    expect(combatPoseAtTick(history, 10.5)).toBeUndefined();
+    expect(rewindCombatPose(history, 10.5, 12)).toBeUndefined();
+    expect(rewindCombatPose(history, 11, 12)?.aabb.minX).toBeCloseTo(99.7);
   });
 });

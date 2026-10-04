@@ -40,6 +40,8 @@ export interface CombatPoseSample {
   readonly inWater: boolean;
   readonly onLadder: boolean;
   readonly riding: boolean;
+  /** Movement epoch of this sample. Rewind never crosses a teleport. */
+  readonly movementEpoch?: number;
 }
 
 export interface RewoundCombatPose {
@@ -72,6 +74,10 @@ export function combatPoseForCommand(
   return history.find((sample) => sample.commandBoundary && sample.commandSeq === commandSeq);
 }
 
+function poseEpoch(sample: CombatPoseSample): number {
+  return sample.movementEpoch ?? 0;
+}
+
 function lerpAabb(a: PlayerAABB, b: PlayerAABB, t: number): PlayerAABB {
   return {
     minX: a.minX + (b.minX - a.minX) * t,
@@ -96,6 +102,10 @@ export function combatPoseAtTick(
     if (sample.serverTick >= requestedTick && (!after || sample.serverTick < after.serverTick)) after = sample;
   }
   if (!before || !after) return undefined;
+  const latest = history[history.length - 1];
+  if (!latest || poseEpoch(before) !== poseEpoch(latest) || poseEpoch(after) !== poseEpoch(latest)) {
+    return undefined;
+  }
   if (before.serverTick === after.serverTick) {
     return { aabb: cloneAabb(before.aabb), dead: before.dead, resolvedTick: before.serverTick };
   }

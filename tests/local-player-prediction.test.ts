@@ -16,6 +16,7 @@ import {
   predictedMoveFromInput,
   predictedStateAfterExtraTicks,
   predictLocalMove,
+  rebasePredictedPlayerAfterMovementEpoch,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   shouldSnapPrediction,
@@ -578,5 +579,40 @@ describe('local player prediction', () => {
       expect(result.kind).toBe('accepted');
       expectPoseUnchanged(player, live);
     }
+  });
+
+  it('drops unacked predictions on a movement epoch and does not replay them', () => {
+    const { world, player, buffer } = groundedPlayer();
+    predictSeries(player, world, buffer, 1, 8, { forward: 1, jump: true });
+    expect(buffer.entries).toHaveLength(8);
+    const keptInputSeq = 8;
+    const destination = snapshotFrom(player, {
+      x: 40.5,
+      y: 12,
+      z: 40.5,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      onGround: true,
+      movementEpoch: 1,
+      ackCommandSeq: keptInputSeq,
+      inputSeq: keptInputSeq,
+    });
+    const discarded = rebasePredictedPlayerAfterMovementEpoch(player, buffer, destination, 20);
+    expect(discarded.discarded).toBe(8);
+    expect(buffer.entries).toHaveLength(0);
+    expect(player.position.x).toBe(40.5);
+    expect(player.position.y).toBe(12);
+    expect(player.position.z).toBe(40.5);
+    expect(player.previousPosition.x).toBe(40.5);
+    expect(player.previousPosition.y).toBe(12);
+    expect(player.previousPosition.z).toBe(40.5);
+    expect(player.velocity.x).toBe(0);
+    expect(player.velocity.y).toBe(0);
+    const reconciled = reconcilePredictedPlayer(player, world, buffer, destination, FIXED_DT, { serverTick: 20 });
+    expect(reconciled.replayed).toBe(0);
+    expect(player.position.x).toBeCloseTo(40.5, 4);
+    expect(player.position.z).toBeCloseTo(40.5, 4);
+    expect(keptInputSeq).toBe(8);
   });
 });

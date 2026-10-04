@@ -402,6 +402,8 @@ export class MobEntity {
   combatPriority?: PetCombatPriority;
   combatTargetSeconds = 0;
   teleportCooldown = 0;
+  /** Hard pet relocation. Pose history must not interpolate across it. */
+  poseEpoch = 0;
   petHomeX?: number;
   petHomeZ?: number;
 
@@ -1054,6 +1056,7 @@ export class MobManager {
         y: mob.position.y,
         z: mob.position.z,
         yaw: mob.facingYaw,
+        poseEpoch: mob.poseEpoch,
       });
     }
   }
@@ -1557,6 +1560,8 @@ export class MobManager {
     mob.position.set(destination.x, destination.y, destination.z);
     mob.previousPosition.copy(mob.position);
     mob.velocity.set(0, 0, 0);
+    mob.poseEpoch += 1;
+    mob.poseHistory.length = 0;
     this.snapMobRender(mob);
     this.options.onPersistentStateChanged?.();
   }

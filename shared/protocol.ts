@@ -103,10 +103,33 @@ export interface PlayerSnapshot {
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;
   /**
-   * Command seqs the server deliberately skipped via continuous-state compaction.
-   * Client must discard these pending predictions, not wait for an ACK.
+   * Authoritative movement epoch. A change is a teleport/respawn discontinuity:
+   * do not reconcile or interpolate across it.
+   */
+  readonly movementEpoch?: number;
+  /**
+   * One contiguous skipped span. Set only when `queueSkippedRanges` has a
+   * single entry, so an older client is not told to drop commands the server kept.
    */
   readonly queueCompacted?: {
+    readonly fromCommandSeq: number;
+    readonly toCommandSeq: number;
+  };
+  /**
+   * Every contiguous span the server intentionally did not simulate since the
+   * previous snapshot. Adjacent seqs are merged. A gap is a separate entry.
+   * At most 8 ranges. A further disjoint skip is `queueSkippedOverflow`, not a 9th entry.
+   */
+  readonly queueSkippedRanges?: readonly {
+    readonly fromCommandSeq: number;
+    readonly toCommandSeq: number;
+  }[];
+  /**
+   * One contiguous tail of commands refused after `queueSkippedRanges` was full.
+   * Until the snapshot that carries this span, every newer movement command
+   * extends it and is not simulated. It is not merged across the gap into the ranges above.
+   */
+  readonly queueSkippedOverflow?: {
     readonly fromCommandSeq: number;
     readonly toCommandSeq: number;
   };
@@ -145,6 +168,18 @@ export interface PlayerSessionDiag {
   readonly lastInputConn: string;
   readonly inputGapMs?: number;
   readonly inputPackets?: number;
+  /** DEV/diag: queued movement commands at snapshot time. */
+  readonly commandQueue?: number;
+  /** DEV/diag: melee attacks waiting on a command boundary. */
+  readonly pendingMelee?: number;
+  /** DEV/diag: commands rejected because the queue was already at the hard cap. */
+  readonly commandQueueOverload?: number;
+  /** DEV/diag: continuous commands removed by the latency budget. */
+  readonly commandQueueCompacted?: number;
+  /** DEV/diag: highest input seq the server has observed. */
+  readonly lastInputSeq?: number;
+  /** DEV/diag: command seq applied on the latest physics tick. */
+  readonly appliedCommandSeq?: number;
 }
 
 export interface RemotePlayerInfo {
@@ -292,6 +327,11 @@ export interface ClientInputMessage {
   readonly mining?: boolean;
   readonly use?: boolean;
   readonly vehicleForward?: number;
+  /**
+   * Client's last authoritative movement epoch. Packets from an older epoch
+   * are pre-teleport intents and must not be simulated.
+   */
+  readonly movementEpoch?: number;
   /** DEV: client performance.now() when this packet was sent. */
   readonly clientSentAt?: number;
 }
@@ -1854,6 +1894,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       }
       const clientTick = optionalSeq(raw.clientTick);
       if (raw.clientTick !== undefined && clientTick === undefined) return { error: 'input.clientTick invalid' };
+      const movementEpoch = optionalSeq(raw.movementEpoch);
+      if (raw.movementEpoch !== undefined && movementEpoch === undefined) {
+        return { error: 'input.movementEpoch invalid' };
+      }
       return {
         type: 'input',
         seq: raw.seq,
@@ -1872,6 +1916,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(raw.mining === true ? { mining: true } : {}),
         ...(raw.use === true ? { use: true } : {}),
         ...(vehicleForward !== undefined ? { vehicleForward } : {}),
+        ...(movementEpoch !== undefined ? { movementEpoch } : {}),
         ...(typeof raw.clientSentAt === 'number' && Number.isFinite(raw.clientSentAt)
           ? { clientSentAt: raw.clientSentAt }
           : {}),

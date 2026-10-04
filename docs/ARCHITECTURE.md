@@ -698,7 +698,7 @@ Committed voxel replacements сбрасывают совпадающий mining 
 
 ## Online networking v2 — 2026-09-04
 
-**Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 3`. Older joins are rejected. Targeted actions require `targetBlockId` and validate from the authoritative pose of `commandSeq`.
+**Current contract.** Supersedes Prediction checkpoint (Model B), latest-input `lastInput`, and silent server re-raycast for Online actions. WebSocket + 20 TPS + shared `PlayerController` remain. `PROTOCOL_VERSION = 4`. Older joins, including v3, are rejected. Targeted actions require `targetBlockId` and validate from the authoritative pose of `commandSeq`.
 
 **CLIENT OWNS INTENT. SERVER OWNS RESULT.**
 
@@ -707,7 +707,7 @@ MOVEMENT:
   InputManager → PlayerCommand(commandSeq, clientTick, WASD/look/slot)
   → predictLocalMove (history[commandSeq] = pre+post)
   → WS input
-  → PlayerCommandQueue.enqueue (bound 32)
+  → PlayerCommandQueue.enqueue (soft budget 4; full queue rejects the new command; suffix lock after 8 skip spans)
   → serverTick N: takeForTick() one command or sticky last
   → AppliedMovementStep { serverTick, commandSeq, pose }
   → player_state.ackCommandSeq + appliedSteps[]
@@ -734,6 +734,12 @@ FIFO answers:
 | Which aim spawned this arrow? | `bow_release.yaw/pitch` captured at release |
 
 Equivalence epsilon is `1e-4` xz/y and `1e-3` speed. Speed / onGround / flying disagreement is a real correction. `predNo*` flags remain DEV-only.
+
+Hotbar selection is not a movement command. A same-frame attack or use carries `action.selectedSlot`; the server reads that slot from its own inventory. Steady WASD/look compacts only as a contiguous head prefix down to `COMMAND_QUEUE_LATENCY_BUDGET` (4). `COMMAND_QUEUE_MAX` (32) is an admission cap: an accepted edge or a pinned action seq is not shifted off the head. A newer command that does not fit is `overload`. It is not simulated. `lastEnqueuedSeq` still advances, so that seq is not admitted again and the next higher seq can be. `queueSkippedRanges` lists each contiguous skipped span (at most 8, adjacent spans merged). A ninth disjoint skip starts `queueSkippedOverflow`, one contiguous suffix. Until that snapshot is flushed, every newer movement command extends the suffix and is refused, even if a tick freed a queue slot. The client discards the ranges and the suffix separately. `queueCompacted` is set only when there is a single span and no suffix. A pending bow whose command was refused is `command_overload` in the same turn, not `pending_timeout`. Action classification of those refused seqs survives the flush and is cleared on teleport or reconnect.
+
+A server-owned hard teleport or respawn increments `movementEpoch` on the player, the snapshot, and later inputs. Pre-epoch queued movement is discarded, combat and mob pose history do not interpolate across the epoch, and prediction is snapped without replaying old unacked moves. `commandSeq` / `lastInputSeq` stay monotonic. An input whose `movementEpoch` disagrees is not simulated. Walking, knockback, minecart motion, and a cancelled move are not an epoch.
+
+Client-only settings persist in `localStorage` under `megacraft.settings.v1` (`src/ui/clientSettings.ts`). Gamemode, inventory, position, and health are not stored there.
 
 Modules: `shared/playerCommand.ts`, `shared/playerActions.ts`, `server/playerCommandQueue.ts`, `src/gameplay/actionValidation.ts`, `src/net/actionIntent.ts`, `src/net/onlineActionMessages.ts`. `Game.ts` orchestrates; it does not own the algorithms.
 

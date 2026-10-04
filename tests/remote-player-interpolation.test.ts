@@ -440,4 +440,18 @@ describe('remote player server-tick interpolation', () => {
     expect(maxStep).toBeLessThan(0.12);
     expect(buffer.diagnostics(now).maxVisualStep).toBeLessThan(0.12);
   });
+
+  it('snaps to the new movement epoch and does not lerp through the teleport', () => {
+    const buffer = new RemoteInterpolationBuffer();
+    buffer.push(remoteSampleFromSnapshot({
+      x: 10, y: 70, z: 0, yaw: 0, pitch: 0, vx: 4, movementEpoch: 0,
+    }, 10, 10 * REMOTE_TICK_MS));
+    buffer.push(remoteSampleFromSnapshot({
+      x: 100, y: 70, z: 0, yaw: 0, pitch: 0, vx: 4, movementEpoch: 1,
+    }, 11, 11 * REMOTE_TICK_MS));
+    expect(buffer.sampleCount).toBe(1);
+    const pose = buffer.sample(11 * REMOTE_TICK_MS);
+    expect(pose?.x).toBe(100);
+    expect([30, 50, 70].includes(pose?.x ?? 0)).toBe(false);
+  });
 });

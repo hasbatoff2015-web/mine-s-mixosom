@@ -14,6 +14,8 @@ export interface MobPoseSample {
   readonly y: number;
   readonly z: number;
   readonly yaw: number;
+  /** Increments on a hard pet relocation. Interpolation must not cross it. */
+  readonly poseEpoch?: number;
 }
 
 export interface RewoundMobPose {
@@ -48,6 +50,9 @@ export function mobPoseAtTick(
     if (sample.tick >= requestedTick && (!after || sample.tick < after.tick)) after = sample;
   }
   if (!before || !after) return undefined;
+  const latest = history[history.length - 1];
+  const epoch = (sample: MobPoseSample): number => sample.poseEpoch ?? 0;
+  if (!latest || epoch(before) !== epoch(latest) || epoch(after) !== epoch(latest)) return undefined;
   if (before.tick === after.tick) {
     return { x: before.x, y: before.y, z: before.z, yaw: before.yaw, resolvedTick: before.tick };
   }

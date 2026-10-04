@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: input, teleport epoch, client settings — 2026-10-04
+
+- Колесо и клавиши 1–9 меняют локальный слот сразу и не создают `PlayerCommand`. Следующий обычный input несёт `selectedSlot`. Атака и use того же кадра несут `action.selectedSlot`; сервер читает свой инвентарь.
+- Очередь команд держит мягкий бюджет 4 (`COMMAND_QUEUE_LATENCY_BUDGET`). 32 — предел приёма: уже принятый edge и pinned seq не сдвигаются с головы. Новый пакет сверх предела — `overload`. До 8 точных `queueSkippedRanges`. Девятый разрывной skip начинает `queueSkippedOverflow`: до flush снимка все более новые команды тоже отклоняются и входят в один suffix. `PROTOCOL_VERSION` = 4. Отклонённая граница закрывается как `command_overload`.
+- Жёсткий телепорт и респавн поднимают `movementEpoch`. Старые команды, prediction и combat history не пересекают этот разрыв. `commandSeq` не сбрасывается. `MAX_PENDING_MELEE_TICKS` остаётся 8, `MAX_PVP_REWIND_TICKS` остаётся 5.
+- Клиентские настройки (FOV, sensitivity, volume, render distance, clouds) лежат в `localStorage` `megacraft.settings.v1`.
+- Подробности: `docs/reports/2026-10-04_input-pvp-teleport-settings-hardening.md`.
+
 ## Последний проход: mobile descend в полёте — 2026-10-04
 
 - На земле crouch по-прежнему toggle. В Creative Flight та же кнопка удерживает снижение только пока палец нажат. Авторитетная смена gamemode в `inventory` сразу переводит crouch в тот же policy, что jump-lock, ещё до следующего `movement()`.

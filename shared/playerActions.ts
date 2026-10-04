@@ -95,7 +95,8 @@ export type CombatActionResultKind =
   | 'occluded'
   | 'out_of_reach'
   | 'stale'
-  | 'pending_timeout';
+  | 'pending_timeout'
+  | 'command_overload';
 
 export interface CombatActionDiagnostics {
   readonly result: CombatActionResultKind;
