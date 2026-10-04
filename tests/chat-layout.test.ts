@@ -151,9 +151,25 @@ describe('chat layout and controls', () => {
     expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('background-size: contain;');
     expect(cssRule('#chat-tabs button')).toContain('background-size: contain;');
     expect(cssRule('#chat-send')).toContain('aspect-ratio: 198 / 96;');
-    expect(cssRule('#chat-close')).toContain('aspect-ratio: 1283 / 1226;');
-    expect(cssRule('#chat-close')).toContain('height: calc(104px * 94 / 96 * 1226 / 940 * var(--hud-scale));');
-    expect(STYLE).toContain('aspect-ratio: 106 / 96;');
+    expect(cssRule('#chat-close')).toContain('position: fixed;');
+    expect(cssRule('#chat-close')).toContain('right: -6px;');
+    expect(cssRule('#chat-close')).toContain('top: 113.3px;');
+    expect(cssRule('#chat-close')).toContain('width: 166.78px;');
+    expect(cssRule('#chat-close')).toContain('height: 159.38px;');
+    expect(cssRule('#chat-close')).toContain('margin: 0;');
+    expect(STYLE).toContain(`#chat-visibility {
+  position: fixed;
+  right: 7.61px;
+  top: 255.8px;
+  width: 137.78px;
+  height: 124.8px;
+  margin: 0;
+  background-image: var(--chat-on-img);
+}`);
+    expect(STYLE).not.toContain('margin-top: calc(-104px');
+    expect(STYLE).not.toContain('margin-bottom: calc(-104px');
+    expect(STYLE).not.toContain('margin-right: calc(104px');
+    expect(STYLE).not.toContain('aspect-ratio: 106 / 96;');
     expect(STYLE).toContain('aspect-ratio: 104 / 96;');
     expect(cssRule('#chat-send')).toContain('background-image: var(--chat-enter-img);');
     expect(cssRule('#chat-close')).toContain('background-image: var(--chat-close-img);');

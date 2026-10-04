@@ -55,7 +55,9 @@ Full `npx vitest run` is 2879 passed / 18 failed before the totem/fall test upda
 
 ## Visual QA
 
-Chat close sprite inspected: same frame and red X, caption TAB, size 102×96. Sapling PNGs are the pack files from `assets/minecraft/textures/blocks/` (oak and spruce RGBA, birch indexed with tRNS). No live browser session.
+Sapling PNGs are the pack files from `assets/minecraft/textures/blocks/` (oak and spruce RGBA, birch indexed with tRNS). `public/ui/chat/close.png` is the attached RGBA 1283×1226 file, unchanged.
+
+Main HUD without `?hudEditor=1`, viewport 2560×1279, `?qaUi=chat-open`: `#chat-close` computed `position: fixed`, `right: -6px`, `top: 113.3px`, used box about 166.77×159.38, viewport right offset −6, top 113.30. `#chat-visibility` computed `right: 7.61px`, `top: 255.8px`, used box about 137.77×124.80, viewport right offset 7.61, top 255.80. Margins are 0. ENTER stays in normal flow (`position: relative`, aspect 198/96) with no experimental `margin-right`. The temporary `?hudEditor=1` harness is still in the client and is not the layout source.
 
 ## Performance
 
