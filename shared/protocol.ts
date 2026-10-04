@@ -103,6 +103,11 @@ export interface PlayerSnapshot {
   /** Creative flight. Omitted by older servers; prediction keeps local isFlying. */
   readonly flying?: boolean;
   /**
+   * Authoritative movement epoch. A change is a teleport/respawn discontinuity:
+   * do not reconcile or interpolate across it.
+   */
+  readonly movementEpoch?: number;
+  /**
    * Command seqs the server deliberately skipped via continuous-state compaction.
    * Client must discard these pending predictions, not wait for an ACK.
    */
@@ -145,6 +150,10 @@ export interface PlayerSessionDiag {
   readonly lastInputConn: string;
   readonly inputGapMs?: number;
   readonly inputPackets?: number;
+  /** DEV/diag: queued movement commands at snapshot time. */
+  readonly commandQueue?: number;
+  /** DEV/diag: melee attacks waiting on a command boundary. */
+  readonly pendingMelee?: number;
 }
 
 export interface RemotePlayerInfo {
@@ -292,6 +301,11 @@ export interface ClientInputMessage {
   readonly mining?: boolean;
   readonly use?: boolean;
   readonly vehicleForward?: number;
+  /**
+   * Client's last authoritative movement epoch. Packets from an older epoch
+   * are pre-teleport intents and must not be simulated.
+   */
+  readonly movementEpoch?: number;
   /** DEV: client performance.now() when this packet was sent. */
   readonly clientSentAt?: number;
 }
@@ -1854,6 +1868,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       }
       const clientTick = optionalSeq(raw.clientTick);
       if (raw.clientTick !== undefined && clientTick === undefined) return { error: 'input.clientTick invalid' };
+      const movementEpoch = optionalSeq(raw.movementEpoch);
+      if (raw.movementEpoch !== undefined && movementEpoch === undefined) {
+        return { error: 'input.movementEpoch invalid' };
+      }
       return {
         type: 'input',
         seq: raw.seq,
@@ -1872,6 +1890,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(raw.mining === true ? { mining: true } : {}),
         ...(raw.use === true ? { use: true } : {}),
         ...(vehicleForward !== undefined ? { vehicleForward } : {}),
+        ...(movementEpoch !== undefined ? { movementEpoch } : {}),
         ...(typeof raw.clientSentAt === 'number' && Number.isFinite(raw.clientSentAt)
           ? { clientSentAt: raw.clientSentAt }
           : {}),

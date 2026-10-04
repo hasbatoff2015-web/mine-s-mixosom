@@ -489,6 +489,46 @@ export function predictLocalMove(
   return state;
 }
 
+/**
+ * A new movement epoch is a teleport, not a small correction.
+ * Old unacked predictions are dropped and are not replayed.
+ * `inputSeq` itself is left to the caller so it stays monotonic.
+ */
+export function rebasePredictedPlayerAfterMovementEpoch(
+  player: PlayerController,
+  buffer: PredictionBuffer,
+  snapshot: PlayerSnapshot,
+  serverTick?: number,
+): { discarded: number } {
+  const discarded = buffer.entries.length;
+  player.applyMovementState({
+    x: snapshot.x,
+    y: snapshot.y,
+    z: snapshot.z,
+    vx: snapshot.vx,
+    vy: snapshot.vy,
+    vz: snapshot.vz,
+    onGround: snapshot.onGround,
+    sneaking: snapshot.sneaking,
+    sprinting: snapshot.sprinting,
+    jumpHeld: false,
+    isFlying: snapshot.flying === true,
+    flyWindowTicks: 0,
+    flyIgnoreGroundTicks: 0,
+    onLadder: false,
+    fallDistance: 0,
+    meleeKnockback: false,
+  });
+  player.previousPosition.set(snapshot.x, snapshot.y, snapshot.z);
+  buffer.entries.length = 0;
+  const ackSeq = snapshot.ackCommandSeq ?? snapshot.inputSeq;
+  if (ackSeq !== undefined && Number.isFinite(ackSeq)) buffer.lastAckedSeq = ackSeq;
+  if (serverTick !== undefined && Number.isFinite(serverTick)) buffer.lastAckedServerTick = serverTick;
+  seedPredictionCheckpoint(buffer, player.captureMovementState(), buffer.lastAckedServerTick);
+  buffer.debug.pending = 0;
+  return { discarded };
+}
+
 export function restoreAuthoritativePlayer(
   player: PlayerController,
   snapshot: PlayerSnapshot,

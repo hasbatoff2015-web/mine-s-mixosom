@@ -62,6 +62,8 @@ export interface RemoteInterpSample {
   readonly dead: boolean;
   /** Client receive time. Telemetry / latest-clock elapsed only. */
   readonly receivedAt: number;
+  /** Authoritative movement epoch. A change snaps; it is not a path. */
+  readonly movementEpoch?: number;
 }
 
 export interface RemoteSampledPose {
@@ -306,7 +308,10 @@ export class RemoteInterpolationBuffer {
     if (previous) {
       const distance = Math.hypot(sample.x - previous.x, sample.y - previous.y, sample.z - previous.z);
       const respawn = previous.dead && !sample.dead;
-      if (distance >= REMOTE_TELEPORT_DISTANCE || respawn) {
+      const epochChanged = previous.movementEpoch !== undefined
+        && sample.movementEpoch !== undefined
+        && previous.movementEpoch !== sample.movementEpoch;
+      if (distance >= REMOTE_TELEPORT_DISTANCE || respawn || epochChanged) {
         this.reset();
       }
     }
@@ -385,6 +390,21 @@ export class RemoteInterpolationBuffer {
 
     if (renderTick < last.serverTick) {
       const { previous, next } = this.surrounding(renderTick);
+      if (previous.movementEpoch !== undefined
+        && next.movementEpoch !== undefined
+        && previous.movementEpoch !== next.movementEpoch) {
+        this.lastMode = 'hold';
+        return this.storePose(poseFromSample(next, {
+          renderTick,
+          mode: 'hold',
+          t: 0,
+          extrapolationMs: 0,
+          bufferDepth,
+          bufferDepthMs,
+          fromTick: next.serverTick,
+          toTick: next.serverTick,
+        }), now);
+      }
       const span = Math.max(1e-9, next.serverTick - previous.serverTick);
       const t = (renderTick - previous.serverTick) / span;
       const lerped = lerpPose(previous, next, t);
@@ -609,6 +629,7 @@ export function remoteSampleFromSnapshot(
     readonly invisible?: boolean;
     readonly onFire?: boolean;
     readonly dead?: boolean;
+    readonly movementEpoch?: number;
   },
   serverTick: number,
   receivedAt: number,
@@ -631,5 +652,6 @@ export function remoteSampleFromSnapshot(
     onFire: snapshot.onFire ?? false,
     dead: snapshot.dead ?? false,
     receivedAt,
+    ...(snapshot.movementEpoch !== undefined ? { movementEpoch: snapshot.movementEpoch } : {}),
   };
 }

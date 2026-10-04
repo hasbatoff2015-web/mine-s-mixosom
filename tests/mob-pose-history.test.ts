@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_MOB_REWIND_TICKS,
   MOB_POSE_HISTORY_TICKS,
+  mobPoseAtTick,
   recordMobPose,
   rewindMobPose,
   type MobPoseSample,
@@ -27,5 +28,15 @@ describe('mob pose rewind history', () => {
     expect(MAX_MOB_REWIND_TICKS).toBe(8);
     expect(MAX_PVP_REWIND_TICKS).toBe(5);
     expect(MOB_POSE_HISTORY_TICKS).toBe(16);
+  });
+
+  it('does not interpolate a mob across a pose epoch', () => {
+    const history: MobPoseSample[] = [
+      { tick: 10, x: 10, y: 70, z: 0, yaw: 0, poseEpoch: 0 },
+      { tick: 11, x: 100, y: 70, z: 0, yaw: 0, poseEpoch: 1 },
+    ];
+    expect(mobPoseAtTick(history, 10.5)).toBeUndefined();
+    expect(rewindMobPose(history, 10.5, 12)).toBeUndefined();
+    expect(mobPoseAtTick(history, 11)?.x).toBe(100);
   });
 });

@@ -252,6 +252,11 @@ export class ServerPlayer implements GameplayPlayer {
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
+  /**
+   * Increments on a server-owned hard teleport or respawn relocation.
+   * Pre-epoch commands must not be simulated at the destination.
+   */
+  movementEpoch = 0;
   appliedCommandSeq = -1;
   readonly commandQueue = new PlayerCommandQueue();
   lastActionSeq = -1;
@@ -412,6 +417,7 @@ export class ServerPlayer implements GameplayPlayer {
       inputSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       ackCommandSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       flying: this.controller.isFlying,
+      movementEpoch: this.movementEpoch,
       appliedTicks: this.appliedInputTrace.slice(),
       appliedSteps: this.appliedStepsThisLoop.slice(),
       ...(this.commandQueue.lastCompacted ? { queueCompacted: this.commandQueue.lastCompacted } : {}),
@@ -426,6 +432,8 @@ export class ServerPlayer implements GameplayPlayer {
           ? Math.round(performance.now() - this.lastServerRecvAt)
           : undefined,
         inputPackets: this.inputPacketsThisLoop,
+        commandQueue: this.commandQueue.length,
+        pendingMelee: this.pendingAttacks.length,
       },
       ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
         netTiming: {
@@ -762,17 +770,7 @@ export class WorldInstance {
           yaw: player.controller.yaw,
           pitch: player.controller.pitch,
         }),
-        teleport: (x, y, z, look) => {
-          if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
-            return false;
-          }
-          if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
-          player.restingBed = undefined;
-          player.controller.teleport([x, y, z]);
-          if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
-          if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
-          return true;
-        },
+        teleport: (x, y, z, look) => this.hardRelocatePlayer(player, x, y, z, look),
         sendMessage: (text) => {
           this.sendTo(player, {
             type: 'chat',
@@ -2285,6 +2283,13 @@ export class WorldInstance {
       return false;
     }
     player.lastInputSeq = input.seq;
+    if (input.movementEpoch !== undefined && input.movementEpoch !== player.movementEpoch) {
+      netDebug(
+        'player input',
+        `stale movement epoch ${input.movementEpoch} != ${player.movementEpoch} seq=${input.seq} for ${player.id}`,
+      );
+      return false;
+    }
     player.lastInputConnectionId = source?.connectionId ?? player.connectionId;
     player.lastClientSentAt = input.clientSentAt;
     const recvAt = performance.now();
@@ -2293,6 +2298,7 @@ export class WorldInstance {
     }
     player.lastServerRecvAt = recvAt;
     player.inputPacketsThisLoop += 1;
+    this.refreshCommandProtection(player);
     const enqueued = player.commandQueue.enqueue(commandFromInput(input));
     if (enqueued === 'stale') {
       netDebug('player input', `stale seq ${input.seq} < queued for ${player.id}`);
@@ -2766,15 +2772,26 @@ export class WorldInstance {
     attackerPose: CombatPoseSample,
   ): ActionResult {
     const { action } = pending;
-    if (attackerPose.dead || action.selectedSlot !== attackerPose.selectedSlot) {
+    if (attackerPose.dead) {
       return {
         ok: false,
         actionSeq: action.actionSeq,
         kind: 'attack',
-        reason: attackerPose.dead ? 'dead' : 'slot',
+        reason: 'dead',
         combat: this.combatStatus(pending, 'stale'),
       };
     }
+    const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
+    if (!slot.ok) {
+      return {
+        ok: false,
+        actionSeq: action.actionSeq,
+        kind: 'attack',
+        reason: slot.reason === 'stale' ? 'stale' : 'slot',
+        combat: this.combatStatus(pending, 'stale'),
+      };
+    }
+    this.commitActionSelectedSlot(player, slot.value, action.commandSeq);
     if (pending.target?.kind === 'player') {
       const target = this.players.get(pending.target.playerId);
       if (!target || target.id === player.id || !target.connected || target.survival.dead
@@ -2789,6 +2806,7 @@ export class WorldInstance {
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
         clickLook: clickLookFromAction(action, attackerPose),
+        itemSlot: slot.value,
         target: {
           kind: 'player',
           player: target,
@@ -2818,6 +2836,7 @@ export class WorldInstance {
       const combat = this.gameplay.attack(player, [...this.players.values()], {
         attackerPose,
         clickLook: clickLookFromAction(action, attackerPose),
+        itemSlot: slot.value,
         target: {
           kind: 'mob',
           mob,
@@ -2837,6 +2856,7 @@ export class WorldInstance {
     const combat = this.gameplay.attack(player, [...this.players.values()], {
       attackerPose,
       clickLook: clickLookFromAction(action, attackerPose),
+      itemSlot: slot.value,
       allowCurrentPlayerTargets: false,
     });
     this.flushBlockChanges();
@@ -2967,15 +2987,16 @@ export class WorldInstance {
   ): { ok: true } | { ok: false; reason: string } {
     const { action } = pending;
     if (pose.dead) return { ok: false, reason: 'dead' };
-    if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
+    const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
+    if (!slot.ok) return { ok: false, reason: slot.reason === 'stale' ? 'stale' : 'slot' };
     const mob = this.gameplay.mobs.get(pending.target.mobId);
     if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
       return { ok: false, reason: 'invalid' };
     }
-    this.commitActionSelectedSlot(player, pose.selectedSlot, action.commandSeq);
+    this.commitActionSelectedSlot(player, slot.value, action.commandSeq);
     const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
     const look = clickLookFromAction(action, pose);
-    const result = this.gameplay.useEntity(player, action, pose.selectedSlot, petLimit, {
+    const result = this.gameplay.useEntity(player, action, slot.value, petLimit, {
       eyeX: pose.eyeX,
       eyeY: pose.eyeY,
       eyeZ: pose.eyeZ,
@@ -4077,6 +4098,7 @@ export class WorldInstance {
         yaw: player.controller.yaw,
         pitch: player.controller.pitch,
         selectedSlot: player.selectedSlot,
+        movementEpoch: player.movementEpoch,
         ...(player.bowReleaseBoundaryThisTick ? { bowRelease: player.bowReleaseBoundaryThisTick } : {}),
         aabb: { ...aabb },
         dead: player.survival.dead,
@@ -4221,8 +4243,109 @@ export class WorldInstance {
 
   respawn(player: ServerPlayer): boolean {
     const respawned = this.gameplay.respawnPlayer(player);
-    if (respawned) player.restingBed = undefined;
-    return respawned;
+    if (!respawned) return false;
+    player.restingBed = undefined;
+    this.rebaseAfterHardRelocation(player);
+    return true;
+  }
+
+  /**
+   * Server-owned instantaneous relocation. Walking, knockback, minecart
+   * motion, and a cancelled move are not this path.
+   */
+  hardRelocatePlayer(
+    player: ServerPlayer,
+    x: number,
+    y: number,
+    z: number,
+    look?: { readonly yaw?: number; readonly pitch?: number },
+  ): boolean {
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
+      return false;
+    }
+    if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
+    player.restingBed = undefined;
+    player.controller.teleport([x, y, z]);
+    if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
+    if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
+    this.rebaseAfterHardRelocation(player);
+    return true;
+  }
+
+  /**
+   * Live movement epoch bump. Does not reset commandSeq the way a reconnect does.
+   * Pre-teleport queued movement, combat history, and pending actions are closed.
+   */
+  rebaseAfterHardRelocation(player: ServerPlayer): void {
+    player.movementEpoch += 1;
+    this.cancelPendingActionsForRelocation(player);
+    player.commandQueue.discardQueuedMovement({
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      selectedSlot: player.selectedSlot,
+    });
+    player.appliedStepsThisLoop.length = 0;
+    player.actionPoseHistory.length = 0;
+    player.combatPoseHistory.length = 0;
+    player.bowReleaseCommandStates.clear();
+    player.bowReleaseBoundaryThisTick = undefined;
+    clearMiningLock(player);
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
+    player.lastUse = false;
+    player.actionSelectedSlot = undefined;
+    player.lastInput = {
+      ...player.lastInput,
+      forward: 0,
+      right: 0,
+      jump: false,
+      manualJump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      mining: false,
+      use: false,
+      vehicleForward: 0,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      selectedSlot: player.selectedSlot,
+    };
+  }
+
+  private cancelPendingActionsForRelocation(player: ServerPlayer): void {
+    for (const pending of player.pendingAttacks) {
+      this.sendAttackActionResult(player, pending.action, {
+        ok: false,
+        actionSeq: pending.action.actionSeq,
+        kind: 'attack',
+        reason: 'stale',
+        combat: this.combatStatus(pending, 'stale'),
+      });
+    }
+    player.pendingAttacks.length = 0;
+    for (const pending of player.pendingBowReleases) {
+      this.sendBowActionResult(player, pending.action, this.bowFailure(pending, 'stale', 'teleport'));
+    }
+    player.pendingBowReleases.length = 0;
+    for (const pending of player.pendingEntityUses) {
+      this.sendEntityUseActionResult(player, pending.action, { ok: false, reason: 'stale' }, pending, 'stale');
+    }
+    player.pendingEntityUses.length = 0;
+  }
+
+  private refreshCommandProtection(player: ServerPlayer): void {
+    const seqs = new Set<number>();
+    for (const pending of player.pendingAttacks) seqs.add(pending.action.commandSeq);
+    for (const pending of player.pendingBowReleases) seqs.add(pending.action.commandSeq);
+    for (const pending of player.pendingEntityUses) seqs.add(pending.action.commandSeq);
+    for (const seq of player.bowReleaseCommandStates.keys()) seqs.add(seq);
+    player.commandQueue.protectedCommandSeqs = seqs;
   }
 
   private flushHealth(player: ServerPlayer): void {
@@ -4384,13 +4507,7 @@ export class WorldInstance {
         pitch: player.controller.pitch,
       }),
       snapshot: () => player.snapshot(),
-        teleport: (x: number, y: number, z: number) => {
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(y)) return false;
-        if (!isPlayerCenterInsidePlayableWorld(x, z)) return false;
-        player.restingBed = undefined;
-        player.controller.teleport([x, y, z]);
-        return true;
-      },
+      teleport: (x: number, y: number, z: number) => this.hardRelocatePlayer(player, x, y, z),
       sendMessage: (text: string) => {
         instance.sendTo(player, {
           type: 'chat',

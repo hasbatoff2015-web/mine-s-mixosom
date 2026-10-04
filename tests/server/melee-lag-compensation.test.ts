@@ -292,7 +292,10 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     const look = recordInitial(world, attacker, victim);
     const receivedServerTick = world.tickNumber;
     const commandSeq = MAX_PENDING_MELEE_TICKS + 2;
-    enqueueAttackerBacklog(world, attacker, 2, commandSeq, look);
+    for (let seq = 2; seq <= commandSeq; seq += 1) {
+      world.applyInput(attacker, { ...input(seq, look.yaw, look.pitch), jump: seq % 2 === 0 });
+    }
+    expect(attacker.commandQueue.length).toBeGreaterThan(MAX_PENDING_MELEE_TICKS);
     attackerSink.payloads.length = 0;
     const before = victim.survival.health;
 
@@ -314,6 +317,38 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
         rewindTicks: 0,
       },
     });
+  });
+
+  it('a continuous input burst stays inside the latency budget and the newest attack still hits', async () => {
+    const { world, attacker, victim, attackerSink } = await boot();
+    const look = recordInitial(world, attacker, victim);
+    const through = 16;
+    enqueueAttackerBacklog(world, attacker, 2, through, look);
+    expect(attacker.commandQueue.length).toBeLessThanOrEqual(4);
+    expect(attacker.commandQueue.find(through)?.commandSeq).toBe(through);
+    attackerSink.payloads.length = 0;
+    const before = victim.survival.health;
+    world.handleSequencedAttack(attacker, action(1, through, look, victim, world.tickNumber));
+    for (let tick = 0; tick < 6; tick += 1) world.tick();
+    expect(victim.survival.health).toBeLessThan(before);
+    expect(result(attackerSink, 1).combat?.result).toBe('hit');
+  });
+
+  it('does not compact away a melee command the server is already waiting on', async () => {
+    const { world, attacker, victim } = await boot();
+    const look = recordInitial(world, attacker, victim);
+    world.applyInput(attacker, input(2, look.yaw, look.pitch));
+    for (let seq = 3; seq <= 6; seq += 1) world.applyInput(attacker, input(seq, look.yaw, look.pitch));
+    const boundary = attacker.commandQueue.peek()?.commandSeq;
+    expect(boundary).toBeDefined();
+    world.handleSequencedAttack(attacker, action(1, boundary!, look, victim, world.tickNumber));
+    expect(attacker.pendingAttacks).toHaveLength(1);
+    for (let seq = 7; seq <= 24; seq += 1) world.applyInput(attacker, input(seq, look.yaw, look.pitch));
+    expect(attacker.commandQueue.find(boundary!)?.commandSeq).toBe(boundary);
+    if (attacker.commandQueue.lastCompacted) {
+      const range = attacker.commandQueue.lastCompacted;
+      expect(boundary! < range.fromCommandSeq || boundary! > range.toCommandSeq).toBe(true);
+    }
   });
 
   it('classifies current-world wall occlusion and reach beyond three blocks', async () => {
