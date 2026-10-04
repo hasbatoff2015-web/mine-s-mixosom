@@ -133,6 +133,7 @@ function runMobileSteps(options: {
         forward: 1,
         right: 0,
         jump,
+        manualJump: false,
         sprint: false,
         sneak: options.sneak === true,
       }),

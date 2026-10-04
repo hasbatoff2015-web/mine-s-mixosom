@@ -2977,6 +2977,7 @@ export class Game {
         forward: 0,
         right: 0,
         jump: false,
+        manualJump: false,
         sneak: false,
         sprint: false,
         descend: false,
@@ -3129,6 +3130,7 @@ export class Game {
     const safeSpawn = relocateStandingPoseInsidePlayableWorld(world, spawn[0], spawn[1], spawn[2]);
     player.teleport([safeSpawn.x, safeSpawn.y, safeSpawn.z]);
     syncCreativeFlightAllowed(player, summary.mode);
+    this.input.setJumpLockAllowed(summary.mode !== 'creative');
     if (restored) {
       player.restore({
         position: restored.player.position,
@@ -4604,6 +4606,7 @@ export class Game {
         forward: inputIntent.forward,
         right: inputIntent.right,
         jump: inputIntent.jump,
+        manualJump: inputIntent.manualJump,
         sneak: inputIntent.sneak,
         sprint: inputIntent.sprint,
         descend: inputIntent.descend,
@@ -4761,6 +4764,7 @@ export class Game {
             forward: riding ? 0 : movement.forward,
             right: riding ? 0 : movement.right,
             jump: riding || exitedRest ? false : movement.jump,
+            manualJump: riding || exitedRest ? false : movement.manualJump,
             sprint: !riding && movement.sprint
               && (session.summary.mode === 'creative' || session.survival.hunger > 6),
             descend: movement.descend === true,
@@ -5954,6 +5958,7 @@ export class Game {
       forward: 0,
       right: 0,
       jump: false,
+      manualJump: false,
       sneak: false,
       sprint: false,
       descend: false,
@@ -6071,6 +6076,7 @@ export class Game {
     gamemode: GameMode = session.summary.mode,
   ): void {
     syncCreativeFlightAllowed(session.player, gamemode);
+    this.input.setJumpLockAllowed(gamemode !== 'creative');
   }
 
   private setGameMode(mode: GameMode): void {

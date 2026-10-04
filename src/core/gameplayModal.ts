@@ -8,6 +8,7 @@ export const BLOCKED_MOVE_INPUT: MoveInput = Object.freeze({
   forward: 0,
   right: 0,
   jump: false,
+  manualJump: false,
   sprint: false,
   sneak: false,
   descend: false,

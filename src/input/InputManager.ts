@@ -19,7 +19,8 @@ import {
   advanceTouchTrack,
   beginTouchTrack,
   jumpInputActive,
-  jumpLockAfterRelease,
+  jumpLockAfterPolicy,
+  jumpLockPolicyAfterMode,
   resolvePointerEnd,
   swipeLookDelta,
   type JumpLockState,
@@ -123,6 +124,8 @@ export class InputManager {
   private touchJumpPressed = false;
   private jumpLock: JumpLockState = JUMP_LOCK_IDLE;
   private jumpDownAt = 0;
+  /** Survival latches a double tap. Creative leaves the button as a flight tap. */
+  private jumpLockAllowed = true;
   private touchSprint = false;
   private touchSneak = false;
   private touchLayout = false;
@@ -184,6 +187,20 @@ export class InputManager {
     this.autoJumpArmed = armed;
   }
 
+  /**
+   * Survival may latch the jump button. Creative must not: the same double
+   * tap is the flight toggle. A change in either direction drops a pending
+   * tap so the other mode cannot inherit it.
+   */
+  setJumpLockAllowed(allowed: boolean): void {
+    const policy = jumpLockPolicyAfterMode(this.jumpLockAllowed, allowed);
+    this.jumpLockAllowed = policy.allowed;
+    if (!policy.clearGesture) return;
+    this.jumpLock = JUMP_LOCK_IDLE;
+    this.jumpDownAt = 0;
+    this.syncJumpButton();
+  }
+
   /** Locked touch ray. Camera yaw stays independent. */
   interactionLook(): { yaw: number; pitch: number } | null {
     return this.interactionAim;
@@ -214,15 +231,18 @@ export class InputManager {
     const forward = Number(this.keys.has('KeyW')) - Number(this.keys.has('KeyS')) + this.touchForward;
     const right = Number(this.keys.has('KeyD')) - Number(this.keys.has('KeyA')) + this.touchRight;
     const length = Math.hypot(forward, right);
+    const space = this.keys.has('Space');
+    const manualJump = space || this.touchJumpPressed;
     return {
       forward: length > 1 ? forward / length : forward,
       right: length > 1 ? right / length : right,
       jump: jumpInputActive({
-        space: this.keys.has('Space'),
+        space,
         pressed: this.touchJumpPressed,
-        locked: this.jumpLock.locked,
+        locked: this.jumpLockAllowed && this.jumpLock.locked,
         autoJump: this.autoJumpArmed,
       }),
+      manualJump,
       sprint: this.touchSprint,
       sneak: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
       descend: DESKTOP_SNEAK_CODES.some((code) => this.keys.has(code)) || this.touchSneak,
@@ -748,7 +768,15 @@ export class InputManager {
 
   private releaseJump(now: number, cancelled: boolean): void {
     this.touchJumpPressed = false;
-    this.jumpLock = jumpLockAfterRelease(this.jumpLock, this.jumpDownAt, now, cancelled);
+    const next = jumpLockAfterPolicy(
+      this.jumpLockAllowed,
+      this.jumpLock,
+      this.jumpDownAt,
+      now,
+      cancelled,
+    );
+    this.jumpLock = next.lock;
+    this.jumpDownAt = next.downAt;
     this.syncJumpButton();
   }
 

@@ -18,6 +18,7 @@ import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventor
 import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
+import { manualJumpLevel } from '../src/player/creativeFlight';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   appearancesEqual,
@@ -500,6 +501,7 @@ function commandFromInput(input: ClientInputMessage): PlayerCommand {
     forward: input.forward,
     right: input.right,
     jump: input.jump,
+    ...(input.manualJump !== undefined ? { manualJump: input.manualJump } : {}),
     sneak: input.sneak,
     sprint: input.sprint,
     descend: input.descend,
@@ -521,6 +523,7 @@ function inputFromCommand(command: PlayerCommand): ClientInputMessage {
     forward: command.forward,
     right: command.right,
     jump: command.jump,
+    ...(command.manualJump !== undefined ? { manualJump: command.manualJump } : {}),
     sneak: command.sneak,
     sprint: command.sprint,
     descend: command.descend,
@@ -3922,7 +3925,7 @@ export class WorldInstance {
           player.restingBed = undefined;
           player.controller.teleport(bedExitPosition(this.world, rest));
           exitedRest = true;
-          player.lastInput = { ...player.lastInput, jump: false };
+          player.lastInput = { ...player.lastInput, jump: false, manualJump: false };
         } else {
           player.controller.velocity.set(0, 0, 0);
         }
@@ -3934,6 +3937,7 @@ export class WorldInstance {
         forward: input.forward,
         right: input.right,
         jump,
+        ...(input.manualJump !== undefined ? { manualJump: input.manualJump && !exitedRest } : {}),
         sneak: input.sneak,
         sprint: input.sprint,
         descend: input.descend,
@@ -3950,6 +3954,7 @@ export class WorldInstance {
           forward: riding ? 0 : movement.forward,
           right: riding ? 0 : movement.right,
           jump: riding ? false : movement.jump,
+          manualJump: riding ? false : manualJumpLevel(movement),
           sneak: movement.sneak,
           sprint: movement.sprint,
           descend: movement.descend,

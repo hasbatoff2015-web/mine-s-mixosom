@@ -23,6 +23,7 @@ export function mergeDroppedRange(
 /** True when dropping `older` would lose an edge-sensitive transition into `newer`. */
 export function commandEdgeSensitive(older: PlayerCommand, newer: PlayerCommand): boolean {
   return older.jump !== newer.jump
+    || (older.manualJump === true) !== (newer.manualJump === true)
     || Boolean(older.use) !== Boolean(newer.use)
     || Boolean(older.mining) !== Boolean(newer.mining)
     || older.sneak !== newer.sneak

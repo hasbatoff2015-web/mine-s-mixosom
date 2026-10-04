@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-04: jump lock vs Creative Flight
+
+- [x] Survival double-tap still latches jump. Creative double-tap toggles flight and does not latch.
+- [x] Switching gamemode clears the latch immediately. Creative does not leave a tap that survival can inherit.
+- [x] Auto-jump and the latch do not arm Creative Flight. Two physical presses do. Desktop double Space is unchanged.
+- [x] The manual edge travels on the input command. Server and prediction use it. Replay of a held press does not toggle twice.
+- [ ] Owner QA on a phone: survival latch, creative flight double-tap, auto-jump then one jump tap.
+
 ## 2026-10-03: mobile polish — bow, inventory, jump, look
 
 - [x] Cloud drift is exactly 4× the previous 0.16 blocks/second. World lock is unchanged.

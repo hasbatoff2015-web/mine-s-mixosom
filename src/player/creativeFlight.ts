@@ -36,6 +36,19 @@ export function syncCreativeFlightAllowed(
   player.creativeFlightAllowed = creativeFlightAllowedForGamemode(gamemode);
 }
 
+/**
+ * Level that may open or toggle Creative Flight.
+ * A physical press sets `manualJump`. Auto-jump and the survival jump latch
+ * set `jump` only, so they cannot arm the 7-tick window.
+ * Commands that predate the field still use `jump`.
+ */
+export function manualJumpLevel(movement: {
+  readonly jump: boolean;
+  readonly manualJump?: boolean;
+}): boolean {
+  return movement.manualJump !== undefined ? movement.manualJump : movement.jump;
+}
+
 export function shouldAcceptFlyToggle(
   creative: boolean,
   jumpPressed: boolean,

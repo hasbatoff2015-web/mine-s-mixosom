@@ -55,6 +55,31 @@ export function jumpInputActive(input: {
   return input.space || input.pressed || input.locked || input.autoJump;
 }
 
+/**
+ * Survival may latch jump. Creative must not: that double tap is Creative
+ * Flight, which has its own 7-tick window. The split is the gamemode, not
+ * two different millisecond thresholds.
+ */
+export function jumpLockPolicyAfterMode(
+  allowed: boolean,
+  nextAllowed: boolean,
+): { readonly allowed: boolean; readonly clearGesture: boolean } {
+  if (allowed === nextAllowed) return { allowed, clearGesture: false };
+  return { allowed: nextAllowed, clearGesture: true };
+}
+
+/** Creative never latches. A cancelled or over-long press never latches. */
+export function jumpLockAfterPolicy(
+  allowed: boolean,
+  state: JumpLockState,
+  downAt: number,
+  upAt: number,
+  cancelled: boolean,
+): { readonly lock: JumpLockState; readonly downAt: number } {
+  if (!allowed) return { lock: JUMP_LOCK_IDLE, downAt: 0 };
+  return { lock: jumpLockAfterRelease(state, downAt, upAt, cancelled), downAt };
+}
+
 export type TouchPhase = 'pending' | 'swipe' | 'hold';
 
 export interface TouchTrack {

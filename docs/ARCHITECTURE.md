@@ -1,5 +1,13 @@
 # Архитектура
 
+## Jump lock and Creative Flight — 2026-10-04
+
+Survival may latch the jump button. Creative may not. `InputManager.setJumpLockAllowed` follows gamemode, and `syncLocalCreativeFlight` is the call site for session start, local `/gamemode`, inventory, player state, respawn, and the online tick. A change in either direction clears `jumpLock` and the pending tap time, then `syncJumpButton` drops `.is-active` and `aria-pressed`.
+
+`movement().jump` is still Space, the physical button, the latch, or auto-jump. `movement().manualJump` is only Space or the physical button. `PlayerController` arms Creative Flight from the rising edge of `manualJumpLevel`. An omitted field still means `jump`, so older commands keep the old edge. The 320 ms latch window and the 7-tick flight window are unchanged; they are not used to tell the gestures apart.
+
+The input command carries optional `manualJump`. Prediction stores the resolved bit and replays it. The server copies it through the FIFO and passes it into the same `PlayerController`. `isFlying` is still produced by that controller, not sent as a client claim. Compaction treats a `manualJump` change as an edge even when `jump` stays true.
+
 ## Mobile polish — 2026-10-03
 
 `CLOUD_DRIFT_BLOCKS_PER_SECOND` is `0.16 * 4`. `cloudScrollOffset` still adds that wind only to U. Camera X/Z still cancel in `cloudWorldSample`.

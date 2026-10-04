@@ -277,6 +277,11 @@ export interface ClientInputMessage {
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
+  /**
+   * Physical jump level for Creative Flight. Absent on older clients, which
+   * the server treats as the same edge as `jump`.
+   */
+  readonly manualJump?: boolean;
   readonly sneak: boolean;
   readonly sprint: boolean;
   readonly descend: boolean;
@@ -1835,6 +1840,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (!bool(raw.jump) || !bool(raw.sneak) || !bool(raw.sprint) || !bool(raw.descend) || !bool(raw.flySprint)) {
         return { error: 'input flags invalid' };
       }
+      if (raw.manualJump !== undefined && !bool(raw.manualJump)) return { error: 'input.manualJump invalid' };
       if (!finite(raw.selectedSlot) || !Number.isInteger(raw.selectedSlot)) {
         return { error: 'input.selectedSlot invalid' };
       }
@@ -1855,6 +1861,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         forward: clampNumber(raw.forward, -1, 1),
         right: clampNumber(raw.right, -1, 1),
         jump: raw.jump,
+        ...(raw.manualJump !== undefined ? { manualJump: raw.manualJump } : {}),
         sneak: raw.sneak,
         sprint: raw.sprint,
         descend: raw.descend,

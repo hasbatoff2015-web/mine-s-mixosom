@@ -936,7 +936,7 @@ export class GameUI {
     this.setScreen(`
       <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
-        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик — движение и бег, прыжок — кнопка, двойное касание прыжка держит его, приседание — переключатель. Свайп по экрану вращает камеру. Короткое касание бьёт, использует или ставит блок, удержание копает. Удержание лука тоже вращает камеру, стрела летит в прицел. Играть в landscape.</p></div>
+        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик — движение и бег, прыжок — кнопка, в выживании двойное касание прыжка держит его, в творческом оно включает полёт, приседание — переключатель. Свайп по экрану вращает камеру. Короткое касание бьёт, использует или ставит блок, удержание копает. Удержание лука тоже вращает камеру, стрела летит в прицел. Играть в landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
       </div></section>`, onBack);
     this.bindAction('back', onBack);

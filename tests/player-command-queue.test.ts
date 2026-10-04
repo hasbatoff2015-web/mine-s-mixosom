@@ -69,7 +69,21 @@ describe('continuous command compaction', () => {
     expect(commandEdgeSensitive(cmd(1), cmd(2, { mining: true }))).toBe(true);
     expect(commandEdgeSensitive(cmd(1), cmd(2, { selectedSlot: 3 }))).toBe(true);
     expect(commandEdgeSensitive(cmd(1), cmd(2, { flySprint: true }))).toBe(true);
+    expect(commandEdgeSensitive(
+      cmd(1, { jump: true, manualJump: false }),
+      cmd(2, { jump: true, manualJump: true }),
+    )).toBe(true);
     expect(commandEdgeSensitive(cmd(1, { forward: 1 }), cmd(2, { forward: 0, yaw: 1 }))).toBe(false);
+  });
+
+  it('keeps a manual-jump edge while locomotion jump stays true', () => {
+    const items = [
+      cmd(1, { jump: true, manualJump: false }),
+      cmd(2, { jump: true, manualJump: true }),
+      cmd(3, { jump: true, manualJump: false }),
+    ];
+    expect(compactContinuousCommands(items)).toBeUndefined();
+    expect(items.map((item) => item.commandSeq)).toEqual([1, 2, 3]);
   });
 
   it('collapses a run of WASD/look into the newest sample', () => {

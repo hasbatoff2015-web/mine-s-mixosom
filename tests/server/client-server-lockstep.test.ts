@@ -158,6 +158,7 @@ function runLockstep(
         forward: packet.forward,
         right: packet.right,
         jump: packet.jump,
+        ...(packet.manualJump !== undefined ? { manualJump: packet.manualJump } : {}),
         sneak: packet.sneak,
         sprint: packet.sprint,
         descend: packet.descend,
