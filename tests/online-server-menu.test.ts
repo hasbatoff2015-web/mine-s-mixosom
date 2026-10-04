@@ -53,9 +53,18 @@ describe('online server menu', () => {
     expect(html).toContain('Выживание PvP');
     expect(html).toContain('Мирный');
     expect(html).toContain('class="server-row selected" data-server-id="anarchy"');
+    expect(html).toContain('server-icon--anarchy');
+    expect(html).toContain('server-icon--survival');
+    expect(html).toContain('server-icon--peaceful');
+    expect(html.match(/<svg /g)).toHaveLength(3);
+    expect(html).toContain('aria-label="приваты взрываются. гриф разрешён. полная свобода и хаос"');
+    expect(html).toContain('спокойное выживание и строительство');
+    expect(html).not.toContain('>FC<');
     expect(html).not.toContain('пока недоступно');
     expect(html).not.toContain('PvP</strong><small>Выживание без PvP');
     expect(gameUiSource).not.toContain('пока недоступно');
+    expect(gameUiSource).toContain("button.addEventListener('dblclick'");
+    expect(gameUiSource).toContain('id="online-nickname"');
     expect(Object.keys(LOCAL_SERVER_PRESETS)).toEqual(['anarchy', 'survival', 'peaceful']);
   });
 

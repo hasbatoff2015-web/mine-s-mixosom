@@ -19,6 +19,24 @@ export interface PlayerAppearancePreviewOptions {
   readonly armorResources?: PlayerArmorResources;
 }
 
+/** Existing menu auto-spin. Manual drag pauses it; the speed stays 0.35 rad/s. */
+export const PREVIEW_AUTO_ROTATE_RADIANS_PER_SECOND = 0.35;
+
+export function normalizePreviewYaw(yaw: number): number {
+  if (!Number.isFinite(yaw)) return 0;
+  return Math.atan2(Math.sin(yaw), Math.cos(yaw));
+}
+
+export function advancePreviewYaw(yaw: number, deltaSeconds: number, paused: boolean): number {
+  const next = paused ? yaw : yaw + deltaSeconds * PREVIEW_AUTO_ROTATE_RADIANS_PER_SECOND;
+  return normalizePreviewYaw(next);
+}
+
+export function rotatePreviewYaw(yaw: number, deltaRadians: number): number {
+  if (!Number.isFinite(deltaRadians)) return normalizePreviewYaw(yaw);
+  return normalizePreviewYaw(yaw + deltaRadians);
+}
+
 /** Offscreen PlayerVisual used by the main-menu character panel and skin selector. */
 export class PlayerAppearancePreview {
   readonly visual: PlayerVisual;
@@ -28,6 +46,7 @@ export class PlayerAppearancePreview {
   private readonly canvas: HTMLCanvasElement;
   private disposed = false;
   private yaw = 0.45;
+  private autoRotatePaused = false;
 
   constructor(options: PlayerAppearancePreviewOptions) {
     this.canvas = options.canvas;
@@ -68,10 +87,20 @@ export class PlayerAppearancePreview {
     this.visual.setAppearance(createPlayerAppearance(appearance));
   }
 
+  setAutoRotatePaused(paused: boolean): void {
+    if (this.disposed) return;
+    this.autoRotatePaused = paused;
+  }
+
+  rotateYaw(deltaRadians: number): void {
+    if (this.disposed) return;
+    this.yaw = rotatePreviewYaw(this.yaw, deltaRadians);
+  }
+
   render(deltaSeconds: number): void {
     if (this.disposed || this.canvas.width === 0) return;
     this.resize();
-    this.yaw += deltaSeconds * 0.35;
+    this.yaw = advancePreviewYaw(this.yaw, deltaSeconds, this.autoRotatePaused);
     this.visual.update(deltaSeconds, {
       viewYaw: this.yaw,
       viewPitch: -0.08,

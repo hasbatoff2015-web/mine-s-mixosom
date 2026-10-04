@@ -623,7 +623,7 @@ Holograms: `HologramNetwork` on the server broadcasts protocol `holograms`. Plug
 
 ## Nickname and server console — 2026-09-05
 
-Display nickname is **not** an account id. The client stores it in `localStorage` (`fc.player.nickname`) and sends it on Anarchy `join.name`. `WorldInstance.join` uses that name when it is valid; otherwise it keeps `Player-XXXX`. `playerId` remains a UUID. `MAX_PLAYER_NAME_LENGTH` is **13**; `sanitizePlayerName` rejects longer names (no silent truncate), and the Account input `maxlength` uses the same constant.
+Display nickname is **not** an account id. The client stores it in `localStorage` (`fc.player.nickname`, key unchanged) and sends it on Anarchy `join.name`. The editor lives on the online server screen. `WorldInstance.join` uses that name when it is valid; otherwise it keeps `Player-XXXX`. `playerId` remains a UUID. A nickname is `^[A-Za-z0-9]+$`, length **2–20** (`MIN_PLAYER_NAME_LENGTH` / `MAX_PLAYER_NAME_LENGTH`). `sanitizePlayerName` rejects anything else, including spaces, and does not trim an invalid value into a valid one. The online input `minlength` / `maxlength` use the same constants. Connect still reads the last successfully saved nickname, not an unsaved draft.
 
 Server stdin is `ConsoleCommandSender` in `server/index.ts` → `WorldInstance.dispatchConsole` → the existing `CommandRegistry`. It is not a fake player and does not use `FC_OPERATORS`.
 

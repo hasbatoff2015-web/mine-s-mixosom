@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-04: Мегакрафт menu UI
+
+- [x] Main menu and loading title are one line, «МЕГАКРАФТ». Account screen removed.
+- [x] Nickname contract is `^[A-Za-z0-9]+$`, 2–20, shared by client and server. Storage key stays `fc.player.nickname`.
+- [x] Online cards use inline SVG and CSS caption rotation. Controls help matches current desktop and mobile input.
+- [x] Visual QA of the menu on 1920×1080, 1366×768, 844×390, and 667×375. Portrait 390×844 keeps the existing two-column clip.
+
 ## 2026-10-04: mobile flight descend
 
 - [x] Ground crouch, including grounded creative, stays a toggle.

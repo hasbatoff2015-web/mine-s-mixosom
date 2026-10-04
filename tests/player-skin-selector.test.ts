@@ -23,6 +23,12 @@ import {
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
 import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?raw';
+import {
+  advancePreviewYaw,
+  PREVIEW_AUTO_ROTATE_RADIANS_PER_SECOND,
+  rotatePreviewYaw,
+} from '../src/rendering/player/PlayerAppearancePreview';
+import { SKIN_PREVIEW_DRAG_RADIANS_PER_PIXEL } from '../src/ui/skinPreviewDrag';
 import buyerNpcSource from '../src/net/BuyerNpcView.ts?raw';
 
 function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage & { data: Record<string, string> } {
@@ -144,4 +150,43 @@ describe('player skin selector', () => {
     expect(previewSource).toContain('this.visual = new PlayerVisual(');
     expect(previewSource).toContain('this.visual.setAppearance(');
   });
+
+  it('hides Classic/Slim controls and still selects the skin default model', () => {
+    expect(gameUiSource).not.toContain('skin-model-toggle');
+    expect(gameUiSource).not.toContain('skin-card-model');
+    expect(gameUiSource).not.toContain('>Classic<');
+    expect(gameUiSource).not.toContain('>Slim<');
+    expect(gameUiSource).not.toContain('data-model=');
+    expect(gameUiSource).toContain('[data-skin-preview]');
+    expect(gameUiSource).toContain('data-skin-thumb');
+    expect(gameUiSource).toContain('Потяните модель, чтобы повернуть');
+    expect(gameUiSource.match(/data-skin-id=/g)?.length).toBeGreaterThan(0);
+    const selector = sourceSection(gameSource, 'private showSkinSelector(): void {', 'private attachCharacterPreview(');
+    expect(selector).toContain('selectSkin(skinId)');
+    expect(selector).toContain('this.characterPreview?.setAppearance(next)');
+    expect(selector).toContain('rotateYaw(deltaPixels * SKIN_PREVIEW_DRAG_RADIANS_PER_PIXEL)');
+    expect(selector).toContain('setAutoRotatePaused(active)');
+    expect(selector).not.toContain('setModel');
+    expect(selector).not.toContain('markSkinModel');
+    expect(SKIN_PREVIEW_DRAG_RADIANS_PER_PIXEL).toBe(0.012);
+  });
+
+  it('pauses automatic preview yaw and applies a bounded manual yaw', () => {
+    expect(PREVIEW_AUTO_ROTATE_RADIANS_PER_SECOND).toBe(0.35);
+    expect(advancePreviewYaw(0.45, 1, true)).toBeCloseTo(0.45);
+    expect(advancePreviewYaw(0.45, 1, false)).toBeCloseTo(0.8);
+    expect(rotatePreviewYaw(0.45, 30 * SKIN_PREVIEW_DRAG_RADIANS_PER_PIXEL)).toBeCloseTo(0.45 + 0.36);
+    expect(Math.abs(rotatePreviewYaw(0, 100))).toBeLessThanOrEqual(Math.PI + 1e-9);
+    expect(previewSource).toContain('advancePreviewYaw(this.yaw, deltaSeconds, this.autoRotatePaused)');
+    expect(previewSource).toContain('this.yaw = rotatePreviewYaw(this.yaw, deltaRadians)');
+    expect(previewSource).not.toContain('this.yaw +=');
+  });
 });
+
+function sourceSection(source: string, start: string, end: string): string {
+  const from = source.indexOf(start);
+  const to = source.indexOf(end, from + start.length);
+  expect(from, start).toBeGreaterThanOrEqual(0);
+  expect(to, end).toBeGreaterThan(from);
+  return source.slice(from, to);
+}

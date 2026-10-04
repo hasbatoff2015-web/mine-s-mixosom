@@ -659,7 +659,8 @@ describe('play info and hotbar layout', () => {
     expect(shown).toBeGreaterThan(hidden);
     expect(gameUi).toContain('id="play-info"');
     expect(gameUi).toContain('name="clouds"');
-    expect(gameUi).toContain('Свайп по экрану вращает камеру');
+    expect(gameUi).toContain('MOBILE_CONTROL_ITEMS');
+    expect(readFileSync('src/ui/menuModel.ts', 'utf8')).toContain("control: 'Свайп по экрану'");
   });
 });
 

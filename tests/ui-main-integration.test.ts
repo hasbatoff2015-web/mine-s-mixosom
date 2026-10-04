@@ -1,6 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
+
+const styleSource = readFileSync('src/style.css', 'utf8');
 
 function sourceSection(source: string, start: string, end: string): string {
   const from = source.indexOf(start);
@@ -11,14 +14,26 @@ function sourceSection(source: string, start: string, end: string): string {
 }
 
 describe('UI visual pass on the authoritative main contracts', () => {
-  it('keeps the Account nickname panel on the existing main menu', () => {
-    expect(gameUiSource).toContain('data-action="account"');
-    expect(gameUiSource).toContain('showAccount(');
-    expect(gameUiSource).toContain('id="account-nickname"');
+  it('shows Мегакрафт without the account route', () => {
+    expect(gameUiSource).toContain('class="megacraft-logo" aria-label="Мегакрафт"');
+    expect(gameUiSource).toContain('<span>МЕГАКРАФТ</span>');
+    expect(gameUiSource).toContain('<h1>МЕГАКРАФТ</h1>');
+    expect(gameUiSource).not.toContain('FRONTIER');
+    expect(gameUiSource).not.toContain('Frontier');
+    expect(gameUiSource).not.toContain('survival alpha');
+    expect(gameUiSource).not.toContain('playable alpha');
+    expect(gameUiSource).not.toContain('data-action="account"');
+    expect(gameUiSource).not.toContain('showAccount(');
+    expect(gameUiSource).not.toContain('frontier-logo');
     expect(gameUiSource).toContain('data-action="select-skin"');
     expect(gameUiSource).toContain('character-panel');
-    expect(gameSource).toContain('account: () => this.showAccount()');
+    expect(gameUiSource).toContain('id="online-nickname"');
+    expect(gameUiSource).toContain('class="online-nickname-editor"');
+    expect(gameSource).not.toContain('showAccount(');
+    expect(gameSource).not.toContain('account:');
     expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
+    expect(gameSource).toContain('saveNickname: (raw) => {');
+    expect(styleSource).toContain("url('/ui/frontier-menu-background.png')");
   });
 
   it('keeps live online status and the existing server connect callbacks', () => {
@@ -35,6 +50,21 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(onlineGame).toContain('this.connectOnlineServer(id)');
     expect(onlineGame).toContain('clientUrlForServer(id)');
     expect(onlineGame).toContain('isLocalServerName(id)');
+    expect(onlineGame).toContain('loadPlayerNickname()');
+    expect(onlineUi).toContain('bindOnlineNickname');
+    const connect = sourceSection(gameSource, 'private async connectOnlineServer(', 'private async startOnlineAnarchy(');
+    expect(connect).toContain('loadPlayerNickname()');
+    expect(connect).not.toContain('online-nickname');
+  });
+
+  it('keeps Press Start on primary menu text and Inter on secondary captions', () => {
+    expect(styleSource).toContain('.megacraft-logo');
+    expect(styleSource).not.toContain('.frontier-logo');
+    expect(styleSource).toMatch(/\.menu-screen \.game-button \{[^}]*font-family: var\(--font-display\)/);
+    expect(styleSource).toMatch(/\.world-copy strong,\s*\.server-copy strong \{[^}]*font-family: var\(--font-display\)/);
+    expect(styleSource).toMatch(/\.server-caption \{[^}]*font-family: var\(--font-ui\)/);
+    expect(styleSource).toMatch(/:root \{[^}]*font-family: var\(--font-ui\)/);
+    expect(styleSource).not.toMatch(/body \{[^}]*font-family: var\(--font-display\)/);
   });
 
   it('keeps authoritative cursor and inventory action routing alongside Creative UI', () => {

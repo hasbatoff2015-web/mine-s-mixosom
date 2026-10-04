@@ -169,8 +169,9 @@ describe('custom display nickname storage', () => {
       setItem: (key: string, value: string) => { data[key] = value; },
       removeItem: (key: string) => { delete data[key]; },
     };
-    expect(savePlayerNickname('Custom_Nick-7', storage)).toEqual({ ok: true, name: 'Custom_Nick-7' });
-    expect(data[PLAYER_NICKNAME_STORAGE_KEY]).toBe('Custom_Nick-7');
-    expect(loadPlayerNickname(storage)).toBe('Custom_Nick-7');
+    expect(savePlayerNickname('CustomNick7', storage)).toEqual({ ok: true, name: 'CustomNick7' });
+    expect(data[PLAYER_NICKNAME_STORAGE_KEY]).toBe('CustomNick7');
+    expect(loadPlayerNickname(storage)).toBe('CustomNick7');
+    expect(PLAYER_NICKNAME_STORAGE_KEY).toBe('fc.player.nickname');
   });
 });
