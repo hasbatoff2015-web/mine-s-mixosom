@@ -6082,12 +6082,21 @@ export class Game {
   ): void {
     syncCreativeFlightAllowed(session.player, gamemode);
     this.input.setJumpLockAllowed(gamemode !== 'creative');
+    // Same gamemode argument, before the handler returns to sample movement.
+    this.syncMobileSneakMode(session, gamemode);
   }
 
-  /** Crouch latches on the ground and holds only while this player is actually flying. */
-  private syncMobileSneakMode(session: GameSession): void {
+  /**
+   * Crouch latches on the ground and holds only while this player is actually flying.
+   * Pass the gamemode explicitly when an authoritative message has it in hand.
+   * Call again after `isFlying` changes; a same-mode call does not clear a ground latch.
+   */
+  private syncMobileSneakMode(
+    session: GameSession,
+    gamemode: GameMode = session.summary.mode,
+  ): void {
     this.input.setMobileSneakFlightHold(
-      mobileSneakFlightHold(session.summary.mode, session.player.isFlying),
+      mobileSneakFlightHold(gamemode, session.player.isFlying),
     );
   }
 

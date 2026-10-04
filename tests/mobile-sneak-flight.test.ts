@@ -342,6 +342,106 @@ describe('flight descend stays aligned online', () => {
       gameSource.indexOf('private noteLocalSnapshotTiming('),
     );
     expect(apply.indexOf('reconcilePredictedPlayer')).toBeLessThan(apply.indexOf('this.syncMobileSneakMode(session)'));
-    expect(gameSource).toContain('mobileSneakFlightHold(session.summary.mode, session.player.isFlying)');
+    expect(gameSource).toContain('mobileSneakFlightHold(gamemode, session.player.isFlying)');
+  });
+});
+
+/** The inventory handler applies this before it returns. No player tick in between. */
+function afterAuthoritativeGamemode(
+  state: MobileSneakState,
+  gamemode: string,
+  isFlying: boolean,
+): MobileSneakState {
+  return mobileSneakAfterFlight(state, mobileSneakFlightHold(gamemode, isFlying));
+}
+
+describe('authoritative gamemode updates the crouch policy before the next sample', () => {
+  it('turns creative flight-hold into a survival toggle before any tick, so the next tap latches', () => {
+    let state = afterAuthoritativeGamemode(MOBILE_SNEAK_IDLE, 'creative', true);
+    expect(state.mode).toBe('flight-hold');
+    expect(state.latched).toBe(false);
+
+    state = afterAuthoritativeGamemode(state, 'survival', true);
+    expect(state.mode).toBe('toggle');
+    expect(state.latched).toBe(false);
+    expect(mobileSneakFlightHold('survival', true)).toBe(false);
+
+    state = up(down(state));
+    expect(state.latched).toBe(true);
+    expect(state.pressed).toBe(false);
+    expect(mobileSneakIntent(state, false)).toEqual({ sneak: true, descend: false });
+  });
+
+  it('keeps a finger that was already down from becoming a latch when survival arrives', () => {
+    let state = down(afterAuthoritativeGamemode(MOBILE_SNEAK_IDLE, 'creative', true));
+    expect(state.mode).toBe('flight-hold');
+    expect(state.pressed).toBe(true);
+    expect(mobileSneakIntent(state, false).descend).toBe(true);
+
+    state = afterAuthoritativeGamemode(state, 'survival', true);
+    expect(state.mode).toBe('toggle');
+    expect(state.latched).toBe(false);
+    expect(state.pressed).toBe(true);
+    expect(mobileSneakIntent(state, false)).toEqual({ sneak: false, descend: true });
+
+    state = up(state);
+    expect(state.pressed).toBe(false);
+    expect(state.latched).toBe(false);
+    expect(mobileSneakIntent(state, false)).toEqual({ sneak: false, descend: false });
+
+    state = up(down(state));
+    expect(state.latched).toBe(true);
+    expect(mobileSneakIntent(state, false)).toEqual({ sneak: true, descend: false });
+  });
+
+  it('keeps grounded creative on the toggle, then clears the latch when flight actually starts', () => {
+    let state = up(down(MOBILE_SNEAK_IDLE));
+    expect(state.latched).toBe(true);
+    state = afterAuthoritativeGamemode(state, 'creative', false);
+    expect(state.mode).toBe('toggle');
+    expect(state.latched).toBe(true);
+
+    let clean = afterAuthoritativeGamemode(MOBILE_SNEAK_IDLE, 'creative', false);
+    expect(clean.mode).toBe('toggle');
+    clean = up(down(clean));
+    expect(clean.latched).toBe(true);
+    expect(mobileSneakIntent(clean, false).descend).toBe(false);
+
+    clean = afterAuthoritativeGamemode(clean, 'creative', true);
+    expect(clean.mode).toBe('flight-hold');
+    expect(clean.latched).toBe(false);
+    expect(sneakButtonActive(clean)).toBe(false);
+    expect(mobileSneakIntent(clean, false)).toEqual({ sneak: false, descend: false });
+  });
+
+  it('applies the sneak policy inside the inventory gamemode handler before movement is sampled', () => {
+    const inventory = gameSource.slice(gameSource.indexOf("case 'inventory':"), gameSource.indexOf("case 'error':"));
+    const assigned = inventory.indexOf('session.summary.mode = message.gamemode');
+    const synced = inventory.indexOf('this.syncLocalCreativeFlight(session, message.gamemode)');
+    expect(assigned).toBeGreaterThanOrEqual(0);
+    expect(synced).toBeGreaterThan(assigned);
+    expect(inventory).not.toContain('this.input.movement()');
+    expect(inventory.indexOf('return;')).toBeGreaterThan(synced);
+
+    const sync = gameSource.slice(
+      gameSource.indexOf('private syncLocalCreativeFlight('),
+      gameSource.indexOf('private syncMobileSneakMode('),
+    );
+    expect(sync.indexOf('syncCreativeFlightAllowed(session.player, gamemode)'))
+      .toBeLessThan(sync.indexOf('this.input.setJumpLockAllowed(gamemode !== \'creative\')'));
+    expect(sync.indexOf('this.input.setJumpLockAllowed(gamemode !== \'creative\')'))
+      .toBeLessThan(sync.indexOf('this.syncMobileSneakMode(session, gamemode)'));
+
+    const sneak = gameSource.slice(
+      gameSource.indexOf('private syncMobileSneakMode('),
+      gameSource.indexOf('private setGameMode('),
+    );
+    expect(sneak).toContain('mobileSneakFlightHold(gamemode, session.player.isFlying)');
+    const writer = gameSource.slice(
+      gameSource.indexOf('private recordLocalNetWrite('),
+      gameSource.indexOf('private noteWorldNearPlayer('),
+    );
+    expect(writer.indexOf('apply();')).toBeGreaterThanOrEqual(0);
+    expect(writer.indexOf('apply();')).toBeLessThan(writer.indexOf('return;'));
   });
 });

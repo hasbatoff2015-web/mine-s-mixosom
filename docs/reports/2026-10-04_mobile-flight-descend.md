@@ -39,6 +39,16 @@ Chrome headless, 844×390, `pointer: coarse`, dev server `127.0.0.1:5173`. The s
 
 The live view was not used to measure altitude. Descent and the return toward hover were checked on `PlayerController` and `WorldInstance`.
 
+## Follow-up: authoritative gamemode
+
+An online `inventory` message can change gamemode and return before the next tick. It already called `syncLocalCreativeFlight`, which updated creative permission and jump-lock, and left the crouch mode on `flight-hold` until the next prediction or reconcile. A crouch tap in that gap was a momentary press, so the first survival toggle was lost.
+
+`syncLocalCreativeFlight` now also calls `syncMobileSneakMode(session, gamemode)` with that same gamemode. Survival clears flight-hold immediately, even while `isFlying` is still true. A finger that is already down stays `pressed` and does not become a latch. The calls after tick, prediction, and reconciliation stay, because those are when `isFlying` itself changes. No protocol field changed.
+
+`tests/mobile-sneak-flight.test.ts` covers creative flight to survival with no tick and an immediate latching tap, a held finger across that change, grounded creative staying on the toggle, and flight still clearing the latch. The inventory case calls the sync before it returns and does not sample movement.
+
+This path was not clicked in a live online session.
+
 ## Git
 
 Branch `cursor/mobile-controls-sky-hud-f726`. PR #115 stays draft. Do not merge.

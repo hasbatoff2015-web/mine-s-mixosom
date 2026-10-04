@@ -6,7 +6,7 @@ Ground crouch and flight descend are different bits. `MobileSneakState.latched` 
 
 `mobileSneakIntent` sets `movement.sneak` from desktop Shift or the latch. `movement.descend` is desktop Shift or `pressed`. The latch is not an input to descend. `sneakButtonActive` is the latch on the ground and the finger in flight. The button still uses `.is-active`.
 
-`Game.syncMobileSneakMode` calls `setMobileSneakFlightHold(gamemode === 'creative' && player.isFlying)` after the singleplayer tick, after `predictLocalMove`, and after reconciliation. Entering or leaving that mode clears the latch. The existing `descend` command field is unchanged and stays edge-sensitive, so a press and its release both survive compaction. The server still integrates that bit in `updateFlyVelocity`.
+`syncLocalCreativeFlight` applies creative permission, jump-lock, and the crouch mode together, using the gamemode argument from the caller. An inventory or snapshot gamemode therefore updates the crouch button before that handler returns and before the next `movement()` sample. `syncMobileSneakMode` still runs after the singleplayer tick, after `predictLocalMove`, and after reconciliation, because those are the places `isFlying` changes. Entering or leaving flight-hold clears the latch. A repeat call with the same mode does not. The existing `descend` command field is unchanged and stays edge-sensitive, so a press and its release both survive compaction. The server still integrates that bit in `updateFlyVelocity`.
 
 ## Jump lock and Creative Flight — 2026-10-04
 
