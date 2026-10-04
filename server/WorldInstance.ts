@@ -246,6 +246,21 @@ const IDLE_INPUT: ClientInputMessage = {
   mining: false,
 };
 
+function skippedCommandFields(queue: PlayerCommandQueue): {
+  queueCompacted?: { fromCommandSeq: number; toCommandSeq: number };
+  queueSkippedRanges?: { fromCommandSeq: number; toCommandSeq: number }[];
+} {
+  const skipped = queue.skippedRanges.map((range) => ({
+    fromCommandSeq: range.fromCommandSeq,
+    toCommandSeq: range.toCommandSeq,
+  }));
+  if (skipped.length === 0) return {};
+  return {
+    ...(skipped.length === 1 ? { queueCompacted: skipped[0] } : {}),
+    queueSkippedRanges: skipped,
+  };
+}
+
 export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
@@ -420,7 +435,7 @@ export class ServerPlayer implements GameplayPlayer {
       movementEpoch: this.movementEpoch,
       appliedTicks: this.appliedInputTrace.slice(),
       appliedSteps: this.appliedStepsThisLoop.slice(),
-      ...(this.commandQueue.lastCompacted ? { queueCompacted: this.commandQueue.lastCompacted } : {}),
+      ...skippedCommandFields(this.commandQueue),
       session: {
         tokenFp: sessionTokenFingerprint(this.sessionToken),
         connectionId: this.connectionId,
@@ -434,6 +449,10 @@ export class ServerPlayer implements GameplayPlayer {
         inputPackets: this.inputPacketsThisLoop,
         commandQueue: this.commandQueue.length,
         pendingMelee: this.pendingAttacks.length,
+        commandQueueOverload: this.commandQueue.overloadRejects,
+        commandQueueCompacted: this.commandQueue.compactedCommands,
+        lastInputSeq: this.lastInputSeq,
+        appliedCommandSeq: this.appliedCommandSeq,
       },
       ...(this.lastServerRecvAt !== undefined || this.lastClientSentAt !== undefined ? {
         netTiming: {
@@ -2308,6 +2327,14 @@ export class WorldInstance {
       netDebug('player input', `duplicate seq ${input.seq} for ${player.id}`);
       return false;
     }
+    if (enqueued === 'overload') {
+      netDebug(
+        'player input',
+        `overload seq ${input.seq} queue=${player.commandQueue.length} for ${player.id}`,
+      );
+      this.closeActionsForSkippedCommand(player, input.seq);
+      return true;
+    }
     if (input.use !== true
       && player.bowUseTicks > 0
       && (player.useStartCommandSeq === undefined || input.seq > player.useStartCommandSeq)) {
@@ -2517,7 +2544,11 @@ export class WorldInstance {
     }
     const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
     if (pose) return { status: 'resolved', result: this.resolveSequencedBowRelease(player, pending, pose) };
-    if (action.commandSeq > player.appliedCommandSeq) {
+    const boundary = this.commandBoundaryState(player, action.commandSeq);
+    if (boundary === 'overload') {
+      return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'command_overload') };
+    }
+    if (boundary === 'queued' || boundary === 'future') {
       if (player.pendingBowReleases.length >= MAX_PENDING_BOW_ACTIONS) {
         return { status: 'resolved', result: this.bowFailure(pending, 'stale', 'pending_full') };
       }
@@ -2677,6 +2708,18 @@ export class WorldInstance {
     if ('ok' in pending) return { status: 'resolved', result: pending };
     const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
     if (pose) return { status: 'resolved', result: this.resolveSequencedAttack(player, pending, pose) };
+    if (player.commandQueue.wasOverloadSkipped(action.commandSeq)) {
+      return {
+        status: 'resolved',
+        result: {
+          ok: false,
+          actionSeq: action.actionSeq,
+          kind: 'attack',
+          reason: 'command_overload',
+          combat: this.combatStatus(pending, 'command_overload'),
+        },
+      };
+    }
     if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
       if (player.pendingAttacks.length >= MAX_PENDING_MELEE_ACTIONS) {
         return {
@@ -2878,7 +2921,7 @@ export class WorldInstance {
 
   private combatStatus(
     pending: PendingMeleeAttack,
-    result: 'stale' | 'pending_timeout',
+    result: 'stale' | 'pending_timeout' | 'command_overload',
   ) {
     const { action } = pending;
     return {
@@ -2934,6 +2977,7 @@ export class WorldInstance {
       this.sendEntityUseActionResult(player, action, result, pending, result.ok ? 'accepted' : result.reason);
       return result;
     }
+    if (player.commandQueue.wasOverloadSkipped(action.commandSeq)) return fail('command_overload', pending);
     if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
       if (player.pendingEntityUses.length >= MAX_PENDING_MELEE_ACTIONS) {
         return fail('stale', pending);
@@ -3065,6 +3109,16 @@ export class WorldInstance {
             result,
             pending,
             result.ok ? 'accepted' : result.reason,
+          );
+          continue;
+        }
+        if (player.commandQueue.wasOverloadSkipped(action.commandSeq)) {
+          this.sendEntityUseActionResult(
+            player,
+            action,
+            { ok: false, reason: 'command_overload' },
+            pending,
+            'command_overload',
           );
           continue;
         }
@@ -3672,7 +3726,7 @@ export class WorldInstance {
     const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
-    for (const player of this.connectedPlayers()) player.commandQueue.lastCompacted = undefined;
+    for (const player of this.connectedPlayers()) player.commandQueue.clearNotifiedSkips();
     if (snapshots.length > 0) {
       this.broadcast({
         type: 'player_state',
@@ -4128,7 +4182,12 @@ export class WorldInstance {
           this.sendBowActionResult(player, action, this.resolveSequencedBowRelease(player, pending, pose));
           continue;
         }
-        if (action.commandSeq > player.appliedCommandSeq) {
+        const boundary = this.commandBoundaryState(player, action.commandSeq);
+        if (boundary === 'overload') {
+          this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'command_overload'));
+          continue;
+        }
+        if (boundary === 'queued' || boundary === 'future') {
           keep.push(pending);
           continue;
         }
@@ -4159,6 +4218,16 @@ export class WorldInstance {
         const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
         if (pose) {
           this.sendAttackActionResult(player, action, this.resolveSequencedAttack(player, pending, pose));
+          continue;
+        }
+        if (player.commandQueue.wasOverloadSkipped(action.commandSeq)) {
+          this.sendAttackActionResult(player, action, {
+            ok: false,
+            actionSeq: action.actionSeq,
+            kind: 'attack',
+            reason: 'command_overload',
+            combat: this.combatStatus(pending, 'command_overload'),
+          });
           continue;
         }
         if (action.commandSeq > player.appliedCommandSeq && player.commandQueue.find(action.commandSeq)) {
@@ -4337,6 +4406,54 @@ export class WorldInstance {
       this.sendEntityUseActionResult(player, pending.action, { ok: false, reason: 'stale' }, pending, 'stale');
     }
     player.pendingEntityUses.length = 0;
+  }
+
+  /**
+   * A command the server will still simulate, has not seen, or has refused.
+   * Compacted seqs are `missing`: they will not grow a combat pose.
+   */
+  private commandBoundaryState(
+    player: ServerPlayer,
+    commandSeq: number,
+  ): 'queued' | 'future' | 'overload' | 'missing' {
+    if (player.commandQueue.isQueued(commandSeq)) return 'queued';
+    if (player.commandQueue.wasOverloadSkipped(commandSeq)) return 'overload';
+    if (commandSeq > player.commandQueue.lastEnqueuedSeq) return 'future';
+    return 'missing';
+  }
+
+  /** Pending actions must not wait out their timeout for a seq that will never be simulated. */
+  private closeActionsForSkippedCommand(player: ServerPlayer, commandSeq: number): void {
+    for (let index = player.pendingBowReleases.length - 1; index >= 0; index -= 1) {
+      const pending = player.pendingBowReleases[index];
+      if (!pending || pending.action.commandSeq !== commandSeq) continue;
+      player.pendingBowReleases.splice(index, 1);
+      this.sendBowActionResult(player, pending.action, this.bowFailure(pending, 'stale', 'command_overload'));
+    }
+    for (let index = player.pendingAttacks.length - 1; index >= 0; index -= 1) {
+      const pending = player.pendingAttacks[index];
+      if (!pending || pending.action.commandSeq !== commandSeq) continue;
+      player.pendingAttacks.splice(index, 1);
+      this.sendAttackActionResult(player, pending.action, {
+        ok: false,
+        actionSeq: pending.action.actionSeq,
+        kind: 'attack',
+        reason: 'command_overload',
+        combat: this.combatStatus(pending, 'command_overload'),
+      });
+    }
+    for (let index = player.pendingEntityUses.length - 1; index >= 0; index -= 1) {
+      const pending = player.pendingEntityUses[index];
+      if (!pending || pending.action.commandSeq !== commandSeq) continue;
+      player.pendingEntityUses.splice(index, 1);
+      this.sendEntityUseActionResult(
+        player,
+        pending.action,
+        { ok: false, reason: 'command_overload' },
+        pending,
+        'command_overload',
+      );
+    }
   }
 
   private refreshCommandProtection(player: ServerPlayer): void {

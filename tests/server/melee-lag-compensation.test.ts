@@ -345,8 +345,7 @@ describe('sequenced melee PvP lag compensation', { timeout: 30_000 }, () => {
     expect(attacker.pendingAttacks).toHaveLength(1);
     for (let seq = 7; seq <= 24; seq += 1) world.applyInput(attacker, input(seq, look.yaw, look.pitch));
     expect(attacker.commandQueue.find(boundary!)?.commandSeq).toBe(boundary);
-    if (attacker.commandQueue.lastCompacted) {
-      const range = attacker.commandQueue.lastCompacted;
+    for (const range of attacker.commandQueue.skippedRanges) {
       expect(boundary! < range.fromCommandSeq || boundary! > range.toCommandSeq).toBe(true);
     }
   });

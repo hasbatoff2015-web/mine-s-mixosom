@@ -3,7 +3,10 @@
  * commandSeq is not a server physics tick. The server ACK names both.
  */
 
-/** Hard safety cap. Not the real-time latency target. */
+/**
+ * Admission cap. Continuous backlog compacts below this. Once the queue is
+ * full of commands that cannot be compacted, newer commands are rejected.
+ */
 export const COMMAND_QUEUE_MAX = 32;
 /**
  * Soft backlog of continuous movement commands.

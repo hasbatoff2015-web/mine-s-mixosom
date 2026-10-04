@@ -108,13 +108,22 @@ export interface PlayerSnapshot {
    */
   readonly movementEpoch?: number;
   /**
-   * Command seqs the server deliberately skipped via continuous-state compaction.
-   * Client must discard these pending predictions, not wait for an ACK.
+   * One contiguous skipped span. Set only when `queueSkippedRanges` has a
+   * single entry, so an older client is not told to drop commands the server kept.
    */
   readonly queueCompacted?: {
     readonly fromCommandSeq: number;
     readonly toCommandSeq: number;
   };
+  /**
+   * Every contiguous span the server intentionally did not simulate since the
+   * previous snapshot. Adjacent seqs are merged. A gap is a separate entry.
+   * At most 8 ranges.
+   */
+  readonly queueSkippedRanges?: readonly {
+    readonly fromCommandSeq: number;
+    readonly toCommandSeq: number;
+  }[];
   /** DEV localhost RTT trace for the input seq this pose used. */
   readonly netTiming?: {
     readonly clientSentAt?: number;
@@ -154,6 +163,14 @@ export interface PlayerSessionDiag {
   readonly commandQueue?: number;
   /** DEV/diag: melee attacks waiting on a command boundary. */
   readonly pendingMelee?: number;
+  /** DEV/diag: commands rejected because the queue was already at the hard cap. */
+  readonly commandQueueOverload?: number;
+  /** DEV/diag: continuous commands removed by the latency budget. */
+  readonly commandQueueCompacted?: number;
+  /** DEV/diag: highest input seq the server has observed. */
+  readonly lastInputSeq?: number;
+  /** DEV/diag: command seq applied on the latest physics tick. */
+  readonly appliedCommandSeq?: number;
 }
 
 export interface RemotePlayerInfo {

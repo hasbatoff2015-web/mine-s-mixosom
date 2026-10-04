@@ -3,7 +3,7 @@
 ## Последний проход: input, teleport epoch, client settings — 2026-10-04
 
 - Колесо и клавиши 1–9 меняют локальный слот сразу и не создают `PlayerCommand`. Следующий обычный input несёт `selectedSlot`. Атака и use того же кадра несут `action.selectedSlot`; сервер читает свой инвентарь.
-- Очередь команд держит мягкий бюджет 4 (`COMMAND_QUEUE_LATENCY_BUDGET`). 32 остаётся только жёстким пределом. Сжатие снимает сплошной continuous-префикс и не сообщает диапазон через сохранённый edge. Границы pending melee/bow/entity-use не удаляются.
+- Очередь команд держит мягкий бюджет 4 (`COMMAND_QUEUE_LATENCY_BUDGET`). 32 — предел приёма: уже принятый edge и pinned seq не сдвигаются с головы. Новый пакет сверх предела — `overload`, без симуляции. Клиент получает точные `queueSkippedRanges` (не общий min..max). Отклонённая граница bow закрывается как `command_overload`.
 - Жёсткий телепорт и респавн поднимают `movementEpoch`. Старые команды, prediction и combat history не пересекают этот разрыв. `commandSeq` не сбрасывается. `MAX_PENDING_MELEE_TICKS` остаётся 8, `MAX_PVP_REWIND_TICKS` остаётся 5.
 - Клиентские настройки (FOV, sensitivity, volume, render distance, clouds) лежат в `localStorage` `megacraft.settings.v1`.
 - Подробности: `docs/reports/2026-10-04_input-pvp-teleport-settings-hardening.md`.

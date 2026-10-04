@@ -469,6 +469,8 @@ export interface OnlineAnarchySession {
   /** Latest server queue depth from the player snapshot, for DEV F3. */
   serverQueueDepth?: number;
   serverPendingMelee?: number;
+  serverQueueOverload?: number;
+  serverQueueCompacted?: number;
   /** Wire state of the last input packet actually handed to AnarchyClient. */
   lastSentInputSeq: number;
   lastSentUse: boolean;
@@ -1757,6 +1759,12 @@ export class Game {
     if (local.session) {
       if (typeof local.session.commandQueue === 'number') online.serverQueueDepth = local.session.commandQueue;
       if (typeof local.session.pendingMelee === 'number') online.serverPendingMelee = local.session.pendingMelee;
+      if (typeof local.session.commandQueueOverload === 'number') {
+        online.serverQueueOverload = local.session.commandQueueOverload;
+      }
+      if (typeof local.session.commandQueueCompacted === 'number') {
+        online.serverQueueCompacted = local.session.commandQueueCompacted;
+      }
     }
     const epochChanged = typeof local.movementEpoch === 'number'
       && Number.isFinite(local.movementEpoch)
@@ -6597,7 +6605,7 @@ export class Game {
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
           this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
-          this.cachedDebugText += `\nEpoch ${session.online.movementEpoch} q=${session.online.serverQueueDepth ?? '—'} pendingMelee=${session.online.serverPendingMelee ?? '—'}`;
+          this.cachedDebugText += `\nEpoch ${session.online.movementEpoch} q=${session.online.serverQueueDepth ?? '—'} compact=${session.online.serverQueueCompacted ?? '—'} overload=${session.online.serverQueueOverload ?? '—'} pendingMelee=${session.online.serverPendingMelee ?? '—'}`;
           if (session.online.lastBlockDiag) {
             const block = session.online.lastBlockDiag;
             this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}${block.gate ? ` ${block.gate}` : ''}`;

@@ -306,8 +306,7 @@ describe('bow and entity-use across a teleport', { timeout: 30_000 }, () => {
       world.applyInput(player, input(seq, { use: false, forward: 1, movementEpoch: 0 }));
     }
     expect(player.commandQueue.find(2)?.commandSeq).toBe(2);
-    if (player.commandQueue.lastCompacted) {
-      const range = player.commandQueue.lastCompacted;
+    for (const range of player.commandQueue.skippedRanges) {
       expect(2 < range.fromCommandSeq || 2 > range.toCommandSeq).toBe(true);
     }
 
@@ -324,8 +323,7 @@ describe('bow and entity-use across a teleport', { timeout: 30_000 }, () => {
       world.applyInput(player, input(seq, { forward: 1, movementEpoch: player.movementEpoch }));
     }
     expect(player.commandQueue.find(petSeq)?.commandSeq).toBe(petSeq);
-    if (player.commandQueue.lastCompacted) {
-      const range = player.commandQueue.lastCompacted;
+    for (const range of player.commandQueue.skippedRanges) {
       expect(petSeq < range.fromCommandSeq || petSeq > range.toCommandSeq).toBe(true);
     }
   });

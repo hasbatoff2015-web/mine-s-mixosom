@@ -104,16 +104,32 @@ No per-frame `localStorage` write, no input packet per wheel event, no extra phy
 
 ## Known issues
 
-- A jump (or other edge) sitting at the head blocks prefix compaction until that command is consumed. A malicious alternating-edge burst can still reach the hard cap of 32; the cap then drops unprotected head commands one at a time. Ordinary WASD does not do this.
+- A jump (or other edge) sitting at the head blocks prefix compaction until that command is consumed. A malicious alternating-edge burst fills the queue to 32. Further packets are rejected as `overload` and are not simulated. Ordinary WASD still compacts to 4 and is not rejected. See the follow-up below. The first version of this branch shifted those accepted edges off the head. That is no longer the case.
 - `targetRenderTick` inside five ticks is still a hint the server honors when the authoritative pose at that tick is in reach. That is the lag-compensation contract, not an extra exploit found in this pass.
 - Bed enter/exit and movement-cancel rollback stay on the same epoch. They are continuous local motion, not a server teleport.
 - Two-client running desync was not measured live. The queue budget removes the chronic 10–30 tick delay that produced it. Normal interpolation delay remains.
 
 ## Deferred
 
-- Multiple `queueCompacted` ranges in one snapshot. One solid range is enough while compaction is prefix-only.
 - A server-owned estimate of the exact render tick the client should have seen, beyond epoch + max rewind + authoritative ray/reach/occlusion.
 - DEV two-client latency QA.
+
+## Follow-up — hard overload admission
+
+The first queue cap shifted the head whenever `length > 32`, including jump and other edges, and stopped entirely when that head seq was pinned. A pinned head let the array grow past 32. The regression that expected jump seqs 1..2 to disappear was describing that bug.
+
+Admission is now:
+
+- Soft budget stays 4. Only a contiguous continuous prefix is removed. Edges and pinned seqs stay.
+- Hard bound is `COMMAND_QUEUE_MAX` (32) queued commands. There is no extra reserve. A command that still does not fit is not pushed. `enqueue` returns `overload`.
+- `lastEnqueuedSeq` is the highest seq the queue has seen, including rejects. A repeat of that seq is `duplicate`. A higher seq is eligible. `lastInputSeq` in `applyInput` still moves first, so the packet filter matches.
+- The client hears every skipped span through `queueSkippedRanges` (max 8, adjacent spans merged). `queueCompacted` is sent only for a single span. A prefix drop of 1..5 plus a later reject of 21..23 is two ranges. It is not reported as 1..23.
+- Ranges are copied onto the snapshot and cleared after that flush, so the same span is not replayed forever. WebSocket delivery is ordered, so one snapshot is the notification.
+- An overload seq is remembered until teleport or reconnect. A bow, melee, or entity-use that was waiting on it, or that arrives later, is `command_overload` immediately. It does not sit until `pending_timeout`. A boundary already in the queue is left there. If it is deeper than 8 ticks, the existing `pending_timeout` test still applies. That timeout was not raised.
+- Teleport still discards the queued array, bumps `movementEpoch`, and does not rewind `lastInputSeq`. Pre-epoch input is not simulated. The next higher seq on the new epoch is accepted.
+- DEV F3 shows queue depth, compaction count, overload count, and pending melee. Overload is not logged unless `FC_DEBUG_NET=1`.
+
+`MAX_PENDING_MELEE_TICKS` remains 8. `MAX_PVP_REWIND_TICKS` remains 5. Settings, remote interpolation, reach, armor, Claims, and hurt resistance were not changed.
 
 ## Next work
 

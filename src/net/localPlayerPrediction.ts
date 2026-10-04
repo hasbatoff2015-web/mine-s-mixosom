@@ -4,6 +4,7 @@ import type { MoveInput } from '../input/MoveInput';
 import { PlayerController, type PlayerInputSource, type PlayerMovementState } from '../player/PlayerController';
 import { creativeFlightAllowedForPrediction, manualJumpLevel } from '../player/creativeFlight';
 import type { VoxelWorld } from '../world/World';
+import { MAX_SKIPPED_RANGES_PER_SNAPSHOT, type DroppedCommandRange } from '../../shared/commandCompaction';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import { LOCAL_SNAP_DISTANCE, distanceSquared } from './authoritativeMotion';
 import {
@@ -401,6 +402,32 @@ export function discardCompactedPrediction(
   return dropped;
 }
 
+/** Drop every listed span and leave commands that sit in the gaps. */
+export function discardSkippedPredictions(
+  buffer: PredictionBuffer,
+  ranges: readonly DroppedCommandRange[],
+  player?: PlayerController,
+  world?: VoxelWorld,
+  dt = FIXED_DT,
+): number {
+  const spans = ranges.slice(0, MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+  if (spans.length === 0) return 0;
+  const before = buffer.entries.length;
+  buffer.entries = buffer.entries.filter((entry) => !spans.some(
+    (range) => entry.seq >= range.fromCommandSeq && entry.seq <= range.toCommandSeq,
+  ));
+  const dropped = before - buffer.entries.length;
+  if (dropped > 0 && player && world && buffer.lastAckedState) {
+    player.applyMovementState(buffer.lastAckedState);
+    for (const entry of buffer.entries) {
+      applyPredictedTick(player, world, entry.input, dt);
+      entry.state = player.captureMovementState();
+    }
+  }
+  buffer.debug.pending = buffer.entries.length;
+  return dropped;
+}
+
 function trimHistory(buffer: PredictionBuffer): void {
   if (buffer.entries.length > PREDICTION_HISTORY) {
     buffer.entries.splice(0, buffer.entries.length - PREDICTION_HISTORY);
@@ -762,15 +789,10 @@ export function inspectPredictedPlayer(
     readonly dt?: number;
   },
 ): SnapshotInspect {
-  if (snapshot.queueCompacted) {
-    discardCompactedPrediction(
-      buffer,
-      snapshot.queueCompacted.fromCommandSeq,
-      snapshot.queueCompacted.toCommandSeq,
-      player,
-      options?.world,
-      options?.dt,
-    );
+  const skipped = snapshot.queueSkippedRanges
+    ?? (snapshot.queueCompacted ? [snapshot.queueCompacted] : undefined);
+  if (skipped && skipped.length > 0) {
+    discardSkippedPredictions(buffer, skipped, player, options?.world, options?.dt);
   }
   const physicsTicks = Math.max(1, Math.floor(options?.physicsTicks ?? 1));
   const serverTick = options?.serverTick;

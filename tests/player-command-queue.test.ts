@@ -2,7 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { PlayerCommandQueue } from '../server/playerCommandQueue';
 import { COMMAND_QUEUE_LATENCY_BUDGET, COMMAND_QUEUE_MAX, type PlayerCommand } from '../shared/playerCommand';
 import { commandEdgeSensitive, compactContinuousCommands, mergeDroppedRange } from '../shared/commandCompaction';
-import { createPredictionBuffer, discardCompactedPrediction } from '../src/net/localPlayerPrediction';
+import { MAX_SKIPPED_RANGES_PER_SNAPSHOT, recordDroppedRange } from '../shared/commandCompaction';
+import type { PlayerSnapshot } from '../shared/protocol';
+import {
+  createPredictionBuffer,
+  discardCompactedPrediction,
+  discardSkippedPredictions,
+  inspectPredictedPlayer,
+} from '../src/net/localPlayerPrediction';
 
 function cmd(seq: number, extra: Partial<PlayerCommand> = {}): PlayerCommand {
   return {
@@ -63,14 +70,26 @@ describe('PlayerCommandQueue FIFO', () => {
     expect(queue.find(1)?.jump).toBe(true);
   });
 
-  it('hard cap drops an unprotected head only after the latency budget cannot', () => {
+  it('does not delete accepted jump edges when a later packet would pass the hard cap', () => {
     const queue = new PlayerCommandQueue();
-    for (let seq = 1; seq <= COMMAND_QUEUE_MAX + 2; seq += 1) {
+    for (let seq = 1; seq <= COMMAND_QUEUE_MAX; seq += 1) {
       expect(queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }))).toBe('ok');
     }
+    expect(queue.enqueue(cmd(COMMAND_QUEUE_MAX + 1, { jump: false }))).toBe('overload');
+    expect(queue.enqueue(cmd(COMMAND_QUEUE_MAX + 2, { jump: true }))).toBe('overload');
     expect(queue.length).toBe(COMMAND_QUEUE_MAX);
-    expect(queue.lastCompacted).toEqual({ fromCommandSeq: 1, toCommandSeq: 2 });
-    expect(queue.peek()?.commandSeq).toBe(3);
+    expect(queue.find(1)?.jump).toBe(false);
+    expect(queue.find(2)?.jump).toBe(true);
+    expect(queue.peek()?.commandSeq).toBe(1);
+    expect(queue.wasOverloadSkipped(1)).toBe(false);
+    expect(queue.wasOverloadSkipped(COMMAND_QUEUE_MAX + 1)).toBe(true);
+    expect(queue.skippedRanges).toEqual([{
+      fromCommandSeq: COMMAND_QUEUE_MAX + 1,
+      toCommandSeq: COMMAND_QUEUE_MAX + 2,
+    }]);
+    expect(queue.enqueue(cmd(COMMAND_QUEUE_MAX + 2, { jump: true }))).toBe('duplicate');
+    expect(queue.enqueue(cmd(COMMAND_QUEUE_MAX + 3, { jump: false }))).toBe('overload');
+    expect(queue.lastEnqueuedSeq).toBe(COMMAND_QUEUE_MAX + 3);
   });
 });
 
@@ -208,7 +227,141 @@ describe('continuous command compaction', () => {
     queue.protectedCommandSeqs = new Set([head]);
     for (let seq = 7; seq <= 20; seq += 1) queue.enqueue(cmd(seq, { forward: 1 }));
     expect(queue.find(head)?.commandSeq).toBe(head);
-    const compacted = queue.lastCompacted;
-    expect(compacted === undefined || head < compacted.fromCommandSeq || head > compacted.toCommandSeq).toBe(true);
+    for (const range of queue.skippedRanges) {
+      expect(head < range.fromCommandSeq || head > range.toCommandSeq).toBe(true);
+    }
+  });
+});
+
+describe('command queue hard overload', () => {
+  it('keeps a protected head and stays at the hard cap', () => {
+    const queue = new PlayerCommandQueue();
+    for (let seq = 1; seq <= COMMAND_QUEUE_MAX; seq += 1) {
+      expect(queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }))).toBe('ok');
+    }
+    queue.protectedCommandSeqs = new Set([1]);
+    for (let seq = COMMAND_QUEUE_MAX + 1; seq <= COMMAND_QUEUE_MAX + 40; seq += 1) {
+      expect(queue.enqueue(cmd(seq, { sneak: seq % 2 === 0 }))).toBe('overload');
+    }
+    expect(queue.length).toBe(COMMAND_QUEUE_MAX);
+    expect(queue.peek()?.commandSeq).toBe(1);
+    expect(queue.find(1)?.commandSeq).toBe(1);
+    expect(queue.overloadRejects).toBe(40);
+    expect(queue.skippedRanges).toEqual([{
+      fromCommandSeq: COMMAND_QUEUE_MAX + 1,
+      toCommandSeq: COMMAND_QUEUE_MAX + 40,
+    }]);
+  });
+
+  it('bounds 100 and 1000 alternating edge packets', () => {
+    for (const count of [100, 1000]) {
+      const queue = new PlayerCommandQueue();
+      for (let seq = 1; seq <= count; seq += 1) {
+        queue.enqueue(cmd(seq, { jump: seq % 2 === 0, sneak: seq % 3 === 0, use: seq % 5 === 0 }));
+      }
+      expect(queue.length).toBeLessThanOrEqual(COMMAND_QUEUE_MAX);
+      expect(queue.length).toBe(COMMAND_QUEUE_MAX);
+      expect(queue.overloadRejects).toBe(count - COMMAND_QUEUE_MAX);
+      expect(queue.skippedRanges.length).toBeLessThanOrEqual(2);
+      expect(queue.skippedRanges.length).toBe(1);
+      expect(queue.find(1)?.commandSeq).toBe(1);
+      expect(queue.find(2)?.jump).toBe(true);
+      expect(queue.wasOverloadSkipped(1)).toBe(false);
+    }
+  });
+
+  it('does not merge a soft prefix with a later overload skip', () => {
+    const queue = new PlayerCommandQueue();
+    for (let seq = 1; seq <= 6; seq += 1) queue.enqueue(cmd(seq, { forward: 1 }));
+    for (let seq = 7; seq <= COMMAND_QUEUE_MAX + 20; seq += 1) {
+      queue.enqueue(cmd(seq, { jump: seq % 2 === 0 }));
+    }
+    expect(queue.length).toBe(COMMAND_QUEUE_MAX);
+    expect(queue.skippedRanges).toHaveLength(2);
+    const prefix = queue.skippedRanges[0]!;
+    const overload = queue.skippedRanges[1]!;
+    expect(prefix.toCommandSeq + 1).toBeLessThan(overload.fromCommandSeq);
+    expect(queue.find(prefix.toCommandSeq + 1)?.commandSeq).toBe(prefix.toCommandSeq + 1);
+    expect(queue.find(overload.fromCommandSeq - 1)?.commandSeq).toBe(overload.fromCommandSeq - 1);
+    let keptJump = false;
+    for (let seq = prefix.toCommandSeq + 1; seq < overload.fromCommandSeq; seq += 1) {
+      if (queue.find(seq)?.jump === true) keptJump = true;
+    }
+    expect(keptJump).toBe(true);
+    expect(queue.wasOverloadSkipped(prefix.toCommandSeq + 1)).toBe(false);
+  });
+
+  it('refuses an unbounded skipped-range list', () => {
+    const ranges: { fromCommandSeq: number; toCommandSeq: number }[] = [];
+    for (let index = 0; index < MAX_SKIPPED_RANGES_PER_SNAPSHOT; index += 1) {
+      expect(recordDroppedRange(ranges, { fromCommandSeq: index * 3 + 1, toCommandSeq: index * 3 + 1 })).toBe(true);
+    }
+    expect(recordDroppedRange(ranges, { fromCommandSeq: 100, toCommandSeq: 100 })).toBe(false);
+    expect(ranges).toHaveLength(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+    expect(recordDroppedRange(ranges, { fromCommandSeq: 2, toCommandSeq: 2 })).toBe(true);
+    expect(ranges).toHaveLength(MAX_SKIPPED_RANGES_PER_SNAPSHOT);
+  });
+});
+
+function predictionEntries(from: number, to: number, jumpAt?: number) {
+  const buffer = createPredictionBuffer();
+  const entries = [];
+  for (let seq = from; seq <= to; seq += 1) {
+    entries.push({
+      seq,
+      predTick: seq,
+      input: {
+        seq,
+        forward: 1,
+        right: 0,
+        jump: seq === jumpAt,
+        manualJump: false,
+        sneak: false,
+        sprint: false,
+        descend: false,
+        flySprint: false,
+        yaw: 0,
+        pitch: 0,
+        locomotion: true,
+      },
+      state: {
+        x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0,
+        onGround: true, sneaking: false, sprinting: false, jumpHeld: false,
+        isFlying: false, flyWindowTicks: 0, flyIgnoreGroundTicks: 0,
+        onLadder: false, fallDistance: 0, meleeKnockback: false,
+      },
+    });
+  }
+  buffer.entries = entries;
+  return buffer;
+}
+
+describe('lossless skipped prediction ranges', () => {
+  it('discards only the listed spans and keeps the commands between them', () => {
+    const buffer = predictionEntries(1, 23, 10);
+    const removed = discardSkippedPredictions(buffer, [
+      { fromCommandSeq: 1, toCommandSeq: 3 },
+      { fromCommandSeq: 21, toCommandSeq: 23 },
+    ]);
+    expect(removed).toBe(6);
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual(
+      [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    );
+    expect(buffer.entries.find((entry) => entry.seq === 10)?.input.jump).toBe(true);
+  });
+
+  it('keeps a jump the server retained when a fake min..max is also present', () => {
+    const buffer = predictionEntries(1, 23, 10);
+    inspectPredictedPlayer(buffer, {
+      queueCompacted: { fromCommandSeq: 1, toCommandSeq: 23 },
+      queueSkippedRanges: [
+        { fromCommandSeq: 1, toCommandSeq: 3 },
+        { fromCommandSeq: 21, toCommandSeq: 23 },
+      ],
+    } as unknown as PlayerSnapshot);
+    expect(buffer.entries.map((entry) => entry.seq)).toEqual(
+      [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20],
+    );
+    expect(buffer.entries.find((entry) => entry.seq === 10)?.input.jump).toBe(true);
   });
 });

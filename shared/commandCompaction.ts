@@ -3,10 +3,14 @@ import { COMMAND_QUEUE_LATENCY_BUDGET, COMMAND_QUEUE_MAX } from './playerCommand
 
 /**
  * Continuous-state commands are compacted down to the latency budget.
- * `COMMAND_QUEUE_MAX` remains the hard safety cap only.
+ * `COMMAND_QUEUE_MAX` is the admission cap. A full queue rejects newer
+ * commands instead of deleting an accepted edge.
  */
 export const COMMAND_QUEUE_COMPACT_AT = COMMAND_QUEUE_LATENCY_BUDGET;
 export { COMMAND_QUEUE_LATENCY_BUDGET, COMMAND_QUEUE_MAX };
+
+/** Snapshot payload cap. Adjacent skips merge, so a burst stays one range. */
+export const MAX_SKIPPED_RANGES_PER_SNAPSHOT = 8;
 
 export interface DroppedCommandRange {
   readonly fromCommandSeq: number;
@@ -32,6 +36,34 @@ export function mergeDroppedRange(
   };
 }
 
+/**
+ * Record `range` into `ranges`, merging only adjacent or overlapping spans.
+ * Returns false when a new disjoint span would exceed `maxRanges`.
+ * The caller must not invent a min..max across the gap.
+ */
+export function recordDroppedRange(
+  ranges: DroppedCommandRange[],
+  range: DroppedCommandRange,
+  maxRanges = MAX_SKIPPED_RANGES_PER_SNAPSHOT,
+): boolean {
+  let incoming = range;
+  let index = 0;
+  while (index < ranges.length) {
+    const merged = mergeDroppedRange(ranges[index], incoming);
+    if (!merged) {
+      index += 1;
+      continue;
+    }
+    ranges.splice(index, 1);
+    incoming = merged;
+    index = 0;
+  }
+  if (ranges.length >= maxRanges) return false;
+  ranges.push(incoming);
+  ranges.sort((left, right) => left.fromCommandSeq - right.fromCommandSeq);
+  return true;
+}
+
 /** True when dropping `older` would lose an edge-sensitive transition into `newer`. */
 export function commandEdgeSensitive(older: PlayerCommand, newer: PlayerCommand): boolean {
   return older.jump !== newer.jump
@@ -49,8 +81,8 @@ export function commandEdgeSensitive(older: PlayerCommand, newer: PlayerCommand)
 /**
  * Drop a contiguous continuous prefix from the head until `maxLength`.
  * Stops at an edge, a protected command, or the newest retained tail.
- * Never removes a command from the middle: one `queueCompacted` range can
- * only describe a solid seq span.
+ * Never removes a command from the middle. A later overload skip is a
+ * separate range, not a min..max across commands that stayed queued.
  */
 export function compactContinuousCommands(
   items: PlayerCommand[],

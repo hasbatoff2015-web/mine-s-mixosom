@@ -707,7 +707,7 @@ MOVEMENT:
   InputManager → PlayerCommand(commandSeq, clientTick, WASD/look/slot)
   → predictLocalMove (history[commandSeq] = pre+post)
   → WS input
-  → PlayerCommandQueue.enqueue (soft budget 4, hard cap 32)
+  → PlayerCommandQueue.enqueue (soft budget 4; full queue rejects the new command)
   → serverTick N: takeForTick() one command or sticky last
   → AppliedMovementStep { serverTick, commandSeq, pose }
   → player_state.ackCommandSeq + appliedSteps[]
@@ -735,7 +735,7 @@ FIFO answers:
 
 Equivalence epsilon is `1e-4` xz/y and `1e-3` speed. Speed / onGround / flying disagreement is a real correction. `predNo*` flags remain DEV-only.
 
-Hotbar selection is not a movement command. A same-frame attack or use carries `action.selectedSlot`; the server reads that slot from its own inventory. Steady WASD/look compacts only as a contiguous head prefix down to `COMMAND_QUEUE_LATENCY_BUDGET` (4). `COMMAND_QUEUE_MAX` (32) is the hard cap. `queueCompacted` is one solid seq range. Jump, sneak, sprint, descend, flight, use, mining, slot, and vehicle edges stay. A pending attack, bow release, or entity-use command seq is pinned.
+Hotbar selection is not a movement command. A same-frame attack or use carries `action.selectedSlot`; the server reads that slot from its own inventory. Steady WASD/look compacts only as a contiguous head prefix down to `COMMAND_QUEUE_LATENCY_BUDGET` (4). `COMMAND_QUEUE_MAX` (32) is an admission cap: an accepted edge or a pinned action seq is not shifted off the head. A newer command that does not fit is `overload`. It is not simulated. `lastEnqueuedSeq` still advances, so that seq is not admitted again and the next higher seq can be. `queueSkippedRanges` lists each contiguous skipped span (at most 8, adjacent spans merged). `queueCompacted` is set only when that list has one span. The client discards exactly those predictions. A pending bow whose command was refused is `command_overload` in the same turn, not `pending_timeout`.
 
 A server-owned hard teleport or respawn increments `movementEpoch` on the player, the snapshot, and later inputs. Pre-epoch queued movement is discarded, combat and mob pose history do not interpolate across the epoch, and prediction is snapped without replaying old unacked moves. `commandSeq` / `lastInputSeq` stay monotonic. An input whose `movementEpoch` disagrees is not simulated. Walking, knockback, minecart motion, and a cancelled move are not an epoch.
 
