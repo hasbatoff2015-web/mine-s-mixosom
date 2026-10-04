@@ -68,6 +68,7 @@ const cloudSource = readFileSync('src/rendering/CloudLayer.ts', 'utf8');
 const maskSource = readFileSync('src/rendering/cloudMask.ts', 'utf8');
 const daylightSource = readFileSync('src/gameplay/daylight.ts', 'utf8');
 const gameUi = readFileSync('src/ui/GameUI.ts', 'utf8');
+const menuModel = readFileSync('src/ui/menuModel.ts', 'utf8');
 
 function facts(partial: Partial<MobileTouchFacts> & Pick<MobileTouchFacts, 'phase'>): MobileTouchFacts {
   return {
@@ -659,7 +660,10 @@ describe('play info and hotbar layout', () => {
     expect(shown).toBeGreaterThan(hidden);
     expect(gameUi).toContain('id="play-info"');
     expect(gameUi).toContain('name="clouds"');
-    expect(gameUi).toContain('Свайп по экрану вращает камеру');
+    expect(gameUi).toContain('MOBILE_CONTROL_ITEMS');
+    expect(gameUi).toContain('Мобильное управление');
+    expect(menuModel).toContain('Свайп по экрану');
+    expect(gameUi).not.toContain('Свайп по экрану вращает камеру');
   });
 });
 

@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-10-04: Megacraft menu UI
+
+- [x] Player-visible menu brand is one line, «МЕГАКРАФТ». The menu background file is unchanged.
+- [x] Account screen is gone. Nickname editing is on the online-server screen.
+- [x] Shared nickname contract is 2–20 characters, `A–Z` `a–z` `0–9` only, with no trim.
+- [x] Server rows use inline SVG icons and a CSS caption cycle. Names and order are unchanged.
+- [x] Skin selector hides Classic/Slim. `defaultModel` still selects the arm geometry. The large preview can be yaw-dragged.
+- [x] Controls help matches the current input code and omits the diagnostics hotkeys.
+- [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
+
 ## 2026-10-04: mobile flight descend
 
 - [x] Ground crouch, including grounded creative, stays a toggle.
