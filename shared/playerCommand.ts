@@ -3,7 +3,14 @@
  * commandSeq is not a server physics tick. The server ACK names both.
  */
 
+/** Hard safety cap. Not the real-time latency target. */
 export const COMMAND_QUEUE_MAX = 32;
+/**
+ * Soft backlog of continuous movement commands.
+ * 4 physics commands ≈ 200 ms at 20 TPS. Edges and pinned action
+ * boundaries may keep the queue deeper until they are consumed.
+ */
+export const COMMAND_QUEUE_LATENCY_BUDGET = 4;
 export const APPLIED_STEPS_MAX = 4;
 
 export interface PlayerCommand {
