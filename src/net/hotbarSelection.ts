@@ -2,7 +2,13 @@
 
 export interface PendingHotbarSelect {
   readonly slot: number;
-  /** Last input seq already sent when the player pressed 1–9. The new slot goes out on seq+1. */
+  /**
+   * Last movement command already sent when the player pressed 1–9 or scrolled.
+   * The new slot rides the next normal physics input (`sinceInputSeq + 1`).
+   * Hotbar selection itself does not allocate a command seq or a physics tick.
+   * A same-frame attack/use carries `action.selectedSlot` so the server can
+   * read its own inventory before that next input exists.
+   */
   readonly sinceInputSeq: number;
 }
 

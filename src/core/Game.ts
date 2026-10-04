@@ -47,8 +47,6 @@ import {
 } from '../audio';
 import {
   AUTOSAVE_INTERVAL_SECONDS,
-  DEFAULT_RENDER_DISTANCE_DESKTOP,
-  DEFAULT_RENDER_DISTANCE_MOBILE,
   FIXED_DT,
   MAX_CATCH_UP_TICKS,
   MAX_FRAME_DELTA,
@@ -241,6 +239,11 @@ import { IdbWorldStore } from '../save/IdbWorldStore';
 import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
+import {
+  loadClientSettings,
+  saveClientSettings,
+  type ClientSettings,
+} from '../ui/clientSettings';
 import { CONTAINER_STRINGS } from '../ui/containerStrings';
 import { potionHudEntries } from '../ui/effectHud';
 import { LIGHT_FLOOD_ADD_EMITTER, LIGHT_FLOOD_REGION, disposeWorldLighting, lightFrameStats, lightingFloodOwner } from '../world/LightEngine';
@@ -321,6 +324,7 @@ import {
   inspectPredictedPlayer,
   predictedMoveFromInput,
   predictLocalMove,
+  rebasePredictedPlayerAfterMovementEpoch,
   reconcilePredictedPlayer,
   resetPredictionBuffer,
   seedPredictionCheckpoint,
@@ -460,6 +464,11 @@ export interface OnlineAnarchySession {
   buyers: Map<string, BuyerNpcView>;
   interpolator: EntityInterpolationBuffer;
   inputSeq: number;
+  /** Last authoritative movement epoch. A change snaps prediction. */
+  movementEpoch: number;
+  /** Latest server queue depth from the player snapshot, for DEV F3. */
+  serverQueueDepth?: number;
+  serverPendingMelee?: number;
   /** Wire state of the last input packet actually handed to AnarchyClient. */
   lastSentInputSeq: number;
   lastSentUse: boolean;
@@ -577,13 +586,7 @@ export interface OnlineAnarchySession {
   ignoreNetworkMotion?: boolean;
 }
 
-interface RuntimeSettings {
-  volume: number;
-  sensitivity: number;
-  renderDistance: number;
-  fov: number;
-  clouds: boolean;
-}
+type RuntimeSettings = ClientSettings;
 
 const isCoarsePointer = isCoarsePointerMedia;
 
@@ -686,13 +689,7 @@ export class Game {
   private openChestKey?: string;
   private lastConsumedArrow: string | undefined;
   private minecartDismountHeld = false;
-  private settings: RuntimeSettings = {
-    volume: 0.7,
-    sensitivity: 0.0022,
-    renderDistance: isCoarsePointer() ? DEFAULT_RENDER_DISTANCE_MOBILE : DEFAULT_RENDER_DISTANCE_DESKTOP,
-    fov: 75,
-    clouds: true,
-  };
+  private settings: RuntimeSettings = loadClientSettings(undefined, isCoarsePointer());
   private accumulator = 0;
   private previousTime = performance.now();
   private frameHandle = 0;
@@ -780,6 +777,7 @@ export class Game {
     this.debugTickOrder = typeof location !== 'undefined'
       && new URLSearchParams(location.search).get('debugTick') === '1';
     this.ui = new GameUI(uiRoot);
+    this.ui.adoptClientSettings(this.settings);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: !isCoarsePointer(), powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     // Two render passes share one frame; reset once so F3 counts world + viewmodel.
@@ -825,6 +823,7 @@ export class Game {
       classifyWorldTouch: (clientX, clientY, phase) => this.classifyWorldTouch(clientX, clientY, phase),
       aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY),
     });
+    this.applyRuntimeSettings(this.settings);
     this.lifecycle.setBlurContext(() => ({
       pointerLocked: this.input.isPointerLocked(),
       pointerLockRequestPending: this.input.isLockRequestPending(),
@@ -1084,6 +1083,7 @@ export class Game {
         buyers,
         interpolator: new EntityInterpolationBuffer(),
         inputSeq: 0,
+        movementEpoch: welcome.you.movementEpoch ?? 0,
         lastSentInputSeq: 0,
         lastSentUse: false,
         actionSeq: 0,
@@ -1754,10 +1754,52 @@ export class Game {
       this.syncLocalCreativeFlight(session, local.gamemode);
     }
 
+    if (local.session) {
+      if (typeof local.session.commandQueue === 'number') online.serverQueueDepth = local.session.commandQueue;
+      if (typeof local.session.pendingMelee === 'number') online.serverPendingMelee = local.session.pendingMelee;
+    }
+    const epochChanged = typeof local.movementEpoch === 'number'
+      && Number.isFinite(local.movementEpoch)
+      && local.movementEpoch !== online.movementEpoch;
+
     const forceResync = online.forceHiddenTabResync === true;
     online.forceHiddenTabResync = false;
     let result: ReconcileResult;
-    if (forceResync) {
+    if (epochChanged) {
+      motionProbe.note('movement-epoch');
+      const discarded = rebasePredictedPlayerAfterMovementEpoch(
+        player,
+        online.prediction,
+        local,
+        message.tick,
+      );
+      online.movementEpoch = local.movementEpoch as number;
+      if (!flags.skipRender) {
+        this.localRender.snapTo({
+          x: player.position.x,
+          y: player.position.y,
+          z: player.position.z,
+          vx: player.velocity.x,
+          vy: player.velocity.y,
+          vz: player.velocity.z,
+        });
+      }
+      if (isDevRuntime() && typeof console !== 'undefined') {
+        console.info(
+          `[movement-epoch] epoch=${online.movementEpoch} discarded=${discarded.discarded} `
+          + `xyz=${local.x.toFixed(3)},${local.y.toFixed(3)},${local.z.toFixed(3)}`,
+        );
+      }
+      result = {
+        kind: 'snapped',
+        snapped: true,
+        replayed: 0,
+        error: { xz: 0, y: 0, speed: 0, distSq: 0 },
+        rejectReason: 'none',
+        acceptMutated: false,
+        softReject: 'none',
+      };
+    } else if (forceResync) {
       motionProbe.note('visibility-resync');
       const synced = resyncLocalPlayerAfterHiddenTab({
         player,
@@ -2987,6 +3029,7 @@ export class Game {
         yaw: this.input.yaw,
         pitch: this.input.pitch,
         selectedSlot: session.selectedSlot,
+        movementEpoch: online.movementEpoch,
         ...(shouldHoldServerMining({
           buttonDown: this.input.mining,
           finishKey: online.miningFinishKey,
@@ -4300,16 +4343,22 @@ export class Game {
     session.online.client.send({ type: 'menu_action', action: 'open', screen: 'root' });
   }
 
+  private applyRuntimeSettings(settings: RuntimeSettings): void {
+    this.settings = settings;
+    this.audio.setVolume(settings.volume);
+    this.input.setSensitivity(settings.sensitivity);
+    this.camera.fov = settings.fov;
+    this.camera.updateProjectionMatrix();
+    this.clouds.setEnabled(settings.clouds);
+    if (this.scene.fog instanceof THREE.Fog) applyDistanceFog(this.scene.fog, settings.renderDistance);
+  }
+
   private showSettings(): void {
     this.disposeCharacterPreview();
     this.ui.showSettings((settings) => {
-      this.settings = settings;
-      this.audio.setVolume(settings.volume);
-      this.input.setSensitivity(settings.sensitivity);
-      this.camera.fov = settings.fov;
-      this.camera.updateProjectionMatrix();
-      this.clouds.setEnabled(settings.clouds);
-      if (this.scene.fog instanceof THREE.Fog) applyDistanceFog(this.scene.fog, settings.renderDistance);
+      const saved = saveClientSettings(settings);
+      this.ui.adoptClientSettings(saved);
+      this.applyRuntimeSettings(saved);
     }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
@@ -4617,6 +4666,7 @@ export class Game {
         yaw: inputIntent.yaw,
         pitch: inputIntent.pitch,
         selectedSlot: session.selectedSlot,
+        movementEpoch: online.movementEpoch,
         ...inputMiningField(gameplayAllowed && shouldHoldServerMining({
           buttonDown: this.input.mining,
           finishKey: online.miningFinishKey,
@@ -5937,52 +5987,14 @@ export class Game {
   }
 
   /**
-   * Publish 1–9 into the command stream immediately so a same-frame LMB/RMB
-   * interact is sequenced against the new slot, not the previous tick's input.
+   * 1–9 and the wheel change the local slot immediately. They do not allocate
+   * a movement command: the next fixed-tick input carries `selectedSlot`, and
+   * a same-frame attack/use already includes `action.selectedSlot`.
    */
   private commitOnlineHotbarSelect(session: GameSession): void {
     const online = session.online;
     if (!online) return;
     online.pendingHotbar = noteHotbarSelect(online.inputSeq, session.selectedSlot);
-    if (online.ignoreNetworkSend) return;
-    this.flushPendingLocalSnapshot(session);
-    this.syncLocalCreativeFlight(session);
-    const overlayOpen = this.ui.isBlockingOverlay();
-    online.inputSeq += 1;
-    const predicted = predictedMoveFromInput(
-      online.inputSeq,
-      { forward: 0, right: 0, jump: false, sneak: false, sprint: false, descend: false, flySprint: false },
-      { yaw: this.input.yaw, pitch: this.input.pitch },
-      !session.ridingCartId,
-    );
-    const clientSentAt = isDevRuntime() ? performance.now() : undefined;
-    online.client.send({
-      type: 'input',
-      seq: online.inputSeq,
-      clientTick: session.playTicks,
-      forward: 0,
-      right: 0,
-      jump: false,
-      manualJump: false,
-      sneak: false,
-      sprint: false,
-      descend: false,
-      flySprint: false,
-      yaw: this.input.yaw,
-      pitch: this.input.pitch,
-      selectedSlot: session.selectedSlot,
-      ...(shouldHoldServerMining({
-        buttonDown: this.input.mining,
-        finishKey: online.miningFinishKey,
-        miningLocked: online.miningLocked,
-      }) ? { mining: true } : {}),
-      use: !overlayOpen && this.input.using,
-      ...(clientSentAt !== undefined ? { clientSentAt } : {}),
-    });
-    online.lastSentInputSeq = online.inputSeq;
-    online.lastSentUse = !overlayOpen && this.input.using;
-    motionProbe.noteSend(online.inputSeq);
-    predictLocalMove(session.player, session.world, online.prediction, predicted);
   }
 
   private openChat(prefix = ''): void {
@@ -6585,6 +6597,7 @@ export class Game {
         if (session.online) {
           this.cachedDebugText += `\n${formatPredictionDebug(session.online.prediction.debug)}`;
           this.cachedDebugText += `\nAck cmd=${session.online.prediction.lastAckedSeq} srvTick=${session.online.prediction.lastAckedServerTick} seq=${session.online.inputSeq} act=${session.online.actionSeq}`;
+          this.cachedDebugText += `\nEpoch ${session.online.movementEpoch} q=${session.online.serverQueueDepth ?? '—'} pendingMelee=${session.online.serverPendingMelee ?? '—'}`;
           if (session.online.lastBlockDiag) {
             const block = session.online.lastBlockDiag;
             this.cachedDebugText += `\nBlock a=${block.actionSeq} c=${block.commandSeq} tgt=${block.target ?? '—'} id=${block.blockId ?? '—'} face=${block.face ?? '—'} ${block.result ?? 'pending'}${block.gate ? ` ${block.gate}` : ''}`;

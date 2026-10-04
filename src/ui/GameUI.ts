@@ -9,6 +9,7 @@ import {
 } from '../inventory';
 import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
+import type { ClientSettings } from './clientSettings';
 import type { ChestState, FurnaceState } from '../world/World';
 import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
@@ -887,6 +888,17 @@ export class GameUI {
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
+  }
+
+  /** UI copy of the canonical client settings. Game owns load, clamp, and persist. */
+  adoptClientSettings(settings: ClientSettings): void {
+    this.settings = {
+      volume: settings.volume,
+      sensitivity: settings.sensitivity,
+      renderDistance: settings.renderDistance,
+      fov: settings.fov,
+      clouds: settings.clouds,
+    };
   }
 
   showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
