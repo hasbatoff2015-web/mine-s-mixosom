@@ -113,6 +113,30 @@ import {
 import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { InputManager } from '../input/InputManager';
 import {
+  isContinuousUseItem,
+  isPriorityHeldUseItem,
+  isTapUseItem,
+  mobileAutoJumpArmed,
+  mobileSneakFlightHold,
+  resolveMobileTouchIntent,
+  type MobileTouchDecision,
+} from '../input/mobileTouch';
+import { CloudLayer } from '../rendering/CloudLayer';
+import { applyDistanceFog } from '../rendering/distanceFog';
+import {
+  CELESTIAL_RENDER_ORDER,
+  SkyDome,
+  celestialPositions,
+  createMoonMesh,
+  createSunMesh,
+  orientCelestialBillboard,
+  sunlightPosition,
+} from '../rendering/SkyDome';
+import { skySample, sunDirection } from '../rendering/skyPalette';
+import { viewportMetrics } from '../ui/visualViewport';
+import { formatPlayInfo } from '../ui/playInfoHud';
+import {
+  isCoarsePointerMedia,
   shouldOpenPauseOnUnlock,
   shouldShowPointerLockFallback,
   type PointerUnlockReason,
@@ -135,6 +159,7 @@ import {
   bowSpawnFromAim,
   formatLocalAimHud,
   localInteractionAim,
+  lookFromDirection,
   viewDirectionFromLook,
   type LocalAim,
 } from '../player/localAim';
@@ -557,9 +582,10 @@ interface RuntimeSettings {
   sensitivity: number;
   renderDistance: number;
   fov: number;
+  clouds: boolean;
 }
 
-const isCoarsePointer = (): boolean => matchMedia('(pointer: coarse)').matches;
+const isCoarsePointer = isCoarsePointerMedia;
 
 function raycastRemotePlayers(
   remotes: Map<string, RemotePlayerView>,
@@ -604,8 +630,8 @@ export class Game {
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
   private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
-  private readonly sun = new THREE.Mesh(new THREE.SphereGeometry(3.2, 12, 8), new THREE.MeshBasicMaterial({ color: 0xffed9b }));
-  private readonly moon = new THREE.Mesh(new THREE.SphereGeometry(2.4, 12, 8), new THREE.MeshBasicMaterial({ color: 0xb9d4e5 }));
+  private readonly sun = createSunMesh();
+  private readonly moon = createMoonMesh();
   private readonly interpolatedPlayerPosition = new THREE.Vector3();
   private readonly localRender = new LocalPlayerRenderState();
   private readonly cameraPivot = new THREE.Vector3();
@@ -614,10 +640,16 @@ export class Game {
   private readonly localAimOrigin = new Vec3();
   private readonly localAimDirection = new Vec3();
   private lastLocalAim: LocalAim | undefined;
-  private readonly daySkyColor = new THREE.Color(0x7fb9dc);
-  private readonly duskSkyColor = new THREE.Color(0xd9785a);
-  private readonly nightSkyColor = new THREE.Color(0x071426);
   private readonly currentSkyColor = new THREE.Color(0x7fb6d5);
+  private readonly sky = new SkyDome();
+  private readonly clouds = new CloudLayer();
+  private skyCloudTime = 0;
+  private readonly touchAimOrigin = new Vec3();
+  private readonly touchAimDirection = new Vec3();
+  private readonly touchVisualOrigin = new Vec3();
+  private readonly touchVisualDirection = new Vec3();
+  private readonly touchNdc = new THREE.Vector3();
+  private readonly touchUnprojected = new THREE.Vector3();
   private readonly firstPersonFrameState: FirstPersonFrameState = {
     visible: false,
     movementSpeed: 0,
@@ -659,6 +691,7 @@ export class Game {
     sensitivity: 0.0022,
     renderDistance: isCoarsePointer() ? DEFAULT_RENDER_DISTANCE_MOBILE : DEFAULT_RENDER_DISTANCE_DESKTOP,
     fov: 75,
+    clouds: true,
   };
   private accumulator = 0;
   private previousTime = performance.now();
@@ -753,10 +786,18 @@ export class Game {
     this.renderer.info.autoReset = false;
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, isCoarsePointer() ? 1.4 : 2));
     this.scene.background = this.currentSkyColor;
-    this.scene.fog = new THREE.Fog(0x7fb6d5, 38, this.settings.renderDistance * 16 + 28);
+    this.sun.renderOrder = CELESTIAL_RENDER_ORDER;
+    this.moon.renderOrder = CELESTIAL_RENDER_ORDER;
+    this.scene.add(this.sky.object);
+    this.scene.add(this.clouds.object);
+    this.sky.update(skySample(6_000), 0, sunDirection(6_000));
+    this.scene.fog = new THREE.Fog(0x7fb6d5, 1, 2);
+    applyDistanceFog(this.scene.fog, this.settings.renderDistance);
     this.ambient.intensity = 0.22;
     this.sunlight.intensity = 1.35;
-    this.sunlight.position.set(40, 70, 25);
+    const menuSun = sunlightPosition(sunDirection(6_000));
+    this.sunlight.position.set(menuSun.x, menuSun.y, menuSun.z);
+    this.sunlight.target.position.set(0, 0, 0);
     this.scene.add(this.ambient, this.sunlight, this.sun, this.moon);
     this.scene.add(this.chunkGrid.group);
     this.chunkGrid.setVisible(this.chunkGridVisible);
@@ -781,6 +822,8 @@ export class Game {
         this.showPointerLockFallbackIfNeeded();
       },
       isChatOpen: () => this.ui.isChatOpen(),
+      classifyWorldTouch: (clientX, clientY, phase) => this.classifyWorldTouch(clientX, clientY, phase),
+      aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY),
     });
     this.lifecycle.setBlurContext(() => ({
       pointerLocked: this.input.isPointerLocked(),
@@ -1779,6 +1822,7 @@ export class Game {
         serverTick: message.tick,
       });
     }
+    this.syncMobileSneakMode(session);
     const afterReconcile = captureMotionFull(player);
     const reconcileChanged = diffMotionFull(before, afterReconcile);
     logMotionFieldMutations({
@@ -2218,23 +2262,27 @@ export class Game {
     const online = session.online;
     if (!online) return;
     if (this.input.consumeUsePressed()) this.sendOnlineUse(session);
-    if (this.input.consumeUseReleased()) this.sendOnlineBowRelease(session);
+    if (this.input.consumeUseReleased()) {
+      this.sendOnlineBowRelease(session);
+      this.input.consumeReleaseAim();
+    }
     if (this.input.consumeMiningReleased()) {
       noteMiningReleased(online);
-      if (!session.miningTarget) return;
-      if (!shouldSendBreakAbort({
+      if (session.miningTarget && shouldSendBreakAbort({
         miningReleased: true,
         miningTarget: session.miningTarget,
         finishKey: online.miningFinishKey,
         awaitingAutoBreak: online.awaitingAutoBreak,
-      })) return;
-      const source = this.onlineActionSource(session);
-      const action = captureBlockBreakAbort(source);
-      this.commitOnlineActionSeq(session, source);
-      online.client.send(actionMessageFromBreakAbort(action));
-      noteBreakAbortSent(online);
-      online.miningIntent = undefined;
+      })) {
+        const source = this.onlineActionSource(session);
+        const action = captureBlockBreakAbort(source);
+        this.commitOnlineActionSeq(session, source);
+        online.client.send(actionMessageFromBreakAbort(action));
+        noteBreakAbortSent(online);
+        online.miningIntent = undefined;
+      }
     }
+    this.input.dismissTapAim();
   }
 
   private sendOnlineUse(session: GameSession): void {
@@ -2931,6 +2979,7 @@ export class Game {
         forward: 0,
         right: 0,
         jump: false,
+        manualJump: false,
         sneak: false,
         sprint: false,
         descend: false,
@@ -3083,6 +3132,8 @@ export class Game {
     const safeSpawn = relocateStandingPoseInsidePlayableWorld(world, spawn[0], spawn[1], spawn[2]);
     player.teleport([safeSpawn.x, safeSpawn.y, safeSpawn.z]);
     syncCreativeFlightAllowed(player, summary.mode);
+    this.input.setJumpLockAllowed(summary.mode !== 'creative');
+    this.input.setMobileSneakFlightHold(mobileSneakFlightHold(summary.mode, player.isFlying));
     if (restored) {
       player.restore({
         position: restored.player.position,
@@ -4257,7 +4308,8 @@ export class Game {
       this.input.setSensitivity(settings.sensitivity);
       this.camera.fov = settings.fov;
       this.camera.updateProjectionMatrix();
-      if (this.scene.fog instanceof THREE.Fog) this.scene.fog.far = settings.renderDistance * 16 + 28;
+      this.clouds.setEnabled(settings.clouds);
+      if (this.scene.fog instanceof THREE.Fog) applyDistanceFog(this.scene.fog, settings.renderDistance);
     }, () => this.ui.showControls(() => this.showSettings(), this.screenBeforeSettings === 'pause'), () => {
       if (this.screenBeforeSettings === 'pause' && this.session) {
         this.ui.showPause({
@@ -4523,6 +4575,7 @@ export class Game {
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movementBeforeUse = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    this.input.armAutoJump(false);
     const riding = Boolean(session.ridingCartId);
     const using = gameplayAllowed && this.input.using;
     const selected = this.selectedStack();
@@ -4556,6 +4609,7 @@ export class Game {
         forward: inputIntent.forward,
         right: inputIntent.right,
         jump: inputIntent.jump,
+        manualJump: inputIntent.manualJump,
         sneak: inputIntent.sneak,
         sprint: inputIntent.sprint,
         descend: inputIntent.descend,
@@ -4581,6 +4635,7 @@ export class Game {
     const prevZ = session.player.position.z;
     predictLocalMove(session.player, session.world, online.prediction,
       session.restingBed ? { ...predicted, resting: true } : predicted);
+    this.syncMobileSneakMode(session);
     if (gameplayAllowed) {
       this.updateFootsteps(session, Math.hypot(
         session.player.position.x - prevX,
@@ -4594,10 +4649,12 @@ export class Game {
     else {
       this.input.consumeAttackPressed();
       this.input.consumeUsePressed();
+      this.input.dismissTapAim();
       session.miningProgress = 0;
       session.miningTarget = undefined;
       if (online) resetOnlineMiningGate(online);
     }
+    this.refreshMobileAutoJump(session);
     const cx = floorDiv(Math.floor(session.player.position.x), 16);
     const cz = floorDiv(Math.floor(session.player.position.z), 16);
     const viewDistance = quietWorldRenderDistance(this.settings.renderDistance);
@@ -4662,6 +4719,7 @@ export class Game {
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
     const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    this.input.armAutoJump(false);
     const riding = Boolean(session.ridingCartId);
     let entityStart = 0;
 
@@ -4710,6 +4768,7 @@ export class Game {
             forward: riding ? 0 : movement.forward,
             right: riding ? 0 : movement.right,
             jump: riding || exitedRest ? false : movement.jump,
+            manualJump: riding || exitedRest ? false : movement.manualJump,
             sprint: !riding && movement.sprint
               && (session.summary.mode === 'creative' || session.survival.hunger > 6),
             descend: movement.descend === true,
@@ -4720,6 +4779,8 @@ export class Game {
           : session.player.tick(session.world, playerInput, FIXED_DT, (damage, cause) => {
           if (session.summary.mode === 'survival') session.survival.damage(damage, cause, { armor: session.inventory });
         });
+        this.syncMobileSneakMode(session);
+        this.refreshMobileAutoJump(session);
         motionProbe.notePredictionTick();
         this.updateFootsteps(session, playerResult.horizontalDistance);
         if (session.summary.mode === 'survival') {
@@ -4745,9 +4806,11 @@ export class Game {
         if (gameplayAllowed) {
           this.updateTargetAndActions();
           this.updateFoodUse();
+          if (!session.online) this.input.consumeReleaseAim();
         } else {
           this.input.consumeAttackPressed();
           this.input.consumeUsePressed();
+          this.input.dismissTapAim();
           session.miningProgress = 0;
           session.miningTarget = undefined;
           if (session.online) resetOnlineMiningGate(session.online);
@@ -4856,10 +4919,186 @@ export class Game {
     this.addSimPart('other', simMark);
   }
 
+  private classifyWorldTouch(clientX: number, clientY: number, phase: 'tap' | 'hold'): MobileTouchDecision {
+    const none: MobileTouchDecision = { yaw: 0, pitch: 0, intent: 'none' };
+    const session = this.session;
+    if (!session?.player || this.lifecycle.state !== 'PLAYING' || this.ui.isBlockingOverlay()) return none;
+    const look = this.lookFromClientPoint(session, clientX, clientY);
+    if (!look) return none;
+    const aim = localInteractionAim(session.player, look, this.touchAimOrigin, this.touchAimDirection);
+    const blockHit = session.world.raycast(aim.origin, aim.direction, PLAYER_REACH);
+    const cartHit = session.minecarts.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId);
+    const mobHit = session.mobs.raycastRendered(aim.origin, aim.direction, Math.min(3, PLAYER_REACH));
+    const remoteHit = session.online
+      ? raycastRemotePlayers(session.online.remotes, aim.origin, aim.direction, Math.min(3, PLAYER_REACH))
+      : undefined;
+    const pet = mobHit && isPetKind(mobHit.mob.kind) ? mobHit : undefined;
+    const hostile = mobHit && !pet ? mobHit : undefined;
+    const rideCart = cartHit
+      && cartHit.cart.id !== session.ridingCartId
+      && session.minecarts.canBoard(cartHit.cart, session.ridingCartId)
+      ? cartHit
+      : undefined;
+    let attackDistance = Infinity;
+    if (remoteHit) attackDistance = remoteHit.distance;
+    if (hostile && hostile.distance < attackDistance) attackDistance = hostile.distance;
+    let useDistance = Infinity;
+    if (pet) useDistance = pet.distance;
+    if (rideCart && rideCart.distance < useDistance) useDistance = rideCart.distance;
+    const blockDistance = blockHit?.distance ?? Infinity;
+    const cartDistance = cartHit?.distance ?? Infinity;
+    const nearestSolid = Math.min(blockDistance, cartDistance);
+    const attackEntity = attackDistance <= nearestSolid && attackDistance <= useDistance && attackDistance < Infinity;
+    const useEntity = !attackEntity && useDistance <= nearestSolid && useDistance < Infinity;
+    const blockInFront = Boolean(
+      blockHit
+      && blockDistance <= attackDistance
+      && blockDistance <= useDistance
+      && blockDistance <= cartDistance,
+    );
+    const definition = blockHit ? getBlockDefinition(blockHit.block) : undefined;
+    const itemId = session.inventory.getSlot(session.selectedSlot)?.itemId;
+    const liquidUse = Boolean(blockInFront && definition?.liquid === true && isTapUseItem(itemId));
+    const interactiveBlock = Boolean(
+      (blockInFront && blockHit && isUseTargetBlock(blockHit.block))
+      || liquidUse,
+    );
+    const hasBlockTarget = Boolean(blockInFront && blockHit);
+    const breakableBlock = Boolean(
+      hasBlockTarget
+      && !interactiveBlock
+      && definition
+      && definition.breakable !== false
+      && definition.hardness >= 0,
+    );
+    return {
+      yaw: look.yaw,
+      pitch: look.pitch,
+      intent: resolveMobileTouchIntent({
+        phase,
+        attackEntity,
+        useEntity,
+        interactiveBlock,
+        hasBlockTarget,
+        breakableBlock,
+        tapUseItem: isTapUseItem(itemId),
+        priorityHeldUse: isPriorityHeldUseItem(itemId),
+        bow: itemId === ItemId.Bow,
+        continuousUse: isContinuousUseItem(itemId),
+      }),
+    };
+  }
+
+  private aimAtClientPoint(clientX: number, clientY: number): { yaw: number; pitch: number } | undefined {
+    const session = this.session;
+    if (!session?.player || this.lifecycle.state !== 'PLAYING' || this.ui.isBlockingOverlay()) return undefined;
+    return this.lookFromClientPoint(session, clientX, clientY);
+  }
+
+  /** Screen point → eye look. The camera ray only picks the point; reach stays the eye ray. */
+  private lookFromClientPoint(
+    session: GameSession,
+    clientX: number,
+    clientY: number,
+  ): { yaw: number; pitch: number } | undefined {
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return undefined;
+    this.camera.updateMatrixWorld();
+    const ndcX = ((clientX - rect.left) / rect.width) * 2 - 1;
+    const ndcY = -(((clientY - rect.top) / rect.height) * 2 - 1);
+    this.touchNdc.set(ndcX, ndcY, 0.5);
+    this.touchUnprojected.copy(this.touchNdc).unproject(this.camera);
+    const cam = this.camera.position;
+    const dx = this.touchUnprojected.x - cam.x;
+    const dy = this.touchUnprojected.y - cam.y;
+    const dz = this.touchUnprojected.z - cam.z;
+    const len = Math.hypot(dx, dy, dz);
+    if (!(len > 1e-8)) return undefined;
+    this.touchVisualOrigin.set(cam.x, cam.y, cam.z);
+    this.touchVisualDirection.set(dx / len, dy / len, dz / len);
+    const visualReach = 64;
+    const blockHit = session.world.raycast(this.touchVisualOrigin, this.touchVisualDirection, visualReach);
+    let best = blockHit?.distance ?? Infinity;
+    let tx = 0;
+    let ty = 0;
+    let tz = 0;
+    let have = false;
+    if (blockHit) {
+      have = true;
+      tx = blockHit.point.x - blockHit.normal.x * 0.02;
+      ty = blockHit.point.y - blockHit.normal.y * 0.02;
+      tz = blockHit.point.z - blockHit.normal.z * 0.02;
+    }
+    const mobHit = session.mobs.raycastRendered(this.touchVisualOrigin, this.touchVisualDirection, visualReach);
+    if (mobHit && mobHit.distance < best) {
+      best = mobHit.distance;
+      have = true;
+      tx = mobHit.point.x;
+      ty = mobHit.point.y;
+      tz = mobHit.point.z;
+    }
+    const cartHit = session.minecarts.raycast(
+      this.touchVisualOrigin,
+      this.touchVisualDirection,
+      visualReach,
+      session.ridingCartId,
+    );
+    if (cartHit && cartHit.distance < best && (!blockHit || cartHit.distance < blockHit.distance)) {
+      best = cartHit.distance;
+      have = true;
+      tx = cam.x + this.touchVisualDirection.x * cartHit.distance;
+      ty = cam.y + this.touchVisualDirection.y * cartHit.distance;
+      tz = cam.z + this.touchVisualDirection.z * cartHit.distance;
+    }
+    const remoteHit = session.online
+      ? raycastRemotePlayers(session.online.remotes, this.touchVisualOrigin, this.touchVisualDirection, visualReach)
+      : undefined;
+    if (remoteHit && remoteHit.distance < best && (!blockHit || remoteHit.distance < blockHit.distance)) {
+      have = true;
+      tx = cam.x + this.touchVisualDirection.x * remoteHit.distance;
+      ty = cam.y + this.touchVisualDirection.y * remoteHit.distance;
+      tz = cam.z + this.touchVisualDirection.z * remoteHit.distance;
+    }
+    if (!have) {
+      return lookFromDirection(
+        this.touchVisualDirection.x,
+        this.touchVisualDirection.y,
+        this.touchVisualDirection.z,
+      );
+    }
+    const eye = session.player.eyePosition();
+    return lookFromDirection(tx - eye.x, ty - eye.y, tz - eye.z);
+  }
+
+  /** Arms jump for the next input sample only. The server sees a normal jump bit. */
+  private refreshMobileAutoJump(session: GameSession): void {
+    if (!this.input.isTouchLayout()) {
+      this.input.armAutoJump(false);
+      return;
+    }
+    const movement = this.input.movement();
+    this.input.armAutoJump(mobileAutoJumpArmed({
+      touchLayout: true,
+      onGround: session.player.onGround,
+      sneaking: session.player.sneaking,
+      flying: session.player.isFlying,
+      inWater: session.player.inWater,
+      inLava: session.player.inLava,
+      onLadder: session.player.onLadder,
+      yaw: session.player.yaw,
+      forward: movement.forward,
+      right: movement.right,
+      feetX: session.player.position.x,
+      feetY: session.player.position.y,
+      feetZ: session.player.position.z,
+      boxesAt: (x, y, z) => blockCollisionBoxes(session.world, x, y, z),
+    }));
+  }
+
   private sampleLocalAim(session: GameSession): LocalAim {
     const aim = localInteractionAim(
       session.player,
-      this.input,
+      this.input.interactionLook() ?? this.input,
       this.localAimOrigin,
       this.localAimDirection,
     );
@@ -4894,8 +5133,14 @@ export class Game {
     return { remoteCloser, remoteTarget: remoteCloser ? remoteHit : undefined, attack, mobTarget, aim };
   }
 
+  /** While a finger is held, sample the block under that finger before the mining tick. */
+  private refreshHeldTouchAim(): void {
+    this.input.refreshHoldAim((clientX, clientY) => this.aimAtClientPoint(clientX, clientY));
+  }
+
   private updateTargetAndActions(): void {
     const session = this.session!;
+    this.refreshHeldTouchAim();
     const { remoteCloser, remoteTarget, attack, mobTarget, aim } = this.refreshLocalCrosshair(session);
     const attackPresses = this.input.consumeAttackPresses();
     const attackPressed = attackPresses > 0;
@@ -5000,6 +5245,7 @@ export class Game {
       }
     }
     for (let click = 0; click < attackPresses; click += 1) this.firstPerson?.swing();
+    this.input.dismissTapAim();
     session.combat.setHeldItem(this.selectedStack()?.itemId);
     if (session.online) {
       /* Use / bow release are captured on the render frame, not the 20 TPS tick. */
@@ -5717,6 +5963,7 @@ export class Game {
       forward: 0,
       right: 0,
       jump: false,
+      manualJump: false,
       sneak: false,
       sprint: false,
       descend: false,
@@ -5834,6 +6081,23 @@ export class Game {
     gamemode: GameMode = session.summary.mode,
   ): void {
     syncCreativeFlightAllowed(session.player, gamemode);
+    this.input.setJumpLockAllowed(gamemode !== 'creative');
+    // Same gamemode argument, before the handler returns to sample movement.
+    this.syncMobileSneakMode(session, gamemode);
+  }
+
+  /**
+   * Crouch latches on the ground and holds only while this player is actually flying.
+   * Pass the gamemode explicitly when an authoritative message has it in hand.
+   * Call again after `isFlying` changes; a same-mode call does not clear a ground latch.
+   */
+  private syncMobileSneakMode(
+    session: GameSession,
+    gamemode: GameMode = session.summary.mode,
+  ): void {
+    this.input.setMobileSneakFlightHold(
+      mobileSneakFlightHold(gamemode, session.player.isFlying),
+    );
   }
 
   private setGameMode(mode: GameMode): void {
@@ -5841,6 +6105,7 @@ export class Game {
     session.summary.mode = mode;
     this.syncLocalCreativeFlight(session, mode);
     if (mode !== 'creative') session.player.isFlying = false;
+    this.syncMobileSneakMode(session);
     this.refreshHud();
   }
 
@@ -5933,6 +6198,7 @@ export class Game {
     this.deathShown = false;
     this.onlineRespawnPending = false;
     this.syncLocalCreativeFlight(session);
+    this.syncMobileSneakMode(session);
     this.clearMinecartRide(session);
     session.miningProgress = 0;
     session.miningTarget = undefined;
@@ -5985,6 +6251,7 @@ export class Game {
     this.lifecycle.setState('DEAD');
     this.ui.hidePointerLockFallback();
     this.input.releasePointerLock();
+    this.input.releaseActions();
     if (session.online) {
       this.ui.showDeath(
         () => this.requestOnlineRespawn(),
@@ -6025,6 +6292,7 @@ export class Game {
       const position = this.interpolatedPlayerPosition.set(sampled.x, sampled.y, sampled.z);
       this.lastRenderAlpha = sampled.alpha;
       this.updatePlayerPresentation(session, position, now);
+      this.refreshHeldTouchAim();
       if (playerGameplayAllowed(this.lifecycle.state, this.ui.isBlockingOverlay())) {
         this.refreshLocalCrosshair(session);
         if (session.online) this.pollOnlineActionEdges(session);
@@ -6079,6 +6347,8 @@ export class Game {
         this.camera.fov = nextFov;
         this.camera.updateProjectionMatrix();
       }
+      this.skyCloudTime += this.renderDeltaSeconds;
+      this.sky.setPosition(this.camera.position.x, this.camera.position.y, this.camera.position.z);
       this.updateEnvironment(session.world.timeOfDay);
       this.updateBreakingOverlay();
     }
@@ -6242,19 +6512,32 @@ export class Game {
     const phase = (time / 24_000) * Math.PI * 2;
     const sunHeight = Math.sin(phase);
     const daylight = daylightFactor(time);
-    const sky = sunHeight > -0.18
-      ? this.currentSkyColor.copy(this.duskSkyColor).lerp(this.daySkyColor, clamp((sunHeight + 0.18) * 2.6, 0, 1))
-      : this.currentSkyColor.copy(this.nightSkyColor).lerp(this.duskSkyColor, clamp((sunHeight + 0.72) * 1.85, 0, 1));
+    const skyVisual = skySample(time);
+    const sky = this.currentSkyColor.setRGB(skyVisual.fog.r, skyVisual.fog.g, skyVisual.fog.b);
+    const dir = sunDirection(time);
+    this.sky.update(skyVisual, this.skyCloudTime, dir);
+    this.clouds.update(
+      this.camera.position.x,
+      this.camera.position.y,
+      this.camera.position.z,
+      this.skyCloudTime,
+      skyVisual.visualNight,
+    );
     if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
     this.ambient.intensity = 0.14 + daylight * 0.32;
     this.sunlight.intensity = 0.18 + daylight * 1.55;
     this.sunlight.color.set(daylight > 0.45 ? 0xffe2b3 : 0x8ea7d4);
     const session = this.session!;
-    const center = session.player.position;
-    this.sun.position.set(center.x + Math.cos(phase) * 70, center.y + sunHeight * 70, center.z + 15);
-    this.sunlight.position.copy(this.sun.position);
+    const places = celestialPositions(this.camera.position, dir);
+    this.sun.position.set(places.sun.x, places.sun.y, places.sun.z);
+    this.moon.position.set(places.moon.x, places.moon.y, places.moon.z);
+    orientCelestialBillboard(this.sun, this.camera.position);
+    orientCelestialBillboard(this.moon, this.camera.position);
+    const light = sunlightPosition(dir);
+    this.sunlight.position.set(light.x, light.y, light.z);
+    this.sunlight.target.position.set(0, 0, 0);
+    this.sunlight.target.updateMatrixWorld();
     session.worldRenderer.setDaylight(daylight);
-    this.moon.position.set(center.x - Math.cos(phase) * 70, center.y - sunHeight * 70, center.z - 15);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
   }
@@ -6337,6 +6620,12 @@ export class Game {
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
+      playInfo: formatPlayInfo(
+        session.online ? session.online.remotes.size + 1 : 1,
+        session.player.position.x,
+        session.player.position.y,
+        session.player.position.z,
+      ),
     });
   }
 
@@ -6575,7 +6864,10 @@ export class Game {
   }
 
   private bindWindowEvents(): void {
-    window.addEventListener('resize', () => this.resize());
+    const resize = (): void => this.resize();
+    window.addEventListener('resize', resize);
+    window.visualViewport?.addEventListener('resize', resize);
+    window.visualViewport?.addEventListener('scroll', resize);
     window.addEventListener('pagehide', () => void this.saveSession());
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) void this.saveSession();
@@ -6626,8 +6918,7 @@ export class Game {
   }
 
   private resize(): void {
-    const width = Math.max(1, window.innerWidth);
-    const height = Math.max(1, window.innerHeight);
+    const { width, height } = viewportMetrics();
     this.renderer.setSize(width, height, false);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();

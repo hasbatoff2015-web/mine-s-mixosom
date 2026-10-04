@@ -33,6 +33,7 @@ export class PlayerCommandQueue {
         forward: 0,
         right: 0,
         jump: false,
+        manualJump: false,
         sneak: false,
         sprint: false,
         descend: false,

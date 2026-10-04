@@ -2,7 +2,7 @@ import { getBlockDefinition } from '../blocks';
 import { CHUNK_SIZE, FIXED_DT, PLAYER_WIDTH, chunkKey, floorDiv } from '../core/constants';
 import type { MoveInput } from '../input/MoveInput';
 import { PlayerController, type PlayerInputSource, type PlayerMovementState } from '../player/PlayerController';
-import { creativeFlightAllowedForPrediction } from '../player/creativeFlight';
+import { creativeFlightAllowedForPrediction, manualJumpLevel } from '../player/creativeFlight';
 import type { VoxelWorld } from '../world/World';
 import type { PlayerSnapshot } from '../../shared/protocol';
 import { LOCAL_SNAP_DISTANCE, distanceSquared } from './authoritativeMotion';
@@ -48,6 +48,8 @@ export interface PredictedMove {
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
+  /** Physical jump level used for Creative Flight. Always resolved before send. */
+  readonly manualJump: boolean;
   readonly sneak: boolean;
   readonly sprint: boolean;
   readonly descend: boolean;
@@ -335,6 +337,7 @@ export function predictedMoveFromInput(
     forward: movement.forward,
     right: movement.right,
     jump: movement.jump,
+    manualJump: manualJumpLevel(movement),
     sneak: movement.sneak,
     sprint: movement.sprint,
     descend: movement.descend === true,
@@ -354,6 +357,7 @@ export function predictedPlayerInput(move: PredictedMove): PlayerInputSource {
       forward: move.forward,
       right: move.right,
       jump: move.jump,
+      manualJump: move.manualJump,
       sneak: move.sneak,
       sprint: move.sprint,
       descend: move.descend,

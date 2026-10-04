@@ -12,6 +12,8 @@ export interface PlayerCommand {
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
+  /** Physical jump level. Absent commands keep the legacy jump edge. */
+  readonly manualJump?: boolean;
   readonly sneak: boolean;
   readonly sprint: boolean;
   readonly descend: boolean;

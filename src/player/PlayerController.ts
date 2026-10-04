@@ -24,6 +24,7 @@ import { clipAabbAxisToWorldBorder, WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '.
 import type { MoveInput } from '../input/MoveInput';
 import type { VoxelWorld } from '../world/World';
 import {
+  manualJumpLevel,
   nextFlyWindowTicks,
   shouldAcceptFlyToggle,
 } from './creativeFlight';
@@ -267,8 +268,11 @@ export class PlayerController {
     this.pitch = clamp(finite(input.pitch, this.pitch), -Math.PI / 2, Math.PI / 2);
 
     const movement = input.movement();
-    const jumpPressed = movement.jump && !this.jumpHeld;
-    this.jumpHeld = movement.jump;
+    // Flight hears a new physical press. `movement.jump` still includes
+    // auto-jump and a survival latch, and those must not arm the window.
+    const manualJump = manualJumpLevel(movement);
+    const jumpPressed = manualJump && !this.jumpHeld;
+    this.jumpHeld = manualJump;
     if (!this.creativeFlightAllowed) {
       this.isFlying = false;
       this.flyWindowTicks = 0;
