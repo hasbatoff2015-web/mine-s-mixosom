@@ -16,6 +16,7 @@ import {
 } from './types';
 import { BLOCK_FAMILIES } from './blockFamilies';
 import { inferBlockSoundGroup } from './soundGroups';
+import { GRAVEL_FLINT_CHANCE, LEAF_SAPLING_CHANCE } from './dropTables';
 import { requiredDisplayName } from '../i18n';
 
 interface BlockOptions {
@@ -180,7 +181,11 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   block(BlockId.Sand, 'sand', { category: 'terrain', hardness: 0.5, tool: 'shovel', tier: 'hand', gravity: true }),
   block(BlockId.Gravel, 'gravel', {
     category: 'terrain', hardness: 0.6, tool: 'shovel', tier: 'hand', gravity: true,
-    drop: { item: 'gravel', count: 1 },
+    drop: {
+      item: 'gravel',
+      count: 1,
+      substitute: { item: 'flint', chance: GRAVEL_FLINT_CHANCE },
+    },
   }),
   block(BlockId.Clay, 'clay', {
     category: 'terrain', hardness: 0.6, tool: 'shovel', tier: 'hand',
@@ -213,9 +218,18 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
   wood(BlockId.OakLog, 'oak_log', { top: 'block/oak_log_top', bottom: 'block/oak_log_top', side: 'block/oak_log' }),
   wood(BlockId.BirchLog, 'birch_log', { top: 'block/birch_log_top', bottom: 'block/birch_log_top', side: 'block/birch_log' }),
   wood(BlockId.SpruceLog, 'spruce_log', { top: 'block/spruce_log_top', bottom: 'block/spruce_log_top', side: 'block/spruce_log' }),
-  block(BlockId.OakLeaves, 'oak_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
-  block(BlockId.BirchLeaves, 'birch_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
-  block(BlockId.SpruceLeaves, 'spruce_leaves', { category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true }),
+  block(BlockId.OakLeaves, 'oak_leaves', {
+    category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true,
+    drop: { item: 'oak_leaves', count: 1, bonus: { item: 'oak_sapling', chance: LEAF_SAPLING_CHANCE } },
+  }),
+  block(BlockId.BirchLeaves, 'birch_leaves', {
+    category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true,
+    drop: { item: 'birch_leaves', count: 1, bonus: { item: 'birch_sapling', chance: LEAF_SAPLING_CHANCE } },
+  }),
+  block(BlockId.SpruceLeaves, 'spruce_leaves', {
+    category: 'wood', hardness: 0.2, opaque: false, renderLayer: 'cutout', tool: 'shears', tier: 'hand', flammable: true,
+    drop: { item: 'spruce_leaves', count: 1, bonus: { item: 'spruce_sapling', chance: LEAF_SAPLING_CHANCE } },
+  }),
   wood(BlockId.OakPlanks, 'oak_planks'),
   wood(BlockId.BirchPlanks, 'birch_planks'),
   wood(BlockId.SprucePlanks, 'spruce_planks'),
@@ -512,6 +526,17 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
     textures: { all: 'block/sugar_cane' },
   }),
+  ...([
+    [BlockId.OakSapling, 'oak_sapling'],
+    [BlockId.BirchSapling, 'birch_sapling'],
+    [BlockId.SpruceSapling, 'spruce_sapling'],
+  ] as const).map(([id, key]) => block(id, key, {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', lightingMode: 'vegetation',
+    fluidDisplaceable: true,
+    drop: { item: key, count: 1 },
+    textures: { all: `block/${key}` },
+  })),
 ]);
 
 function buildRegistry<K>(keyOf: (definition: BlockDefinition) => K): ReadonlyMap<K, BlockDefinition> {

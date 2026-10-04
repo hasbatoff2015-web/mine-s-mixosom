@@ -949,7 +949,7 @@ describe('Anarchy server gameplay authority', () => {
     player.controller.teleport([x + 0.5, y, z + 0.5]);
   }
 
-  it('fall death respawns through dead→alive health and still accepts input', async () => {
+  it('a lethal fall stays alive at 1 HP and still accepts input', async () => {
     const world = await bootWorld();
     const joined = join(world);
     if ('error' in joined) throw new Error(joined.error);
@@ -964,8 +964,16 @@ describe('Anarchy server gameplay authority', () => {
     }
     player.controller.teleport([x, baseY + 48, z]);
     player.controller.velocity.set(0, 0, 0);
-    tickUntilCanonicalRespawn(world, player, joined.sink, from);
-    expectCanonicalDeadThenAlive(joined.sink, from);
+    let sawFloor = false;
+    for (let tick = 0; tick < 280 && !sawFloor; tick += 1) {
+      world.tick();
+      const health = healthPackets(joined.sink).slice(from);
+      expect(health.some((entry) => entry.dead === true)).toBe(false);
+      sawFloor = health.some((entry) => entry.health === 1);
+    }
+    expect(sawFloor).toBe(true);
+    expect(player.survival.dead).toBe(false);
+    expect(player.survival.health).toBeGreaterThanOrEqual(1);
     expectWalks(world, player, 11);
   });
 

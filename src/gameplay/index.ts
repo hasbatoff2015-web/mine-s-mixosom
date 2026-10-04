@@ -9,6 +9,7 @@ export {
   dropScatterVelocity,
   dropScatterOrigin,
   rollBlockDropCount,
+  rollBrokenBlockDrops,
   rollDropCount,
   seededRandomFn,
   seededRandomSource,

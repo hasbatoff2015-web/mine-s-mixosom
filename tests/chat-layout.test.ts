@@ -66,6 +66,7 @@ describe('chat layout and controls', () => {
   it('hides compose and side controls when closed without an empty open-sized frame', () => {
     expect(cssRule('#chat-compose')).toContain('display: none;');
     expect(cssRule('#chat.open #chat-compose')).toContain('display: flex;');
+    expect(cssRule('#chat-side')).toContain('gap: 0;');
     expect(cssRule('#chat-side')).toContain('display: none;');
     expect(cssRule('#chat.open #chat-side')).toContain('display: flex;');
     const closed = cssRule('#chat');
@@ -150,8 +151,25 @@ describe('chat layout and controls', () => {
     expect(cssRule('#chat-send,\n#chat-close,\n#chat-visibility')).toContain('background-size: contain;');
     expect(cssRule('#chat-tabs button')).toContain('background-size: contain;');
     expect(cssRule('#chat-send')).toContain('aspect-ratio: 198 / 96;');
-    expect(cssRule('#chat-close')).toContain('aspect-ratio: 102 / 96;');
-    expect(STYLE).toContain('aspect-ratio: 106 / 96;');
+    expect(cssRule('#chat-close')).toContain('position: fixed;');
+    expect(cssRule('#chat-close')).toContain('right: -6px;');
+    expect(cssRule('#chat-close')).toContain('top: 113.3px;');
+    expect(cssRule('#chat-close')).toContain('width: 166.78px;');
+    expect(cssRule('#chat-close')).toContain('height: 159.38px;');
+    expect(cssRule('#chat-close')).toContain('margin: 0;');
+    expect(STYLE).toContain(`#chat-visibility {
+  position: fixed;
+  right: 7.61px;
+  top: 255.8px;
+  width: 137.78px;
+  height: 124.8px;
+  margin: 0;
+  background-image: var(--chat-on-img);
+}`);
+    expect(STYLE).not.toContain('margin-top: calc(-104px');
+    expect(STYLE).not.toContain('margin-bottom: calc(-104px');
+    expect(STYLE).not.toContain('margin-right: calc(104px');
+    expect(STYLE).not.toContain('aspect-ratio: 106 / 96;');
     expect(STYLE).toContain('aspect-ratio: 104 / 96;');
     expect(cssRule('#chat-send')).toContain('background-image: var(--chat-enter-img);');
     expect(cssRule('#chat-close')).toContain('background-image: var(--chat-close-img);');
@@ -183,6 +201,12 @@ describe('chat layout and controls', () => {
     expect(GAME_UI).toContain('chat-close-x');
     expect(GAME_UI).toContain('>X</span>');
     expect(GAME_UI).toContain('>TAB</span>');
+    expect(GAME_UI).toContain('title="Закрыть чат (Tab)"');
+    expect(GAME_UI).not.toContain('Закрыть чат (E)');
+    const closePng = readFileSync(join(root, '../public/ui/chat/close.png'));
+    expect(closePng.readUInt32BE(16)).toBe(1283);
+    expect(closePng.readUInt32BE(20)).toBe(1226);
+    expect(closePng[25]).toBe(6);
     expect(GAME_UI).toContain('class="chat-sr"');
     expect(GAME_UI).toContain("this.chatCloseEl.addEventListener('click', () => this.onChatCancel?.())");
     expect(GAME_UI).toContain("event.key === 'Tab'");

@@ -383,7 +383,7 @@ import {
   performUseHeld,
   movementDuringItemUse,
   resolveHologramUseTarget,
-  rollDropCount,
+  rollBrokenBlockDrops,
   systemRandomFn,
   tickGameplayKernel,
   type UseSimulationContext,
@@ -5418,12 +5418,14 @@ export class Game {
       } else {
         const drop = definition.drop;
         if (drop && harvestable) {
-          const count = rollDropCount(drop, this.simRandom);
-          const slabExtra = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double' ? count : 0;
-          this.spawnDroppedStack(
-            createItemStack(drop.item, count + slabExtra),
-            new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
-          );
+          const doubleSlab = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double';
+          for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
+            const count = doubleSlab && rolled.item === drop.item ? rolled.count * 2 : rolled.count;
+            if (count > 0) this.spawnDroppedStack(
+              createItemStack(rolled.item, count),
+              new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+            );
+          }
         }
       }
       if (toolStack && (item?.kind === 'tool' || item?.kind === 'weapon')) {
@@ -5719,9 +5721,10 @@ export class Game {
       }
       const drop = getBlockDefinition(event.block).drop;
       if (!drop) continue;
-      const count = rollDropCount(drop, this.simRandom);
-      if (count > 0) this.spawnDroppedStack(createItemStack(drop.item, count),
-        new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+      for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
+        if (rolled.count > 0) this.spawnDroppedStack(createItemStack(rolled.item, rolled.count),
+          new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+      }
     }
   }
 

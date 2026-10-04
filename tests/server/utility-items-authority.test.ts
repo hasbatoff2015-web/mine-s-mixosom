@@ -360,7 +360,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     world.gameplay.whMarks.mark(b.player.id, a.player.id, world.tickNumber);
     const deaths: string[] = [];
     world.events.on('entityDeath', (event) => deaths.push(event.entityId));
-    expect(a.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    expect(a.player.survival.damage(40, 'explosion', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     expect(a.player.inventory.getSlot(0)?.itemId).toBe(ItemId.TotemOfUndying);
     expect(a.player.inventory.offhand).toBeNull();
     expect(a.player.survival.health).toBe(1);
@@ -394,7 +394,7 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     expect(playerState.players?.find((player) => player.id === protectedPlayer.player.id)?.presentation)
       .toMatchObject({ heldItemId: ItemId.DiamondSword, offhandItemId: ItemId.TotemOfUndying });
 
-    expect(protectedPlayer.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    expect(protectedPlayer.player.survival.damage(40, 'explosion', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     world.tick();
     const totemCues = (sink: MemorySink) => sink.payloads.flatMap((payload) =>
       payload.type === 'world_sound' && Array.isArray(payload.sounds)
@@ -422,13 +422,13 @@ describe('utility items server authority', { timeout: 30_000 }, () => {
     a.player.inventory.clear();
     a.player.inventory.setSlot({ section: 'offhand' }, createItemStack(ItemId.TotemOfUndying));
     a.player.selectedSlot = 0;
-    expect(a.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).deathProtected).toBe(true);
+    expect(a.player.survival.damage(40, 'explosion', { ignoreInvulnerability: true }).deathProtected).toBe(true);
     expect(a.player.inventory.offhand).toBeNull();
     const b = add('MainhandOnly');
     b.player.inventory.clear();
     b.player.inventory.setSlot(1, createItemStack(ItemId.TotemOfUndying));
     b.player.selectedSlot = 1;
-    expect(b.player.survival.damage(40, 'fall', { ignoreInvulnerability: true }).killed).toBe(true);
+    expect(b.player.survival.damage(40, 'explosion', { ignoreInvulnerability: true }).killed).toBe(true);
     expect(b.player.inventory.getSlot(1)?.itemId).toBe(ItemId.TotemOfUndying);
     world.tick();
     expect(b.sink.payloads.filter((payload) => (

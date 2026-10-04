@@ -21,6 +21,7 @@ import {
   clamp,
 } from '../core/constants';
 import { clipAabbAxisToWorldBorder, WORLD_BORDER_MAX, WORLD_BORDER_MIN } from '../world/worldBorder';
+import { fallDamageFromDistance } from './fallDamage';
 import type { MoveInput } from '../input/MoveInput';
 import type { VoxelWorld } from '../world/World';
 import {
@@ -390,7 +391,7 @@ export class PlayerController {
         const completedFallDistance = this.fallDistance + actualDrop;
         if (completedFallDistance > 0) {
           this.lastFallDistance = completedFallDistance;
-          fallDamage = Math.max(0, Math.ceil(this.lastFallDistance - 3));
+          fallDamage = fallDamageFromDistance(this.lastFallDistance);
           this.lastFallDamage = fallDamage;
         }
         this.fallDistance = 0;

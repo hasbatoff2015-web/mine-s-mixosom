@@ -11,6 +11,7 @@ const SAND_KEYS = new Set(['sand', 'gravel']);
 const DIRT_KEYS = new Set([
   'dirt', 'grass_block', 'clay', 'snow_block', 'cactus',
   'oak_leaves', 'birch_leaves', 'spruce_leaves',
+  'oak_sapling', 'birch_sapling', 'spruce_sapling',
   'tall_grass', 'fern', 'dandelion', 'poppy', 'oxeye_daisy', 'dead_bush',
   'tnt',
 ]);
