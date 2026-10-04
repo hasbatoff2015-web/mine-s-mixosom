@@ -9,6 +9,7 @@ import {
 } from '../inventory';
 import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import type { GameMode, WorldSummary } from '../save/types';
+import type { ClientSettings } from './clientSettings';
 import type { ChestState, FurnaceState } from '../world/World';
 import { EMPTY_SIGN_LINES, sanitizeSignLines, type SignLines } from '../world/sign';
 import { TextureAtlas } from '../rendering/TextureAtlas';
@@ -33,10 +34,12 @@ import {
 import {
   containerStageSize,
   containerUiScaleWithClose,
+  cursorStackClientPosition,
   MC_MENU_WIDTH,
   menuLogicalHeight,
   menuUiScale,
 } from './containerTheme';
+import { viewportMetrics } from './visualViewport';
 import {
   allCraftingBookEntries,
   inventoryAndGridCounts,
@@ -127,6 +130,7 @@ import {
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
+import { readCloudSetting } from '../input/mobileTouch';
 import {
   attachItemTooltip,
   itemHoverAttributeString,
@@ -244,6 +248,8 @@ export interface HudState {
   absorption?: number;
   effects?: readonly PotionHudEntry[];
   debug?: string;
+  /** "Игроков" plus floored XYZ. Omitted updates leave the previous text. */
+  playInfo?: string;
 }
 
 export interface InventoryContext {
@@ -307,6 +313,8 @@ export class GameUI {
   private hologramPreviewTimer?: number;
   private itemTooltip?: ItemTooltipHandle;
   private cursorStack: ItemStack | null = null;
+  /** Last pointer that can own the carried stack. Touch taps have no later move. */
+  private cursorPointer: { x: number; y: number; pointerType: string } | null = null;
   private craftSlots: Array<ItemStack | null> = [];
   private ghostCraft?: GhostCraftState;
   private recipeBookOpen = false;
@@ -349,7 +357,9 @@ export class GameUI {
   private debugText = '';
   private debugVisible = false;
   private effectsHtml = '';
-  private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75 };
+  private playInfoText = '';
+  private playInfo: HTMLElement;
+  private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75, clouds: true };
   private itemIconResolver?: (itemId: string) => string;
   private onScreenEscape?: () => void;
 
@@ -369,6 +379,7 @@ export class GameUI {
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
+        <div id="play-info" aria-live="polite"></div>
         <div id="offhand-hud" aria-label="Вторая рука"></div>
         <div id="effect-hud" class="hidden"></div>
         <div id="chat" style="${chatChromeStyle()}" data-chat-anchor="top-left" data-chat-open-width="viewport">
@@ -428,6 +439,7 @@ export class GameUI {
       </button>`;
     this.hud = this.root.querySelector('#hud')!;
     this.hotbar = this.root.querySelector('#hotbar')!;
+    this.playInfo = this.root.querySelector('#play-info')!;
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
@@ -455,11 +467,8 @@ export class GameUI {
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
     document.addEventListener('pointermove', (event) => {
-      const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
-      if (cursor) {
-        cursor.style.left = `${event.clientX}px`;
-        cursor.style.top = `${event.clientY}px`;
-      }
+      this.rememberCursorPointer(event);
+      this.syncCursorStackElement();
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -881,6 +890,17 @@ export class GameUI {
     this.bindAction('quit', actions.saveAndQuit);
   }
 
+  /** UI copy of the canonical client settings. Game owns load, clamp, and persist. */
+  adoptClientSettings(settings: ClientSettings): void {
+    this.settings = {
+      volume: settings.volume,
+      sensitivity: settings.sensitivity,
+      renderDistance: settings.renderDistance,
+      fov: settings.fov,
+      clouds: settings.clouds,
+    };
+  }
+
   showSettings(onApply: (settings: typeof this.settings) => void, onControls: () => void, onBack: () => void, overlayWorld = false): void {
     const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
@@ -891,6 +911,7 @@ export class GameUI {
           ${this.settingRange('Чувствительность мыши', 'sensitivity', 0.0007, 0.005, 0.0001, this.settings.sensitivity)}
           ${this.settingRange('Дальность чанков', 'renderDistance', 2, 6, 1, this.settings.renderDistance)}
           ${this.settingRange('Поле зрения', 'fov', 60, 100, 1, this.settings.fov)}
+          <label class="setting-row setting-check"><span><strong>Облака</strong><small>Далёкий слой на небе</small></span><input type="checkbox" name="clouds"${this.settings.clouds ? ' checked' : ''} /></label>
         </div>
         <button class="game-button settings-controls-button" type="button" data-action="controls"><span>Управление</span><small>Посмотреть клавиши и действия</small></button>
         <footer class="menu-footer"><button class="game-button" type="submit">Применить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
@@ -911,6 +932,7 @@ export class GameUI {
         sensitivity: Number(data.get('sensitivity')),
         renderDistance: Number(data.get('renderDistance')),
         fov: Number(data.get('fov')),
+        clouds: readCloudSetting(data.get('clouds')),
       };
       onApply({ ...this.settings });
       onBack();
@@ -926,7 +948,7 @@ export class GameUI {
     this.setScreen(`
       <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
-        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик отвечает за движение, правая зона — за обзор; действия вынесены на отдельные кнопки. Целевая ориентация — landscape.</p></div>
+        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик — движение и бег, прыжок — кнопка, в выживании двойное касание прыжка держит его, в творческом оно включает полёт, приседание — переключатель. Свайп по экрану вращает камеру. Короткое касание бьёт, использует или ставит блок, удержание копает. Удержание лука тоже вращает камеру, стрела летит в прицел. Играть в landscape.</p></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
       </div></section>`, onBack);
     this.bindAction('back', onBack);
@@ -1033,6 +1055,10 @@ export class GameUI {
       this.effectsHtml = effectsHtml;
       this.effectHud.innerHTML = effectsHtml;
       this.effectHud.classList.toggle('hidden', effects.length === 0);
+    }
+    if (state.playInfo !== undefined && state.playInfo !== this.playInfoText) {
+      this.playInfoText = state.playInfo;
+      this.playInfo.textContent = state.playInfo;
     }
   }
 
@@ -2019,7 +2045,7 @@ export class GameUI {
     this.itemTooltip = undefined;
     this.resetOverlayModal();
     const stage = containerStageSize('craft', false);
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const scale = this.containerScale(stage.width, stage.height);
     this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, stage.width)}">
         <div class="mc-panel mc-craft-panel" data-container-kind="inventory" data-craft-screen>
@@ -2098,13 +2124,14 @@ export class GameUI {
       && this.modal
       && patchCreativeDynamic(this.modal, { hotbar, inventory, cursor, tab: this.creativeTab })) {
       this.syncCreativeTabs();
+      this.syncCursorStackElement();
       return;
     }
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
     const stage = containerStageSize('creative', false);
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const scale = this.containerScale(stage.width, stage.height);
     const catalog = obtainableItems();
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
@@ -2128,6 +2155,7 @@ export class GameUI {
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.bindContainerChrome(context);
+    this.syncCursorStackElement();
   }
 
   private syncCreativeTabs(): void {
@@ -2145,7 +2173,7 @@ export class GameUI {
     const bookOpen = this.isRecipeBookOpen(context.kind);
     const showBook = this.showsRecipeBook(context);
     const stage = containerStageSize(context.kind, bookOpen && showBook);
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, stage.width, stage.height);
+    const scale = this.containerScale(stage.width, stage.height);
     const body = this.containerBodyHtml(context);
     const player = this.playerInventoryHtml(context, context.kind !== 'inventory');
     const recipe = showBook ? this.recipeBookHtml(context) : '';
@@ -2156,6 +2184,7 @@ export class GameUI {
       && patchContainerDynamic(this.modal, { body, player, recipeGrid: this.recipeGridHtml(context), cursor })) {
       this.applyContainerScale(scale, stage.width);
       this.syncRecipeBookChrome(context);
+      this.syncCursorStackElement();
       return;
     }
     this.itemTooltip?.dispose();
@@ -2175,6 +2204,31 @@ export class GameUI {
       <div id="cursor-stack">${cursor}</div>`;
     this.bindContainerChrome(context);
     this.bindRecipeBookControls(context);
+    this.syncCursorStackElement();
+  }
+
+  private containerScale(logicalWidth: number, logicalHeight: number): number {
+    const { width, height } = viewportMetrics();
+    return containerUiScaleWithClose(width, height, logicalWidth, logicalHeight);
+  }
+
+  private menuScale(logicalWidth: number, logicalHeight: number): number {
+    const { width, height } = viewportMetrics();
+    return menuUiScale(width, height, logicalWidth, logicalHeight);
+  }
+
+  private rememberCursorPointer(event: { clientX: number; clientY: number; pointerType: string }): void {
+    this.cursorPointer = { x: event.clientX, y: event.clientY, pointerType: event.pointerType };
+  }
+
+  /** Places the carried stack on the pointer that created it, without waiting for pointermove. */
+  private syncCursorStackElement(): void {
+    const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
+    const pointer = this.cursorPointer;
+    if (!cursor || !pointer) return;
+    const position = cursorStackClientPosition(pointer.x, pointer.y, pointer.pointerType);
+    cursor.style.left = `${position.left}px`;
+    cursor.style.top = `${position.top}px`;
   }
 
   private applyContainerScale(scale: number, logicalWidth: number): void {
@@ -2194,6 +2248,7 @@ export class GameUI {
       else context.onClose();
     });
     this.modal!.addEventListener('pointerdown', (event) => {
+      this.rememberCursorPointer(event);
       const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-creative-tab]');
       if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
         event.preventDefault();
@@ -2865,7 +2920,7 @@ export class GameUI {
           : state.screen === 'manage' ? 236
             : state.screen === 'sell-confirm' ? 204
               : 218;
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
@@ -3176,7 +3231,7 @@ export class GameUI {
     const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
       : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
         : 220;
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 220, logicalHeight);
+    const scale = this.containerScale(220, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     const modal = this.resetOverlayModal();
@@ -3740,7 +3795,7 @@ export class GameUI {
     const logicalHeight = state.screen === 'pick-item' ? 222
       : state.screen === 'trade' ? 248
         : 248;
-    const scale = containerUiScaleWithClose(window.innerWidth, window.innerHeight, 176, logicalHeight);
+    const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
@@ -3871,7 +3926,7 @@ export class GameUI {
     const keep = this.captureMenuInputFocus();
     const logicalWidth = MC_MENU_WIDTH;
     const logicalHeight = menuLogicalHeight(state.screen);
-    const scale = menuUiScale(window.innerWidth, window.innerHeight, logicalWidth, logicalHeight);
+    const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     const modal = this.resetOverlayModal();
@@ -4087,7 +4142,7 @@ export class GameUI {
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureTradeInputFocus();
-    const scale = menuUiScale(window.innerWidth, window.innerHeight, MC_MENU_WIDTH, 248);
+    const scale = this.menuScale(MC_MENU_WIDTH, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();

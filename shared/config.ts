@@ -18,8 +18,12 @@ export const LOCAL_SERVER_PRESETS = {
 } as const;
 
 export type LocalServerName = keyof typeof LOCAL_SERVER_PRESETS;
-/** v3: required targetBlockId on targeted actions; commandSeq names action pose context. */
-export const PROTOCOL_VERSION = 3;
+/**
+ * v4: movementEpoch; exact multi-range movement skips (`queueSkippedRanges`);
+ * one contiguous overload suffix when that list is full; prediction discards both.
+ * v3 joins are rejected.
+ */
+export const PROTOCOL_VERSION = 4;
 
 /** Max JSON text payload accepted from a client. */
 export const MAX_CLIENT_MESSAGE_BYTES = 16_384;

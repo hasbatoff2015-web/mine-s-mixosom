@@ -17,6 +17,8 @@ const SLOT_SHIFT = Math.ceil(Math.log2(VOLUME));
 const SLOT_SIZE = 2 ** SLOT_SHIFT;
 const SLOT_MASK = SLOT_SIZE - 1;
 const SNAPSHOT_PAGE_SIZE = 4096;
+const SNAPSHOT_PAGE_SHIFT = Math.round(Math.log2(SNAPSHOT_PAGE_SIZE));
+const SNAPSHOT_PAGE_MASK = SNAPSHOT_PAGE_SIZE - 1;
 const RETAINED_FLAG_BUFFERS = 16;
 const DX = [1, -1, 0, 0, 0, 0] as const;
 const DZ = [0, 0, 0, 0, 1, -1] as const;
@@ -42,6 +44,8 @@ export interface LightFrameStats {
   ms: number; maxSlice: number; dirtyLightChunks: number;
 }
 export const lightEngineStats = { skyRecomputes: 0, blockPropagations: 0 };
+/** Region floods restarted while one was already running. A healthy edit queue stays near zero. */
+export const lightSchedulerStats = { restarts: 0 };
 export const lightFrameStats: LightFrameStats = {
   jobsActive: 0, jobsPending: 0, columns: 0, nodes: 0, ms: 0, maxSlice: 0, dirtyLightChunks: 0,
 };
@@ -114,6 +118,13 @@ interface LightState {
   readonly touched: Map<Chunk, Snapshot>;
   emitters: Array<readonly [number, number, number]>;
   emitterCursor: number;
+  /**
+   * Blocks changed after the active region or add-emitter flood started.
+   * The flood keeps reading these ids so its commit matches one block view.
+   * Sparse: one entry per edited cell, not a second chunk buffer.
+   */
+  blockView?: Map<Chunk, Map<number, number>>;
+  emissionView?: Map<Chunk, Map<number, number>>;
   snapshotBytes: number;
   peakSnapshotBytes: number;
   peakFlagsBytes: number;
@@ -155,6 +166,64 @@ function entryFor(state: LightState, chunk: Chunk): Entry {
 function loadedChunk(world: VoxelWorld, x: number, z: number): Chunk | undefined {
   return world.chunks.get(chunkKey(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE)));
 }
+/** Block id the active flood is allowed to see. Empty view means the live world. */
+function viewedBlock(state: LightState | undefined, chunk: Chunk, index: number): number {
+  const view = state?.blockView;
+  if (view === undefined) return chunk.blocks[index]!;
+  const pinned = view.get(chunk)?.get(index);
+  return pinned !== undefined ? pinned : chunk.blocks[index]!;
+}
+function clearBlockView(state: LightState): void {
+  state.blockView = undefined;
+  state.emissionView = undefined;
+}
+/**
+ * Pin the pre-edit block while a region or add-emitter flood is already running.
+ * Later edits of the same cell keep the first pin (the id at flood start).
+ * The in-progress flood commits that one view. A later job reads the live world.
+ */
+export function noteLightingBlockOverride(
+  world: VoxelWorld,
+  x: number,
+  y: number,
+  z: number,
+  blockId: number,
+  emission?: number,
+): void {
+  const state = states.get(world);
+  if (!state || (state.owner !== LIGHT_FLOOD_REGION && state.owner !== LIGHT_FLOOD_ADD_EMITTER)) return;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  const view = state.blockView ?? (state.blockView = new Map());
+  let page = view.get(chunk);
+  if (!page) {
+    page = new Map();
+    view.set(chunk, page);
+  }
+  if (!page.has(index)) page.set(index, blockId);
+  if (emission === undefined) return;
+  const emissions = state.emissionView ?? (state.emissionView = new Map());
+  let levels = emissions.get(chunk);
+  if (!levels) {
+    levels = new Map();
+    emissions.set(chunk, levels);
+  }
+  if (!levels.has(index)) levels.set(index, emission);
+}
+export function lightingBlockOverrideCount(world: VoxelWorld): number {
+  const view = states.get(world)?.blockView;
+  if (!view) return 0;
+  let count = 0;
+  for (const page of view.values()) count += page.size;
+  return count;
+}
+/** The region job whose working arrays are mid-flood, if any. */
+export function activeRegionLightJob(world: VoxelWorld): PendingLightJob | undefined {
+  const state = states.get(world);
+  if (!state || state.owner !== LIGHT_FLOOD_REGION) return undefined;
+  return state.job;
+}
 function touch(state: LightState, entry: Entry, index: number, channel: 'sky' | 'block'): void {
   const chunk = entry.chunk;
   let snapshot = entry.snapshot ?? state.touched.get(chunk);
@@ -167,6 +236,8 @@ function touch(state: LightState, entry: Entry, index: number, channel: 'sky' | 
     const pages = snapshot[channel] ?? (snapshot[channel] = []);
     const page = Math.floor(index / SNAPSHOT_PAGE_SIZE);
     if (!pages[page]) {
+      // First mutation of this page freezes the committed logical light. Mesh
+      // reads that copy until the job commits; the working arrays may be partial.
       const values = channel === 'sky' ? chunk.skyLight : chunk.blockLight;
       pages[page] = values.slice(page * SNAPSHOT_PAGE_SIZE, (page + 1) * SNAPSHOT_PAGE_SIZE);
       if (channel === 'sky') {
@@ -243,6 +314,9 @@ export function peekLightTouched(world?: VoxelWorld): ReadonlySet<Chunk> {
 export function resetLightEngineStats(): void {
   lightEngineStats.skyRecomputes = 0;
   lightEngineStats.blockPropagations = 0;
+}
+export function resetLightSchedulerStats(): void {
+  lightSchedulerStats.restarts = 0;
 }
 export function resetLightFrameStats(): void {
   for (const key of Object.keys(lightFrameStats) as Array<keyof LightFrameStats>) lightFrameStats[key] = 0;
@@ -321,7 +395,7 @@ function floodNode(state: LightState): void {
     const at = cell & SLOT_MASK;
     if (!inside(state, target, at, sky)) continue;
     if (sky && !target.chunk.skyReady && !state.region) continue;
-    const id = target.chunk.blocks[at]!;
+    const id = viewedBlock(state, target.chunk, at);
     if (sky ? FILTER[id] === 16 : OCCLUDES[id] && !EMISSION[id]) continue;
     const next = level - 1 - (sky ? FILTER[id]! : 0);
     if (sky && next < 15 - LATERAL_SKY_RADIUS) continue;
@@ -332,18 +406,19 @@ function floodNode(state: LightState): void {
   }
 }
 function emissionAt(state: LightState, entry: Entry, index: number): number {
-  const id = entry.chunk.blocks[index]!;
-  return id === BlockId.Furnace
-    ? state.world.blockEmissionAt(entry.chunk.x * CHUNK_SIZE + index % CHUNK_SIZE, Math.floor(index / COLUMNS),
-      entry.chunk.z * CHUNK_SIZE + Math.floor(index / CHUNK_SIZE) % CHUNK_SIZE)
-    : EMISSION[id]!;
+  const id = viewedBlock(state, entry.chunk, index);
+  if (id !== BlockId.Furnace) return EMISSION[id]!;
+  const pinned = state.emissionView?.get(entry.chunk)?.get(index);
+  if (pinned !== undefined) return pinned;
+  return state.world.blockEmissionAt(entry.chunk.x * CHUNK_SIZE + index % CHUNK_SIZE, Math.floor(index / COLUMNS),
+    entry.chunk.z * CHUNK_SIZE + Math.floor(index / CHUNK_SIZE) % CHUNK_SIZE);
 }
 function fillColumn(chunk: Chunk, x: number, z: number, state?: LightState): void {
   let sky = 15;
   let filterHeight = 0;
   const entry = state ? entryFor(state, chunk) : undefined;
   for (let index = chunk.scanMaxY() * COLUMNS + z * CHUNK_SIZE + x; index >= 0; index -= COLUMNS) {
-    const attenuation = FILTER[chunk.blocks[index]!]!;
+    const attenuation = FILTER[viewedBlock(state, chunk, index)]!;
     if (attenuation > 0 && filterHeight === 0) filterHeight = Math.floor(index / COLUMNS) + 1;
     if (attenuation === 16) sky = 0;
     if (state && entry) write(state, entry, index, sky, 'sky');
@@ -383,7 +458,7 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
     boundary ||= state.region ? !inside(state, other, at, true) : other.chunk !== chunk;
   }
   for (let index = column; index < Math.min(WORLD_HEIGHT, maxY) * COLUMNS; index += COLUMNS) {
-    const id = chunk.blocks[index]!;
+    const id = viewedBlock(state, chunk, index);
     if (FILTER[id] === 16) continue;
     let value = chunk.skyLightAtIndex(index);
     if (value <= 1 && !boundary) continue;
@@ -400,7 +475,7 @@ function seedSkyColumn(state: LightState, entry: Entry, column: number): void {
         value = incoming;
         push(state, entry, index);
       }
-      if (value > 1 && value - 1 - FILTER[other.chunk.blocks[at]!]! > other.chunk.skyLightAtIndex(at)) push(state, entry, index);
+      if (value > 1 && value - 1 - FILTER[viewedBlock(state, other.chunk, at)]! > other.chunk.skyLightAtIndex(at)) push(state, entry, index);
     }
   }
 }
@@ -420,7 +495,7 @@ function seedBlockColumn(state: LightState, entry: Entry, column: number): void 
   const maxZ = state.region?.maxZ ?? (entry.chunk.z + 1) * CHUNK_SIZE - 1;
   for (let y = minY; y <= maxY; y += 1) {
     const index = y * COLUMNS + column;
-    const id = entry.chunk.blocks[index]!;
+    const id = viewedBlock(state, entry.chunk, index);
     if ((EMISSION[id] || id === BlockId.Furnace) && entry.chunk.blockLight[index]! > 0) push(state, entry, index);
     if (OCCLUDES[id] && !EMISSION[id]) continue;
     if (x !== minX && x !== maxX && z !== minZ && z !== maxZ && y !== minY && y !== maxY) continue;
@@ -469,6 +544,7 @@ function finishWork(state: LightState): void {
   state.phase = 'done';
   state.emitters = [];
   state.emitterCursor = 0;
+  clearBlockView(state);
 }
 function advancePhase(state: LightState): void {
   state.cursor = 0;
@@ -620,6 +696,7 @@ export function relightRegion(world: VoxelWorld, region: LightRegion, sky = true
   const started = performance.now();
   const state = stateFor(world);
   if (state.owner !== LIGHT_FLOOD_REGION || !job || state.job !== job) {
+    if (state.owner === LIGHT_FLOOD_REGION) lightSchedulerStats.restarts += 1;
     startWork(state, LIGHT_FLOOD_REGION, sky, block, undefined, job ?? { region, sky, block, origin: 'other' });
     if (!sky && !block) state.phase = 'done';
   }
@@ -644,14 +721,16 @@ export function addBlockLightEmitters(world: VoxelWorld, emitters: ReadonlyArray
     state.entryMap.clear();
     state.targets = [];
     state.region = undefined;
+    state.job = undefined;
     state.initial = undefined;
+    clearBlockView(state);
     state.owner = LIGHT_FLOOD_ADD_EMITTER;
     state.phase = 'block-flood';
     state.channel = 'block';
-    state.emitters = [];
+    // Copy: the caller may clear its queue. Sources that arrive later are a new batch.
+    state.emitters = emitters.slice();
     state.emitterCursor = 0;
   }
-  for (const emitter of emitters) state.emitters.push(emitter);
   const done = continueWork(state, deadline);
   recordSlice(started);
   return done;
@@ -660,6 +739,91 @@ export function continuePendingLight(world: VoxelWorld, job: PendingLightJob, de
   lightFrameStats.jobsActive += 1;
   return relightRegion(world, job.region, job.sky, job.block, deadline, job);
 }
+/** True only when this chunk has lazy snapshot pages the mesher must prefer. */
+export function chunkNeedsCommittedMeshLight(world: VoxelWorld, chunk: Chunk): boolean {
+  return committedPages(world, chunk, 'sky') !== undefined || committedPages(world, chunk, 'block') !== undefined;
+}
+
+function committedPages(world: VoxelWorld, chunk: Chunk, channel: 'sky' | 'block'): LightPages | undefined {
+  if (!chunk.lightPending || !chunk.lightingReady) return undefined;
+  const snapshot = states.get(world)?.touched.get(chunk);
+  if (!snapshot || snapshot.initial) return undefined;
+  return snapshot[channel];
+}
+
+/** Last committed channel byte, or undefined when this page has not been copied yet. Zero is a real level. */
+function committedLightAt(world: VoxelWorld, chunk: Chunk, index: number, channel: 'sky' | 'block'): number | undefined {
+  const pages = committedPages(world, chunk, channel);
+  const page = pages?.[index >>> SNAPSHOT_PAGE_SHIFT];
+  return page ? page[index & SNAPSHOT_PAGE_MASK] : undefined;
+}
+
+export interface MeshLightSample {
+  skyAt(index: number): number;
+  blockAt(index: number): number;
+}
+
+/**
+ * Per-chunk light reader for one mesh build.
+ * Idle chunks stay on the live arrays. A chunk inside an uncommitted flood
+ * reads lazy snapshot pages, then the live array for pages the job has not touched.
+ * Initial unlit floods (`snapshot.initial`) are not a committed view.
+ */
+export function bindMeshLightSample(world: VoxelWorld, chunk: Chunk): MeshLightSample {
+  const skyPages = committedPages(world, chunk, 'sky');
+  const blockPages = committedPages(world, chunk, 'block');
+  return {
+    skyAt: skyPages
+      ? (index) => skyPages[index >>> SNAPSHOT_PAGE_SHIFT]?.[index & SNAPSHOT_PAGE_MASK] ?? chunk.skyLightAtIndex(index)
+      : (index) => chunk.skyLightAtIndex(index),
+    blockAt: blockPages
+      ? (index) => blockPages[index >>> SNAPSHOT_PAGE_SHIFT]?.[index & SNAPSHOT_PAGE_MASK] ?? chunk.blockLight[index]!
+      : (index) => chunk.blockLight[index]!,
+  };
+}
+
+/** Mesh/visual sky. Unchanged pages and settled chunks match `skyLightAtIndex`. */
+export function readMeshSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0) return 0;
+  if (y >= WORLD_HEIGHT) return 15;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return 0;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  return committedLightAt(world, chunk, index, 'sky') ?? chunk.skyLightAtIndex(index);
+}
+
+/** Mesh/visual block light. Simulation `getBlockLight` still sees the working flood. */
+export function readMeshBlockLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0 || y >= WORLD_HEIGHT) return 0;
+  const chunk = loadedChunk(world, x, z);
+  if (!chunk) return 0;
+  const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+  return committedLightAt(world, chunk, index, 'block') ?? chunk.blockLight[index]!;
+}
+
+function visualSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0) return 0;
+  if (y >= WORLD_HEIGHT) return 15;
+  const chunk = loadedChunk(world, x, z);
+  if (chunk) {
+    const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+    const stable = committedLightAt(world, chunk, index, 'sky');
+    if (stable !== undefined) return stable;
+  }
+  return getSkyLight(world, x, y, z);
+}
+
+function visualBlockLight(world: VoxelWorld, x: number, y: number, z: number): number {
+  if (y < 0 || y >= WORLD_HEIGHT) return 0;
+  const chunk = loadedChunk(world, x, z);
+  if (chunk) {
+    const index = Chunk.index(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE));
+    const stable = committedLightAt(world, chunk, index, 'block');
+    if (stable !== undefined) return stable;
+  }
+  return getBlockLight(world, x, y, z);
+}
+
 export function getSkyLight(world: VoxelWorld, x: number, y: number, z: number): number {
   if (y < 0) return 0;
   if (y >= WORLD_HEIGHT) return 15;
@@ -710,13 +874,13 @@ export function lightingMemoryUsage(world: VoxelWorld): {
     peakFlagsBytes: state?.peakFlagsBytes ?? 0, peakQueueBytes: state?.peakQueueBytes ?? 0 };
 }
 export function sampleVoxelLightLevels(world: VoxelWorld, x: number, y: number, z: number): { sky: number; block: number } {
-  let sky = getSkyLight(world, x, y, z);
-  let block = getBlockLight(world, x, y, z);
+  let sky = visualSkyLight(world, x, y, z);
+  let block = visualBlockLight(world, x, y, z);
   if (sky || block || !getBlockDefinition(world.getBlock(x, y, z, false)).occludesFaces) return { sky, block };
   for (let dir = 0; dir < 6; dir += 1) {
     const ny = y + (dir === 2 ? 1 : dir === 3 ? -1 : 0);
-    sky = Math.max(sky, getSkyLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
-    block = Math.max(block, getBlockLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
+    sky = Math.max(sky, visualSkyLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
+    block = Math.max(block, visualBlockLight(world, x + DX[dir]!, ny, z + DZ[dir]!));
   }
   return { sky, block };
 }

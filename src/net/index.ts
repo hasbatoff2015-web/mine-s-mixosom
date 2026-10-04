@@ -39,6 +39,7 @@ export {
   comparableExtraTicks,
   consumeAckedCommands,
   discardCompactedPrediction,
+  discardSkippedPredictions,
   consumeOldestPredTicks,
   extraAssignSite,
   overwriteLatestSlot,

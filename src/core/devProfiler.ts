@@ -38,6 +38,10 @@ export interface PerfSnapshot {
   readonly lightFrameMs: number;
   readonly lightMaxSlice: number;
   readonly dirtyLightChunks: number;
+  readonly lightOwner?: string;
+  readonly pendingMeshChunks?: number;
+  readonly emitterLine?: string;
+  readonly editLightLine?: string;
   readonly dirtyChunks: number;
   readonly blockMutations: number;
   readonly mobCount: number;
@@ -149,6 +153,10 @@ export class DevProfiler {
     lightFrameMs?: number;
     lightMaxSlice?: number;
     dirtyLightChunks?: number;
+    lightOwner?: string;
+    pendingMeshChunks?: number;
+    emitterLine?: string;
+    editLightLine?: string;
     dirtyChunks: number;
     blockMutations: number;
     mobCount: number;
@@ -180,6 +188,10 @@ export class DevProfiler {
       lightFrameMs: world.lightFrameMs ?? 0,
       lightMaxSlice: world.lightMaxSlice ?? 0,
       dirtyLightChunks: world.dirtyLightChunks ?? 0,
+      lightOwner: world.lightOwner,
+      pendingMeshChunks: world.pendingMeshChunks,
+      emitterLine: world.emitterLine,
+      editLightLine: world.editLightLine,
       dirtyChunks: world.dirtyChunks,
       blockMutations: world.blockMutations,
       mobCount: world.mobCount,
@@ -226,7 +238,9 @@ export class DevProfiler {
       `TICK  ${snapshot.tick.averageMs.toFixed(2)} / p95 ${snapshot.tick.p95Ms.toFixed(2)}   RENDER ${snapshot.renderMs.toFixed(2)}`,
       simLine,
       `JOBS  gen ${snapshot.generateJobs} mesh ${snapshot.meshJobs} waitG ${snapshot.waitingGenerate} waitM ${snapshot.waitingMesh} light ${snapshot.lightingJobs} dirty ${snapshot.dirtyChunks} mut ${snapshot.blockMutations}`,
-      `LIGHT jobs ${snapshot.lightPending} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | frame ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks}`,
+      `LIGHT jobs ${snapshot.lightPending} owner ${snapshot.lightOwner ?? 'idle'} | nodes ${snapshot.lightNodes} | cols ${snapshot.lightColumns} | slice ${snapshot.lightFrameMs.toFixed(1)} ms | maxSlice ${snapshot.lightMaxSlice.toFixed(1)} | dirtyL ${snapshot.dirtyLightChunks} | meshPend ${snapshot.pendingMeshChunks ?? 0}`,
+      snapshot.editLightLine ?? '',
+      snapshot.emitterLine ?? '',
       meshWaitLine,
       `CHUNK ${chunkHud}`,
       `ENT   mobs ${snapshot.mobCount} update ${snapshot.entityUpdateMs.toFixed(2)} ms   HEAP ${heap}`,
@@ -239,4 +253,23 @@ export class DevProfiler {
     this.overlay?.remove();
     this.overlay = undefined;
   }
+}
+
+export function formatEditLightLine(stats: {
+  queued: number;
+  active: boolean;
+  oldestAgeMs: number;
+  commits: number;
+  restarts: number;
+  merges: number;
+  emitterQueued?: number;
+  emitterActive?: boolean;
+  emitterOldestAgeMs?: number;
+  emitterCommits?: number;
+}): string {
+  const active = stats.active ? ' active' : '';
+  const base = `EDITQ ${stats.queued}${active} age ${Math.round(stats.oldestAgeMs)}ms commits ${stats.commits} restart ${stats.restarts} merge ${stats.merges}`;
+  if (stats.emitterQueued === undefined && stats.emitterCommits === undefined) return base;
+  const emitActive = stats.emitterActive ? ' active' : '';
+  return `${base} | EMITQ ${stats.emitterQueued ?? 0}${emitActive} age ${Math.round(stats.emitterOldestAgeMs ?? 0)}ms commits ${stats.emitterCommits ?? 0}`;
 }

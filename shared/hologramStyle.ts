@@ -54,6 +54,9 @@ export const HOLOGRAM_BG_HEIGHT_MAX = Number(
 );
 export const HOLOGRAM_BG_SIZE_STEP = 0.01;
 export const HOLOGRAM_BACKGROUND_ENABLED_DEFAULT = true;
+/** Spawn hologram plate. The renderer uses this on a mesh; chat bubbles fill the same tone on their canvas. */
+export const HOLOGRAM_BACKGROUND_COLOR_HEX = 0x000000;
+export const HOLOGRAM_BACKGROUND_OPACITY = 0.35;
 
 export const HOLOGRAM_TIMER_DURATION_MIN = 1;
 export const HOLOGRAM_TIMER_DURATION_MAX = 86_400;

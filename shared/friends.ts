@@ -10,6 +10,16 @@ export const FRIENDS_NOT_FRIEND_ERROR = 'Этот игрок не в списк�
 export const FRIENDS_OFFLINE_ERROR = 'Игрок не в сети.';
 export const FRIENDS_TELEPORT_DENIED_ERROR = 'Этот игрок запретил телепортацию друзей.';
 export const FRIENDS_EMPTY_NAME_ERROR = 'Введите ник игрока.';
+
+/** System chat line sent to online friends when a player actually comes online. */
+export function friendJoinChatText(name: string): string {
+  return `${name} зашел в игру.`;
+}
+
+/** System chat line sent to online friends when a player actually goes offline. */
+export function friendLeaveChatText(name: string): string {
+  return `${name} вышел из игры.`;
+}
 export const FRIENDS_SELF_CARD_LABEL = 'Это вы';
 export const FRIENDS_ALREADY_LABEL = 'Уже в друзьях';
 export const FRIENDS_OUTGOING_LABEL = 'Заявка отправлена';

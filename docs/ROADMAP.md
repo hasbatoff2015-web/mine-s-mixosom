@@ -3,6 +3,114 @@
 ## 2026-09-29: saplings, flint, silent glass steps, fall damage, chat Tab
 
 Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and add a 0.2 sapling. Gravel is 0.1 flint or gravel. Growth uses the existing tree shape after two real minutes stored on the block state. Glass-group footsteps are silent. Fall damage is halved once and cannot kill. The chat close sprite says TAB and Tab still closes chat. Main HUD places TAB and CHAT ON with the editor coordinates from a 2560×1279 viewport (`#chat-close` right -6px / top 113.3px / 166.78×159.38, `#chat-visibility` right 7.61px / top 255.8px / 137.78×124.8).
+## 2026-10-04: mobile flight descend
+
+- [x] Ground crouch, including grounded creative, stays a toggle.
+- [x] Creative Flight crouch is momentary. Releasing or cancelling the finger stops descend.
+- [x] A ground latch cannot descend, and it is cleared when flight starts. Landing does not turn the in-air press into a crouch latch.
+- [x] The existing `descend` bit stays server-authoritative. Compaction keeps the release.
+- [ ] Owner QA on a phone: flight descend tap, hold, release, and crouch-then-fly.
+
+## 2026-10-04: jump lock vs Creative Flight
+
+- [x] Survival double-tap still latches jump. Creative double-tap toggles flight and does not latch.
+- [x] Switching gamemode clears the latch immediately. Creative does not leave a tap that survival can inherit.
+- [x] Auto-jump and the latch do not arm Creative Flight. Two physical presses do. Desktop double Space is unchanged.
+- [x] The manual edge travels on the input command. Server and prediction use it. Replay of a held press does not toggle twice.
+- [ ] Owner QA on a phone: survival latch, creative flight double-tap, auto-jump then one jump tap.
+
+## 2026-10-03: mobile polish — bow, inventory, jump, look
+
+- [x] Cloud drift is exactly 4× the previous 0.16 blocks/second. World lock is unchanged.
+- [x] Sun and moon are alpha-cutout, so world geometry covers them. Clouds still draw afterwards.
+- [x] A mobile bow draw rotates the camera and releases through the center crosshair. Mining and food still use the finger ray.
+- [x] Container UI has one viewport scale. A creative tap places the cursor stack on the pointer immediately.
+- [x] Jump and crouch sit further right. Grounded auto-jump works in survival and creative. Double-tap jump latches. Mobile look is 2× the old touch baseline. Page zoom is blocked.
+- [ ] Owner QA on a phone: distant tree over the sun, bow while dragging, inventory size, double-tap jump, pinch zoom.
+
+## 2026-10-03: pixel sun, camera-locked sky, light distance haze
+
+- [x] Sun is a 16×16 nearest quad, 6.4 units, same depth order as the moon. The moon texture is unchanged.
+- [x] Sun and moon offsets come from the render camera. `CELESTIAL_DISTANCE` keeps the old `(70 cos, 70 sin, 15)` orbit.
+- [x] Directional light uses `sunDirection * 100` and an origin target. Intensity formulas are unchanged.
+- [x] Distance fog blend at the far chunk corner is 12% for render distances 2, 4, and 8.
+- [ ] Owner QA: run under the sun and the moon, first and third person, and check a forest at the render-distance edge by day and night.
+
+## 2026-10-03: cloud field, night sky, larger touch controls
+
+- [x] Cloud mask is a 512×512 two-scale field, 6.29% coverage, 40 components, large empty sectors. No full-width body stamp.
+- [x] Cloud plane is 6144 blocks at `cameraY + 128`. Edge elevation is 2.39°. Outer 14% fades. Drift stays 0.16 blocks/second and world-locked.
+- [x] Day zenith is saturated blue. Visual night is already night at tick 13000. Fog keeps the old curve and does not get darker. Gameplay daylight formulas are unchanged.
+- [x] Stars are two point layers. The moon is a 16×16 billboard. Sun and moon still do not write depth.
+- [x] Coarse stick is 124/116/108 px with travel capped at 36 px. Actions are 72/68/64 px, shifted left and up together. Inventory gap stays at least 20 px.
+- [ ] Owner QA on a phone: stick travel, jump/crouch stack, `/time night` stars, clouds to the horizon, tree in front of a cloud.
+
+## 2026-10-03: vertical actions, larger hotbar, tileable clouds, directional sunset
+
+- [x] Jump sits directly above crouch. Same center X, shared action size and gap. No diagonal offset.
+- [x] Coarse hotbar uses one clamp and stays 42px at 844×390 and 40px at 800×360. Inventory keeps the 20px mirror and a pixel backpack.
+- [x] Renderer and camera use `viewportMetrics()`, the same visual viewport as `#app`.
+- [x] Cloud mask is one 256×256 lobe tile, 11.71% coverage, 0.16 blocks/second, `cameraY + 96`. Sun and moon do not write depth.
+- [x] Sunset warmth is stronger toward the sun. Fog uses the milder horizon.
+- [ ] Owner QA on a phone: vertical buttons, larger hotbar, backpack, browser-bar resize, cloud drift, sun behind a cloud, tree in front, sunset vs opposite horizon.
+
+## 2026-10-02: mobile HUD root cause, retarget, clouds, sunset
+
+- [x] `#app` tracks `visualViewport` / `100dvh` so real-phone bottom anchors are not the tall `100vh` layout viewport.
+- [x] Play-info is the bottom-left corner. The joystick is above it and shifted right. Inventory mirrors the offhand 20px gap on the right of the hotbar. Jump and crouch are bottom-right.
+- [x] In-game menus keep the desktop grid and type. Short screens only zoom `.mc-stage`.
+- [x] Hold starts at the current finger. Mining re-aims every tick. Bow release keeps the last touch aim until it is sampled.
+- [x] Cloud V offset subtracts camera Z. The layer stays above the world and the camera. Drift is 0.35 blocks/second.
+- [x] Sunset band is a tight saturated horizon stripe. Daylight and sunlight formulas are unchanged.
+- [ ] Owner QA on a real phone: browser bars shown and hidden, menus, mine-then-drag, bow release, run on X and on Z, sunrise and sunset.
+
+## 2026-10-02: mobile hold aim, buttons, visible clouds
+
+- [x] `pointercancel` does not become a tap. A cancelled hold releases mining or a drawn use and does not press again.
+- [x] A mining hold follows the finger. The camera stays put. Existing target-key mining retargets.
+- [x] Bow, food and milk hold as `use-hold` over a block or a player. Milk is not a tap-use tool. Placement does not require a breakable face.
+- [x] Touch crouch also sets creative `descend`.
+- [x] Jump, crouch and inventory sit in the bottom-right cluster. The top-right stays `#hud-corner`.
+- [x] Gameplay chrome does not select text. Chat and text fields still do.
+- [x] Play-info is bottom-left on desktop, above the stick on mobile, with coordinates on one line.
+- [x] Clouds are one plane. The sky fragment no longer draws them. The checkbox hides the plane.
+- [ ] Owner manual QA on a real phone: hold-mine then slide to the next block, bow/food hold, creative down, long-press callout, browser-bar resize.
+
+## 2026-10-02: mobile controls, sky gradient, play-info HUD
+
+- [x] Touch chrome only for `(pointer: coarse)`. Horizontal hotbar via flex nowrap and a definite `--hotbar-slot`.
+- [x] Jump is momentary, crouch toggles and highlights, world tap/hold/swipe share the existing attack, use and mine intents.
+- [x] Mobile auto-jump arms the next `jump` bit only. Creative flight is unchanged.
+- [x] One sky-dome draw: day, dawn, dusk, night, stars after sunset. Clouds moved to a separate plane in the follow-up above.
+- [x] Compact online + floored coordinate HUD on desktop and mobile.
+- [ ] Owner manual QA on a real phone remains open; see the follow-up checklist.
+
+## 2026-09-30: add-emitter fairness during edits
+
+- [x] Region edits and pending add-only emitters both make progress while mining continues. Fairness is at job boundaries. Budget stays 2 ms.
+- [x] An in-progress add-emitter flood commits one pinned block view. Newer sources wait for the next batch.
+- [x] Tests: torch and lantern during a 20 TPS stream, a wall edit mid-flood, torch place/break, and rapid source churn.
+- [ ] Owner manual QA on DEV: place a torch or lantern while holding LMB, and confirm the new light appears before mining stops.
+
+## 2026-09-30: continuous edit lighting queue
+
+- [x] Remove the 80 ms quiet hold that starved region floods while edits arrived every 50 ms.
+- [x] Spatial queue: merge overlapping regions, keep distant edits apart, finish the active flood before the next one, pin mid-flood block edits.
+- [x] Tests for a 20 TPS stream at 60 FPS and 30 FPS, borders, coalescing, and committed mesh light across a superseding edit.
+- [ ] Owner manual QA on DEV: hold LMB 5–10 s and confirm light updates before release, plus roof, emitters, and `?perf=1` `EDITQ`.
+
+## 2026-09-30: lighting flicker and emitter audit
+
+- [x] Urgent geometry updates while a sliced flood is open, and the mesh reads last committed snapshot pages instead of the partial working arrays.
+- [x] Regression coverage for emitter remove/add, sky hole, borders, diagonal, high Y, edit burst, no-op relight, memory, and the initial unlit gate.
+- [x] DEV `?perf=1` emitter census and a Node CPU many-emitter benchmark. No global brightness change and no spawn-block edits.
+- [ ] Owner manual QA on DEV: rapid mining, emitter add/remove, roof, chunk border, high Y, and the spawn census checklist in the report.
+
+## 2026-09-28: friend join notices and player chat bubbles
+
+- [x] System chat to online mutual friends only on a real offline → online edge, and the matching leave line on a real disconnect.
+- [x] Five-second billboard above the remote nickname, fed only by a delivered player chat message. A new line replaces the previous texture when the canvas size changes.
+- [ ] Owner manual QA on DEV VPS with two or three clients (second tab, nearby, clan privacy, invisibility).
 
 ## 2026-09-24: complete golden tool set
 

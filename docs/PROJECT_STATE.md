@@ -8,6 +8,111 @@
 - Урон от падения — половина прежней формулы (`floor(ceil(distance - 3) / 2)`), один раз в `PlayerController`. Если после этого здоровье упало бы до 0, остаётся 1 HP. Другие источники урона по-прежнему убивают.
 - Кнопка закрытия чата по-прежнему закрывается на Tab; спрайт `public/ui/chat/close.png` не перерисовывался. На основном HUD (`2560×1279`, origin right/top) `#chat-close` стоит `right: -6px; top: 113.3px; width: 166.78px; height: 159.38px`, `#chat-visibility` — `right: 7.61px; top: 255.8px; width: 137.78px; height: 124.8px`. Это прямые координаты, без прежних margin-формул. `?hudEditor=1` остаётся только отладочным режимом.
 - Подробности: `docs/reports/2026-09-29_saplings-flint-fall-chat.md`.
+## Последний проход: input, teleport epoch, client settings — 2026-10-04
+
+- Колесо и клавиши 1–9 меняют локальный слот сразу и не создают `PlayerCommand`. Следующий обычный input несёт `selectedSlot`. Атака и use того же кадра несут `action.selectedSlot`; сервер читает свой инвентарь.
+- Очередь команд держит мягкий бюджет 4 (`COMMAND_QUEUE_LATENCY_BUDGET`). 32 — предел приёма: уже принятый edge и pinned seq не сдвигаются с головы. Новый пакет сверх предела — `overload`. До 8 точных `queueSkippedRanges`. Девятый разрывной skip начинает `queueSkippedOverflow`: до flush снимка все более новые команды тоже отклоняются и входят в один suffix. `PROTOCOL_VERSION` = 4. Отклонённая граница закрывается как `command_overload`.
+- Жёсткий телепорт и респавн поднимают `movementEpoch`. Старые команды, prediction и combat history не пересекают этот разрыв. `commandSeq` не сбрасывается. `MAX_PENDING_MELEE_TICKS` остаётся 8, `MAX_PVP_REWIND_TICKS` остаётся 5.
+- Клиентские настройки (FOV, sensitivity, volume, render distance, clouds) лежат в `localStorage` `megacraft.settings.v1`.
+- Подробности: `docs/reports/2026-10-04_input-pvp-teleport-settings-hardening.md`.
+
+## Последний проход: mobile descend в полёте — 2026-10-04
+
+- На земле crouch по-прежнему toggle. В Creative Flight та же кнопка удерживает снижение только пока палец нажат. Авторитетная смена gamemode в `inventory` сразу переводит crouch в тот же policy, что jump-lock, ещё до следующего `movement()`.
+- Наземный latch не попадает в `descend`. Вход в полёт сразу снимает latch и золотую кнопку. Выход из полёта начинает crouch с выключенного состояния.
+- Сервер по-прежнему считает вертикальную скорость из уже существующего бита `descend`. Подробности: `docs/reports/2026-10-04_mobile-flight-descend.md`.
+
+## Последний проход: jump-lock и Creative Flight — 2026-10-04
+
+- В выживании двойной tap прыжка по-прежнему фиксирует jump. В творческом тот же жест не включает latch: это переключение Creative Flight.
+- Смена режима сразу очищает latch, `.is-active`, `aria-pressed` и незавершённый tap. Обратный переход начинает latch с чистого состояния.
+- Creative Flight слышит только физический Space или кнопку Jump (`manualJump` в команде). Автопрыжок и latch ставят `jump` и не открывают окно полёта. Сервер остаётся authority для `isFlying`.
+- Подробности: `docs/reports/2026-10-04_jump-lock-creative-flight.md`.
+
+## Последний проход: мобильная полировка — 2026-10-03
+
+- Ветер облаков `0.16 × 4 = 0.64` блока/с. Маска, плоскость 6144, высота `cameraY + 128` и world-lock не менялись.
+- Солнце и луна — alpha-cutout (`transparent: false`, `alphaTest: 0.5`, `depthWrite: false`, `depthTest: true`, order -750). Мир рисуется после и закрывает диск и вблизи, и дальше ~72 блоков. Облака остаются transparent на -500.
+- Удержание лука на coarse — отдельный `bow-hold`: палец крутит камеру, `interactionAim` пустой, выстрел берёт текущий yaw/pitch. Копание и еда по-прежнему следуют за пальцем.
+- Масштаб контейнеров один: `containerUiScaleWithClose(viewportMetrics())`. Второй `zoom` у `.mc-stage` снят. Курсор после tap ставится сразу, у touch со сдвигом +18/−36.
+- Jump/crouch сдвинуты вправо: `--touch-action-right-offset` 30 / 40 / 36. Автопрыжок на земле включён и в выживании, и в творческом; полёт, присед, лестница и жидкости его гасят. Двойной tap прыжка фиксирует jump. Mobile look `1.35 × 2`. Pinch и Safari gesture не зумят страницу.
+- Подробности: `docs/reports/2026-10-03_mobile-polish-bow-inventory-controls.md`.
+
+## Последний проход: пиксельное солнце, якорь камеры, слабый туман — 2026-10-03
+
+- Солнце больше не `SphereGeometry(3.2)`. Это тот же billboard, что у луны: `PlaneGeometry(6.4)`, текстура 16×16, nearest, без мипов. Край `#F1CF62`, тело `#FFEDA0`, центр `#FFF6C8`. Луна 5.6 и её текстура не менялись.
+- Солнце и луна стоят от `camera.position`, не от `session.player.position`. Дистанция `hypot(70, 15)`. Сдвиг камеры не меняет экранный угол. `DirectionalLight` больше не копирует позицию меша: позиция `sunDirection * 100`, target в нуле. Яркости `0.14 + daylight * 0.32`, `0.18 + daylight * 1.55` и `setDaylight` те же.
+- Линейный туман больше не `near = 38`, `far = renderDistance * 16 + 28`. `distanceFogRange` держит 12% на дальнем углу квадрата чанков. На RD 4 это near ≈ 62.2 и far ≈ 486.5. На 64 блоках blend ≈ 0.4% вместо 48%. Цвет тумана по-прежнему `skyVisual.fog`.
+- Подробности: `docs/reports/2026-10-03_pixel-sun-camera-fog.md`.
+
+## Последний проход: поле облаков, ночное небо, размер кнопок — 2026-10-03
+
+- Маска облаков больше не штампует 120 горизонтальных тел. Это поле 512×512: макро-шум решает, где небо чистое, деталь режет блочный край. Покрытие 6.29%, 40 связных компонент, 32 из 64 секторов пустые. Ветер по-прежнему 0.16 блока/с, выборка не зависит от камеры.
+- Плоскость 6144 блока на высоте `cameraY + 128`. Край виден под 2.39° (раньше 960 / +96 и 11.31°). Последние 10–15% плоскости гаснут в шейдере. Один draw, текстура около 1 МиБ, без мипов.
+- Дневной зенит `(0.18, 0.41, 0.93)`, горизонт `(0.55, 0.74, 0.95)`. Визуальная ночь `smoothstep(0.03, -0.22, sunHeight)`: на 13000 это уже ночь. Туман держит старую кривую `smoothstep(0.08, -0.5)`. Яркость тумана на 13000 −1.0%, на 18000 выше baseline, не ниже. `daylightFactor`, ambient `0.14 + daylight * 0.32`, sun `0.18 + daylight * 1.55` и `setDaylight` не менялись.
+- Звёзды — две точки внутри ячейки, не заливка клетки. Луна — квад 16×16, `depthWrite` false. Облака ночью тёмно-синие и не пропадают.
+- Стик: 124 / 116 / 108 px. Ход пальца `min(width * 0.34, 36)`. Кнопки 72 / 68 / 64, сдвиг `--touch-action-right-offset` и `--touch-action-bottom-offset`. На 844×390 jump и crouch 68×68, центр X 742, зазор с инвентарём 27 px. На 800×360 — 64×64, зазор 24 px.
+- Подробности: `docs/reports/2026-10-03_cloud-field-night-sky.md`.
+
+## Последний проход: вертикальные кнопки, хотбар, облака, закат — 2026-10-03
+
+- Jump и crouch больше не стоят по диагонали. Общий `--touch-action-size` и `--touch-action-gap`. Crouch у нижнего safe edge, jump над ним: `bottom = safe + size + gap`. Один и тот же `right`. На 844×390 обе кнопки 58×58, центр X = 805, зазор 8px. На 800×360 обе 56×56, центр X = 762, зазор 8px.
+- Мобильный хотбар больше не сбрасывается в 30px на коротком landscape. Один clamp: `clamp(38px, 5vw, 42px)`. На 844×390 слот 42px, на 800×360 слот 40px. Инвентарь по-прежнему зеркало offhand с зазором 20px. Иконка — свой pixel SVG рюкзака, `aria-label` и `title` «Инвентарь».
+- `viewportMetrics()` читает `visualViewport`, иначе `innerWidth/innerHeight`. Эти же числа идут в `--app-width` / `--app-height`, `renderer.setSize` и `camera.aspect`. `visualViewport` resize и scroll тоже вызывают `Game.resize()`.
+- Облака: маска 256×256 строится один раз из 120 связанных групп долей, без сетки и без четырёх шаблонов. Тайл 512 блоков, покрытие 11.71%. Ветер 0.16 блока/с. Высота `cameraY + 96`, без пола 118. Солнце и луна не пишут depth (`renderOrder` -750), облака -500 с depth test, небо -1000.
+- Закат зависит от направления солнца: слабое тепло на всём низком горизонте, сильный orange только к солнцу. Туман берёт меньшую долю того же тепла, без полного локального свечения.
+- Подробности: `docs/reports/2026-10-03_mobile-stack-clouds-sunset.md`.
+
+## Последний проход: mobile HUD, retarget, облака, закат — 2026-10-02
+
+- На телефоне `100vh` — это layout viewport выше видимой области: низ HUD и футеры меню оказывались под панелью браузера. Desktop-request рисует широкий viewport и масштабирует его, поэтому там раскладка выглядела верной. `#app` теперь `position: fixed` и берёт высоту из `visualViewport` (`--app-height`, запасной вариант `100dvh`).
+- `#play-info` в левом нижнем углу и на coarse. Джойстик выше этой плашки и на 40px правее. Инвентарь справа от хотбара: `left: 50% + --hud-hotbar-half-width + 20px`, тот же низ, что у хотбара. Это зеркало `#offhand-hud`. Прыжок и присед — правый нижний сектор, квадратные кнопки с рамкой. Присед в `.is-active` жёлтый. `#hud-corner` — ряд сверху справа.
+- Игровые меню больше не перекладываются media query в 1–2 колонки и не растягиваются на `100vh`. Сетка, отступы и кнопки те же, что на ПК. Короткий экран ставит `zoom` на `.mc-stage`, а меню ниже 520px по высоте масштабируется целиком через `--menu-fit` (0.5, на высоте до 430px — 0.42).
+- Hold классифицируется по текущим `track.x/y`. Пока палец зажат, `refreshHoldAim` пересчитывает луч каждый тик и каждый кадр. Сломанный блок не оставляет старую цель: singleplayer сбрасывает прогресс по `targetKey`, online идёт через `resolveOnlineMiningTick`. Отпускание лука хранит последний touch aim до `consumeReleaseAim` (после `releaseBow` в одиночной игре и после `sendOnlineBowRelease` онлайн). `selectstart` / callout срабатывают только при coarse.
+- Облака: V-offset равен `-cameraZ / span`. Раньше `+cameraZ` добавлялся к сдвигу плоскости, и при беге по Z маска ехала с игроком. По X так не было. Скорость `0.35` блока/с. Высота `max(118, cameraY + 64)`. Маска — небольшие силуэты, 2 блока на тексель, без тумана, теней и света.
+- Закат: узкая полоса `(dir.y - 0.035) * 8.6`, насыщенный оранжевый горизонт, зенит остаётся холодным. `daylightFactor` и яркости солнца не менялись.
+- Подробности: `docs/reports/2026-10-02_mobile-hud-clouds-sunset.md`.
+
+## Последний проход: mobile hold aim, кнопки, облака — 2026-10-02
+
+- `pointercancel` больше не заканчивается как tap. Отмена pending/swipe не жмёт attack/use. Отмена hold снимает mining/use и ставит release edge только если кнопка реально была зажата. `blur` / `visibilitychange` по-прежнему идут через `releaseActions()` и release edge не выдумывают.
+- Hold копания и held-use следит за пальцем: камера этим пальцем не крутится, `interactionAim` пересчитывается из текущего `clientX/clientY`. Старый ray после сдвига пальца не остаётся. Ретаргет — существующий `targetKey` / `resolveOnlineMiningTick`, без server shortcut.
+- Bow, еда и молоко на hold всегда `use-hold`, даже над блоком или игроком. Tap по игроку с луком остаётся одним ударом. Молоко убрано из tap-use. Поставить блок можно и на неразрушаемую грань; копать её нельзя.
+- Touch crouch в полёте даёт `descend`, как Shift. На земле это по-прежнему toggle.
+- Кнопки: jump справа над хотбаром, crouch левее, инвентарь выше crouch. `#hud-corner` на coarse — ряд в правом верхнем углу. Короткий landscape уменьшает кнопки, не прячет. `--hotbar-slot` продублирован на `#app`, потому что touch controls не наследники `#hud`.
+- Выделение текста и callout на gameplay surface выключены. Чат, textarea и contenteditable остаются `user-select: text`.
+- `#play-info` на desktop в левом нижнем углу. На телефоне — над стиком. Строка координат одна: `X: n  Y: n  Z: n`, `Math.floor`.
+- Облака — одна плоскость `CloudLayer` на Y=84, маска один раз, сдвиг UV. Шейдер неба больше не рисует облачный шум. Ночью слой темнеет и не пропадает. Чекбокс «Облака» скрывает mesh.
+- Touch layout по-прежнему только `(pointer: coarse)`, одна константа `TOUCH_LAYOUT_QUERY` для CSS, `InputManager` и `isCoarsePointerMedia`. Узкий desktop со мышью стик не получает.
+- Подробности: `docs/reports/2026-10-02_mobile-hold-aim-clouds.md`.
+
+## Последний проход: mobile controls, sky gradient, play-info HUD — 2026-10-02
+
+- Сенсорный layout включается только при `(pointer: coarse)`. Узкое окно desktop больше не показывает стик и кнопки. Хотбар — `flex-direction: row; flex-wrap: nowrap` и явный `--hotbar-slot`. Вертикальный ряд был из-за невалидного `clamp(0.72, calc(0.52 + 0.03vw), 0.86)`: число и `vw` в одном `calc` обнуляли `grid-template-columns: repeat(9, ...)`, и слоты с `aspect-ratio: 1` вставали в один столбец.
+- На телефоне остались стик, momentary jump, crouch toggle с классом `is-active`, кнопка инвентаря и верхние пауза/чат/меню. Удар, use и строительство идут через tap/hold по миру. Свайп от 18px — только камера. Удержание 200ms без свайпа — копание или held-use. Автопрыжок мобильный: следующий input sample получает обычный `jump`, creative не армится.
+- Небо — один `SkyDome` (градиент, закатная полоса, звёзды ночью, блочные облака в том же шейдере). `daylightFactor` и яркость солнца не менялись. Облака выключаются чекбоксом в настройках, по умолчанию включены.
+- Левый нижний HUD: `Игроков: N`, `X/Y/Z` через `Math.floor`. Онлайн — `remotes.size + 1`, одиночная игра — 1.
+- Подробности: `docs/reports/2026-10-02_mobile-controls-sky-hud.md`.
+
+## Последний проход: add-emitter fairness и consistent flood — 2026-09-30
+
+- Add-only источники (факел, фонарь, редстоун-факел) больше не ждут, пока опустеет очередь region edits. Один общий light state не прерывает уже идущий flood: после commit region job, если есть pending emitters, следующий старт — emitter batch, и наоборот. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
+- Активный add-emitter batch неизменяем. Правка блока во время flood пинится так же, как у region. Новый источник остаётся в следующем batch. Commit совпадает с block view на старте flood, затем следующий job дочитывает живой мир.
+- `?perf=1` строка `EDITQ` дополнена `EMITQ` (очередь, age, commits). Census по-прежнему только в perf mode; набор загруженных чанков сравнивается на шаге 400 ms, а не на каждом кадре.
+- Подробности: `docs/reports/2026-09-30_lighting-emitter-fairness.md`. Предыдущий проход очереди: `docs/reports/2026-09-30_lighting-edit-queue.md`.
+
+## Последний проход: edit lighting queue without quiet-hold starvation — 2026-09-30
+
+- Непрерывный mining больше не ждёт 80 ms тишины. `queueLight` кладёт регион в пространственную очередь (`EDIT_LIGHT_QUEUE_LIMIT = 32`): пересекающиеся регионы сливаются, далёкие остаются отдельными jobs. Уже идущий flood не сбрасывается. Правки во время flood пиннятся sparse override и становятся следующим job. Каждый законченный job коммитит свет до старта следующего.
+- Срочный remesh по-прежнему пишет геометрию сразу (`allowPendingLighting: true`) и читает последний committed light. `lightVersion` растёт только на реальном отличии. Второго полного light buffer нет. `WORLD_LIGHT_BUDGET_MS` остаётся 2.
+- `?perf=1` добавляет строку `EDITQ` (очередь, age, commits, restart, merge). Census источников остаётся только в perf mode, шаг 400 ms, удержание прохода 4 s. Следующий проход перестал сравнивать набор чанков на каждом кадре: сравнение происходит на шаге census.
+- Подробности: `docs/reports/2026-09-30_lighting-edit-queue.md`. Предыдущий проход stable mesh: `docs/reports/2026-09-30_lighting-flicker-stable-mesh-audit.md`.
+
+## Последний проход: friend join chat и speech bubble — 2026-09-28
+
+- Реальный переход `connected: false → true` шлёт онлайн-друзьям system chat `<ник> зашел в игру.` Реальный `disconnect` текущего connectionId шлёт `<ник> вышел из игры.` Старый socket после takeover не считается выходом. `NotificationService` и `style: announcement` не используются.
+- Над `PlayerNameplate` чужого игрока на 5 секунд появляется `PlayerChatBubble`. Панель на `0.02` выше глифов ника и рисует ту же чёрную подложку `0.35`, что и голограммы на спавне. Новая строка заменяет текстуру, если canvas сменил размер. Источник — уже доставленный `ServerChatMessage` с `kind: 'player'`.
+- Подробности: `docs/reports/2026-09-28_friend-join-chat-bubbles.md`.
 
 ## Последний проход: полный набор золотых инструментов — 2026-09-24
 
@@ -351,7 +456,7 @@
 ## Последний проход: Player fire height + AutoMine reset pipeline — 2026-09-17
 
 - Burning-player fire overlay: `PlayerVisual` keeps overlay width and `position.y = 0.15`, then `scale.y = 0.5`. Mob / first-person fire paths unchanged.
-- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit-region floods wait until a voxel burst pauses.
+- AutoMine lag root cause was repeated full-column remesh + restarted lighting floods, not 64 writes/tick. Fill uses `updateLighting: false`; lighting is budgeted `processLighting`. Client remeshes dirty Y sections (`MESH_SECTION_HEIGHT = 16`). Edit light is a spatial queue and is not held until the burst pauses.
 - Handoff: `docs/reports/2026-09-17_automine-fire-pipeline.md`.
 
 ## Предыдущий проход: Bugfix/performance gameplay pass — 2026-09-17

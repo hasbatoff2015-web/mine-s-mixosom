@@ -56,6 +56,17 @@ export function viewDirectionFromLook(yaw: number, pitch: number, target = new V
   ).normalize();
 }
 
+/** Inverse of `viewDirectionFromLook`. Unit length is not required. */
+export function lookFromDirection(x: number, y: number, z: number): { yaw: number; pitch: number } {
+  const len = Math.hypot(x, y, z);
+  if (!(len > 1e-8)) return { yaw: 0, pitch: 0 };
+  const ny = Math.min(1, Math.max(-1, y / len));
+  return {
+    pitch: Math.asin(ny),
+    yaw: Math.atan2(-x / len, -z / len),
+  };
+}
+
 /**
  * Local interaction aim: canonical player eye origin + live look.
  * Does not read `PlayerController.yaw/pitch`, so a stale fixed-tick look cannot

@@ -6,7 +6,14 @@
 npx vitest run tests/server/saplings-and-drops.test.ts tests/fall-damage.test.ts tests/audio-sfx.test.ts tests/player-physics.test.ts tests/block-registry.test.ts tests/chat-layout.test.ts tests/chat-channels.test.ts tests/random-source.test.ts
 ```
 
-Contracts: leaf drop keeps the leaf and adds a sapling at 0.2; gravel is flint at 0.1 otherwise gravel; saplings plant only on dirt/grass/farmland/snow; growth waits `SAPLING_GROW_MS` of real time, survives `blockStates` restore, and will not overwrite a solid build; glass/ice/glowstone have no step event while `glass.break` stays; fall damage is `floor(ceil(distance - 3) / 2)` once and lethal falls leave 1 HP; melee/lava/void still kill; chat close PNG stays 102×96 and the control is Tab.
+Contracts: leaf drop keeps the leaf and adds a sapling at 0.2; gravel is flint at 0.1 otherwise gravel; saplings plant only on dirt/grass/farmland/snow; growth waits `SAPLING_GROW_MS` of real time, survives `blockStates` restore, and will not overwrite a solid build; glass/ice/glowstone have no step event while `glass.break` stays; fall damage is `floor(ceil(distance - 3) / 2)` once and lethal falls leave 1 HP; melee/lava/void still kill; chat close PNG is the attached 1283×1226 file and the control is Tab. Main HUD `#chat-close` is `right: -6px; top: 113.3px; 166.78×159.38`, `#chat-visibility` is `right: 7.61px; top: 255.8px; 137.78×124.8`.
+## 2026-09-28 Friend join chat and player chat bubbles
+
+```text
+npx vitest run tests/player-chat-bubble.test.ts tests/player-nameplate.test.ts tests/chat-layout.test.ts tests/chat-channels.test.ts tests/server/chat-channels.test.ts tests/server/friends.test.ts tests/server/anarchy-server.test.ts tests/remote-appearance-join.test.ts tests/server/friend-join-chat.test.ts
+```
+
+Contracts: join text is `<name> зашел в игру.` and leave text is `<name> вышел из игры.`, both without `style`. Pending requests and a live session takeover do not notify. A stale connectionId does not leave. A real disconnect then resume sends one leave and one join. Bubble lifetime is 5000 ms. `ку` → `да` redraws the same texture; `ку` → `привет` replaces the CanvasTexture. Wrap stays within 32 columns, and `SERVER_MESSAGE_TYPES` has no speech-bubble packet.
 
 ## 2026-09-24 Golden tools
 

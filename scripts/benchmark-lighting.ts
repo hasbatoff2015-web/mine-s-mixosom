@@ -180,6 +180,177 @@ if (!only) for (const radius of [2, 4, 6]) {
     naiveFullSnapshotsBytes: chunks.length * CHUNK_SIZE * CHUNK_SIZE * WORLD_HEIGHT * 2,
   });
 }
+function idleLighting(world: InstanceType<typeof VoxelWorld>, frames: number) {
+  let ms = 0;
+  let nodes = 0;
+  let columns = 0;
+  let maxSlice = 0;
+  for (let frame = 0; frame < frames; frame += 1) {
+    ms += world.processLighting(2, 8, 8);
+    nodes += light.lightFrameStats.nodes;
+    columns += light.lightFrameStats.columns;
+    maxSlice = Math.max(maxSlice, light.lightFrameStats.maxSlice);
+  }
+  return {
+    frames, ms, nodes, columns, maxSlice,
+    pending: world.pendingLightJobs,
+    owner: light.lightingFloodOwner(world),
+    snapshotBytes: light.lightingMemoryUsage(world).snapshotBytes,
+  };
+}
+function emitterPositions(count: number): Array<{ x: number; y: number; z: number }> {
+  const spots = [];
+  const columns = 12;
+  const rows = 11;
+  const perLayer = columns * rows;
+  for (let i = 0; i < count; i += 1) {
+    const layer = Math.floor(i / perLayer);
+    const cell = i % perLayer;
+    spots.push({
+      x: 4 + (cell % columns) * 2,
+      z: 6 + Math.floor(cell / columns) * 2,
+      y: 41 + layer * 2,
+    });
+  }
+  return spots;
+}
+const emitterKinds = [BlockId.Torch, BlockId.Lantern, BlockId.Glowstone] as const;
+function manyEmitterTrial(count: number) {
+  const world = scene('closed');
+  world.deferredLighting = true;
+  const spots = emitterPositions(count);
+  const setup: Array<{ x: number; y: number; z: number; block: BlockId }> = [
+    { x: 5, y: 42, z: 7, block: BlockId.Stone },
+  ];
+  if (count > 0) {
+    for (let index = 0; index < spots.length; index += 1) {
+      setup.push({ ...spots[index]!, block: emitterKinds[index % emitterKinds.length]! });
+    }
+  }
+  world.applyBlockBatch(setup, { updateLighting: false, scheduleNeighbors: false, record: false });
+  const initial = measure(world);
+  const idle = idleLighting(world, 30);
+  const ordinaryBreak = measure(world, () => edit(world, [{ x: 5, y: 42, z: 7, block: BlockId.Air }]), 1);
+  const removed = count > 0
+    ? measure(world, () => edit(world, [{ ...spots[0]!, block: BlockId.Air }]), 1)
+    : null;
+  const added = count > 0
+    ? measure(world, () => edit(world, [{ ...spots[0]!, block: spots[0] ? emitterKinds[0] : BlockId.Torch }]), 1)
+    : null;
+  return {
+    count,
+    initial: { totalMs: initial.totalMs, maxSliceMs: initial.maxSliceMs, columns: initial.columns, nodes: initial.nodes, slices: initial.slices, memory: initial.memory },
+    idle,
+    ordinaryBreak: { totalMs: ordinaryBreak.totalMs, maxSliceMs: ordinaryBreak.maxSliceMs, columns: ordinaryBreak.columns, nodes: ordinaryBreak.nodes, slices: ordinaryBreak.slices },
+    emitterRemoval: removed ? { totalMs: removed.totalMs, maxSliceMs: removed.maxSliceMs, columns: removed.columns, nodes: removed.nodes, slices: removed.slices } : null,
+    emitterAdd: added ? { totalMs: added.totalMs, maxSliceMs: added.maxSliceMs, columns: added.columns, nodes: added.nodes, slices: added.slices } : null,
+  };
+}
+function creativeStreamTrial() {
+  const world = scene('room');
+  lightAll(world);
+  world.applyBlockBatch(burstBlocks, { scheduleNeighbors: false });
+  for (const chunk of world.chunks.values()) completeCpuMesh(world, chunk);
+  let commitsDuring = 0;
+  let maxQueue = 0;
+  let maxAge = 0;
+  let maxSlice = 0;
+  let editMs = 0;
+  let columns = 0;
+  let nodes = 0;
+  const merges0 = world.editLightMerges;
+  const enqueued0 = world.editLightEnqueued;
+  const restarts0 = world.editLightRestarts;
+  for (let index = 0; index < burstBlocks.length; index += 1) {
+    edit(world, [{ ...burstBlocks[index]!, block: BlockId.Air }]);
+    for (let frame = 0; frame < 3; frame += 1) {
+      const before = world.editLightCommits;
+      const elapsed = world.processLighting(2, 8, 8);
+      editMs += elapsed;
+      maxSlice = Math.max(maxSlice, elapsed, light.lightFrameStats.maxSlice);
+      columns += light.lightFrameStats.columns;
+      nodes += light.lightFrameStats.nodes;
+      if (index < burstBlocks.length - 1) commitsDuring += world.editLightCommits - before;
+      maxQueue = Math.max(maxQueue, world.editLightQueueLength);
+      maxAge = Math.max(maxAge, world.editLightOldestAgeMs());
+    }
+  }
+  const settleStart = performance.now();
+  let settleSlices = 0;
+  while ((world.pendingLightJobs > 0 || light.lightingFloodOwner(world)) && settleSlices < 20000) {
+    world.processLighting(2, 8, 8);
+    settleSlices += 1;
+  }
+  return {
+    edits: burstBlocks.length,
+    model: '3 processLighting(2ms) calls per edit, about 60 FPS between 20 TPS edits',
+    commitsDuring,
+    maxQueue,
+    maxAgeMs: Math.round(maxAge),
+    restarts: world.editLightRestarts - restarts0,
+    merges: world.editLightMerges - merges0,
+    enqueued: world.editLightEnqueued - enqueued0,
+    columns,
+    nodes,
+    maxSliceMs: maxSlice,
+    editPhaseMs: editMs,
+    settleMs: performance.now() - settleStart,
+    settleSlices,
+    pending: world.pendingLightJobs,
+    peakSnapshotBytes: light.lightingMemoryUsage(world).peakSnapshotBytes,
+    snapshotBytes: light.lightingMemoryUsage(world).snapshotBytes,
+  };
+}
+function editQueueShapeTrial() {
+  const same = scene('room');
+  lightAll(same);
+  const stones = Array.from({ length: 100 }, (_, index) => ({
+    x: 6 + (index % 10), y: 43, z: 6 + Math.floor(index / 10), block: BlockId.Stone,
+  }));
+  same.applyBlockBatch(stones, { scheduleNeighbors: false });
+  same.deferredLighting = true;
+  for (const stone of stones) edit(same, [{ ...stone, block: BlockId.Air }]);
+  const sameShape = {
+    queue: same.editLightQueueLength,
+    merges: same.editLightMerges,
+    enqueued: same.editLightEnqueued,
+    marks: same.lightQueueMarks,
+  };
+  const distant = new VoxelWorld('bench-distant-edits');
+  distant.ensureChunks(8, 8, 1);
+  distant.ensureChunks(8 + 10 * CHUNK_SIZE, 8, 1);
+  for (const chunk of distant.chunks.values()) distant.ensureChunkLighting(chunk);
+  distant.deferredLighting = true;
+  for (let index = 0; index < 10; index += 1) {
+    distant.applyBlockBatch([{ x: 4 + index, y: 48, z: 4, block: BlockId.Glowstone }], {
+      deferLighting: true, scheduleNeighbors: false, skipSupport: true,
+    });
+    distant.applyBlockBatch([{ x: 4 + index + 10 * CHUNK_SIZE, y: 48, z: 4, block: BlockId.Glowstone }], {
+      deferLighting: true, scheduleNeighbors: false, skipSupport: true,
+    });
+  }
+  return {
+    sameChunk: sameShape,
+    distant: {
+      queue: distant.editLightQueueLength,
+      merges: distant.editLightMerges,
+      enqueued: distant.editLightEnqueued,
+      regions: distant.editLightRegions().map((region) => ({
+        minX: region.minX, maxX: region.maxX, minZ: region.minZ, maxZ: region.maxZ,
+      })),
+    },
+  };
+}
+const editScheduler = !baseline && !only ? {
+  removedQuietHold: 'Previously >=8 edits held the region flood until 80ms without a new edit. A 50ms stream never released it, so commits during mining were 0.',
+  creativeBurst100Stream: [0, 1, 2].map(() => creativeStreamTrial()),
+  shapes: editQueueShapeTrial(),
+} : undefined;
+const manyEmitters = !only ? [0, 32, 128, 256].map((count) => {
+  const trials = [];
+  for (let trial = 0; trial < 3; trial += 1) trials.push(manyEmitterTrial(count));
+  return { count, trials };
+}) : undefined;
 const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'), {
   meshRadius: 6, lightBudgetMs: 2, pruneEveryFrames: 80, warmupFrames: 48,
   instantLight: false, policy: 'fair', speedBlocksPerSec: STREAMING_SPEEDS.flySprint,
@@ -187,6 +358,9 @@ const streaming = !only ? runStreamingPath(new VoxelWorld('stream-fly-r6-sliced'
 }) : undefined;
 const { litToMeshWaitsMs, wantedToVisibleMs, readyWantedToMeshMs, ...streamingSummary } = streaming ?? {};
 const result = { runtime: 'Node CPU; no browser FPS claim', baseline, worldHeight: WORLD_HEIGHT, trials: 3, budgetMs: 2,
+  manyEmittersNote: 'CPU benchmark; not browser/GPU FPS. Idle is processLighting after settle, not a frame time.',
+  editScheduler,
+  manyEmitters,
   remeshCount: 'production-gated CPU mesh acknowledgements; no GPU work',
   memoryScope: 'Typed arrays only; excludes JS object overhead, world deltas, import voxel objects, GPU and renderer caches',
   cases, memory, streaming: streamingSummary };

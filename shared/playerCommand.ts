@@ -3,7 +3,17 @@
  * commandSeq is not a server physics tick. The server ACK names both.
  */
 
+/**
+ * Admission cap. Continuous backlog compacts below this. Once the queue is
+ * full of commands that cannot be compacted, newer commands are rejected.
+ */
 export const COMMAND_QUEUE_MAX = 32;
+/**
+ * Soft backlog of continuous movement commands.
+ * 4 physics commands ≈ 200 ms at 20 TPS. Edges and pinned action
+ * boundaries may keep the queue deeper until they are consumed.
+ */
+export const COMMAND_QUEUE_LATENCY_BUDGET = 4;
 export const APPLIED_STEPS_MAX = 4;
 
 export interface PlayerCommand {
@@ -12,6 +22,8 @@ export interface PlayerCommand {
   readonly forward: number;
   readonly right: number;
   readonly jump: boolean;
+  /** Physical jump level. Absent commands keep the legacy jump edge. */
+  readonly manualJump?: boolean;
   readonly sneak: boolean;
   readonly sprint: boolean;
   readonly descend: boolean;

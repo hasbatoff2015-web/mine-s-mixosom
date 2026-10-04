@@ -41,6 +41,21 @@ export function craftListFitsColumns(
   return columns * slot <= craftListInnerWidth(panelWidth);
 }
 
+/**
+ * Cursor stack follows the pointer. Touch sits up and to the right so the
+ * finger does not cover the item. Mouse stays on the pointer.
+ */
+export function cursorStackClientPosition(
+  clientX: number,
+  clientY: number,
+  pointerType: string,
+): { readonly left: number; readonly top: number } {
+  if (pointerType === 'touch' || pointerType === 'pen') {
+    return { left: clientX + 18, top: clientY - 36 };
+  }
+  return { left: clientX, top: clientY };
+}
+
 /** Minimum touch target for the outside close control. */
 export const MC_CLOSE_HIT_MIN_PX = 44;
 export const MC_CLOSE_LOGICAL_SIZE = 20;

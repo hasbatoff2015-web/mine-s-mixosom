@@ -351,8 +351,8 @@ export class BlockBreakingOverlay {
   }
 
   private tintFromWorldLight(x: number, y: number, z: number): void {
-    const sky = this.world.skyLightAt(x, y, z) / 15;
-    const block = this.world.blockLightAt(x, y, z) / 15;
+    const sky = this.world.readMeshSkyLight(x, y, z) / 15;
+    const block = this.world.readMeshBlockLight(x, y, z) / 15;
     const [red, green, blue] = composeWorldLight(sky, block, 0, 1, worldDaylightUniform.value);
     const luminance = (red + green + blue) / 3;
     const shade = 0.42 + 0.58 * Math.min(1, Math.max(0, luminance));

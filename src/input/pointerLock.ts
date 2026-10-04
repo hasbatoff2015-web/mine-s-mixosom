@@ -1,3 +1,5 @@
+import { TOUCH_LAYOUT_QUERY } from './touchLayout';
+
 export type PointerUnlockReason = 'escape' | 'programmatic' | 'focus-lost' | 'unknown';
 
 export interface PointerLockCaptureState {
@@ -50,7 +52,7 @@ export function shouldReleasePointerLockAfterAcquire(canCapture: boolean): boole
 }
 
 export function isCoarsePointerMedia(): boolean {
-  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  return typeof matchMedia === 'function' && matchMedia(TOUCH_LAYOUT_QUERY).matches;
 }
 
 /** Skip a second exit when the browser already unlocked (Esc default gesture). */
