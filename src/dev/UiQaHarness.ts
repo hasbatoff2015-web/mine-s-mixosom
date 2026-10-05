@@ -2,6 +2,7 @@ import { createItemStack, Inventory } from '../inventory';
 import type { WorldSummary } from '../save/types';
 import { GameUI } from '../ui/GameUI';
 import type { ClientClanActionMessage, ClientDirectMessageActionMessage, ClientMenuActionMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import { normalizeDirectMessageText } from '../../shared/directMessages';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { TRADE_SLOT_COUNT } from '../../shared/trade';
 
@@ -126,19 +127,36 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
     },
     sendDirect: (action: ClientDirectMessageActionMessage) => {
       if (action.action !== 'send') return;
-      ui.applyDirectMessage({
-        type: 'direct_message',
-        event: 'append',
-        friendId: action.friendId,
-        messages: [{
-          messageId: `qa-${Date.now()}`,
-          seq: Date.now(),
-          senderId: 'self',
-          recipientId: action.friendId,
-          text: action.text ?? '',
-          createdAt: Date.now(),
-        }],
-      });
+      const ackDelay = Number(new URLSearchParams(location.search).get('qaDmAckDelay') ?? '0');
+      const deliver = (): void => {
+        const normalized = normalizeDirectMessageText(action.text ?? '');
+        if (!normalized.ok) {
+          ui.applyDirectMessage({
+            type: 'direct_message',
+            event: 'error',
+            friendId: action.friendId,
+            error: normalized.error,
+            ...(action.clientRequestId ? { clientRequestId: action.clientRequestId } : {}),
+          });
+          return;
+        }
+        ui.applyDirectMessage({
+          type: 'direct_message',
+          event: 'append',
+          friendId: action.friendId,
+          ...(action.clientRequestId ? { clientRequestId: action.clientRequestId } : {}),
+          messages: [{
+            messageId: `qa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            seq: Date.now(),
+            senderId: 'self',
+            recipientId: action.friendId,
+            text: normalized.text,
+            createdAt: Date.now(),
+          }],
+        });
+      };
+      if (Number.isFinite(ackDelay) && ackDelay > 0) window.setTimeout(deliver, ackDelay);
+      else deliver();
     },
     selfId: 'self',
     close: () => ui.closeGameMenu(),

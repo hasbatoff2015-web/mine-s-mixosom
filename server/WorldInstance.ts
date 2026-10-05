@@ -2304,6 +2304,7 @@ export class WorldInstance {
       return;
     }
     const text = message.text ?? '';
+    const clientRequestId = message.clientRequestId;
     const viewing = this.isViewingFriendChat(message.friendId, player.id);
     const result = this.directMessages.send(player.id, message.friendId, text, viewing
       ? { markReadFor: message.friendId }
@@ -2314,6 +2315,7 @@ export class WorldInstance {
         event: 'error',
         friendId: message.friendId,
         error: result.error,
+        ...(clientRequestId ? { clientRequestId } : {}),
       });
       return;
     }
@@ -2322,6 +2324,7 @@ export class WorldInstance {
       event: 'append',
       friendId: message.friendId,
       messages: [result.message],
+      ...(clientRequestId ? { clientRequestId } : {}),
     });
     const recipient = this.players.get(message.friendId);
     if (!recipient?.connected) return;

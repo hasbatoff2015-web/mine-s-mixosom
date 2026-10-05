@@ -558,4 +558,82 @@ describe('direct messages on the authoritative server', () => {
     });
     expect(lastOf<ServerDirectMessage>(adaAgain.sink, 'direct_message')?.event).toBe('history');
   });
+
+  it('echoes clientRequestId only to the sender and does not store or authorize with it', async () => {
+    const { world, dir } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const eve = join(world, 'Eve');
+    befriend(world, ada, bob);
+    world.handleMenuAction(bob.player, { type: 'menu_action', action: 'friends_chat', playerId: ada.player.id });
+
+    world.handleDirectMessage(ada.player, {
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: bob.player.id,
+      text: 'Привет   ',
+      clientRequestId: 'req-trail',
+    });
+    const echo = lastOf<ServerDirectMessage>(ada.sink, 'direct_message');
+    expect(echo?.event).toBe('append');
+    expect(echo?.clientRequestId).toBe('req-trail');
+    expect(echo?.messages?.[0]?.text).toBe('Привет');
+    expect(echo?.messages?.[0]?.senderId).toBe(ada.player.id);
+    expect(echo?.messages?.[0]?.messageId).not.toBe('req-trail');
+    const bobAppend = lastOf<ServerDirectMessage>(bob.sink, 'direct_message');
+    expect(bobAppend?.event).toBe('append');
+    expect(bobAppend?.messages?.[0]?.text).toBe('Привет');
+    expect(bobAppend?.clientRequestId).toBeUndefined();
+
+    const stored = await readFile(pathJoin(
+      dir,
+      'anarchy',
+      'plugin-data',
+      DIRECT_MESSAGE_STORAGE_DIR,
+      `${conversationKey(ada.player.id, bob.player.id)}.json`,
+    ), 'utf8');
+    expect(stored).not.toContain('req-trail');
+    expect(stored).toContain('"text": "Привет"');
+    expect(stored).not.toContain('Привет   ');
+
+    world.handleDirectMessage(ada.player, {
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: bob.player.id,
+      text: 'без токена',
+    });
+    expect(lastOf<ServerDirectMessage>(ada.sink, 'direct_message')?.clientRequestId).toBeUndefined();
+    expect(lastOf<ServerDirectMessage>(bob.sink, 'direct_message')?.clientRequestId).toBeUndefined();
+
+    for (let index = 0; index < 4; index += 1) {
+      world.handleDirectMessage(ada.player, {
+        type: 'direct_message_action',
+        action: 'send',
+        friendId: bob.player.id,
+        text: `burst-${index}`,
+        clientRequestId: `burst-${index}`,
+      });
+    }
+    const limited = lastOf<ServerDirectMessage>(ada.sink, 'direct_message');
+    expect(limited?.event).toBe('error');
+    expect(limited?.error).toBe(DIRECT_MESSAGE_RATE_LIMIT_ERROR);
+    expect(limited?.clientRequestId).toBe('burst-3');
+    expect(bob.sink.payloads.filter((payload) => {
+      const message = payload as ServerDirectMessage;
+      return message.type === 'direct_message' && message.messages?.some((row) => row.text === 'burst-3');
+    })).toHaveLength(0);
+
+    world.handleDirectMessage(eve.player, {
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: ada.player.id,
+      text: 'чужое',
+      clientRequestId: 'req-forged',
+    });
+    const rejected = lastOf<ServerDirectMessage>(eve.sink, 'direct_message');
+    expect(rejected?.event).toBe('error');
+    expect(rejected?.clientRequestId).toBe('req-forged');
+    expect(rejected?.error).toBe(DIRECT_MESSAGE_NOT_FRIEND_ERROR);
+    expect(ofType<ServerDirectMessage>(ada.sink, 'direct_message').some((message) => message.messages?.some((row) => row.text === 'чужое'))).toBe(false);
+  });
 });

@@ -743,6 +743,8 @@ export interface ClientDirectMessageActionMessage {
   readonly friendId: string;
   readonly text?: string;
   readonly beforeSeq?: number;
+  /** Opaque send correlation. Not a message id, sender, or timestamp. */
+  readonly clientRequestId?: string;
 }
 
 export type ClientMessage =
@@ -1482,6 +1484,8 @@ export interface ServerDirectMessage {
   readonly messages?: readonly NetworkDirectMessage[];
   readonly hasMore?: boolean;
   readonly error?: string;
+  /** Echoed to the sender of this request. Absent on history and on the recipient copy. */
+  readonly clientRequestId?: string;
 }
 
 export interface ServerTradeMessage {
@@ -1748,6 +1752,15 @@ function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Correlation token. Missing is valid. Over-long or non-string is not, because slicing would break the match. */
+function parseClientRequestId(value: unknown, error: string): string | undefined | { error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return { error };
+  if (value.length === 0) return undefined;
+  if (value.length > 64) return { error };
+  return value;
 }
 
 export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
@@ -2360,7 +2373,15 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.action === 'send') {
         if (typeof raw.text !== 'string') return { error: 'direct_message_action.text invalid' };
         if (raw.text.length > 512) return { error: 'direct_message_action.text too long' };
-        return { type: 'direct_message_action', action: 'send', friendId, text: raw.text };
+        const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message_action.clientRequestId invalid');
+        if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+        return {
+          type: 'direct_message_action',
+          action: 'send',
+          friendId,
+          text: raw.text,
+          ...(clientRequestId ? { clientRequestId } : {}),
+        };
       }
       if (raw.beforeSeq !== undefined && (!Number.isInteger(raw.beforeSeq) || !finite(raw.beforeSeq) || raw.beforeSeq < 0)) {
         return { error: 'direct_message_action.beforeSeq invalid' };
@@ -2678,6 +2699,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'direct_message.error invalid' };
       }
       const errorText = typeof raw.error === 'string' ? raw.error.slice(0, 200) : undefined;
+      const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'direct_message',
         event: raw.event,
@@ -2685,6 +2708,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         ...(messages ? { messages } : {}),
         ...(typeof raw.hasMore === 'boolean' ? { hasMore: raw.hasMore } : {}),
         ...(errorText ? { error: errorText } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'menu': {

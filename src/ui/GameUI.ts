@@ -108,8 +108,14 @@ import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
   chatScrollPinnedToBottom,
   chatShouldRequestOlder,
+  createFriendChatComposerLedger,
+  directMessageTargetsOpenChat,
+  friendChatSendAlreadyPending,
   mergeDirectMessagePage,
+  noteFriendChatDraft,
   planDirectMessageScroll,
+  settleFriendChatSend,
+  trackFriendChatSend,
 } from '../../shared/directMessages';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
@@ -374,7 +380,7 @@ export class GameUI {
   private menuForceRender = false;
   /** Logical px copied from the friends panel so opening a chat does not resize it. */
   private friendChatLogicalHeight?: number;
-  private friendChatDrafts = new Map<string, string>();
+  private readonly friendChatComposer = createFriendChatComposerLedger();
   private friendChat?: {
     friendId: string;
     messages: NetworkDirectMessage[];
@@ -1704,8 +1710,18 @@ export class GameUI {
   }
 
   applyDirectMessage(message: ServerDirectMessage): void {
-    const state = this.menuState;
-    if (!state || state.screen !== 'friend-chat' || state.activeFriendId !== message.friendId) return;
+    if (message.event === 'append' || message.event === 'error') {
+      const settlement = settleFriendChatSend(
+        this.friendChatComposer,
+        message.clientRequestId,
+        message.friendId,
+        message.event === 'append' ? 'accepted' : 'rejected',
+      );
+      if (settlement.kind === 'accepted' && settlement.clearDraft) {
+        this.clearSettledFriendChatInput(message.friendId);
+      }
+    }
+    if (!directMessageTargetsOpenChat(this.menuState?.screen, this.menuState?.activeFriendId, message.friendId)) return;
     if (!this.friendChat || this.friendChat.friendId !== message.friendId) {
       this.friendChat = { friendId: message.friendId, messages: [], hasMore: false, loadingOlder: false };
     }
@@ -1723,7 +1739,6 @@ export class GameUI {
       view.loadingOlder = false;
     }
     this.showFriendChatError('');
-    if (message.event === 'append') this.clearAcceptedFriendChatDraft(message.friendId, incoming);
     this.paintFriendChatLog(mode);
   }
 
@@ -4085,7 +4100,7 @@ export class GameUI {
     const input = this.friendChatInput();
     const friendId = this.menuState?.activeFriendId;
     if (!input || !friendId) return;
-    const draft = this.friendChatDrafts.get(friendId);
+    const draft = this.friendChatComposer.drafts.get(friendId);
     if (draft === undefined) return;
     input.value = draft;
   }
@@ -4105,7 +4120,7 @@ export class GameUI {
       input.addEventListener('input', () => {
         const friendId = this.menuState?.activeFriendId;
         if (!friendId) return;
-        this.friendChatDrafts.set(friendId, input.value);
+        noteFriendChatDraft(this.friendChatComposer, friendId, input.value);
       });
     }
     const log = this.friendChatLog();
@@ -4130,11 +4145,16 @@ export class GameUI {
     const input = this.friendChatInput();
     const friendId = this.menuState?.activeFriendId;
     if (!input || !friendId) return;
+    if (friendChatSendAlreadyPending(this.friendChatComposer, friendId)) return;
+    const clientRequestId = crypto.randomUUID?.()
+      ?? `dm-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    trackFriendChatSend(this.friendChatComposer, friendId, clientRequestId);
     this.menuActions?.sendDirect?.({
       type: 'direct_message_action',
       action: 'send',
       friendId,
       text: input.value,
+      clientRequestId,
     });
   }
 
@@ -4188,14 +4208,10 @@ export class GameUI {
     line.textContent = text;
   }
 
-  private clearAcceptedFriendChatDraft(friendId: string, incoming: readonly NetworkDirectMessage[]): void {
-    const selfId = this.menuActions?.selfId ?? '';
-    const own = incoming.find((message) => message.senderId === selfId);
-    if (!own) return;
+  private clearSettledFriendChatInput(friendId: string): void {
+    if (!directMessageTargetsOpenChat(this.menuState?.screen, this.menuState?.activeFriendId, friendId)) return;
     const input = this.friendChatInput();
-    if (!input || input.value !== own.text) return;
-    input.value = '';
-    this.friendChatDrafts.delete(friendId);
+    if (input) input.value = '';
   }
 
   private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {

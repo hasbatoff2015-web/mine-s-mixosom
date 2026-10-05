@@ -91,9 +91,21 @@ DEV `http://localhost:5173/?qaUi=menu-friends`, headed Chrome на `DISPLAY=:1` 
 
 ## Git
 
-- `origin/main` HEAD: `49e782d841b023593a76e31b180f51073d000cee`
 - Ветка: `cursor/friend-private-chat-7fd5`
-- Implementation: `0d7e2ef4afd7414f4234cf0e7afc532338fecac8`
-- Merge base: `49e782d841b023593a76e31b180f51073d000cee`
+- Первая реализация: `0d7e2ef4afd7414f4234cf0e7afc532338fecac8`
 - Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/120
 - Production не менялся. Не смержено.
+
+## Follow-up: merge main и ACK черновика
+
+Сравнение `input.value === own.text` не подтверждает конкретную отправку. Сервер обрезает хвостовые пробелы, поэтому `"Привет   "` успешно сохраняется как `"Привет"`, а поле остаётся заполненным. Тот же текст, набранный заново после Enter, тоже не является тем же intent.
+
+`send` теперь может нести optional `clientRequestId`. Сервер только возвращает его отправителю в `append` или `error`. Получатель, history и файл диалога его не видят. `messageId`, `seq`, `createdAt` и sender по-прежнему создаёт сервер. `PROTOCOL_VERSION` остаётся 4.
+
+Клиент хранит revision черновика. Enter запоминает revision этого запроса. Повторный Enter той же revision, пока запрос pending, второй пакет не шлёт. Новая revision может уйти, даже если предыдущая ещё ждёт ответ. Успех очищает поле только если revision не изменилась. Ошибка pending снимает и черновик оставляет. Закрытие чата pending не забывает: поздний ACK всё равно закрывает запрос и стирает неизменённый черновик, но не рисует ошибку в другом диалоге.
+
+`origin/main` `d61cb6f` (PR #119, частицы невидимости и air HUD) влит обычным merge. Конфликты были только в `docs/PROJECT_STATE.md` и `docs/ROADMAP.md`: оставлены оба раздела. `GameUI.ts`, `Game.ts`, `style.css`, `UiQaHarness.ts` и `docs/ARCHITECTURE.md` слились автоматически, air HUD и friend chat оба на месте.
+
+Повторная локальная проверка после merge и ACK-фикса: direct-message helpers и server, friends, game menu, GUI, notifications, chat channels/commands/scroll/layout, bubbles, friend join, online session, session replacement, air HUD, air DOM, survival air, invisibility particles, remote player view/interpolation/presentation, third-person camera. `tsc` client/server/full, import boundaries, `npm run build`, `npm run build:server` — PASS. GitHub CI по-прежнему не настроен.
+
+Браузерный DEV-харнесс с задержкой ACK: `"Привет   "` очищает поле и показывает `Привет`; правка до ACK оставляет новый текст; двойной Enter одной revision даёт одно сообщение; две разные revision доходят обе; Назад до ACK не возвращает успешный черновик; ошибка пустого текста оставляет черновик и не показывается в чужом чате. Landscape 844×390: обе панели 248×258. Два браузерных клиента «Играть онлайн» и виртуальная клавиатура не запускались. Воздух: `?qaUi=hud-full&air=120` показывает 4 пузырька в `.status-right` над hunger. Невидимость в `?qaPlayer=1&invis=1` включает режим; поведение частиц подтверждено `tests/invisibility-world-particles.test.ts`.

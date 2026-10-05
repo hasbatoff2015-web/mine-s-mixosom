@@ -7,12 +7,20 @@ import {
   chatScrollTopAfterPrepend,
   chatShouldRequestOlder,
   conversationKey,
+  createFriendChatComposerLedger,
+  directMessageTargetsOpenChat,
   formatDirectMessageClock,
+  friendChatDraftRevision,
+  friendChatSendAlreadyPending,
   friendsMenuBadgeCount,
   mergeDirectMessagePage,
   normalizeDirectMessageText,
+  noteFriendChatDraft,
   participantsFromKey,
   planDirectMessageScroll,
+  settleFriendChatSend,
+  trackFriendChatSend,
+  type FriendChatComposerLedger,
 } from '../shared/directMessages';
 import { parseClientMessage, parseServerMessage } from '../shared/protocol';
 
@@ -183,5 +191,194 @@ describe('direct message helpers', () => {
         createdAt: index,
       })),
     })).toEqual({ error: 'direct_message.messages invalid' });
+    expect(parseClientMessage({
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: 'bob',
+      text: 'Привет',
+      clientRequestId: 'req-1',
+    })).toMatchObject({ clientRequestId: 'req-1', text: 'Привет' });
+    expect(parseClientMessage({
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: 'bob',
+      text: 'Привет',
+      clientRequestId: 'x'.repeat(65),
+    })).toEqual({ error: 'direct_message_action.clientRequestId invalid' });
+    expect(parseClientMessage({
+      type: 'direct_message_action',
+      action: 'send',
+      friendId: 'bob',
+      text: 'Привет',
+      clientRequestId: 12,
+    })).toEqual({ error: 'direct_message_action.clientRequestId invalid' });
+    expect(parseServerMessage({
+      type: 'direct_message',
+      event: 'append',
+      friendId: 'bob',
+      clientRequestId: 'req-1',
+      messages: [{
+        messageId: 'm',
+        seq: 1,
+        senderId: 'ada',
+        recipientId: 'bob',
+        text: 'Привет',
+        createdAt: 50,
+      }],
+    })).toMatchObject({ clientRequestId: 'req-1', event: 'append' });
+    expect(parseServerMessage({
+      type: 'direct_message',
+      event: 'append',
+      friendId: 'bob',
+      messages: [{
+        messageId: 'm',
+        seq: 1,
+        senderId: 'ada',
+        recipientId: 'bob',
+        text: 'Привет',
+        createdAt: 50,
+      }],
+    })).toMatchObject({ event: 'append' });
+    expect(parseServerMessage({
+      type: 'direct_message',
+      event: 'error',
+      friendId: 'bob',
+      error: 'нет',
+      clientRequestId: 'y'.repeat(65),
+    })).toEqual({ error: 'direct_message.clientRequestId invalid' });
+  });
+});
+
+describe('friend chat send correlation', () => {
+  function send(ledger: FriendChatComposerLedger, friendId: string, clientRequestId: string): void {
+    expect(friendChatSendAlreadyPending(ledger, friendId)).toBe(false);
+    trackFriendChatSend(ledger, friendId, clientRequestId);
+  }
+
+  it('clears an unchanged draft on success, including after server whitespace normalization', () => {
+    const ledger = createFriendChatComposerLedger();
+    noteFriendChatDraft(ledger, 'bob', 'Привет');
+    send(ledger, 'bob', 'A');
+    expect(settleFriendChatSend(ledger, 'A', 'bob', 'accepted')).toEqual({
+      kind: 'accepted',
+      friendId: 'bob',
+      clearDraft: true,
+    });
+    expect(ledger.drafts.has('bob')).toBe(false);
+    expect(ledger.pending.has('A')).toBe(false);
+
+    const spaced = createFriendChatComposerLedger();
+    noteFriendChatDraft(spaced, 'bob', 'Привет   ');
+    send(spaced, 'bob', 'A');
+    expect(normalizeDirectMessageText('Привет   ')).toEqual({ ok: true, text: 'Привет' });
+    expect(settleFriendChatSend(spaced, 'A', 'bob', 'accepted').kind).toBe('accepted');
+    expect(spaced.drafts.has('bob')).toBe(false);
+  });
+
+  it('keeps a newer revision when the ack arrives, even if the text matches again', () => {
+    const edited = createFriendChatComposerLedger();
+    noteFriendChatDraft(edited, 'bob', 'Первое');
+    send(edited, 'bob', 'A');
+    noteFriendChatDraft(edited, 'bob', 'Второе');
+    expect(settleFriendChatSend(edited, 'A', 'bob', 'accepted')).toMatchObject({ clearDraft: false });
+    expect(edited.drafts.get('bob')).toBe('Второе');
+    expect(edited.pending.has('A')).toBe(false);
+
+    const sameWords = createFriendChatComposerLedger();
+    noteFriendChatDraft(sameWords, 'bob', 'Привет');
+    const first = friendChatDraftRevision(sameWords, 'bob');
+    send(sameWords, 'bob', 'A');
+    noteFriendChatDraft(sameWords, 'bob', 'Привет ');
+    noteFriendChatDraft(sameWords, 'bob', 'Привет');
+    expect(friendChatDraftRevision(sameWords, 'bob')).toBeGreaterThan(first);
+    expect(settleFriendChatSend(sameWords, 'A', 'bob', 'accepted')).toMatchObject({ clearDraft: false });
+    expect(sameWords.drafts.get('bob')).toBe('Привет');
+  });
+
+  it('keeps the current draft on error, including an edit made after submit', () => {
+    const ledger = createFriendChatComposerLedger();
+    noteFriendChatDraft(ledger, 'bob', 'Привет');
+    send(ledger, 'bob', 'A');
+    expect(settleFriendChatSend(ledger, 'A', 'bob', 'rejected')).toEqual({ kind: 'rejected', friendId: 'bob' });
+    expect(ledger.drafts.get('bob')).toBe('Привет');
+
+    const edited = createFriendChatComposerLedger();
+    noteFriendChatDraft(edited, 'bob', 'Привет');
+    send(edited, 'bob', 'A');
+    noteFriendChatDraft(edited, 'bob', 'Второе');
+    settleFriendChatSend(edited, 'A', 'bob', 'rejected');
+    expect(edited.drafts.get('bob')).toBe('Второе');
+    expect(edited.pending.size).toBe(0);
+  });
+
+  it('settles a closed chat without restoring a successful draft or painting another friend error', () => {
+    const success = createFriendChatComposerLedger();
+    noteFriendChatDraft(success, 'bob', 'Привет');
+    send(success, 'bob', 'A');
+    expect(directMessageTargetsOpenChat('friends', undefined, 'bob')).toBe(false);
+    settleFriendChatSend(success, 'A', 'bob', 'accepted');
+    expect(success.pending.has('A')).toBe(false);
+    expect(success.drafts.has('bob')).toBe(false);
+
+    const failure = createFriendChatComposerLedger();
+    noteFriendChatDraft(failure, 'bob', 'Привет');
+    noteFriendChatDraft(failure, 'cara', 'другой');
+    send(failure, 'bob', 'A');
+    expect(directMessageTargetsOpenChat('friend-chat', 'cara', 'bob')).toBe(false);
+    expect(directMessageTargetsOpenChat('friend-chat', 'bob', 'bob')).toBe(true);
+    settleFriendChatSend(failure, 'A', 'bob', 'rejected');
+    expect(failure.drafts.get('bob')).toBe('Привет');
+    expect(failure.drafts.get('cara')).toBe('другой');
+  });
+
+  it('blocks a second submit of the same revision and allows a newer one while the first is pending', () => {
+    const ledger = createFriendChatComposerLedger();
+    noteFriendChatDraft(ledger, 'bob', 'Привет');
+    send(ledger, 'bob', 'A');
+    expect(friendChatSendAlreadyPending(ledger, 'bob')).toBe(true);
+
+    noteFriendChatDraft(ledger, 'bob', 'Как дела?');
+    expect(friendChatSendAlreadyPending(ledger, 'bob')).toBe(false);
+    send(ledger, 'bob', 'B');
+    expect(ledger.pending.size).toBe(2);
+
+    settleFriendChatSend(ledger, 'A', 'bob', 'accepted');
+    expect(ledger.drafts.get('bob')).toBe('Как дела?');
+    expect(settleFriendChatSend(ledger, 'B', 'bob', 'accepted')).toMatchObject({ clearDraft: true });
+    expect(ledger.drafts.has('bob')).toBe(false);
+
+    const reversed = createFriendChatComposerLedger();
+    noteFriendChatDraft(reversed, 'bob', 'Первое');
+    send(reversed, 'bob', 'A');
+    noteFriendChatDraft(reversed, 'bob', 'Второе');
+    send(reversed, 'bob', 'B');
+    expect(settleFriendChatSend(reversed, 'B', 'bob', 'accepted')).toMatchObject({ clearDraft: true });
+    expect(reversed.drafts.has('bob')).toBe(false);
+    expect(settleFriendChatSend(reversed, 'A', 'bob', 'accepted')).toMatchObject({ clearDraft: false });
+    expect(reversed.drafts.has('bob')).toBe(false);
+    expect(reversed.pending.size).toBe(0);
+  });
+
+  it('does not clear a draft when the recipient append has no request id', () => {
+    const ledger = createFriendChatComposerLedger();
+    noteFriendChatDraft(ledger, 'bob', 'мой черновик');
+    const parsed = parseServerMessage({
+      type: 'direct_message',
+      event: 'append',
+      friendId: 'bob',
+      messages: [{
+        messageId: 'from-bob',
+        seq: 4,
+        senderId: 'bob',
+        recipientId: 'ada',
+        text: 'ответ',
+        createdAt: 9,
+      }],
+    });
+    expect(parsed).toMatchObject({ type: 'direct_message', event: 'append' });
+    if (!parsed || !('type' in parsed) || parsed.type !== 'direct_message') return;
+    expect(parsed.clientRequestId).toBeUndefined();
+    expect(settleFriendChatSend(ledger, parsed.clientRequestId, parsed.friendId, 'accepted')).toEqual({ kind: 'untracked' });
+    expect(ledger.drafts.get('bob')).toBe('мой черновик');
   });
 });

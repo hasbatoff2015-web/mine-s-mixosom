@@ -148,6 +148,99 @@ export function mergeDirectMessagePage<T extends { readonly messageId: string; r
   return out;
 }
 
+export interface PendingFriendChatSend {
+  readonly friendId: string;
+  readonly draftRevision: number;
+}
+
+/**
+ * Composer correlation. Draft text is not an id: the server may normalize it,
+ * and the player may type the same words again as a new intent.
+ */
+export interface FriendChatComposerLedger {
+  readonly drafts: Map<string, string>;
+  readonly revisions: Map<string, number>;
+  readonly pending: Map<string, PendingFriendChatSend>;
+}
+
+export type FriendChatSendSettlement =
+  | { readonly kind: 'untracked' }
+  | { readonly kind: 'accepted'; readonly friendId: string; readonly clearDraft: boolean }
+  | { readonly kind: 'rejected'; readonly friendId: string };
+
+export function createFriendChatComposerLedger(): FriendChatComposerLedger {
+  return {
+    drafts: new Map(),
+    revisions: new Map(),
+    pending: new Map(),
+  };
+}
+
+export function friendChatDraftRevision(ledger: FriendChatComposerLedger, friendId: string): number {
+  return ledger.revisions.get(friendId) ?? 0;
+}
+
+/** A real edit. The same string does not start a new revision. */
+export function noteFriendChatDraft(ledger: FriendChatComposerLedger, friendId: string, text: string): number {
+  const previous = ledger.drafts.get(friendId);
+  if (previous === text && ledger.revisions.has(friendId)) return ledger.revisions.get(friendId) ?? 0;
+  const revision = (ledger.revisions.get(friendId) ?? 0) + 1;
+  ledger.revisions.set(friendId, revision);
+  ledger.drafts.set(friendId, text);
+  return revision;
+}
+
+export function friendChatSendAlreadyPending(ledger: FriendChatComposerLedger, friendId: string): boolean {
+  const revision = friendChatDraftRevision(ledger, friendId);
+  for (const pending of ledger.pending.values()) {
+    if (pending.friendId === friendId && pending.draftRevision === revision) return true;
+  }
+  return false;
+}
+
+export function trackFriendChatSend(
+  ledger: FriendChatComposerLedger,
+  friendId: string,
+  clientRequestId: string,
+): void {
+  ledger.pending.set(clientRequestId, {
+    friendId,
+    draftRevision: friendChatDraftRevision(ledger, friendId),
+  });
+}
+
+/**
+ * Close one send. Success clears the draft only when the player has not edited
+ * since that submit. The authoritative message text is not an input.
+ */
+export function settleFriendChatSend(
+  ledger: FriendChatComposerLedger,
+  clientRequestId: string | undefined,
+  friendId: string,
+  outcome: 'accepted' | 'rejected',
+): FriendChatSendSettlement {
+  if (!clientRequestId) return { kind: 'untracked' };
+  const pending = ledger.pending.get(clientRequestId);
+  if (!pending || pending.friendId !== friendId) return { kind: 'untracked' };
+  ledger.pending.delete(clientRequestId);
+  if (outcome === 'rejected') return { kind: 'rejected', friendId };
+  const clearDraft = friendChatDraftRevision(ledger, friendId) === pending.draftRevision;
+  if (clearDraft) {
+    ledger.drafts.delete(friendId);
+    ledger.revisions.set(friendId, pending.draftRevision + 1);
+  }
+  return { kind: 'accepted', friendId, clearDraft };
+}
+
+/** An error or append is painted only while that exact conversation is open. */
+export function directMessageTargetsOpenChat(
+  screen: string | undefined,
+  activeFriendId: string | undefined,
+  friendId: string,
+): boolean {
+  return screen === 'friend-chat' && activeFriendId === friendId;
+}
+
 function encodeParticipant(id: string): string {
   const bytes = new TextEncoder().encode(id);
   let hex = '';
