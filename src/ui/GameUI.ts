@@ -547,7 +547,7 @@ export class GameUI {
     this.setScreen(`
       <div id="loading-screen" class="screen">
         <div class="menu-card loading-card">
-          <div class="brand"><div class="brand-mark"></div><h1>МЕГАКРАФТ</h1></div>
+          <div class="brand"><h1>МЕГАКРАФТ</h1></div>
           <div class="loading-phase"><span class="loading-kicker">Загрузка мира</span><strong data-loading-label>${this.escape(label)}</strong></div>
           ${bar}
           <div class="loading-progress-meta"><span data-loading-percent>${progress === undefined ? '' : `${Math.round(progress)}%`}</span></div>

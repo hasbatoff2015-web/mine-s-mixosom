@@ -47,6 +47,8 @@ describe('menu model', () => {
     expect(html.match(/class="server-caption /g)).toHaveLength(9);
     expect(html).toContain('aria-label="приваты взрываются. гриф разрешён. полная свобода и хаос"');
     expect(html).toContain('aria-hidden="true"');
+    expect(html.match(/viewBox="0 0 48 48"/g)).toHaveLength(3);
+    expect(html.match(/shape-rendering="crispEdges"/g)).toHaveLength(3);
   });
 
   it('documents the real desktop bindings and hides developer diagnostics', () => {

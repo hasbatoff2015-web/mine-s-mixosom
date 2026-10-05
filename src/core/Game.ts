@@ -3468,7 +3468,7 @@ export class Game {
     };
     this.lastLoadPercent = 8;
     this.lifecycle.setState('LOADING_WORLD');
-    this.ui.showLoading('Загрузка мира', this.lastLoadPercent, 'Подготовка мира…');
+    this.ui.showLoading('Загрузка мира', this.lastLoadPercent);
     this.input.releasePointerLock();
   }
 

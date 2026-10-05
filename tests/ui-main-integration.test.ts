@@ -36,6 +36,13 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(loading).toContain('>МЕГАКРАФТ<');
     expect(loading).not.toContain('FRONTIER');
     expect(loading).not.toContain('survival alpha');
+    expect(loading).not.toContain('brand-mark');
+    expect(loading).toContain('data-loading-percent');
+    expect(loading).toContain('data-loading-detail');
+    expect(gameUiSource).not.toContain('brand-mark');
+    expect(gameSource).toContain("this.ui.showLoading('Загрузка мира', this.lastLoadPercent)");
+    expect(gameSource).not.toContain('Подготовка мира…');
+    expect(gameSource).toContain("this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url))");
   });
 
   it('keeps live online status and the existing server connect callbacks', () => {
@@ -100,5 +107,14 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(styleSource).not.toMatch(/:root \{[^}]*font-family:\s*var\(--font-display\)/);
     expect(gameUiSource).not.toContain('frontier-logo');
     expect(styleSource).toContain("url('/ui/frontier-menu-background.png')");
+    expect(styleSource).not.toContain('grid-template-rows: 1fr auto 1fr');
+    expect(styleSource).toMatch(/\.main-menu-layout \{[^}]*grid-template-rows: auto auto/);
+    expect(styleSource).toMatch(/\.main-menu-layout \{[^}]*align-content: center/);
+    expect(styleSource).toContain('--menu-fit: 0.5');
+    expect(styleSource).toContain('--menu-fit: 0.42');
+    expect(styleSource).not.toContain('.brand-mark');
+    expect(styleSource).toMatch(/#loading-screen \.brand h1 \{[^}]*font-size: clamp\(34px, 4\.8vw, 46px\)/);
+    expect(styleSource).toMatch(/\.setting-row > span strong \{[^}]*font-family: var\(--font-display\)/);
+    expect(styleSource).toMatch(/\.setting-row > span strong \{[^}]*font-size: 11px/);
   });
 });

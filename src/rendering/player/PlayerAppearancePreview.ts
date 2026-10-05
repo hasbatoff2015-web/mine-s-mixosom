@@ -12,6 +12,9 @@ import { setEntityLight } from '../worldLighting';
 
 export const PREVIEW_AUTO_YAW_PER_SECOND = 0.35;
 export const PREVIEW_DRAG_RADIANS_PER_PIXEL = 0.012;
+export const PREVIEW_CAMERA_Z = 4.2;
+export const PREVIEW_LOOK_AT_Y = 0.9;
+export const PREVIEW_NEUTRAL_VIEW_YAW = 0;
 const PREVIEW_INITIAL_YAW = 0.45;
 
 export function normalizePreviewYaw(yaw: number): number {
@@ -52,6 +55,7 @@ export class PlayerAppearancePreview {
   readonly visual: PlayerVisual;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
+  private readonly turntable = new THREE.Group();
   private readonly camera = new THREE.PerspectiveCamera(28, 1, 0.05, 20);
   private readonly canvas: HTMLCanvasElement;
   private disposed = false;
@@ -85,10 +89,11 @@ export class PlayerAppearancePreview {
       { armorResources: options.armorResources },
     );
     this.visual.root.position.set(0, 0, 0);
-    this.scene.add(this.visual.root);
+    this.scene.add(this.turntable);
+    this.turntable.add(this.visual.root);
     setEntityLight(this.visual.root, [1.05, 1.02, 0.98]);
-    this.camera.position.set(1.35, 1.15, 3.05);
-    this.camera.lookAt(0, 0.95, 0);
+    this.camera.position.set(1.35, 1.15, PREVIEW_CAMERA_Z);
+    this.camera.lookAt(0, PREVIEW_LOOK_AT_Y, 0);
     this.resize();
   }
 
@@ -111,9 +116,10 @@ export class PlayerAppearancePreview {
     if (this.disposed || this.canvas.width === 0) return;
     this.resize();
     this.rotation.advance(deltaSeconds, this.autoRotatePaused);
+    this.turntable.rotation.y = this.rotation.read();
     this.visual.update(deltaSeconds, {
-      viewYaw: this.rotation.read(),
-      viewPitch: -0.08,
+      viewYaw: PREVIEW_NEUTRAL_VIEW_YAW,
+      viewPitch: 0,
       movementSpeed: 0,
       onGround: true,
       sneaking: false,

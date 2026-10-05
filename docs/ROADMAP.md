@@ -10,6 +10,15 @@
 - [x] Controls help matches the current input code and omits the diagnostics hotkeys.
 - [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
 
+## 2026-10-05: Megacraft menu polish
+
+- [x] Loading title is larger and has no decorative mark.
+- [x] World-load detail no longer repeats the percent under the bar.
+- [x] Main menu is one centered group. The empty footer row is gone.
+- [x] Preview yaw turns an outer group. The gameplay animator keeps a neutral view yaw.
+- [x] Preview camera leaves the head and feet inside the canvas.
+- [x] Setting names are 11px Press Start. Server icons are solid block shapes.
+
 ## 2026-10-04: mobile flight descend
 
 - [x] Ground crouch, including grounded creative, stays a toggle.

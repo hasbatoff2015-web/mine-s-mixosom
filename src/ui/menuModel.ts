@@ -130,39 +130,53 @@ function escapeMenuText(value: string): string {
 }
 
 function serverIconSvg(id: LocalServerName): string {
+  const svg = (body: string): string => `<svg viewBox="0 0 48 48" width="48" height="48" shape-rendering="crispEdges" aria-hidden="true" focusable="false">${body}</svg>`;
   if (id === 'survival') {
-    return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true" focusable="false" stroke-linecap="square" stroke-linejoin="miter">
-      <path d="M8 10h18v14L17 38 8 24z" fill="#3c8a4e" stroke="#102216" stroke-width="2.4"/>
-      <path d="M12 14h10v9l-5 8-5-8z" fill="#2c6840"/>
-      <polygon points="16,42 22,42 40,20 34,14" fill="#e7eef3" stroke="#1b2228" stroke-width="1.6"/>
-      <polygon points="12,34 20,42 25,37 17,29" fill="#e2b14a" stroke="#3a2a0c" stroke-width="1.5"/>
-      <polygon points="10,40 16,40 20,36 14,36" fill="#c48a2a" stroke="#3a2a0c" stroke-width="1.4"/>
-    </svg>`;
+    return svg(`
+      <polygon points="4,4 32,4 32,24 18,44 4,26" fill="#0e2414"/>
+      <polygon points="6,6 30,6 30,22 18,40 6,24" fill="#2f9a48"/>
+      <polygon points="6,6 16,6 16,22 12,32 6,24" fill="#58c86a"/>
+      <polygon points="20,8 30,8 30,22 18,38 18,22" fill="#1c6b34"/>
+      <polygon points="8,44 20,44 44,8 32,8" fill="#1a1e22"/>
+      <polygon points="10,42 18,42 42,10 34,10" fill="#f4f7fa"/>
+      <polygon points="14,40 18,42 42,10 38,12" fill="#c5d0d8"/>
+      <polygon points="4,32 16,32 22,44 10,44" fill="#8a5a18"/>
+      <polygon points="6,34 14,34 20,42 12,42" fill="#f0c14a"/>
+      <polygon points="6,40 12,40 10,46 4,46" fill="#c48a2a"/>
+    `);
   }
   if (id === 'peaceful') {
-    return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true" focusable="false" stroke-linecap="square" stroke-linejoin="miter">
-      <polygon points="6,22 24,7 42,22" fill="#d7c7a4" stroke="#1c1610" stroke-width="2.4"/>
-      <rect x="11" y="22" width="26" height="18" fill="#6b5340" stroke="#1a140e" stroke-width="2.2"/>
-      <rect x="21" y="28" width="7" height="12" fill="#241c14"/>
-      <polygon points="30,1 46,6 42,18 27,12" fill="#46b15f" stroke="#14341e" stroke-width="2"/>
-      <polyline points="32,8 40,11" fill="none" stroke="#14341e" stroke-width="1.8"/>
-    </svg>`;
+    return svg(`
+      <polygon points="4,24 24,4 44,24" fill="#5c3418"/>
+      <polygon points="6,22 24,6 42,22" fill="#a56b3c"/>
+      <polygon points="6,22 24,6 24,22" fill="#d7a15a"/>
+      <polygon points="24,8 42,22 24,22" fill="#7a4a28"/>
+      <rect x="10" y="22" width="28" height="20" fill="#6a4a2c"/>
+      <rect x="12" y="22" width="24" height="20" fill="#f0d7b0"/>
+      <rect x="28" y="22" width="8" height="20" fill="#c9a67a"/>
+      <rect x="13" y="26" width="6" height="6" fill="#16343c"/>
+      <rect x="14" y="27" width="4" height="4" fill="#5ed4ea"/>
+      <rect x="21" y="30" width="8" height="12" fill="#3a2414"/>
+      <polygon points="32,2 46,6 42,16 30,10" fill="#145c28"/>
+      <polygon points="34,4 44,7 40,14 32,9" fill="#46d464"/>
+      <polygon points="36,8 44,10 40,14 34,11" fill="#1f8a38"/>
+    `);
   }
-  return `<svg viewBox="0 0 48 48" width="48" height="48" aria-hidden="true" focusable="false" stroke-linecap="square" stroke-linejoin="miter">
-    <g fill="none" stroke="#ff7a32" stroke-width="2.6">
-      <line x1="24" y1="15" x2="24" y2="3"/>
-      <line x1="33" y1="18" x2="42" y2="8"/>
-      <line x1="36" y1="26" x2="45" y2="26"/>
-      <line x1="33" y1="34" x2="41" y2="43"/>
-      <line x1="24" y1="35" x2="24" y2="45"/>
-      <line x1="15" y1="34" x2="7" y2="43"/>
-      <line x1="12" y1="26" x2="3" y2="26"/>
-      <line x1="15" y1="18" x2="6" y2="8"/>
-    </g>
-    <polygon points="7,12 21,12 19,21 22,28 14,39 7,26" fill="#9a3434" stroke="#2a1010" stroke-width="2"/>
-    <polygon points="27,14 41,14 41,28 33,40 26,30 29,21" fill="#c4512e" stroke="#2a1010" stroke-width="2"/>
-    <polyline points="22,11 17,18 24,22 16,29 23,37" fill="none" stroke="#ffd36a" stroke-width="2.2"/>
-  </svg>`;
+  return svg(`
+    <polygon points="24,1 29,12 46,8 35,20 47,28 33,30 38,46 24,35 10,46 15,30 1,28 13,20 2,8 19,12" fill="#ff6a28"/>
+    <polygon points="24,10 27,17 36,15 31,23 36,30 27,30 30,38 24,31 18,38 21,30 12,30 17,23 12,15 21,17" fill="#ffd15a"/>
+    <polygon points="2,8 22,8 21,18 23,28 14,44 2,26" fill="#3a1016"/>
+    <polygon points="4,10 20,10 19,18 21,28 14,40 4,26" fill="#b42838"/>
+    <polygon points="4,10 12,10 12,22 8,30 4,24" fill="#e05058"/>
+    <polygon points="26,10 46,10 46,28 34,46 25,30 27,18" fill="#5a140e"/>
+    <polygon points="28,12 44,12 44,28 34,42 27,30 29,18" fill="#f05a30"/>
+    <polygon points="36,14 44,14 44,28 36,38 34,26" fill="#c43a22"/>
+    <rect x="20" y="8" width="4" height="6" fill="#ffe14a"/>
+    <rect x="17" y="14" width="4" height="6" fill="#ffe14a"/>
+    <rect x="21" y="20" width="4" height="6" fill="#ffe14a"/>
+    <rect x="16" y="26" width="4" height="6" fill="#ffe14a"/>
+    <rect x="20" y="32" width="4" height="8" fill="#ffe14a"/>
+  `);
 }
 
 function serverCaptionsHtml(server: MenuServerRow): string {

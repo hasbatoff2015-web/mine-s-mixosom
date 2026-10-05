@@ -80,9 +80,7 @@ export function worldLoadView(snapshot: WorldLoadSnapshot, percent: number): Wor
   const label = PHASE_LABELS[snapshot.phase];
   const detail = snapshot.phase === 'error'
     ? (snapshot.error ?? 'Неизвестная ошибка генерации')
-    : snapshot.phase === 'ready'
-      ? '100%'
-      : `${Math.round(percent)}%`;
+    : '';
   return { phase: snapshot.phase, percent, label, detail };
 }
 

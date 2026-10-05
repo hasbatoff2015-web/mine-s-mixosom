@@ -26,6 +26,9 @@ import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?ra
 import {
   PREVIEW_AUTO_YAW_PER_SECOND,
   PREVIEW_DRAG_RADIANS_PER_PIXEL,
+  PREVIEW_CAMERA_Z,
+  PREVIEW_LOOK_AT_Y,
+  PREVIEW_NEUTRAL_VIEW_YAW,
   PreviewRotation,
 } from '../src/rendering/player/PlayerAppearancePreview';
 import { SkinPreviewDragTracker } from '../src/ui/skinPreviewDrag';
@@ -192,6 +195,17 @@ describe('player skin selector', () => {
     expect(previewSource).toContain('if (this.disposed) return');
     expect(gameSource).toContain('deltaPixels * PREVIEW_DRAG_RADIANS_PER_PIXEL');
     expect(gameSource).toContain('setAutoRotatePaused(active)');
+    expect(previewSource).toContain('private readonly turntable = new THREE.Group()');
+    expect(previewSource).toContain('this.turntable.add(this.visual.root)');
+    expect(previewSource).toContain('this.turntable.rotation.y = this.rotation.read()');
+    expect(previewSource).not.toContain('viewYaw: this.rotation.read()');
+    expect(previewSource).toContain('viewYaw: PREVIEW_NEUTRAL_VIEW_YAW');
+    expect(PREVIEW_NEUTRAL_VIEW_YAW).toBe(0);
+    expect(PREVIEW_CAMERA_Z).toBeGreaterThan(3.05);
+    expect(PREVIEW_CAMERA_Z).toBe(4.2);
+    expect(PREVIEW_LOOK_AT_Y).toBe(0.9);
+    expect(previewSource).toContain('this.camera.position.set(1.35, 1.15, PREVIEW_CAMERA_Z)');
+    expect(previewSource).toContain('this.camera.lookAt(0, PREVIEW_LOOK_AT_Y, 0)');
   });
 
   it('tracks one primary pointer for the skin preview drag', () => {
