@@ -77,18 +77,45 @@ Focused files:
 - `tests/invisibility-world-particles.test.ts` — pool, depth flags, opacity, volume, recycle, shared frames, dispose, first-person scene has the overlay and not the world group.
 - Remote view activates and clears the emitter from the existing `invisible` pose. Interpolation still has no particle field.
 
-Commands and counts are filled in after the verification run on this branch.
+Focused run, PASS, 12 files / 111 tests:
+
+```
+npx vitest run \
+  tests/air-hud.test.ts \
+  tests/air-hud-dom.test.ts \
+  tests/survival-air.test.ts \
+  tests/invisibility-world-particles.test.ts \
+  tests/potion-effects-hud.test.ts \
+  tests/player-visual-animation.test.ts \
+  tests/remote-player-view.test.ts \
+  tests/remote-player-interpolation.test.ts \
+  tests/heart-hud.test.ts \
+  tests/armor-hud.test.ts \
+  tests/mobile-controls-sky-hud.test.ts \
+  tests/survival-death-invariant.test.ts
+```
+
+`npm run typecheck:client`, `npm run typecheck:server`, `npm run check:boundaries`, `npm run build`, and `git diff --check` passed. The production build still warns that `/sdk.js` is not a module. Local loads of that path 404 and the existing no-op fallback remains.
+
+`npx vitest run` on the whole repo is not green here. A later JSON pass listed 12 failing files, all outside this diff: arrow visual cleanup, classic combat, fence collision, menu chrome, SFX bytes, pet AI cost, remote breaking overlays, urgent remesh, pet hit timing, bow draw FIFO, and two server tick budgets. None of those files import the new particle or air HUD modules.
 
 ## Visual QA
 
-DEV harnesses, not a second gameplay path:
+Chrome on the Vite dev server, DEV harnesses only.
 
-- `?qaPlayer=1&invis=1&armor=none` — third-person front, no armor, world swirls.
-- `?qaPlayer=1&invis=1&armor=none&wall=1` — solid wall between the front camera and the player.
-- `?qaPlayer=1&invis=1&armor=none&camera=first` — screen overlay, world root hidden.
-- `?qaUi=hud-full&air=300`, `&air=272`, `&air=2`, and a run with no `air` param.
+Confirmed:
 
-Two live clients on a server were not opened in this pass.
+- `?qaPlayer=1&invis=1&armor=none&camera=front`: no skin, no armor, a few white swirls around the empty volume. One frame reported draw 5 / 10 triangles, which is the ground plus four sprites.
+- `?qaPlayer=1&invis=1&armor=none&camera=front&wall=1`: the gray wall covers that volume. The swirls are not visible through it.
+- `?qaPlayer=1&invis=1&armor=none&camera=first`: the world root is hidden. Swirls sit on the lower screen from the existing first-person overlay.
+- `?qaUi=hud-full&air=300`: ten full bubbles, same width as hunger, armor on the matching left row, hearts and hunger on one baseline.
+- `&air=272`: leftmost icon is `air_bursting.svg`, the other nine are full, row stays right-aligned.
+- `&air=2`: one bursting icon at the right end.
+- no `air` param: the row is `hidden`, hunger stays.
+- 1366×768 and 1920×1080 keep the same alignment and stay inside the viewport, above the hotbar.
+- 844×390 with touch emulation: bubbles scale down with the status row, still above hunger, still clear of the hotbar. The QA page does not mount the joystick, so joystick overlap was not on screen.
+
+Not opened: a second online client, creative mode in a live world, feet-only water in a generated world, and a full drown-to-damage wait. Those predicates are covered by `Game.refreshHud` and `tests/survival-air.test.ts`.
 
 ## Performance
 
