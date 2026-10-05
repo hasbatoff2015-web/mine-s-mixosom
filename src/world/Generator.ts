@@ -11,6 +11,7 @@ import {
   type WaterBiome,
 } from './hydrology';
 import { fbm2D, hashCoords, mulberry32, random01, smoothstep, valueNoise2D, valueNoise3D } from './noise';
+import { treeCells, type TreeKind } from './trees';
 
 export type { HydrologyRegion, WaterBiome };
 
@@ -35,13 +36,7 @@ export function biomeCode(biome: Biome): number {
   return BIOME_CODES[biome];
 }
 
-export type TreeKind = 'oak' | 'birch' | 'spruce';
-
-export const TREE_BLOCKS: Readonly<Record<TreeKind, Readonly<{ log: BlockId; leaves: BlockId }>>> = {
-  oak: { log: BlockId.OakLog, leaves: BlockId.OakLeaves },
-  birch: { log: BlockId.BirchLog, leaves: BlockId.BirchLeaves },
-  spruce: { log: BlockId.SpruceLog, leaves: BlockId.SpruceLeaves },
-};
+export { TREE_BLOCKS, treeCells, type TreeKind } from './trees';
 
 const BIOME_SPAWN_PENALTY: Readonly<Record<Biome, number>> = {
   plains: 0,
@@ -1075,43 +1070,13 @@ export class TerrainGenerator {
   }
 
   private placeTree(chunk: Chunk, x: number, y: number, z: number, kind: TreeKind, height: number): boolean {
-    const blocks = TREE_BLOCKS[kind];
-    const shape = new Map<string, Readonly<{ x: number; y: number; z: number; block: BlockId }>>();
-    const addLeaves = (dy: number, radius: number, rounded = false): void => {
-      for (let dx = -radius; dx <= radius; dx += 1) {
-        for (let dz = -radius; dz <= radius; dz += 1) {
-          if (rounded && radius > 1 && Math.abs(dx) === radius && Math.abs(dz) === radius) continue;
-          const px = x + dx;
-          const py = y + height + dy;
-          const pz = z + dz;
-          shape.set(`${px},${py},${pz}`, { x: px, y: py, z: pz, block: blocks.leaves });
-        }
-      }
-    };
-    if (kind === 'oak') {
-      for (let dy = -2; dy <= 1; dy += 1) addLeaves(dy, dy >= 1 ? 1 : 2, dy !== 0);
-    } else if (kind === 'birch') {
-      addLeaves(-2, 1);
-      addLeaves(-1, 1);
-      addLeaves(0, 1);
-      addLeaves(1, 0);
-    } else {
-      addLeaves(-5, 1);
-      addLeaves(-4, 2, true);
-      addLeaves(-3, 1);
-      addLeaves(-2, 2, true);
-      addLeaves(-1, 1);
-      addLeaves(0, 0);
-    }
-    for (let offset = 0; offset < height; offset += 1) {
-      shape.set(`${x},${y + offset},${z}`, { x, y: y + offset, z, block: blocks.log });
-    }
-    for (const entry of shape.values()) {
+    const shape = treeCells(kind, x, y, z, height);
+    for (const entry of shape) {
       if (entry.y < 0 || entry.y >= WORLD_HEIGHT) return false;
       const existing = chunk.get(entry.x, entry.y, entry.z) as BlockId;
       if (existing !== BlockId.Air && getBlockDefinition(existing).replaceable !== true) return false;
     }
-    for (const entry of shape.values()) chunk.set(entry.x, entry.y, entry.z, entry.block);
+    for (const entry of shape) chunk.set(entry.x, entry.y, entry.z, entry.block);
     return true;
   }
 

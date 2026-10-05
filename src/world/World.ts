@@ -14,6 +14,7 @@ import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
 import { TerrainGenerator, type Biome, type TerrainGenJob } from './Generator';
 import { gameplayMayMutateBlock } from './worldBorder';
+import { syncSaplingClock, tickSaplings } from './saplings';
 import {
   bindMeshLightSample,
   chunkNeedsCommittedMeshLight,
@@ -222,6 +223,8 @@ export class VoxelWorld {
   readonly signs = new Map<string, SignLines>();
   signVersion = 0;
   readonly blockStates = new Map<string, BlockRenderState>();
+  /** Planted-sapling timestamps. Restored with block states; not a second save file. */
+  readonly saplingPlantedAt = new Map<string, number>();
   readonly generator: TerrainGenerator;
   timeOfDay = 1_000;
   tickNumber = 0;
@@ -342,6 +345,10 @@ export class VoxelWorld {
       for (const [key, value] of Object.entries(state.blockStates)) {
         this.blockStates.set(key, value as BlockRenderState);
       }
+    }
+    this.saplingPlantedAt.clear();
+    for (const [key, blockState] of this.blockStates) {
+      syncSaplingClock(this.saplingPlantedAt, key, blockState);
     }
     this.signs.clear();
     for (const [key, raw] of Object.entries(state.signs ?? {})) {
@@ -557,7 +564,9 @@ export class VoxelWorld {
       this.noteFluidNoop();
       return false;
     }
-    this.blockStates.set(blockKey(x, y, z), state);
+    const key = blockKey(x, y, z);
+    this.blockStates.set(key, state);
+    syncSaplingClock(this.saplingPlantedAt, key, state);
     if (state.fluidLevel === undefined) this.queueSupportAround(x, y, z);
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
@@ -586,8 +595,10 @@ export class VoxelWorld {
     const key = blockKey(x, y, z);
     if (state === undefined) {
       if (!this.blockStates.delete(key)) return;
+      syncSaplingClock(this.saplingPlantedAt, key, undefined);
     } else {
       this.blockStates.set(key, state);
+      syncSaplingClock(this.saplingPlantedAt, key, state);
     }
     this.markBlockDirty(x, z);
   }
@@ -891,7 +902,9 @@ export class VoxelWorld {
     const previousDefinition = getBlockDefinition(previous);
     const previousEmission = previous === BlockId.Furnace ? this.blockEmissionAt(x, y, z) : previousDefinition.emission ?? 0;
     chunk.set(localX, y, localZ, block);
-    this.blockStates.delete(blockKey(x, y, z));
+    const clearedKey = blockKey(x, y, z);
+    this.blockStates.delete(clearedKey);
+    syncSaplingClock(this.saplingPlantedAt, clearedKey, undefined);
     if (previous === BlockId.OakSign && block !== BlockId.OakSign
       && this.signs.delete(blockKey(x, y, z))) this.signVersion += 1;
     if (!skipSupport) this.queueSupportAround(x, y, z);
@@ -1451,6 +1464,7 @@ export class VoxelWorld {
     processFluidQueue(this);
     this.processSupportIntegrity();
     this.tickFurnaces();
+    tickSaplings(this);
   }
 
   beginFluidTick(): void {

@@ -1,5 +1,14 @@
 # Архитектура
 
+## Saplings, drops, footsteps, fall damage — 2026-09-29
+
+Saplings are `BlockId` 167–169 and normal block items. `plantedAtMs` lives on the existing `BlockRenderState` and is indexed in `VoxelWorld.saplingPlantedAt`. `VoxelWorld.tick` calls `tickSaplings`, which compares that timestamp to `Date.now()` (not the 20 TPS counter). A due sapling grows through `treeCells`, the same shape `TerrainGenerator.placeTree` writes, and only if every cell is air, replaceable, or the sapling itself. `applyBlockBatch` is the block update, so connected players get the usual committed-block deltas.
+
+`rollBrokenBlockDrops` is the one break/detach loot roll. A `substitute` replaces the primary item (gravel → flint at 0.1). A `bonus` adds a stack (leaves → sapling at 0.2) and does not remove the primary drop. Blocks without those fields consume the same RNG as `rollDropCount`.
+
+Footsteps call `footstepEventForGroup`. The glass group returns no step event. Break still uses `glass.break`.
+
+`fallDamageFromDistance` is applied once in `PlayerController` and handed to `SurvivalSystem.damage`. For `source === 'fall'` only, health that would reach 0 becomes 1 before the death/totem check.
 ## Mobile crouch and flight descend — 2026-10-04
 
 Ground crouch and flight descend are different bits. `MobileSneakState.latched` toggles on sneak `pointerdown` only while the mode is `toggle`. `pressed` is the finger, set on `pointerdown` and cleared on `pointerup`, `pointercancel`, `releaseActions`, and `clearHeldKeys`. A second pointer does not steal the first.
@@ -72,7 +81,7 @@ Draw order: sky dome renderOrder -1000, depth test off, depth write off. Sun and
 
 `#app` is `position: fixed` and its height is `--app-height`, filled by `bindVisualViewport()` from `visualViewport.height` (fallback `100dvh`). `100vh` is the layout viewport. On a phone it stays tall while the browser bar covers the bottom, so `bottom: 0` controls and menu footers sat under that bar. Requesting the desktop site uses a wide layout viewport that the browser scales onto the screen, which is why that mode looked aligned and the real mobile viewport did not. Menu shells use `dvh` for the same reason.
 
-In-game menus keep the desktop grid, type, padding and close/back metrics. The old `max-width` / `max-height` queries that turned `.mc-menu-grid-row-4` into two columns, stacked `.main-menu-center`, forced `.menu-window` to `100vh`, and shrank pause buttons are gone. A short or narrow screen sets `zoom` on `.mc-stage`. Under 520px tall, `.main-menu-layout`, `.menu-window` and `.pause-window` use `--menu-fit` (`0.5`, or `0.42` under 430px) so the same desktop structure fits the visual viewport. `--mc-ui-scale` stays 3.
+In-game menus keep the desktop grid, type, padding and close/back metrics. The old `max-width` / `max-height` queries that turned `.mc-menu-grid-row-4` into two columns, stacked `.main-menu-center`, forced `.menu-window` to `100vh`, and shrank pause buttons are gone. A short or narrow screen sets `zoom` on `.mc-stage`. Under 520px tall, `.main-menu-layout`, `.menu-window` and `.pause-window` use `--menu-fit` (`0.65`, or `0.55` under 430px) so the same desktop structure fits the visual viewport. `--mc-ui-scale` stays 3.
 
 Touch layout is still only `TOUCH_LAYOUT_QUERY` (`(pointer: coarse)`). Portrait coarse still shows the rotate overlay. `#hotbar` stays one non-wrapping row. On coarse, `--hotbar-slot` and `--hud-hotbar-half-width` are set on both `#app` and `#hud` because the touch buttons are not inside `#hud`. The inventory button's left edge is `50% + half-width + 20px` and its bottom matches the hotbar. That is the same 20px gap as `#offhand-hud`, mirrored to the right. Jump and crouch are absolute in the bottom-right. `#play-info` is the bottom-left corner on desktop and on coarse. The joystick sits above that block and 40px to the right. `#hud-corner` stays a top-right row. `selectstart` / `contextmenu` / `dragstart` on `#app` run only while `touchLayout` is on, and they still ignore `input`, `textarea` and `[contenteditable="true"]`.
 

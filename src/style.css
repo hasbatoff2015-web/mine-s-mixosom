@@ -915,7 +915,7 @@ textarea,
   flex: 0 0 auto;
   flex-direction: column;
   align-items: stretch;
-  gap: calc(8px * var(--hud-scale));
+  gap: 0;
 }
 
 #chat.open #chat-side {
@@ -1132,12 +1132,22 @@ textarea,
 }
 
 #chat-close {
-  aspect-ratio: 102 / 96;
+  position: fixed;
+  right: -6px;
+  top: 113.3px;
+  width: 166.78px;
+  height: 159.38px;
+  margin: 0;
   background-image: var(--chat-close-img);
 }
 
 #chat-visibility {
-  aspect-ratio: 106 / 96;
+  position: fixed;
+  right: 7.61px;
+  top: 255.8px;
+  width: 137.78px;
+  height: 124.8px;
+  margin: 0;
   background-image: var(--chat-on-img);
 }
 
@@ -1249,9 +1259,7 @@ textarea,
     --chat-open-log-height: min(58vh, calc(100dvh - 7.5rem));
   }
 
-  #chat-send,
-  #chat-close,
-  #chat-visibility {
+  #chat-send {
     height: calc(88px * var(--hud-scale));
   }
 
@@ -5249,9 +5257,9 @@ textarea,
     overflow: hidden;
   }
 
+  .pause-window,
   .main-menu-layout,
-  .menu-window,
-  .pause-window {
+  .menu-window {
     zoom: var(--menu-fit);
   }
 

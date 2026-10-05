@@ -35,7 +35,7 @@ import {
   shouldPlayExplosion,
 } from '../src/audio/explosionDedupe';
 import { consumableSoundEvent } from '../src/audio/consumableSounds';
-import { materialSoundEvent } from '../src/audio/soundEvents';
+import { footstepEventForGroup, materialSoundEvent } from '../src/audio/soundEvents';
 import { AudioManager } from '../src/core/AudioManager';
 import { ItemId } from '../src/items';
 
@@ -124,6 +124,19 @@ describe('block sound groups', () => {
 
   it('builds material event ids from group + action', () => {
     expect(materialSoundEvent('break', 'stone')).toBe('block.break.stone');
+  });
+
+  it('stays silent while walking on glass-group blocks and still breaks glass', () => {
+    expect(getBlockDefinition(BlockId.Glass).soundGroup).toBe('glass');
+    expect(getBlockDefinition(BlockId.Ice).soundGroup).toBe('glass');
+    expect(getBlockDefinition(BlockId.Glowstone).soundGroup).toBe('glass');
+    expect(footstepEventForGroup('glass')).toBeUndefined();
+    expect(footstepEventForGroup(undefined)).toBeUndefined();
+    expect(footstepEventForGroup('stone')).toBe('block.step.stone');
+    expect(footstepEventForGroup('wood')).toBe('block.step.wood');
+    expect(materialSoundEvent('break', 'glass')).toBe('block.break.glass');
+    expect(materialSoundEvent('place', 'glass')).toBe('block.place.glass');
+    expect(resolveCatalogEvent('glass.break')?.files).toEqual(['glass_1.mp3']);
   });
 });
 
