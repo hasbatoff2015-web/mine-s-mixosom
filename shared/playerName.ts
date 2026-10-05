@@ -1,7 +1,7 @@
 import { MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from './config';
 
 /**
- * Display nickname only. English letters and digits, 2–20 characters.
+ * Display nickname only. English letters and digits, 2–13 characters.
  * No trim: spaces and other symbols stay invalid. Not an account id.
  */
 export const PLAYER_NICKNAME_PATTERN = /^[A-Za-z0-9]+$/;

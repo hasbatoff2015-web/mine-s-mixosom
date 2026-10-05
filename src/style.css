@@ -4116,9 +4116,11 @@ textarea,
   grid-template-rows: auto auto;
   align-content: center;
   justify-items: center;
-  row-gap: clamp(28px, 3.5vh, 44px);
+  row-gap: clamp(16px, 2.2vh, 28px);
   width: 100%;
   min-height: 100%;
+  padding-top: clamp(4px, 1vh, 12px);
+  padding-bottom: clamp(28px, 7vh, 84px);
 }
 
 .megacraft-logo {
@@ -4132,29 +4134,45 @@ textarea,
 
 .megacraft-logo span {
   display: block;
-  color: #d8dad6;
   font-family: var(--font-display);
-  font-size: clamp(42px, 6.3vw, 88px);
   font-weight: 400;
   font-synthesis: none;
-  letter-spacing: -0.04em;
-  line-height: 1.25;
   white-space: nowrap;
+}
+
+.megacraft-logo__title {
+  color: #d8dad6;
+  font-size: clamp(56px, 7vw, 112px);
+  letter-spacing: -0.04em;
+  line-height: 1.05;
   -webkit-text-stroke: clamp(1px, 0.15vw, 3px) #171717;
   text-shadow:
-    0 3px 0 #7c8079,
-    0 7px 0 #3c3e3a,
-    0 11px 0 #141414;
+    0 4px 0 #7c8079,
+    0 8px 0 #3c3e3a,
+    0 12px 0 #141414;
+}
+
+.megacraft-logo__subtitle {
+  margin-top: 6px;
+  color: #d2dc62;
+  font-size: clamp(22px, 2.9vw, 42px);
+  letter-spacing: 0.08em;
+  line-height: 1.05;
+  -webkit-text-stroke: clamp(1px, 0.08vw, 2px) #1c240c;
+  text-shadow:
+    0 2px 0 #6a7828,
+    0 4px 0 #2a320e,
+    0 6px 0 #101408;
 }
 
 .main-menu-center {
   align-self: center;
   justify-self: center;
   display: grid;
-  grid-template-columns: minmax(300px, 560px) minmax(240px, 310px);
-  gap: 24px;
+  grid-template-columns: minmax(300px, 1fr) minmax(260px, 380px);
+  gap: 28px;
   align-items: stretch;
-  width: min(920px, calc(100vw - 42px));
+  width: min(1080px, calc(100vw - 42px));
 }
 
 .main-menu-actions {
@@ -4168,9 +4186,9 @@ textarea,
   display: grid;
   align-content: start;
   justify-items: stretch;
-  gap: 12px;
+  gap: 14px;
   min-width: 0;
-  padding: 14px 14px 16px;
+  padding: 18px 18px 20px;
   border: 2px solid var(--menu-edge);
   color: var(--menu-ink);
   background: linear-gradient(var(--menu-face-light), var(--menu-face-dark));
@@ -4194,7 +4212,7 @@ textarea,
 .character-preview-canvas {
   display: block;
   width: 100%;
-  height: 280px;
+  height: clamp(320px, 36vh, 380px);
   background:
     radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.16), transparent 62%),
     linear-gradient(180deg, #2a3340, #151a22);
@@ -4344,8 +4362,13 @@ textarea,
 }
 
 .main-menu-screen .main-menu-actions .game-button {
-  min-height: 56px;
+  min-height: 62px;
   font-size: 13px;
+}
+
+.main-menu-screen .character-panel .game-button {
+  min-height: 58px;
+  font-size: 12px;
 }
 
 .submenu-screen {
@@ -5174,7 +5197,8 @@ textarea,
   }
 
   .main-menu-layout {
-    row-gap: clamp(16px, 2.4vh, 28px);
+    row-gap: clamp(12px, 2vh, 20px);
+    padding-bottom: 12px;
   }
 
   .megacraft-logo {
@@ -5182,12 +5206,17 @@ textarea,
     margin: 0;
   }
 
-  .megacraft-logo span {
-    font-size: clamp(26px, 8.4vw, 46px);
+  .megacraft-logo__title {
+    font-size: clamp(28px, 9vw, 48px);
+  }
+
+  .megacraft-logo__subtitle {
+    margin-top: 4px;
+    font-size: clamp(13px, 3.6vw, 20px);
   }
 
   .character-preview-canvas {
-    height: min(240px, 32vh);
+    height: min(280px, 34vh);
   }
 }
 
@@ -5219,6 +5248,24 @@ textarea,
     width: calc(100% / var(--menu-fit));
     height: auto;
     min-height: 0;
+    row-gap: 16px;
+    padding-bottom: 0;
+  }
+
+  .megacraft-logo__title {
+    font-size: 72px;
+  }
+
+  .megacraft-logo__subtitle {
+    font-size: 28px;
+  }
+
+  .character-preview-canvas {
+    height: 260px;
+  }
+
+  .main-menu-screen .main-menu-actions .game-button {
+    min-height: 52px;
   }
 
   .menu-window {

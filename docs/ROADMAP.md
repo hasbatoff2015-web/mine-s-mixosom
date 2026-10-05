@@ -10,6 +10,12 @@
 - [x] Controls help matches the current input code and omits the diagnostics hotkeys.
 - [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
 
+## 2026-10-05: Megacraft logo and nickname length
+
+- [x] Main-menu logo is two lines: «МЕГАКРАФТ» and a smaller olive «ОНЛАЙН».
+- [x] Main-menu buttons, center block, and character panel are larger. The background file is unchanged.
+- [x] Shared nickname maximum is 13. The online hint says 2–13. Pattern and minimum stay the same.
+
 ## 2026-10-05: Megacraft menu polish
 
 - [x] Loading title is larger and has no decorative mark.

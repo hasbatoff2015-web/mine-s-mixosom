@@ -606,8 +606,9 @@ export class GameUI {
     this.setScreen(`
       <section class="screen menu-screen main-menu-screen">
         <div class="main-menu-layout">
-          <div class="megacraft-logo" aria-label="Мегакрафт">
-            <span>МЕГАКРАФТ</span>
+          <div class="megacraft-logo" aria-label="Мегакрафт Онлайн">
+            <span class="megacraft-logo__title">МЕГАКРАФТ</span>
+            <span class="megacraft-logo__subtitle">ОНЛАЙН</span>
           </div>
           <div class="main-menu-center">
             <div class="menu-stack main-menu-actions">

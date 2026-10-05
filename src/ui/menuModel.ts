@@ -1,4 +1,4 @@
-import { LOCAL_SERVER_PRESETS, type LocalServerName } from '../../shared/config';
+import { LOCAL_SERVER_PRESETS, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH, type LocalServerName } from '../../shared/config';
 import { playerNicknameError } from '../../shared/playerName';
 
 export type MenuServerCaptionTone = 'danger' | 'warning' | 'positive' | 'info' | 'accent';
@@ -44,7 +44,7 @@ export interface MobileControlItem {
   note?: string;
 }
 
-export const ONLINE_NICKNAME_HINT = '2–20 символов · только A–Z и 0–9';
+export const ONLINE_NICKNAME_HINT = `${MIN_PLAYER_NAME_LENGTH}–${MAX_PLAYER_NAME_LENGTH} символов · только A–Z и 0–9`;
 export const ONLINE_NICKNAME_SAVED = 'Сохранено';
 
 export interface OnlineNicknameMessage {

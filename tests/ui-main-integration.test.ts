@@ -17,8 +17,9 @@ describe('UI visual pass on the authoritative main contracts', () => {
   it('shows Мегакрафт on the main menu without an account route', () => {
     const main = sourceSection(gameUiSource, 'showMainMenu(', 'showSkinSelector(');
     expect(main).toContain('class="megacraft-logo"');
-    expect(main).toContain('>МЕГАКРАФТ<');
-    expect(main).toContain('aria-label="Мегакрафт"');
+    expect(main).toContain('class="megacraft-logo__title">МЕГАКРАФТ<');
+    expect(main).toContain('class="megacraft-logo__subtitle">ОНЛАЙН<');
+    expect(main).toContain('aria-label="Мегакрафт Онлайн"');
     expect(main).not.toContain('FRONTIER');
     expect(main).not.toContain('Frontier');
     expect(main).not.toContain('survival alpha');
@@ -34,6 +35,7 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
     const loading = sourceSection(gameUiSource, 'showLoading(', 'updateWorldLoading(');
     expect(loading).toContain('>МЕГАКРАФТ<');
+    expect(loading).not.toContain('ОНЛАЙН');
     expect(loading).not.toContain('FRONTIER');
     expect(loading).not.toContain('survival alpha');
     expect(loading).not.toContain('brand-mark');
@@ -100,6 +102,10 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(styleSource).toContain('.megacraft-logo');
     expect(styleSource).not.toContain('.frontier-logo');
     expect(styleSource).toMatch(/\.megacraft-logo span \{[^}]*font-family: var\(--font-display\)/);
+    expect(styleSource).toMatch(/\.megacraft-logo__title \{[^}]*font-size: clamp\(56px, 7vw, 112px\)/);
+    expect(styleSource).toMatch(/\.megacraft-logo__subtitle \{[^}]*color: #d2dc62/);
+    expect(styleSource).toMatch(/\.main-menu-screen \.main-menu-actions \.game-button \{[^}]*min-height: 62px/);
+    expect(styleSource).toMatch(/\.character-preview-canvas \{[^}]*height: clamp\(320px, 36vh, 380px\)/);
     expect(styleSource).toMatch(/\.menu-screen \.game-button \{[^}]*font-family: var\(--font-display\)/);
     expect(styleSource).toMatch(/\.server-copy strong \{[^}]*font-family: var\(--font-display\)/);
     expect(styleSource).toMatch(/\.server-caption \{[^}]*font-family: var\(--font-ui\)/);

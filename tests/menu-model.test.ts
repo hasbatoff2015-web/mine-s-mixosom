@@ -106,6 +106,7 @@ describe('menu model', () => {
   });
 
   it('keeps nickname errors hidden until submit and disables an unchanged draft', () => {
+    expect(ONLINE_NICKNAME_HINT).toBe('2–13 символов · только A–Z и 0–9');
     expect(onlineNicknameMessage({ draft: '', saved: undefined })).toEqual({
       text: ONLINE_NICKNAME_HINT,
       tone: 'help',

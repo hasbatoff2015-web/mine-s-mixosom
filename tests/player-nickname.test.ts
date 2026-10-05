@@ -9,10 +9,11 @@ import {
   savePlayerNickname,
   type NicknameStorage,
 } from '../src/net/playerNickname';
+import { ONLINE_NICKNAME_HINT } from '../src/ui/menuModel';
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
 
-const LENGTH_ERROR = 'Ник должен содержать от 2 до 20 символов.';
+const LENGTH_ERROR = 'Ник должен содержать от 2 до 13 символов.';
 const CHARACTER_ERROR = 'Только английские буквы и цифры.';
 
 function memoryStorage(initial: Record<string, string> = {}): NicknameStorage & { data: Record<string, string> } {
@@ -26,11 +27,12 @@ function memoryStorage(initial: Record<string, string> = {}): NicknameStorage & 
 }
 
 describe('player display nickname', () => {
-  it('uses a shared 2–20 Latin/digit contract', () => {
+  it('uses a shared 2–13 Latin/digit contract', () => {
     expect(MIN_PLAYER_NAME_LENGTH).toBe(2);
-    expect(MAX_PLAYER_NAME_LENGTH).toBe(20);
+    expect(MAX_PLAYER_NAME_LENGTH).toBe(13);
+    expect(ONLINE_NICKNAME_HINT).toBe('2–13 символов · только A–Z и 0–9');
     expect(PLAYER_NICKNAME_PATTERN.source).toBe('^[A-Za-z0-9]+$');
-    for (const name of ['Ab', 'Misha', 'Player123', 'A1', '12345678901234567890']) {
+    for (const name of ['Ab', 'Misha', 'Player123', 'A1', 'a'.repeat(13)]) {
       expect(sanitizePlayerName(name)).toBe(name);
       expect(playerNicknameError(name)).toBeUndefined();
       expect(savePlayerNickname(name, memoryStorage())).toEqual({ ok: true, name });
@@ -38,14 +40,14 @@ describe('player display nickname', () => {
   });
 
   it('rejects short, empty, spaced, Cyrillic, symbol, and overlong nicks without trimming', () => {
-    const invalid = ['A', '', ' Misha', 'Misha ', 'Mi sha', 'Миша', 'Custom_Nick', 'Custom-Nick', 'a'.repeat(21), 'Mi\nsha', 'Mi\tsha'];
+    const invalid = ['A', '', ' Misha', 'Misha ', 'Mi sha', 'Миша', 'Custom_Nick', 'Custom-Nick', 'a'.repeat(14), 'a'.repeat(20), 'Mi\nsha', 'Mi\tsha'];
     for (const name of invalid) {
       expect(sanitizePlayerName(name), name).toBeUndefined();
       expect(savePlayerNickname(name, memoryStorage()).ok, name).toBe(false);
     }
     expect(playerNicknameError('')).toBe(LENGTH_ERROR);
     expect(playerNicknameError('A')).toBe(LENGTH_ERROR);
-    expect(playerNicknameError('a'.repeat(21))).toBe(LENGTH_ERROR);
+    expect(playerNicknameError('a'.repeat(14))).toBe(LENGTH_ERROR);
     expect(playerNicknameError(' Misha')).toBe(CHARACTER_ERROR);
     expect(playerNicknameError('Misha ')).toBe(CHARACTER_ERROR);
     expect(playerNicknameError('Mi sha')).toBe(CHARACTER_ERROR);
@@ -65,7 +67,7 @@ describe('player display nickname', () => {
   });
 
   it('puts a valid nick on the join payload and omits an invalid one', () => {
-    const max = 'a'.repeat(20);
+    const max = 'a'.repeat(13);
     expect(buildAnarchyJoinMessage('Misha')).toEqual({
       type: 'join',
       protocol: PROTOCOL_VERSION,
@@ -101,7 +103,7 @@ describe('player display nickname', () => {
     expect(parseClientMessage({
       type: 'join',
       protocol: PROTOCOL_VERSION,
-      name: 'a'.repeat(21),
+      name: 'a'.repeat(14),
     })).not.toHaveProperty('name');
   });
 
@@ -111,6 +113,7 @@ describe('player display nickname', () => {
     expect(gameUiSource).toContain('aria-label="Ваш ник"');
     expect(gameUiSource).toContain('minlength="${MIN_PLAYER_NAME_LENGTH}"');
     expect(gameUiSource).toContain('maxlength="${MAX_PLAYER_NAME_LENGTH}"');
+    expect(gameUiSource).toContain('>${ONLINE_NICKNAME_HINT}<');
     expect(gameUiSource).toContain('autocomplete="off"');
     expect(gameUiSource).not.toContain('id="account-nickname"');
     expect(gameUiSource).not.toContain('showAccount(');
