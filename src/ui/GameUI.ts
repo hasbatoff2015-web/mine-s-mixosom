@@ -7,7 +7,8 @@ import {
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { getItemDefinition, obtainableItems, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
+import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
+import { creativeCatalogGrant } from '../inventory/inventoryUiAction';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ClientSettings } from './clientSettings';
 import type { ChestState, FurnaceState } from '../world/World';
@@ -2117,7 +2118,7 @@ export class GameUI {
     this.resetOverlayModal();
     const stage = containerStageSize('creative', false);
     const scale = this.containerScale(stage.width, stage.height);
-    const catalog = obtainableItems();
+    const catalog = creativeCatalogItems();
     const catalogHidden = this.creativeTab !== 'catalog';
     const inventoryHidden = this.creativeTab !== 'inventory';
     this.modal!.innerHTML = `
@@ -2573,8 +2574,8 @@ export class GameUI {
     else if (key.startsWith('container-')) this.clickContainer(Number(key.slice('container-'.length)), button, shift);
     else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)) as 0 | 1 | 2, button, shift);
     else if (key.startsWith('creative-')) {
-      const definition = obtainableItems()[Number(key.slice('creative-'.length))];
-      if (definition) this.cursorStack = createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
+      const granted = creativeCatalogGrant(Number(key.slice('creative-'.length)), button);
+      if (granted) this.cursorStack = granted;
     }
     context.onChanged();
     this.renderInventory();

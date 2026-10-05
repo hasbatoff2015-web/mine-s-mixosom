@@ -69,7 +69,7 @@ describe('third-person held item defaults', () => {
 
   it('uses one sword pose for every sword and one tool pose for every non-axe tool', () => {
     expect(SWORD_IDS).toEqual([
-      'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword',
+      'wooden_sword', 'stone_sword', 'iron_sword', 'golden_sword', 'diamond_sword', 'ruby_sword', 'titanium_sword', 'god_sword',
     ]);
     expect(OTHER_TOOL_IDS).toContain('wooden_pickaxe');
     expect(OTHER_TOOL_IDS).toContain('iron_pickaxe');

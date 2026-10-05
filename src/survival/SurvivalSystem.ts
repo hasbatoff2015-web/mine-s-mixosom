@@ -43,6 +43,12 @@ export interface DamageOptions {
   readonly bypassArmor?: boolean;
   readonly ignoreInvulnerability?: boolean;
   readonly swordBlocking?: boolean;
+  /**
+   * Player-hit semantic for a special weapon. The strike removes current health
+   * without consulting hurt resistance, sword blocking, armor, or absorption,
+   * then the existing death-protection path still runs. This is not a damage magnitude.
+   */
+  readonly forceLethal?: boolean;
   /** Distinguishes inFire contact from onFire DOT without a new damage-source system. */
   readonly fireContact?: boolean;
   readonly onDamage?: (result: DamageResult) => void;
@@ -276,29 +282,45 @@ export class SurvivalSystem {
   damage(amount: number, source: DamageSource = 'generic', options: DamageOptions = {}): DamageResult {
     const requested = Number.isFinite(amount) ? Math.max(0, amount) : 0;
     const healthBefore = this.health;
-    if (requested <= 0 || this.dead) return this.emptyDamageResult(source, requested, healthBefore);
-    if ((source === 'fire' || source === 'lava') && this.hasEffect('fire_resistance')) {
+    const forceLethal = options.forceLethal === true;
+    if (this.dead || (!forceLethal && requested <= 0)) return this.emptyDamageResult(source, requested, healthBefore);
+    if (!forceLethal && (source === 'fire' || source === 'lava') && this.hasEffect('fire_resistance')) {
       return this.emptyDamageResult(source, requested, healthBefore);
     }
 
-    const hurt = this.hurtResistance.receive(requested, options.ignoreInvulnerability);
-    if (!hurt.accepted) return this.emptyDamageResult(source, requested, healthBefore);
-    const blocking = options.swordBlocking ?? this.isSwordBlocking?.() ?? false;
-    const rawToApply = blocking && !options.bypassArmor && isSwordBlockable(source, options.fireContact)
-      ? (1 + hurt.rawDamage) * 0.5 : hurt.rawDamage;
+    let afterArmor: number;
+    let absorbed: number;
+    let dealt: number;
+    let armorWorn = false;
+    let fullHurt: boolean;
+    if (forceLethal) {
+      const hurt = this.hurtResistance.receive(Math.max(requested, 1), true);
+      fullHurt = hurt.fullHurt;
+      afterArmor = healthBefore;
+      absorbed = 0;
+      dealt = healthBefore;
+      this.health = 0;
+    } else {
+      const hurt = this.hurtResistance.receive(requested, options.ignoreInvulnerability);
+      if (!hurt.accepted) return this.emptyDamageResult(source, requested, healthBefore);
+      fullHurt = hurt.fullHurt;
+      const blocking = options.swordBlocking ?? this.isSwordBlocking?.() ?? false;
+      const rawToApply = blocking && !options.bypassArmor && isSwordBlockable(source, options.fireContact)
+        ? (1 + hurt.rawDamage) * 0.5 : hurt.rawDamage;
 
-    const bypassArmor = options.bypassArmor ?? ARMOR_BYPASS_SOURCES.has(source);
-    const afterArmor = bypassArmor
-      ? rawToApply
-      : reduceDamageByArmor(rawToApply, options.armor);
-    const armorWorn = bypassArmor
-      ? false
-      : wearEquippedArmor(options.armor, armorDurabilityLoss(rawToApply));
-    const absorbed = Math.min(this.absorption, afterArmor);
-    this.absorption -= absorbed;
-    const dealt = Math.max(0, afterArmor - absorbed);
-    const nextHealth = Math.max(0, this.health - dealt);
-    this.health = source === 'fall' && nextHealth <= 0 ? FALL_DAMAGE_MIN_HEALTH : nextHealth;
+      const bypassArmor = options.bypassArmor ?? ARMOR_BYPASS_SOURCES.has(source);
+      afterArmor = bypassArmor
+        ? rawToApply
+        : reduceDamageByArmor(rawToApply, options.armor);
+      armorWorn = bypassArmor
+        ? false
+        : wearEquippedArmor(options.armor, armorDurabilityLoss(rawToApply));
+      absorbed = Math.min(this.absorption, afterArmor);
+      this.absorption -= absorbed;
+      dealt = Math.max(0, afterArmor - absorbed);
+      const nextHealth = Math.max(0, this.health - dealt);
+      this.health = source === 'fall' && nextHealth <= 0 ? FALL_DAMAGE_MIN_HEALTH : nextHealth;
+    }
     const deathProtected = this.health <= 0 && source !== 'void' && this.tryDeathProtection?.(source) === true;
     if (deathProtected) {
       this.clearEffects();
@@ -321,7 +343,7 @@ export class SurvivalSystem {
       killed,
       ignored: false,
       accepted: true,
-      fullHurt: hurt.fullHurt,
+      fullHurt,
       ...(deathProtected ? { deathProtected: true } : {}),
       ...(armorWorn ? { armorWorn: true } : {}),
     };

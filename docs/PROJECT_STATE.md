@@ -4,7 +4,28 @@
 
 - Невидимый игрок получает редкие world-space swirl particles на `PlayerVisual.root`. После появления частица остаётся в мировой точке спавна и не едет вместе с моделью. Прыжок на 6 блоков и больше сбрасывает шлейф. Это клиентская презентация существующего `invisible`. Протокол, длительность эффекта и first-person screen overlay не менялись. В первом лице группа скрыта вместе с моделью.
 - Survival HUD показывает 10 пузырьков над hunger, пока голова под водой. Формула vanilla-like от `airTicks` 0–300. Расход воздуха, восстановление и drowning damage не менялись.
-- Подробности: `docs/reports/2026-10-05_invisibility-particles-air-hud.md`.
+- Подробности: `docs/reports/2026-10-05_invisibility-particles-air-hud.md` и `docs/reports/2026-10-05_invisibility-particle-world-trail.md`.
+
+## Последний проход: визуал Меча бога по референсу — 2026-10-05
+
+- Спрайт `god_sword` по-прежнему 32×32 с маской iron sword. Кромка теперь двухслойная: внешний пиксель горячий, внутренний темнее. Между кромкой и центральной жилой остаётся графитовый металл. На жиле четыре белых узла. Гарда и навершие держат свой `#FFE8E2` core. Рукоять тёмная, с тремя красными искрами.
+- Боевая механика и Creative catalog не менялись.
+- Подробности: `docs/reports/2026-10-05_god-sword-visual-reference.md`.
+
+## Последний проход: текстура Меча бога и Creative — 2026-10-05
+
+- Спрайт `god_sword` по-прежнему 32×32 с alpha-маской iron sword. Клинок темнее титана, но основная поверхность — `#18232D` / `#263542`, а не чёрная плоскость. Кромка — authored ruby с тремя пиками, не одинаковый яркий красный. Рукоять перекрашена в тёмную обмотку. Две короткие fissure и семь пикселей холодного ridge.
+- Creative catalog берёт `creativeCatalogItems()`. God Sword остаётся `hiddenFromGameplay: true` и дополнительно `creativeCatalog: true`. Крафт, плавка и лут его не содержат. `/give` работает. В Creative прочность не тратится, как у остальных предметов с durability.
+- Боевая семантика `forceLethal` не менялась.
+- Подробности: `docs/reports/2026-10-05_god-sword-texture-creative.md`.
+
+## Последний проход: Меч бога — 2026-10-05
+
+- `god_sword` — отдельный одноразовый меч, не следующий material tier после Titanium. `hiddenFromGameplay: true`: нет крафта, плавки, лута и каталога Creative. `/give god_sword 1` работает, потому что команда ищет known item id.
+- Урон по игроку — `DamageOptions.forceLethal` внутри `SurvivalSystem.damage`. Сервер ставит флаг только если authoritative слот атаки содержит `ItemId.GodSword`. Клиент не присылает lethal-флаг. `attackDamage` остаётся 10 и используется против мобов. Броня, блок мечом, absorption и HurtResistance этот удар не снижают и броню не изнашивают. Источник остаётся `melee`. `dealt` равен здоровью до удара.
+- Смерть идёт в существующий `setDeathProtection` → `consumeOffhandTotem`. Тотем в offhand спасает (1 HP и обычные эффекты); тотем в обычном слоте не спасает. После принятого удара `damageItem` снимает единственную прочность и удаляет меч, в том числе если тотем спас цель. Промах, отказ PvP, отменённый `playerDamage`, Creative, стена, дистанция и сломанный блок меч не тратят.
+- Спрайт `public/textures/item/god_sword.png` — 32×32, та же alpha-маска, что `assets/minecraft/textures/items/iron_sword.png`. Геометрия, scale и pose `sword` общие с остальными мечами. Отличие только текстура: тёмный металл и 30 красных акцентов внутри силуэта.
+- Подробности: `docs/reports/2026-10-05_god-sword.md`.
 
 ## Последний проход: масштаб меню — 2026-10-05
 

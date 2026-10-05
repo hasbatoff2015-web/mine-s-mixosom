@@ -150,7 +150,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { ItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -5419,7 +5419,7 @@ export class Game {
           }
         }
       }
-      if (toolStack && (item?.kind === 'tool' || item?.kind === 'weapon')) {
+      if (toolStack && losesDurabilityWhenBreakingBlocks(item)) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
       }
       session.survival.addExhaustion(0.005);

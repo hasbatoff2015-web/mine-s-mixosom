@@ -169,6 +169,22 @@ const swords: ItemDefinition[] = tiers.map((stats): WeaponItemDefinition => {
   });
 });
 
+const godSwordDescription = itemDescriptionFor(ItemId.GodSword);
+const godSword: WeaponItemDefinition = Object.freeze({
+  id: ItemId.GodSword,
+  name: requiredDisplayName(ItemId.GodSword),
+  kind: 'weapon',
+  maxStack: 1,
+  texture: 'item/god_sword',
+  tags: Object.freeze(['weapon', 'sword', 'special', 'god_sword']),
+  weapon: 'sword',
+  durability: 1,
+  attackDamage: 10,
+  hiddenFromGameplay: true,
+  creativeCatalog: true,
+  ...(godSwordDescription === undefined ? {} : { description: godSwordDescription }),
+});
+
 const armorStats = {
   leather: {
     durability: { head: 55, chest: 80, legs: 75, feet: 65 },
@@ -301,6 +317,7 @@ const equipment: readonly ItemDefinition[] = [
   ...tools,
   ...hoes,
   ...swords,
+  godSword,
   Object.freeze({
     id: ItemId.Bow, name: requiredDisplayName(ItemId.Bow), kind: 'weapon', maxStack: 1, texture: 'item/bow',
     tags: Object.freeze(['weapon', 'bow']), weapon: 'bow', durability: 384, attackDamage: 0,
@@ -360,6 +377,15 @@ export function getBlockItemId(blockId: BlockId): string | undefined {
   return ITEMS.find((definition) => definition.kind === 'block' && definition.blockId === blockId)?.id;
 }
 
+/**
+ * Tools and ordinary weapons lose one durability when they break a block.
+ * God Sword is a single combat use and is not spent on mining.
+ */
+export function losesDurabilityWhenBreakingBlocks(item: ItemDefinition | undefined): boolean {
+  if (!item || (item.kind !== 'tool' && item.kind !== 'weapon')) return false;
+  return item.id !== ItemId.GodSword;
+}
+
 export function isItemObtainable(itemOrId: string | ItemDefinition): boolean {
   const item = typeof itemOrId === 'string' ? ITEM_REGISTRY.get(itemOrId) : itemOrId;
   return item !== undefined && item.hiddenFromGameplay !== true;
@@ -367,4 +393,9 @@ export function isItemObtainable(itemOrId: string | ItemDefinition): boolean {
 
 export function obtainableItems(): readonly ItemDefinition[] {
   return ITEMS.filter((item) => item.hiddenFromGameplay !== true);
+}
+
+/** Creative catalog order. Hidden items stay out unless they opt in. */
+export function creativeCatalogItems(): readonly ItemDefinition[] {
+  return ITEMS.filter((item) => item.hiddenFromGameplay !== true || item.creativeCatalog === true);
 }

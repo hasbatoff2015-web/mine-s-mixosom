@@ -2,7 +2,7 @@ import { craftOnceByRecipeId, matchCraftingRecipe } from '../crafting';
 import { Inventory } from './inventory';
 import { applySlotClick, createItemStack } from './stack';
 import type { ItemStack } from './types';
-import { obtainableItems } from '../items';
+import { creativeCatalogItems } from '../items';
 import type { GameMode } from '../save/types';
 import {
   clickFurnaceSlot,
@@ -58,6 +58,14 @@ export interface InventoryUiResult {
 
 function emptyResult(ok: boolean): InventoryUiResult {
   return { ok, dropped: [] };
+}
+
+/** One Creative catalog sequence for rendering and for catalog clicks. */
+export function creativeCatalogGrant(index: number, button: 'left' | 'right'): ItemStack | null {
+  if (!Number.isInteger(index) || index < 0) return null;
+  const definition = creativeCatalogItems()[index];
+  if (!definition) return null;
+  return createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
 }
 
 export function gridSizeFor(kind: ContainerKind): 2 | 3 {
@@ -264,9 +272,9 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
 
   if (key.startsWith('creative-')) {
     if (state.gamemode !== 'creative') return emptyResult(false);
-    const definition = obtainableItems()[Number(key.slice('creative-'.length))];
-    if (!definition) return emptyResult(false);
-    state.cursor = createItemStack(definition.id, button === 'right' ? 1 : definition.maxStack);
+    const granted = creativeCatalogGrant(Number(key.slice('creative-'.length)), button);
+    if (!granted) return emptyResult(false);
+    state.cursor = granted;
     return emptyResult(true);
   }
 
