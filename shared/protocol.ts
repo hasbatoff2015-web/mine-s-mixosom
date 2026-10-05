@@ -954,7 +954,23 @@ export interface ServerInventoryMessage {
     readonly y?: number;
     readonly z?: number;
     readonly slots?: unknown;
+    /** Present when the open window is a furnace. Server tick is the source. */
+    readonly burnTime?: number;
+    readonly burnTotal?: number;
+    readonly cookTime?: number;
   };
+}
+
+/** Live furnace slots and progress for players who already have that GUI open. */
+export interface ServerFurnaceSyncMessage {
+  readonly type: 'furnace_sync';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly slots: readonly unknown[];
+  readonly burnTime: number;
+  readonly burnTotal: number;
+  readonly cookTime: number;
 }
 
 export interface ServerHealthMessage {
@@ -1487,6 +1503,7 @@ export type ServerMessage =
   | ServerPongMessage
   | ServerStatusMessage
   | ServerInventoryMessage
+  | ServerFurnaceSyncMessage
   | ServerHealthMessage
   | ServerEffectsMessage
   | ServerWhMarksMessage
@@ -1555,6 +1572,7 @@ export const SERVER_MESSAGE_TYPES = [
   'pong',
   'status',
   'inventory',
+  'furnace_sync',
   'health',
   'effects',
   'entity_snapshot',
@@ -2484,6 +2502,33 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
     case 'effects': {
       if (!Array.isArray(raw.effects)) return { error: 'effects invalid' };
       return raw as unknown as ServerEffectsMessage;
+    }
+    case 'furnace_sync': {
+      const x = raw.x;
+      const y = raw.y;
+      const z = raw.z;
+      const burnTime = raw.burnTime;
+      const burnTotal = raw.burnTotal;
+      const cookTime = raw.cookTime;
+      if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number'
+        || !Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) {
+        return { error: 'furnace_sync invalid' };
+      }
+      if (!finite(burnTime) || !finite(burnTotal) || !finite(cookTime)) {
+        return { error: 'furnace_sync invalid' };
+      }
+      if (!Array.isArray(raw.slots) || raw.slots.length > 3) return { error: 'furnace_sync invalid' };
+      const ticks = (value: number): number => Math.max(0, Math.min(1_000_000, value));
+      return {
+        type: 'furnace_sync',
+        x,
+        y,
+        z,
+        slots: raw.slots.slice(0, 3),
+        burnTime: ticks(burnTime),
+        burnTotal: ticks(burnTotal),
+        cookTime: ticks(cookTime),
+      };
     }
     case 'command_result': {
       if (!bool(raw.ok) || typeof raw.name !== 'string' || !Array.isArray(raw.lines)) {

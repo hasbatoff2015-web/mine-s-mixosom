@@ -37,16 +37,23 @@ describe('new items, blocks and entities', () => {
     }
   });
 
-  it('crafts a fire arrow from arrow + lava bucket and returns an empty bucket', () => {
-    const match = matchCraftingRecipe([ItemId.Arrow, ItemId.LavaBucket, null, null], 2, 2);
-    expect(match?.output.itemId).toBe(ItemId.FireArrow);
+  it('crafts eight fire arrows from eight arrows + lava bucket and returns an empty bucket', () => {
+    const match = matchCraftingRecipe([
+      createItemStack(ItemId.Arrow, 8),
+      ItemId.LavaBucket,
+      null,
+      null,
+    ], 2, 2);
+    expect(match?.output).toEqual(createItemStack(ItemId.FireArrow, 8));
     const leftover = consumeCraftingGrid([
-      createItemStack(ItemId.Arrow),
+      createItemStack(ItemId.Arrow, 8),
       createItemStack(ItemId.LavaBucket),
       null,
       null,
     ], match!);
+    expect(leftover[0]).toBeNull();
     expect(leftover[1]?.itemId).toBe(ItemId.Bucket);
+    expect(matchCraftingRecipe([ItemId.Arrow, ItemId.LavaBucket, null, null], 2, 2)).toBeUndefined();
   });
 
   it('gives golden apple absorption and regeneration, and potions return a bottle', () => {

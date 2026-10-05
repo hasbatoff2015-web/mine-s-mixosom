@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-05: Apples, crafting and furnace
+
+- [x] Every fifth leaf broken by a player drops one apple. The counter is per player and resets after the fifth.
+- [x] Golden apple is 8 gold ingots around an apple. Fire arrows are 8 arrows plus a lava bucket, returning the bucket.
+- [x] Cobblestone smelts to stone. A lava bucket burns for 16000 ticks and leaves an empty bucket in the fuel slot.
+- [x] An open furnace keeps ticking. Online viewers receive `furnace_sync`. The arrow uses the smelting recipe time.
+
 ## 2026-10-05: Invisibility world particles and air HUD
 
 - [x] Sparse white swirl particles on `PlayerVisual.root` while `invisible` is true. Pool of 7, depth test on, no protocol field.

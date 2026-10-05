@@ -5,7 +5,7 @@ import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
 import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SURFACE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
-import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
+import { consumeFurnaceFuel, findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
 import { sanitizeSignLines, type SignLines } from './sign';
 import { bedOtherCell, isMatchingBedHalf } from './bed';
@@ -178,6 +178,8 @@ export interface FurnaceState {
   burnTime: number;
   burnTotal: number;
   cookTime: number;
+  /** Item the current cookTime belongs to. Missing on older saves. */
+  cookInputId?: string;
 }
 
 interface ScheduledBlockTick {
@@ -1713,33 +1715,45 @@ export class VoxelWorld {
     for (const [key, furnace] of this.furnaces) {
       const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
+      const inputId = input?.itemId;
+      if (furnace.cookInputId !== undefined && furnace.cookInputId !== inputId) furnace.cookTime = 0;
+      furnace.cookInputId = inputId;
+
       const recipe = input ? findSmeltingRecipe(input.itemId) : undefined;
       const outputId = recipe?.output.item;
       const outputCount = recipe?.output.count ?? 1;
-      if (furnace.burnTime <= 0 && recipe) {
+      const output = furnace.slots[2];
+      const maxOutput = outputId ? getItemDefinition(outputId).maxStack : 0;
+      const canSmelt = outputId !== undefined
+        && (!output || (output.itemId === outputId && output.count + outputCount <= maxOutput));
+
+      if (furnace.burnTime <= 0 && canSmelt) {
         const fuel = furnace.slots[1];
         const fuelTicks = fuel ? getFuelBurnTicks(fuel.itemId) : 0;
         if (fuel && fuelTicks > 0) {
           furnace.burnTime = fuelTicks;
           furnace.burnTotal = fuelTicks;
-          furnace.slots[1] = fuel.count <= 1 ? null : { ...fuel, count: fuel.count - 1 };
+          furnace.slots[1] = consumeFurnaceFuel(fuel);
         }
       }
-      if (furnace.burnTime > 0) furnace.burnTime -= 1;
-      const output = furnace.slots[2];
-      const maxOutput = outputId ? getItemDefinition(outputId).maxStack : 0;
-      const canOutput = outputId !== undefined
-        && (!output || (output.itemId === outputId && output.count + outputCount <= maxOutput));
-      if (furnace.burnTime > 0 && canOutput) {
+
+      if (furnace.burnTime > 0 && canSmelt && recipe && input && outputId) {
         furnace.cookTime += 1;
-        if (recipe && furnace.cookTime >= recipe.cookingTimeTicks && input && outputId) {
-          furnace.slots[0] = input.count <= 1 ? null : { ...input, count: input.count - 1 };
-          furnace.slots[2] = output
-            ? { ...output, count: output.count + outputCount }
-            : { itemId: outputId, count: outputCount };
-          furnace.cookTime = 0;
+        if (furnace.cookTime >= recipe.cookingTimeTicks) {
+          const currentInput = furnace.slots[0];
+          if (currentInput && currentInput.itemId === input.itemId) {
+            furnace.slots[0] = currentInput.count <= 1 ? null : { ...currentInput, count: currentInput.count - 1 };
+            const currentOutput = furnace.slots[2];
+            furnace.slots[2] = currentOutput
+              ? { ...currentOutput, count: currentOutput.count + outputCount }
+              : { itemId: outputId, count: outputCount };
+            furnace.cookTime = 0;
+            furnace.cookInputId = furnace.slots[0]?.itemId;
+          }
         }
       } else furnace.cookTime = 0;
+
+      if (furnace.burnTime > 0) furnace.burnTime -= 1;
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);

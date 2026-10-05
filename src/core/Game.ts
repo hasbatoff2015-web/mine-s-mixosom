@@ -309,6 +309,7 @@ import { angularError, type BlockTargetIntent } from '../../shared/playerActions
 import { IDLE_PLAYER_PRESENTATION, presentationHurtSeq } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
+  applyFurnaceSync,
   parseNetworkItemStack,
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
@@ -374,11 +375,13 @@ import {
   shouldHandleOnlineClientEvent,
 } from './onlineSession';
 import {
+  applesForBrokenLeaves,
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
   dropScatterOrigin,
   formatGameplayKernelTrace,
+  isLeafBlock,
   performUseHeld,
   movementDuringItemUse,
   resolveHologramUseTarget,
@@ -452,6 +455,8 @@ export interface GameSession {
   bowUseTicks: number;
   playTicks: number;
   lastAutosaveTick: number;
+  /** Leaves broken toward the next apple. Authoritative singleplayer counter. */
+  leafBreaksTowardApple: number;
   serverWorld?: SerializedServerWorld;
   online?: OnlineAnarchySession;
 }
@@ -1433,6 +1438,10 @@ export class Game {
           this.openOnlineContainer(session, message.window.kind, message.window);
         }
         this.refreshHud();
+        return;
+      case 'furnace_sync':
+        applyFurnaceSync(session.world, message, parseNetworkItemStack);
+        if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
         return;
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
@@ -3388,6 +3397,7 @@ export class Game {
       bowUseTicks: 0,
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
+      leafBreaksTowardApple: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
       online: options?.online,
     };
@@ -5418,6 +5428,7 @@ export class Game {
             );
           }
         }
+        if (harvestable) this.dropLeafApple(session, hit);
       }
       if (toolStack && losesDurabilityWhenBreakingBlocks(item)) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
@@ -5425,6 +5436,17 @@ export class Game {
       session.survival.addExhaustion(0.005);
     }
     this.releaseBlockEntityContents(hit);
+  }
+
+  private dropLeafApple(session: GameSession, hit: VoxelHit): void {
+    if (!isLeafBlock(hit.block)) return;
+    const award = applesForBrokenLeaves(session.leafBreaksTowardApple, 1);
+    session.leafBreaksTowardApple = award.next;
+    if (award.apples <= 0) return;
+    this.spawnDroppedStack(
+      createItemStack(ItemId.Apple, award.apples),
+      new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+    );
   }
 
   private breakMinecart(cart: MinecartEntity): void {

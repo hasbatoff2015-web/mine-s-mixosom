@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, blockKey, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
@@ -336,6 +336,8 @@ export class ServerPlayer implements GameplayPlayer {
   totemActivated = false;
   pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
+  /** Last furnace_sync payload sent while this player's furnace GUI is open. */
+  furnaceSyncSignature?: string;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
@@ -3802,6 +3804,7 @@ export class WorldInstance {
       this.flushPlayerInventory(player, false);
       this.flushHealth(player);
     }
+    this.flushOpenFurnaceViews();
     const entityEvents = this.gameplay.consumeEntityEvents();
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
@@ -4301,8 +4304,47 @@ export class WorldInstance {
         y: player.window.y,
         z: player.window.z,
         slots: chest?.slots ?? furnace?.slots,
+        ...(furnace ? {
+          burnTime: furnace.burnTime,
+          burnTotal: furnace.burnTotal,
+          cookTime: furnace.cookTime,
+        } : {}),
       },
     });
+  }
+
+  /**
+   * Players with a furnace GUI open need the server tick's burn/cook/slots.
+   * This is not a full inventory flush and does not touch chest viewers.
+   */
+  private flushOpenFurnaceViews(): void {
+    for (const player of this.connectedPlayers()) {
+      const window = player.window;
+      if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+        player.furnaceSyncSignature = undefined;
+        continue;
+      }
+      const furnace = this.world.furnaces.get(blockKey(window.x, window.y, window.z));
+      const slots = furnace?.slots ?? [null, null, null];
+      const burnTime = furnace?.burnTime ?? 0;
+      const burnTotal = furnace?.burnTotal ?? 0;
+      const cookTime = furnace?.cookTime ?? 0;
+      const signature = `${burnTime}|${burnTotal}|${cookTime}|${slots.map((stack) => (
+        stack ? `${stack.itemId}:${stack.count}` : ''
+      )).join(',')}`;
+      if (player.furnaceSyncSignature === signature) continue;
+      player.furnaceSyncSignature = signature;
+      this.sendTo(player, {
+        type: 'furnace_sync',
+        x: window.x,
+        y: window.y,
+        z: window.z,
+        slots,
+        burnTime,
+        burnTotal,
+        cookTime,
+      });
+    }
   }
 
   /** Other clients with the same chest/furnace open must see the mutation immediately. */
