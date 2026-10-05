@@ -132,6 +132,8 @@ import {
 import { armorHudIcons, type ArmorHudIcon } from './armorHud';
 import { absorptionHudIcons, heartHudIcons, type HeartHudIcon } from './heartHud';
 import { hungerHudIcons, type HungerHudIcon } from './hungerHud';
+import { AIR_HUD_ICON_COUNT, airHudIcons, type AirHudIcon } from './airHud';
+import { MAX_AIR_TICKS } from '../survival';
 import { readCloudSetting } from '../input/mobileTouch';
 import {
   attachItemTooltip,
@@ -249,6 +251,10 @@ export interface HudState {
   miningProgress: number;
   armor?: number;
   absorption?: number;
+  /** Canonical SurvivalSystem air supply. Omitted updates assume a full tank. */
+  airTicks?: number;
+  /** Head-under-water survival predicate. Omitted updates keep the row hidden. */
+  airVisible?: boolean;
   effects?: readonly PotionHudEntry[];
   debug?: string;
   /** "Игроков" plus floored XYZ. Omitted updates leave the previous text. */
@@ -284,6 +290,7 @@ export class GameUI {
   private selectedItem: HTMLElement;
   private hearts: HTMLElement;
   private hunger: HTMLElement;
+  private air: HTMLElement;
   private armor: HTMLElement;
   private mining: HTMLElement;
   private debug: HTMLElement;
@@ -354,6 +361,9 @@ export class GameUI {
   private selectedItemText = '';
   private heartsHtml = '';
   private hungerHtml = '';
+  private airHtml = '';
+  private airVisible = false;
+  private airLabel = 'Запас воздуха';
   private armorHtml = '';
   private miningWidth = '';
   private miningVisible = false;
@@ -378,7 +388,10 @@ export class GameUI {
             <div class="armor hidden"></div>
             <div class="hearts"></div>
           </div>
-          <div class="hunger"></div>
+          <div class="status-right">
+            <div class="air hidden" aria-label="Запас воздуха"></div>
+            <div class="hunger"></div>
+          </div>
         </div>
         <div id="selected-item"></div>
         <div id="hotbar"></div>
@@ -447,6 +460,7 @@ export class GameUI {
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.hunger = this.root.querySelector('.hunger')!;
+    this.air = this.root.querySelector('.air')!;
     this.armor = this.root.querySelector('.armor')!;
     this.mining = this.root.querySelector('#mining-progress')!;
     this.debug = this.root.querySelector('#debug-panel')!;
@@ -975,6 +989,21 @@ export class GameUI {
     if (hungerHtml !== this.hungerHtml) {
       this.hungerHtml = hungerHtml;
       this.hunger.innerHTML = hungerHtml;
+    }
+    const airHud = airHudIcons(state.airTicks ?? MAX_AIR_TICKS, state.airVisible === true);
+    const airHtml = airHud.icons.map((icon) => this.airIconHtml(icon)).join('');
+    if (airHtml !== this.airHtml) {
+      this.airHtml = airHtml;
+      this.air.innerHTML = airHtml;
+    }
+    if (airHud.visible !== this.airVisible) {
+      this.airVisible = airHud.visible;
+      this.air.classList.toggle('hidden', !airHud.visible);
+    }
+    const airLabel = `Воздух: ${airHud.icons.length} из ${AIR_HUD_ICON_COUNT}`;
+    if (airLabel !== this.airLabel) {
+      this.airLabel = airLabel;
+      this.air.setAttribute('aria-label', airLabel);
     }
     const armorHud = armorHudIcons(state.armor ?? 0);
     const armorHtml = armorHud.visible
@@ -2691,6 +2720,10 @@ export class GameUI {
 
   private hungerIconHtml(icon: HungerHudIcon): string {
     return `<img class="hunger-icon" src="${import.meta.env.BASE_URL}textures/gui/hunger_${icon}.svg" alt="" draggable="false" />`;
+  }
+
+  private airIconHtml(icon: AirHudIcon): string {
+    return `<img class="air-icon" src="${import.meta.env.BASE_URL}textures/gui/air_${icon}.svg" alt="" draggable="false" />`;
   }
 
   private closeButtonHtml(): string {

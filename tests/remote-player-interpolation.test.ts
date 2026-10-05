@@ -454,4 +454,19 @@ describe('remote player server-tick interpolation', () => {
     expect(pose?.x).toBe(100);
     expect([30, 50, 70].includes(pose?.x ?? 0)).toBe(false);
   });
+
+  it('keeps invisibility as the existing discrete pose flag', () => {
+    const hidden = new RemoteInterpolationBuffer();
+    const shown = new RemoteInterpolationBuffer();
+    for (let tick = 100; tick <= 110; tick += 1) {
+      hidden.push(snap(tick, { invisible: true }));
+      shown.push(snap(tick, { invisible: false }));
+    }
+    const now = 110 * REMOTE_TICK_MS;
+    const hiddenPose = hidden.sample(now)!;
+    const shownPose = shown.sample(now)!;
+    expect(hiddenPose.invisible).toBe(true);
+    expect(shownPose.invisible).toBe(false);
+    expect(hiddenPose).not.toHaveProperty('particles');
+  });
 });

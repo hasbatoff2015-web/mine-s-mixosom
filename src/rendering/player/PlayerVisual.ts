@@ -50,6 +50,7 @@ import {
   humanoidDeathScale,
 } from '../../entities/humanoidDeath';
 import { SharedFireTexture } from '../fireTexture';
+import { InvisibilityWorldParticles } from '../InvisibilityWorldParticles';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly bedRest?: BedRestState | null;
@@ -142,6 +143,7 @@ export class PlayerVisual {
   private hurtFlashStartedAt = -1;
   private disposed = false;
   private fireOverlay?: THREE.Mesh;
+  private readonly worldParticles = new InvisibilityWorldParticles();
   private readonly ownedArmorResources?: PlayerArmorResources;
 
   constructor(
@@ -203,6 +205,11 @@ export class PlayerVisual {
     this.rebuildMeshes();
     bindEntityLightReceiver(this.root);
     setEntityLight(this.root, [1, 1, 1]);
+    this.root.add(this.worldParticles.group);
+  }
+
+  get invisibilityParticles(): InvisibilityWorldParticles {
+    return this.worldParticles;
   }
 
   get appearance(): PlayerAppearance {
@@ -353,6 +360,16 @@ export class PlayerVisual {
     return pose;
   }
 
+  /**
+   * Call after PlayerVisual.root has its final render position.
+   * Spawned swirls stay in world space while the parent keeps moving.
+   */
+  updateWorldParticles(deltaSeconds: number): void {
+    this.assertActive();
+    this.worldParticles.setActive(this.invisible);
+    this.worldParticles.update(deltaSeconds);
+  }
+
   applyWorldLight(world: VoxelWorld, x: number, y: number, z: number, daylight = 1): void {
     const sample = applySampledEntityLight(this.root, world, x, y, z, 1.8, daylight);
     if (this.hurtFlash <= 0) return;
@@ -373,6 +390,7 @@ export class PlayerVisual {
 
   dispose(): void {
     if (this.disposed) return;
+    this.worldParticles.dispose();
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
     this.offhandModel?.removeFromParent();
