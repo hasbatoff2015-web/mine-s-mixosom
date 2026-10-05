@@ -5,10 +5,12 @@ import { resolveItemId } from '../src/chat/commands';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { displayNameFor } from '../src/i18n';
 import { createItemStack, damageItem, Inventory, parseSerializedItemStack } from '../src/inventory';
+import { applyInventoryUiAction, creativeCatalogGrant } from '../src/inventory/inventoryUiAction';
 import {
   ItemId,
   classifyItemForRendering,
   classifyThirdPersonItemPose,
+  creativeCatalogItems,
   getItemDefinition,
   isSwordItem,
   itemHeldMeshKind,
@@ -35,6 +37,7 @@ describe('God Sword registry', () => {
       attackDamage: 10,
       texture: 'item/god_sword',
       hiddenFromGameplay: true,
+      creativeCatalog: true,
       name: 'Меч бога',
       description: 'Смертельный удар. Спасает только тотем бессмертия. Одноразовый.',
     });
@@ -43,6 +46,8 @@ describe('God Sword registry', () => {
     expect(isSwordItem(ItemId.GodSword)).toBe(true);
     expect(displayNameFor(ItemId.GodSword, 'en')).toBe('God Sword');
     expect(obtainableItems().some((entry) => entry.id === ItemId.GodSword)).toBe(false);
+    const catalog = creativeCatalogItems();
+    expect(catalog.filter((entry) => entry.id === ItemId.GodSword)).toHaveLength(1);
     expect(resolveItemId('god_sword')).toBe(ItemId.GodSword);
     expect(resolveItemId('minecraft:god_sword')).toBe(ItemId.GodSword);
     expect(getAttackProfile(ItemId.GodSword)).toMatchObject({
@@ -169,5 +174,57 @@ describe('forceLethal damage contract', () => {
     expect(second.accepted).toBe(false);
     expect(survival.health).toBe(afterBlock);
     expect(survival.dead).toBe(false);
+  });
+});
+
+describe('God Sword creative catalog', () => {
+  it('keeps ordinary progression hidden and grants one sword from the shared catalog index', () => {
+    const obtainableIds = obtainableItems().map((item) => item.id);
+    const catalog = creativeCatalogItems();
+    const catalogIds = catalog.map((item) => item.id);
+    expect(obtainableIds).not.toContain(ItemId.GodSword);
+    expect(catalogIds.filter((id) => id === ItemId.GodSword)).toEqual([ItemId.GodSword]);
+    expect(catalogIds).toContain(ItemId.TitaniumSword);
+    expect(catalogIds).toContain(ItemId.RubySword);
+    expect(catalogIds).not.toContain('stone_stairs');
+    let seen = 0;
+    for (const id of catalogIds) {
+      if (id === obtainableIds[seen]) seen += 1;
+    }
+    expect(seen).toBe(obtainableIds.length);
+
+    const index = catalogIds.indexOf(ItemId.GodSword);
+    const granted = creativeCatalogGrant(index, 'left');
+    expect(granted).toMatchObject({ itemId: ItemId.GodSword, count: 1 });
+    expect(creativeCatalogGrant(index, 'right')).toMatchObject({ itemId: ItemId.GodSword, count: 1 });
+    expect(creativeCatalogGrant(catalogIds.indexOf(ItemId.TitaniumSword), 'left')?.itemId).toBe(ItemId.TitaniumSword);
+
+    const state = {
+      inventory: new Inventory(),
+      cursor: null,
+      craftSlots: [null, null, null, null],
+      window: { kind: 'inventory' as const },
+      gamemode: 'creative' as const,
+    };
+    expect(applyInventoryUiAction(state, {
+      type: 'inventory_action',
+      action: 'click',
+      key: `creative-${index}`,
+      button: 'left',
+    }).ok).toBe(true);
+    expect(state.cursor).toEqual(granted);
+
+    const blocked = {
+      ...state,
+      cursor: null,
+      gamemode: 'survival' as const,
+    };
+    expect(applyInventoryUiAction(blocked, {
+      type: 'inventory_action',
+      action: 'click',
+      key: `creative-${index}`,
+      button: 'left',
+    }).ok).toBe(false);
+    expect(blocked.cursor).toBeNull();
   });
 });

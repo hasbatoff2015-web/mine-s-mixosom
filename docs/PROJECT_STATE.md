@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: текстура Меча бога и Creative — 2026-10-05
+
+- Спрайт `god_sword` по-прежнему 32×32 с alpha-маской iron sword. Клинок темнее титана, но основная поверхность — `#18232D` / `#263542`, а не чёрная плоскость. Кромка — authored ruby с тремя пиками, не одинаковый яркий красный. Рукоять перекрашена в тёмную обмотку. Две короткие fissure и семь пикселей холодного ridge.
+- Creative catalog берёт `creativeCatalogItems()`. God Sword остаётся `hiddenFromGameplay: true` и дополнительно `creativeCatalog: true`. Крафт, плавка и лут его не содержат. `/give` работает. В Creative прочность не тратится, как у остальных предметов с durability.
+- Боевая семантика `forceLethal` не менялась.
+- Подробности: `docs/reports/2026-10-05_god-sword-texture-creative.md`.
+
 ## Последний проход: Меч бога — 2026-10-05
 
 - `god_sword` — отдельный одноразовый меч, не следующий material tier после Titanium. `hiddenFromGameplay: true`: нет крафта, плавки, лута и каталога Creative. `/give god_sword 1` работает, потому что команда ищет known item id.

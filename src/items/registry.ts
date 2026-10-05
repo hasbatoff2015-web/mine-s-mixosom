@@ -181,6 +181,7 @@ const godSword: WeaponItemDefinition = Object.freeze({
   durability: 1,
   attackDamage: 10,
   hiddenFromGameplay: true,
+  creativeCatalog: true,
   ...(godSwordDescription === undefined ? {} : { description: godSwordDescription }),
 });
 
@@ -392,4 +393,9 @@ export function isItemObtainable(itemOrId: string | ItemDefinition): boolean {
 
 export function obtainableItems(): readonly ItemDefinition[] {
   return ITEMS.filter((item) => item.hiddenFromGameplay !== true);
+}
+
+/** Creative catalog order. Hidden items stay out unless they opt in. */
+export function creativeCatalogItems(): readonly ItemDefinition[] {
+  return ITEMS.filter((item) => item.hiddenFromGameplay !== true || item.creativeCatalog === true);
 }

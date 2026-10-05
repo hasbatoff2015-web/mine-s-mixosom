@@ -17,10 +17,16 @@ export interface BaseItemDefinition {
   /** Optional block placed by using the item. */
   readonly placesBlockId?: BlockId;
   /**
-   * Hidden from Creative catalog, recipes and other obtainable UI.
-   * The registry entry may remain for combat/tests/old saves.
+   * Hidden from ordinary survival progression and from the default Creative catalog.
+   * The registry entry may remain for combat, commands, and old saves.
+   * `creativeCatalog: true` puts a hidden item back into Creative only.
    */
   readonly hiddenFromGameplay?: boolean;
+  /**
+   * Include this item in the Creative catalog even when it is hidden from
+   * ordinary gameplay. Items without `hiddenFromGameplay` are already included.
+   */
+  readonly creativeCatalog?: boolean;
   /** Optional tooltip body under the display name. */
   readonly description?: string;
 }

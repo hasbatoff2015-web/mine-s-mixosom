@@ -2,7 +2,9 @@
 
 ## God Sword — 2026-10-05
 
-`ItemId.GodSword` (`god_sword`) is a `WeaponItemDefinition` registered after the tier sword list. It has no `tier`. `attackDamage` is 10, the same base as a titanium sword, and `getAttackProfile` still reports `durabilityCost: 1`. `hiddenFromGameplay` keeps it out of `obtainableItems()`. `/give` resolves it through `isKnownItemId`.
+`ItemId.GodSword` (`god_sword`) is a `WeaponItemDefinition` registered after the tier sword list. It has no `tier`. `attackDamage` is 10, the same base as a titanium sword, and `getAttackProfile` still reports `durabilityCost: 1`. `hiddenFromGameplay` keeps it out of `obtainableItems()`. `creativeCatalog: true` adds it to `creativeCatalogItems()`, which is the only list `GameUI` and `creativeCatalogGrant` use for Creative slots and clicks. `/give` resolves it through `isKnownItemId`.
+
+The sprite is generated from `iron_sword.png` without changing alpha. Blade gray follows source luminance into `#18232D` and `#263542`. Nine spine pixels use `#080A0E` or `#0E141B`. Seven authored pixels use `#384B5B` and `#52697A`. The wooden handle is remapped onto the four-step grip palette. Crimson pixels are fixed coordinates: an 18-pixel edge with an authored intensity list, two reflection pixels, two fissures, and a three-pixel guard core.
 
 Rendering classifies every `kind: 'weapon', weapon: 'sword'` item as handheld with the third-person `sword` pose. God Sword does not add a mesh, scale, or grip.
 
