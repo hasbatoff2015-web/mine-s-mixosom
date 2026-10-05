@@ -2169,6 +2169,137 @@ textarea,
   box-shadow: none;
 }
 
+.mc-menu-panel.mc-menu-panel-chat {
+  display: flex;
+  flex-direction: column;
+  height: calc(268px * var(--mc-ui-scale, 3));
+  overflow: hidden;
+}
+
+.mc-menu-panel-chat .mc-friend-chat {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-friend-chat-head .mc-menu-heading {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mc-friend-chat-status {
+  display: flex;
+  align-items: center;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mc-friend-chat-log {
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  overflow-anchor: none;
+  touch-action: pan-y;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  padding: calc(4px * var(--mc-ui-scale, 3));
+  background: #15171b;
+  box-shadow:
+    inset calc(1px * var(--mc-ui-scale, 3)) calc(1px * var(--mc-ui-scale, 3)) 0 #0a0a0c,
+    inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 #3a3d44;
+}
+
+.mc-friend-chat-log::-webkit-scrollbar {
+  display: none;
+}
+
+.mc-friend-chat-empty {
+  margin: auto;
+  color: #8a8a8a;
+  text-align: center;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  line-height: 1.3;
+}
+
+.mc-dm {
+  display: flex;
+  flex-direction: column;
+  max-width: 78%;
+  gap: calc(1px * var(--mc-ui-scale, 3));
+}
+
+.mc-dm.is-in {
+  align-self: flex-start;
+}
+
+.mc-dm.is-out {
+  align-self: flex-end;
+}
+
+.mc-dm-text {
+  padding: calc(3px * var(--mc-ui-scale, 3)) calc(4px * var(--mc-ui-scale, 3));
+  border-radius: 2px;
+  color: #f4f4f4;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 600;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
+.mc-dm.is-in .mc-dm-text {
+  background: #2c3036;
+}
+
+.mc-dm.is-out .mc-dm-text {
+  background: #24412d;
+}
+
+.mc-dm-time {
+  color: #8a8a8a;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 600;
+  line-height: 1;
+}
+
+.mc-dm.is-out .mc-dm-time {
+  text-align: right;
+}
+
+.mc-friend-chat-compose {
+  display: flex;
+  align-items: center;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-width: 0;
+}
+
+.mc-friend-chat-compose input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.mc-friend-chat-compose .mc-ah-btn {
+  flex: none;
+}
+
+.mc-friend-chat-error {
+  margin: 0;
+  color: var(--mc-error);
+  font-size: calc(6.5px * var(--mc-ui-scale, 3));
+  line-height: 1.2;
+}
+
 .mc-menu-panel .mc-menu-count,
 .mc-menu-panel .mc-menu-toggle,
 .mc-menu-panel .mc-trade-ready {
@@ -2330,6 +2461,50 @@ textarea,
 
 .mc-status-dot.is-offline {
   background: var(--mc-offline);
+}
+
+.mc-friend-row {
+  flex-wrap: nowrap;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  padding-right: calc(3px * var(--mc-ui-scale, 3));
+  padding-left: calc(3px * var(--mc-ui-scale, 3));
+  overflow: hidden;
+}
+
+.mc-friend-row .mc-menu-row-actions {
+  gap: calc(2px * var(--mc-ui-scale, 3));
+}
+
+.mc-friend-row .mc-ah-btn {
+  min-width: calc(32px * var(--mc-ui-scale, 3));
+  padding: 0 calc(4px * var(--mc-ui-scale, 3));
+  letter-spacing: 0;
+}
+
+.mc-friend-name-line {
+  display: flex;
+  align-items: center;
+  gap: calc(3px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  max-width: 100%;
+}
+
+.mc-friend-row .mc-player-main {
+  overflow: hidden;
+}
+
+.mc-friend-row .mc-player-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.mc-menu-badge.mc-friend-unread {
+  position: static;
+  top: auto;
+  right: auto;
+  flex: none;
 }
 
 .mc-toggle {

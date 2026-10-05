@@ -1,5 +1,13 @@
 # Архитектура
 
+## Private friend chat — 2026-10-05
+
+`DirectMessageService` is separate from `FriendsService`. It may call `isFriend`, and every send and history request does that again. The client sends `direct_message_action` with `send` or `history`, a friend id, and text or `beforeSeq`. A send may also carry optional `clientRequestId`. That token is echoed only on the sender's `append` or `error` so the composer can match one intent. It is not a message id, it is not stored, and the recipient copy omits it. The server still fills sender id, message id, `seq`, `createdAt`, and the normalized text. The composer clears a draft only when that request's draft revision is still current. There is no client `mark_read`: opening `friend-chat` marks that conversation read through the latest seq, and an append does the same when the recipient already has that exact chat open.
+
+Storage is one JSON file per pair at `plugin-data/friends/messages/<key>.json`, next to `friends/friends.json`. `conversationKey` sorts the two player ids and hex-encodes them. The file keeps `version`, `participants`, `nextSeq`, `lastReadSeq`, and at most 200 messages. Trimming drops the oldest message and does not reset `nextSeq`. Unfriend does not delete the file. A later friendship can read the retained messages. Unknown schema versions are left on disk. Invalid records inside version 1 are skipped. A rate limit of 5 tokens, refilled once per second, stays in memory.
+
+`NotificationService` category `friends` is still cleared by opening the friends screen. The root Friends badge shown in the menu snapshot is that stored count plus `totalUnread` for current friends only. `CHAT_CHANNELS` stays `global | nearby | clan`. `PROTOCOL_VERSION` stays 4 because the new packets are additive: an old client never sends the action, and an unknown server packet is ignored by the existing client parser.
+
 ## God Sword — 2026-10-05
 
 `ItemId.GodSword` (`god_sword`) is a `WeaponItemDefinition` registered after the tier sword list. It has no `tier`. `attackDamage` is 10, the same base as a titanium sword, and `getAttackProfile` still reports `durabilityCost: 1`. `hiddenFromGameplay` keeps it out of `obtainableItems()`. `creativeCatalog: true` adds it to `creativeCatalogItems()`, which is the only list `GameUI` and `creativeCatalogGrant` use for Creative slots and clicks. `/give` resolves it through `isKnownItemId`.

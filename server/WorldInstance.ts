@@ -57,6 +57,7 @@ import type {
   ClientBuyerActionMessage,
   ClientMenuActionMessage,
   ClientTradeActionMessage,
+  ClientDirectMessageActionMessage,
   GameMenuScreenKind,
   ClientBookUpdateMessage,
   ClientSignUpdateMessage,
@@ -119,6 +120,7 @@ import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
+import { DirectMessageService } from './services/directMessages';
 import { TradeService } from './services/trade';
 import { NotificationService } from './services/notifications';
 import {
@@ -131,6 +133,7 @@ import {
   type GameMenuSession,
 } from './services/gameMenu';
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
+import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
 import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
 import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
 import {
@@ -593,6 +596,7 @@ export class WorldInstance {
   readonly buyer: BuyerService;
   readonly homes: HomeService;
   readonly friends: FriendsService;
+  readonly directMessages: DirectMessageService;
   readonly trade: TradeService;
   readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
@@ -679,6 +683,7 @@ export class WorldInstance {
     this.clan = new ClanService(this.pluginStore, this.economy);
     this.homes = new HomeService(this.pluginStore);
     this.friends = new FriendsService(this.pluginStore);
+    this.directMessages = new DirectMessageService(this.pluginStore, (a, b) => this.friends.isFriend(a, b));
     this.trade = new TradeService(this.economy);
     this.notifications = new NotificationService(this.pluginStore);
     const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
@@ -1010,6 +1015,7 @@ export class WorldInstance {
       this.clan.load();
       this.homes.load();
       this.friends.load();
+      this.directMessages.load();
       this.notifications.load();
       this.buyer.load();
       this.preloadSpawnChunks();
@@ -1025,6 +1031,7 @@ export class WorldInstance {
     this.clan.load();
     this.homes.load();
     this.friends.load();
+    this.directMessages.load();
     this.notifications.load();
     this.buyer.load();
     this.preloadSpawnChunks();
@@ -2009,6 +2016,21 @@ export class WorldInstance {
       this.sendTo(player, closedMenuMessage());
       return;
     }
+    if (outcome.kind === 'open-friend-chat') {
+      if (!this.friends.isFriend(player.id, outcome.friendId)) {
+        session.screen = 'friends';
+        session.activeFriendId = undefined;
+        session.message = DIRECT_MESSAGE_NOT_FRIEND_ERROR;
+        this.flushMenu(player);
+        return;
+      }
+      session.screen = 'friend-chat';
+      session.activeFriendId = outcome.friendId;
+      this.directMessages.markReadThroughLatest(player.id, outcome.friendId);
+      this.flushMenu(player);
+      this.sendFriendHistory(player, outcome.friendId);
+      return;
+    }
     if (outcome.kind === 'open-clan') {
       this.clan.markOpenedFromMenu(player.id, outcome.view);
       const result = this.openClan(player.id, outcome.view);
@@ -2140,7 +2162,11 @@ export class WorldInstance {
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
     const balance = this.economy.getBalance(player.id);
-    const notifications = this.notifications.counts(player.id);
+    const storedNotifications = this.notifications.counts(player.id);
+    const notifications = {
+      ...storedNotifications,
+      friends: friendsMenuBadgeCount(storedNotifications.friends, this.directMessages.totalUnread(player.id)),
+    };
     const base = {
       type: 'menu' as const,
       screen: session.screen as GameMenuScreenKind,
@@ -2162,9 +2188,30 @@ export class WorldInstance {
         ...(session.pendingHomeName ? { pendingHomeName: session.pendingHomeName } : {}),
       };
     }
+    if (session.screen === 'friend-chat') {
+      const friendId = session.activeFriendId;
+      if (!friendId || !this.friends.isFriend(player.id, friendId)) {
+        session.screen = 'friends';
+        session.activeFriendId = undefined;
+        session.message = session.message ?? DIRECT_MESSAGE_NOT_FRIEND_ERROR;
+      } else {
+        const row = this.friends.sortedFriends(player.id).find((entry) => entry.playerId === friendId);
+        return {
+          ...base,
+          screen: 'friend-chat',
+          title: menuTitle('friend-chat'),
+          activeFriendId: friendId,
+          activeFriendName: row?.name ?? friendId,
+          activeFriendOnline: this.players.get(friendId)?.connected === true,
+        };
+      }
+    }
     if (session.screen === 'friends' || session.screen === 'friend-delete-confirm') {
       const state = this.friends.state(player.id);
-      const friends = this.friends.sortedFriends(player.id);
+      const friends = this.friends.sortedFriends(player.id).map((row) => ({
+        ...row,
+        unreadCount: this.directMessages.unreadCount(player.id, row.playerId),
+      }));
       const requests = this.friends.incomingRequests(player.id).map((request) => ({
         playerId: request.fromPlayerId,
         name: this.players.get(request.fromPlayerId)?.name
@@ -2176,6 +2223,9 @@ export class WorldInstance {
       }));
       return {
         ...base,
+        screen: session.screen as GameMenuScreenKind,
+        title: menuTitle(session.screen as GameMenuScreenKind),
+        ...(session.message ? { message: session.message } : {}),
         allowFriendTeleport: state.allowFriendTeleport,
         friendNameText: session.friendNameText,
         friendRequests: requests,
@@ -2240,6 +2290,88 @@ export class WorldInstance {
       };
     }
     return base;
+  }
+
+  handleDirectMessage(
+    player: ServerPlayer,
+    message: ClientDirectMessageActionMessage,
+    source?: { readonly connectionId: string },
+  ): void {
+    if (!player.connected) return;
+    if (source && source.connectionId !== player.connectionId) return;
+    if (message.action === 'history') {
+      this.sendFriendHistory(player, message.friendId, message.beforeSeq);
+      return;
+    }
+    const text = message.text ?? '';
+    const clientRequestId = message.clientRequestId;
+    const viewing = this.isViewingFriendChat(message.friendId, player.id);
+    const result = this.directMessages.send(player.id, message.friendId, text, viewing
+      ? { markReadFor: message.friendId }
+      : undefined);
+    if (!result.ok) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId: message.friendId,
+        error: result.error,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      });
+      return;
+    }
+    this.sendTo(player, {
+      type: 'direct_message',
+      event: 'append',
+      friendId: message.friendId,
+      messages: [result.message],
+      ...(clientRequestId ? { clientRequestId } : {}),
+    });
+    const recipient = this.players.get(message.friendId);
+    if (!recipient?.connected) return;
+    if (viewing) {
+      this.sendTo(recipient, {
+        type: 'direct_message',
+        event: 'append',
+        friendId: player.id,
+        messages: [result.message],
+      });
+      return;
+    }
+    this.flushFriendMenuBadge(recipient);
+  }
+
+  private sendFriendHistory(player: ServerPlayer, friendId: string, beforeSeq?: number): void {
+    const page = this.directMessages.history(player.id, friendId, beforeSeq);
+    if (!page.ok) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId,
+        error: page.error,
+      });
+      return;
+    }
+    this.sendTo(player, {
+      type: 'direct_message',
+      event: 'history',
+      friendId,
+      messages: page.messages,
+      hasMore: page.hasMore,
+    });
+  }
+
+  private isViewingFriendChat(playerId: string, friendId: string): boolean {
+    const player = this.players.get(playerId);
+    const session = this.menuSessions.get(playerId);
+    return player?.connected === true
+      && session?.screen === 'friend-chat'
+      && session.activeFriendId === friendId;
+  }
+
+  private flushFriendMenuBadge(player: ServerPlayer): void {
+    const session = this.menuSessions.get(player.id);
+    if (!session) return;
+    if (session.screen === 'root' || session.screen === 'friends') this.flushMenu(player);
   }
 
   private notifyUnread(playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade'): void {

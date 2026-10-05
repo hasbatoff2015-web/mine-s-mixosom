@@ -1,5 +1,6 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
+import { DIRECT_MESSAGE_PAGE } from './directMessages';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
@@ -659,6 +660,7 @@ export type MenuActionKind =
   | 'friends_delete'
   | 'friends_confirm_delete'
   | 'friends_cancel_delete'
+  | 'friends_chat'
   | 'set_friend_name'
   | 'clans_mine'
   | 'clans_list'
@@ -692,6 +694,7 @@ export type GameMenuScreenKind =
   | 'home-delete-confirm'
   | 'friends'
   | 'friend-delete-confirm'
+  | 'friend-chat'
   | 'clans'
   | 'claims'
   | 'claim-settings'
@@ -732,6 +735,18 @@ export interface ClientTradeActionMessage {
   readonly money?: string | number;
 }
 
+export type DirectMessageActionKind = 'send' | 'history';
+
+export interface ClientDirectMessageActionMessage {
+  readonly type: 'direct_message_action';
+  readonly action: DirectMessageActionKind;
+  readonly friendId: string;
+  readonly text?: string;
+  readonly beforeSeq?: number;
+  /** Opaque send correlation. Not a message id, sender, or timestamp. */
+  readonly clientRequestId?: string;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -759,7 +774,8 @@ export type ClientMessage =
   | ClientBuyerInteractMessage
   | ClientBuyerActionMessage
   | ClientMenuActionMessage
-  | ClientTradeActionMessage;
+  | ClientTradeActionMessage
+  | ClientDirectMessageActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1349,6 +1365,17 @@ export interface NetworkMenuFriend {
   readonly online: boolean;
   readonly canTeleport: boolean;
   readonly requestId?: string;
+  /** Server-authoritative DM unread. Omitted means zero. */
+  readonly unreadCount?: number;
+}
+
+export interface NetworkDirectMessage {
+  readonly messageId: string;
+  readonly seq: number;
+  readonly senderId: string;
+  readonly recipientId: string;
+  readonly text: string;
+  readonly createdAt: number;
 }
 
 export interface NetworkMenuClaim {
@@ -1397,6 +1424,9 @@ export interface ServerMenuMessage {
   readonly friendMax?: number;
   readonly pendingFriendId?: string;
   readonly pendingFriendName?: string;
+  readonly activeFriendId?: string;
+  readonly activeFriendName?: string;
+  readonly activeFriendOnline?: boolean;
   readonly claims?: readonly NetworkMenuClaim[];
   readonly claimCount?: number;
   readonly claimMax?: number;
@@ -1443,6 +1473,19 @@ export interface NetworkRankingRow {
   readonly valueLabel: string;
   readonly metric: 'money' | 'kills';
   readonly highlight: boolean;
+}
+
+export type DirectMessageEvent = 'history' | 'append' | 'error';
+
+export interface ServerDirectMessage {
+  readonly type: 'direct_message';
+  readonly event: DirectMessageEvent;
+  readonly friendId: string;
+  readonly messages?: readonly NetworkDirectMessage[];
+  readonly hasMore?: boolean;
+  readonly error?: string;
+  /** Echoed to the sender of this request. Absent on history and on the recipient copy. */
+  readonly clientRequestId?: string;
 }
 
 export interface ServerTradeMessage {
@@ -1504,7 +1547,8 @@ export type ServerMessage =
   | ServerBuyersMessage
   | ServerBuyerMessage
   | ServerMenuMessage
-  | ServerTradeMessage;
+  | ServerTradeMessage
+  | ServerDirectMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1534,6 +1578,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'clan_action',
   'menu_action',
   'trade_action',
+  'direct_message_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1573,6 +1618,7 @@ export const SERVER_MESSAGE_TYPES = [
   'buyer',
   'menu',
   'trade',
+  'direct_message',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1618,7 +1664,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'open', 'close', 'back', 'spawn',
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
-  'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'set_friend_name',
+  'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'friends_chat', 'set_friend_name',
   'clans_mine', 'clans_list', 'clans_create', 'clans_invitations',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
@@ -1628,7 +1674,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
-  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm',
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'closed',
 ];
 
@@ -1684,10 +1730,37 @@ function optionalInteger(value: unknown): number | undefined {
   return value;
 }
 
+function parseNetworkDirectMessage(raw: unknown): NetworkDirectMessage | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (typeof raw.messageId !== 'string' || raw.messageId.length === 0 || raw.messageId.length > 80) return undefined;
+  if (!Number.isInteger(raw.seq) || !finite(raw.seq) || raw.seq < 1) return undefined;
+  if (typeof raw.senderId !== 'string' || raw.senderId.length === 0 || raw.senderId.length > 64) return undefined;
+  if (typeof raw.recipientId !== 'string' || raw.recipientId.length === 0 || raw.recipientId.length > 64) return undefined;
+  if (typeof raw.text !== 'string' || raw.text.length === 0 || raw.text.length > MAX_CHAT_LENGTH) return undefined;
+  if (!finite(raw.createdAt) || raw.createdAt < 0) return undefined;
+  return {
+    messageId: raw.messageId,
+    seq: raw.seq,
+    senderId: raw.senderId,
+    recipientId: raw.recipientId,
+    text: raw.text,
+    createdAt: raw.createdAt,
+  };
+}
+
 function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Correlation token. Missing is valid. Over-long or non-string is not, because slicing would break the match. */
+function parseClientRequestId(value: unknown, error: string): string | undefined | { error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return { error };
+  if (value.length === 0) return undefined;
+  if (value.length > 64) return { error };
+  return value;
 }
 
 export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
@@ -2291,6 +2364,36 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(hologramText !== undefined ? { hologramText } : {}),
       };
     }
+    case 'direct_message_action': {
+      if (raw.action !== 'send' && raw.action !== 'history') {
+        return { error: 'direct_message_action.action invalid' };
+      }
+      const friendId = optionalString(raw.friendId, 64);
+      if (!friendId) return { error: 'direct_message_action.friendId invalid' };
+      if (raw.action === 'send') {
+        if (typeof raw.text !== 'string') return { error: 'direct_message_action.text invalid' };
+        if (raw.text.length > 512) return { error: 'direct_message_action.text too long' };
+        const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message_action.clientRequestId invalid');
+        if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+        return {
+          type: 'direct_message_action',
+          action: 'send',
+          friendId,
+          text: raw.text,
+          ...(clientRequestId ? { clientRequestId } : {}),
+        };
+      }
+      if (raw.beforeSeq !== undefined && (!Number.isInteger(raw.beforeSeq) || !finite(raw.beforeSeq) || raw.beforeSeq < 0)) {
+        return { error: 'direct_message_action.beforeSeq invalid' };
+      }
+      const beforeSeq = typeof raw.beforeSeq === 'number' ? raw.beforeSeq : undefined;
+      return {
+        type: 'direct_message_action',
+        action: 'history',
+        friendId,
+        ...(beforeSeq !== undefined ? { beforeSeq } : {}),
+      };
+    }
     case 'menu_action': {
       if (!isMenuActionKind(typeof raw.action === 'string' ? raw.action : undefined)) {
         return { error: 'menu_action.action invalid' };
@@ -2570,6 +2673,43 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'buyer invalid' };
       }
       return raw as unknown as ServerBuyerMessage;
+    }
+    case 'direct_message': {
+      if (raw.event !== 'history' && raw.event !== 'append' && raw.event !== 'error') {
+        return { error: 'direct_message.event invalid' };
+      }
+      const friendId = optionalString(raw.friendId, 64);
+      if (!friendId) return { error: 'direct_message.friendId invalid' };
+      let messages: NetworkDirectMessage[] | undefined;
+      if (raw.messages !== undefined) {
+        if (!Array.isArray(raw.messages) || raw.messages.length > DIRECT_MESSAGE_PAGE) {
+          return { error: 'direct_message.messages invalid' };
+        }
+        messages = [];
+        for (const entry of raw.messages) {
+          const parsed = parseNetworkDirectMessage(entry);
+          if (!parsed) return { error: 'direct_message.messages invalid' };
+          messages.push(parsed);
+        }
+      }
+      if (raw.hasMore !== undefined && typeof raw.hasMore !== 'boolean') {
+        return { error: 'direct_message.hasMore invalid' };
+      }
+      if (raw.error !== undefined && typeof raw.error !== 'string') {
+        return { error: 'direct_message.error invalid' };
+      }
+      const errorText = typeof raw.error === 'string' ? raw.error.slice(0, 200) : undefined;
+      const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+      return {
+        type: 'direct_message',
+        event: raw.event,
+        friendId,
+        ...(messages ? { messages } : {}),
+        ...(typeof raw.hasMore === 'boolean' ? { hasMore: raw.hasMore } : {}),
+        ...(errorText ? { error: errorText } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
+      };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

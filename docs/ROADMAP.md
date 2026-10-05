@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-05: Private friend chat
+
+- [x] Green `Чат` button on every friend row, immediately left of `Удалить`.
+- [x] Nested `friend-chat` screen at the friends menu width. Opening it from Friends keeps the panel footprint.
+- [x] File-per-conversation history, 200-message cap, monotonic `seq`, per-player `lastReadSeq`.
+- [x] Direct messages stay out of Global, Nearby, Clan, ChatLog, and player chat bubbles.
+- [ ] Not merged. Draft PR **#120**. Wait for an explicit merge command.
+
 ## 2026-10-05: Invisibility world particles and air HUD
 
 - [x] Sparse white swirl particles on `PlayerVisual.root` while `invisible` is true. Pool of 7, depth test on, no protocol field.
