@@ -214,6 +214,7 @@ export class RemotePlayerView {
         onFire: this.lastRenderedPose?.onFire === true || this.joinOnFire,
       });
       applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
+      this.visual.updateWorldParticles(deltaSeconds);
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
@@ -235,6 +236,7 @@ export class RemotePlayerView {
       onFire: pose.onFire === true,
     });
     applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
+    this.visual.updateWorldParticles(deltaSeconds);
     this.lastInvisible = pose.invisible === true;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);

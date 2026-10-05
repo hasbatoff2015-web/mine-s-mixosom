@@ -70,15 +70,21 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
   const inventory = fixtureInventory();
 
   const showHud = (health: number, hunger: number, absorption = 0): void => {
+    const params = new URLSearchParams(location.search);
+    const armorParam = params.get('armor');
+    const airParam = params.get('air');
     ui.enterGame();
     ui.updateHud({
       inventory,
       selectedSlot: 2,
       health,
       hunger,
-      armor: 20,
+      armor: armorParam === null ? 20 : Number(armorParam),
       absorption,
       miningProgress: 0,
+      ...(airParam === null
+        ? {}
+        : { airTicks: Number(airParam), airVisible: true }),
     });
   };
 

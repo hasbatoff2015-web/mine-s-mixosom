@@ -54,6 +54,7 @@
     "@types/three": "^0.179.0",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.25.12",
+    "happy-dom": "^20.14.5",
     "typescript": "^5.9.2",
     "vite": "^7.1.2",
     "vite-node": "^3.2.4",

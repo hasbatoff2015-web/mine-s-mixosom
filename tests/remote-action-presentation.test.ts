@@ -13,7 +13,7 @@ function harness(presentation?: PlayerPresentationState) {
   const visual = {
     root: new THREE.Group(), animator: { reset: vi.fn() },
     update: vi.fn(() => ({ bodyYaw: 0 })), setHeldItem: vi.fn(), setOffhandItem: vi.fn(), setArmor: vi.fn(), swing: vi.fn(),
-    triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), dispose: vi.fn(),
+    triggerHurtFlash: vi.fn(), applyWorldLight: vi.fn(), updateWorldParticles: vi.fn(), dispose: vi.fn(),
   };
   const onMining = vi.fn();
   const onRemove = vi.fn();
