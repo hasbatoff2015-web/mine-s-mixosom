@@ -18,6 +18,7 @@ export const EN_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   titanium_leggings: 'Titanium Leggings',
   titanium_boots: 'Titanium Boots',
   titanium_sword: 'Titanium Sword',
+  god_sword: 'God Sword',
   titanium_pickaxe: 'Titanium Pickaxe',
   titanium_axe: 'Titanium Axe',
   titanium_shovel: 'Titanium Shovel',

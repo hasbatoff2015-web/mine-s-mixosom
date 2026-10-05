@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-"""Generate Ruby and Titanium pixel assets from the repository's source textures.
+"""Generate Ruby, Titanium, and God Sword pixel assets from repository textures.
 
 The generator preserves source silhouettes and alpha masks. It performs a
 controlled luminance-to-palette remap; it never resamples item or block art.
 The supplied 5x Netherite armor sheets are reduced to the armor renderer's
 128x64 contract with nearest-neighbor sampling before recoloring.
+
+God Sword is not a material tier. Blade pixels follow the iron sword's
+luminance into a dark titanium palette, the grip is recolored off the wooden
+handle, and crimson energy is painted from fixed coordinates inside the same
+alpha mask.
 
 Usage:
     python scripts/generate-tier-assets.py
@@ -74,6 +79,103 @@ TITANIUM_PALETTE = tuple(
 
 TITANIUM_ORE_PALETTE = tuple(
     map(hex_rgb, ("#2A3038", "#4D5968", "#7C8E9E", "#D1D9E1"))
+)
+
+# Graphite body. The lightest step is a broad facet, not a handful of silver dots.
+DARK_GOD_PALETTE = tuple(
+    map(
+        hex_rgb,
+        (
+            "#080A0E",
+            "#121820",
+            "#1C2834",
+            "#2C3C4A",
+            "#3E5364",
+        ),
+    )
+)
+
+# Wrapped grip. Replaces the iron sword's wooden handle colors.
+GOD_GRIP_PALETTE = tuple(
+    map(
+        hex_rgb,
+        (
+            "#090C11",
+            "#111720",
+            "#1B242E",
+            "#2C3945",
+        ),
+    )
+)
+
+GOD_RED_CRIMSON = hex_rgb("#4A0812")
+GOD_RED_DEEP = hex_rgb("#7A1020")
+GOD_RED_RUBY = hex_rgb("#C4142C")
+GOD_RED_BRIGHT = hex_rgb("#FF2438")
+GOD_RED_HOT = hex_rgb("#FF5A62")
+GOD_RED_CORE = hex_rgb("#FFE8E2")
+GOD_RED_PALETTE = (
+    GOD_RED_CRIMSON,
+    GOD_RED_DEEP,
+    GOD_RED_RUBY,
+    GOD_RED_BRIGHT,
+    GOD_RED_HOT,
+    GOD_RED_CORE,
+)
+
+# Cutting edge of iron_sword.png, tip to guard. Hot, with authored pulses.
+GOD_SWORD_EDGE = (
+    (28, 0, GOD_RED_CORE), (27, 1, GOD_RED_HOT), (26, 2, GOD_RED_BRIGHT),
+    (25, 3, GOD_RED_HOT), (24, 4, GOD_RED_BRIGHT), (23, 5, GOD_RED_BRIGHT),
+    (22, 6, GOD_RED_HOT), (21, 7, GOD_RED_BRIGHT), (20, 8, GOD_RED_HOT),
+    (19, 9, GOD_RED_BRIGHT), (18, 10, GOD_RED_HOT), (17, 11, GOD_RED_BRIGHT),
+    (16, 12, GOD_RED_HOT), (15, 13, GOD_RED_BRIGHT), (14, 14, GOD_RED_HOT),
+    (13, 15, GOD_RED_BRIGHT), (12, 16, GOD_RED_HOT), (11, 17, GOD_RED_RUBY),
+)
+
+# Inner half of the cutting edge. Darker than the outer pixel, so the edge falls off
+# into the metal instead of staying one flat red stair.
+GOD_SWORD_EDGE_GLOW = (
+    (29, 0, GOD_RED_BRIGHT), (30, 0, GOD_RED_RUBY), (31, 0, GOD_RED_DEEP),
+    (28, 1, GOD_RED_RUBY), (27, 2, GOD_RED_RUBY), (26, 3, GOD_RED_DEEP),
+    (25, 4, GOD_RED_RUBY), (24, 5, GOD_RED_DEEP), (23, 6, GOD_RED_RUBY),
+    (22, 7, GOD_RED_DEEP), (21, 8, GOD_RED_RUBY), (20, 9, GOD_RED_DEEP),
+    (19, 10, GOD_RED_RUBY), (18, 11, GOD_RED_DEEP), (17, 12, GOD_RED_RUBY),
+    (16, 13, GOD_RED_DEEP), (15, 14, GOD_RED_RUBY), (14, 15, GOD_RED_DEEP),
+    (13, 16, GOD_RED_RUBY), (12, 17, GOD_RED_CRIMSON),
+)
+
+# Centerline, separated from the edge by the unpainted metal pixels between them.
+# Four white-hot nodes, the rest a darker ember so it stays one vein.
+GOD_SWORD_VEIN = (
+    (29, 1, GOD_RED_DEEP),
+    (29, 2, GOD_RED_RUBY), (28, 3, GOD_RED_CORE), (27, 4, GOD_RED_RUBY),
+    (26, 5, GOD_RED_DEEP), (25, 6, GOD_RED_CORE), (24, 7, GOD_RED_RUBY),
+    (23, 8, GOD_RED_DEEP), (22, 9, GOD_RED_CORE), (21, 10, GOD_RED_RUBY),
+    (20, 11, GOD_RED_DEEP), (19, 12, GOD_RED_RUBY), (18, 13, GOD_RED_DEEP),
+    (17, 14, GOD_RED_RUBY), (16, 15, GOD_RED_CORE), (15, 16, GOD_RED_DEEP),
+    (14, 17, GOD_RED_CRIMSON),
+)
+
+# Guard stays the iron-sword shape. The center is the bright energy core.
+GOD_SWORD_GUARD = (
+    (8, 18, GOD_RED_CORE), (7, 18, GOD_RED_HOT), (9, 18, GOD_RED_BRIGHT),
+    (8, 17, GOD_RED_HOT), (7, 17, GOD_RED_RUBY), (9, 17, GOD_RED_RUBY),
+    (8, 19, GOD_RED_RUBY), (7, 19, GOD_RED_DEEP), (6, 18, GOD_RED_DEEP),
+    (6, 16, GOD_RED_HOT), (5, 16, GOD_RED_DEEP),
+    (10, 20, GOD_RED_BRIGHT), (9, 20, GOD_RED_RUBY),
+)
+
+# Pommel gem. Same silhouette, one hot core.
+GOD_SWORD_POMMEL = (
+    (1, 29, GOD_RED_CORE), (2, 29, GOD_RED_HOT), (1, 28, GOD_RED_BRIGHT),
+    (2, 28, GOD_RED_RUBY), (0, 29, GOD_RED_DEEP), (1, 30, GOD_RED_RUBY),
+    (2, 30, GOD_RED_DEEP),
+)
+
+# A few energy sparks in the wrapped grip. The rest of the handle stays dark.
+GOD_SWORD_GRIP_SPARKS = (
+    (7, 24, GOD_RED_RUBY), (6, 25, GOD_RED_HOT), (5, 26, GOD_RED_DEEP),
 )
 
 TOOL_NAMES = ("sword", "pickaxe", "axe", "shovel", "hoe")
@@ -243,6 +345,86 @@ def generate_ingots() -> list[GeneratedAsset]:
     return generated
 
 
+def god_sword_red_colors() -> dict[tuple[int, int], tuple[int, int, int]]:
+    accents: dict[tuple[int, int], tuple[int, int, int]] = {}
+    for group in (
+        GOD_SWORD_EDGE,
+        GOD_SWORD_EDGE_GLOW,
+        GOD_SWORD_VEIN,
+        GOD_SWORD_GUARD,
+        GOD_SWORD_POMMEL,
+        GOD_SWORD_GRIP_SPARKS,
+    ):
+        for x, y, color in group:
+            if (x, y) in accents:
+                raise ValueError(f"God Sword red groups overlap at {(x, y)}")
+            accents[(x, y)] = color
+    return accents
+
+
+def god_grip_ranks() -> dict[tuple[int, int, int], int]:
+    ranked = sorted(handle_colors(), key=luminance)
+    if len(ranked) != len(GOD_GRIP_PALETTE):
+        raise ValueError(
+            f"God Sword grip palette has {len(GOD_GRIP_PALETTE)} steps "
+            f"for {len(ranked)} wooden handle colors"
+        )
+    return {color: index for index, color in enumerate(ranked)}
+
+
+def god_blade_metal_color(x: int, y: int, rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    outline, shadow, dark, mid, facet = DARK_GOD_PALETTE
+    shade = rgb[0] if rgb[0] == rgb[1] == rgb[2] else round(luminance(rgb))
+    if shade <= 24:
+        # The blade spine stays the darkest step. Other outlines stay one step up.
+        return outline if x >= 17 and y <= 17 else shadow
+    if shade <= 68:
+        return dark
+    if shade <= 150:
+        return mid
+    return facet
+
+
+def generate_god_sword() -> GeneratedAsset:
+    template = SOURCE_TEXTURES / "items" / "iron_sword.png"
+    source = load_rgba(template)
+    handles = handle_colors()
+    grip_ranks = god_grip_ranks()
+    reds = god_sword_red_colors()
+    grip_sparks = {(x, y) for x, y, _color in GOD_SWORD_GRIP_SPARKS}
+    source_pixels = pixel_data(source)
+    result: list[tuple[int, int, int, int]] = []
+    mask: list[bool] = []
+    for index, pixel in enumerate(source_pixels):
+        x = index % source.width
+        y = index // source.width
+        if pixel[3] == 0:
+            result.append(pixel)
+            mask.append(False)
+            continue
+        mask.append(True)
+        red = reds.get((x, y))
+        if red is not None:
+            on_grip = pixel[:3] in handles
+            if on_grip != ((x, y) in grip_sparks):
+                raise ValueError(f"God Sword red accent {(x, y)} is on the wrong material")
+            result.append((*red, pixel[3]))
+            continue
+        if pixel[:3] in handles:
+            result.append((*GOD_GRIP_PALETTE[grip_ranks[pixel[:3]]], pixel[3]))
+            continue
+        result.append((*god_blade_metal_color(x, y, pixel[:3]), pixel[3]))
+    image = Image.new("RGBA", source.size)
+    image.putdata(result)
+    return GeneratedAsset(
+        ITEM_OUTPUT_DIR / "god_sword.png",
+        template,
+        image,
+        tuple(mask),
+        "god_sword",
+    )
+
+
 def generate_ore() -> list[GeneratedAsset]:
     template = SOURCE_TEXTURES / "blocks" / "emerald_ore.png"
     source = load_rgba(template)
@@ -259,7 +441,7 @@ def generate_ore() -> list[GeneratedAsset]:
 
 
 def generate_all() -> list[GeneratedAsset]:
-    return generate_armor() + generate_armor_icons() + generate_ingots() + generate_tools() + generate_ore()
+    return generate_armor() + generate_armor_icons() + generate_ingots() + generate_tools() + generate_ore() + [generate_god_sword()]
 
 
 def expected_source(asset: GeneratedAsset) -> Image.Image:
@@ -275,6 +457,67 @@ def palette_for(asset: GeneratedAsset) -> tuple[tuple[int, int, int], ...]:
     return RUBY_PALETTE if asset.path.name.startswith("ruby_") else TITANIUM_PALETTE
 
 
+def validate_god_sword(asset: GeneratedAsset, output: Image.Image, source: Image.Image) -> None:
+    output_pixels = pixel_data(output)
+    source_pixels = pixel_data(source)
+    if [pixel[3] for pixel in output_pixels] != [pixel[3] for pixel in source_pixels]:
+        raise ValueError(f"{asset.path}: alpha mask differs from the iron sword")
+    accents = god_sword_red_colors()
+    handles = handle_colors()
+    grip = frozenset(GOD_GRIP_PALETTE)
+    dark = frozenset(DARK_GOD_PALETTE)
+    red = frozenset(GOD_RED_PALETTE)
+    metal_colors: set[tuple[int, int, int]] = set()
+    cores = 0
+    god_luminance = 0.0
+    god_count = 0
+    titanium_luminance = 0.0
+    opaque = 0
+    titanium = pixel_data(load_rgba(ITEM_OUTPUT_DIR / "titanium_sword.png"))
+    for index, source_pixel in enumerate(source_pixels):
+        x = index % source.width
+        y = index // source.width
+        output_pixel = output_pixels[index]
+        if source_pixel[3] == 0:
+            if output_pixel[3] != 0:
+                raise ValueError(f"{asset.path}: new opaque pixel at {(x, y)}")
+            continue
+        opaque += 1
+        expected = accents.get((x, y))
+        if expected is not None:
+            if output_pixel[:3] != expected or output_pixel[:3] not in red:
+                raise ValueError(f"{asset.path}: unexpected accent at {(x, y)}")
+            if output_pixel[:3] == GOD_RED_CORE:
+                cores += 1
+            continue
+        if source_pixel[:3] in handles:
+            if output_pixel[:3] not in grip or output_pixel[:3] in handles:
+                raise ValueError(f"{asset.path}: grip pixel left the dark wrap at {(x, y)}")
+            continue
+        if output_pixel[:3] not in dark:
+            raise ValueError(f"{asset.path}: metal pixel left the dark palette at {(x, y)}")
+        metal_colors.add(output_pixel[:3])
+        god_luminance += luminance(output_pixel[:3])
+        titanium_luminance += luminance(titanium[index][:3])
+        god_count += 1
+    # The earlier 24–29 red cap forced a thin outline. The reference needs a vein,
+    # an inner glow, and guard/pommel cores, while metal stays the majority.
+    if not 60 <= len(accents) <= opaque // 2:
+        raise ValueError(f"{asset.path}: red accent count {len(accents)} / {opaque}")
+    if cores < 6:
+        raise ValueError(f"{asset.path}: only {cores} energy cores")
+    if len(metal_colors) < 4:
+        raise ValueError(f"{asset.path}: only {len(metal_colors)} metal colors")
+    if god_count == 0:
+        raise ValueError(f"{asset.path}: no blade metal pixels")
+    god_mean = god_luminance / god_count
+    titanium_mean = titanium_luminance / god_count
+    if not titanium_mean * 0.28 < god_mean < titanium_mean * 0.85:
+        raise ValueError(
+            f"{asset.path}: metal luminance {god_mean:.2f} vs titanium {titanium_mean:.2f}"
+        )
+
+
 def validate_asset(asset: GeneratedAsset, actual: Image.Image | None = None) -> None:
     output = asset.image if actual is None else actual.convert("RGBA")
     source = expected_source(asset)
@@ -287,6 +530,10 @@ def validate_asset(asset: GeneratedAsset, actual: Image.Image | None = None) -> 
     source_alpha = [pixel[3] for pixel in source_pixels]
     if output_alpha != source_alpha:
         raise ValueError(f"{asset.path}: alpha mask differs from its normalized template")
+
+    if asset.kind == "god_sword":
+        validate_god_sword(asset, output, source)
+        return
 
     allowed = frozenset(palette_for(asset))
     for index, selected in enumerate(asset.remap_mask):

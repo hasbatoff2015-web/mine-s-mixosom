@@ -209,6 +209,7 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   titanium_axe: 'Титановый топор',
   titanium_shovel: 'Титановая лопата',
   titanium_sword: 'Титановый меч',
+  god_sword: 'Меч бога',
   wooden_hoe: 'Деревянная мотыга',
   stone_hoe: 'Каменная мотыга',
   iron_hoe: 'Железная мотыга',
@@ -247,4 +248,5 @@ export const RU_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
 /** Optional tooltip bodies keyed by the same item IDs as `RU_DISPLAY_NAMES`. */
 export const RU_ITEM_DESCRIPTIONS: Readonly<Record<string, string>> = Object.freeze({
   potion_repair: 'Восстанавливает 50% максимальной прочности всех повреждённых предметов',
+  god_sword: 'Смертельный удар. Спасает только тотем бессмертия. Одноразовый.',
 });

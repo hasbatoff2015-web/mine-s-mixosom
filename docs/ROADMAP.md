@@ -1,5 +1,18 @@
 # Roadmap
 
+## 2026-10-05: God Sword texture and Creative catalog
+
+- [x] Recolor the same 32×32 silhouette: dark metal with a short ridge, an authored crimson edge, two fissures, a dark grip, and a small guard core.
+- [x] `creativeCatalog: true` shows the hidden sword in Creative. `obtainableItems()` still excludes it.
+
+## 2026-10-05: God Sword
+
+- [x] Register `god_sword` outside the crafted sword tiers. Durability 1, attack damage 10, hidden from ordinary progression.
+- [x] Author a 32×32 sprite on the iron sword silhouette: dark metal, one red edge, sparse veins, two guard pixels.
+- [x] Server melee sets `forceLethal` only from the authoritative attack slot. Totem death protection stays the existing offhand hook.
+- [x] The sword breaks on an accepted living hit and stays intact on a miss, a rejected hit, and a block break.
+- [ ] Donation shop, payment, and paid delivery are not part of this item.
+
 ## 2026-10-05: Responsive menu scale
 
 - [x] Short landscape uses one `--menu-fit`: 0.65, and 0.55 below 430px.
