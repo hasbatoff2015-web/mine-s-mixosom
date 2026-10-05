@@ -1,5 +1,17 @@
 # Архитектура
 
+## God Sword — 2026-10-05
+
+`ItemId.GodSword` (`god_sword`) is a `WeaponItemDefinition` registered after the tier sword list. It has no `tier`. `attackDamage` is 10, the same base as a titanium sword, and `getAttackProfile` still reports `durabilityCost: 1`. `hiddenFromGameplay` keeps it out of `obtainableItems()`. `/give` resolves it through `isKnownItemId`.
+
+Rendering classifies every `kind: 'weapon', weapon: 'sword'` item as handheld with the third-person `sword` pose. God Sword does not add a mesh, scale, or grip.
+
+`ServerGameplay.meleePlayer` reads `attacker.inventory.getSlot(selectedSlot)`, where `selectedSlot` is the attack action slot. If that stack is `god_sword`, `hurtPlayerResult` passes `forceLethal: true` into `SurvivalSystem.damage`. The client attack packet stays the existing `attack` intent. Mob melee does not set the flag, so a mob takes the normal 10 damage. PvP permission, `playerDamage` cancellation, reach, line of sight, and Creative immunity still run before `damage()`.
+
+`forceLethal` is not a large damage number. The branch ignores hurt resistance, sword blocking, armor, and absorption, does not wear armor, sets health to 0, and records `dealt` as the health that was present. The following lines are the existing death-protection hook: offhand Totem only, then 1 HP, Regeneration II for 900 ticks, Fire Resistance for 800 ticks, and Absorption II for 100 ticks. `WorldInstance` still emits `totem.activate` and `totem_activate` on the next tick from `totemActivated`.
+
+One combat use removes the item through `damageItem`, because max durability is 1. `losesDurabilityWhenBreakingBlocks` is false only for this id, in both `ServerGameplay.breakBlock` and singleplayer `Game.breakTarget`. Other tools and swords still lose durability when they break a block.
+
 ## Saplings, drops, footsteps, fall damage — 2026-09-29
 
 Saplings are `BlockId` 167–169 and normal block items. `plantedAtMs` lives on the existing `BlockRenderState` and is indexed in `VoxelWorld.saplingPlantedAt`. `VoxelWorld.tick` calls `tickSaplings`, which compares that timestamp to `Date.now()` (not the 20 TPS counter). A due sapling grows through `treeCells`, the same shape `TerrainGenerator.placeTree` writes, and only if every cell is air, replaceable, or the sapling itself. `applyBlockBatch` is the block update, so connected players get the usual committed-block deltas.

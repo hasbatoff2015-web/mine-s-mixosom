@@ -60,7 +60,7 @@ import {
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { ItemId, tryGetItemDefinition } from '../src/items';
+import { ItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { WhMarks } from '../src/combat/WhMarks';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
@@ -793,7 +793,7 @@ export class ServerGameplay {
     if (player.gamemode === 'survival') {
       const tool = player.inventory.getSlot(player.selectedSlot);
       const item = tool ? tryGetItemDefinition(tool.itemId) : undefined;
-      if (tool && (item?.kind === 'tool' || item?.kind === 'weapon')) {
+      if (tool && losesDurabilityWhenBreakingBlocks(item)) {
         player.inventory.setSlot(player.selectedSlot, damageItem(tool, 1));
         player.inventoryDirty = true;
       }
@@ -1865,10 +1865,12 @@ export class ServerGameplay {
     const attackerPosition = pose
       ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
       : attacker.controller.position;
+    const godSwordHit = stack?.itemId === ItemId.GodSword;
     const damage = this.hurtPlayerResult(victim, result.damage, 'melee', attackerPosition, {
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerYaw: result.attackerYaw,
       attackerId: attacker.id,
+      ...(godSwordHit ? { forceLethal: true } : {}),
     });
     const accepted = damage === 'hit';
     completeMeleeAttack(result, accepted, attacker.controller);
@@ -1897,6 +1899,7 @@ export class ServerGameplay {
       readonly attackerYaw?: number;
       readonly ignite?: boolean;
       readonly attackerId?: string;
+      readonly forceLethal?: boolean;
     } = {},
   ): boolean {
     return this.hurtPlayerResult(victim, amount, cause, from, extras) === 'hit';
@@ -1913,6 +1916,7 @@ export class ServerGameplay {
       readonly attackerYaw?: number;
       readonly ignite?: boolean;
       readonly attackerId?: string;
+      readonly forceLethal?: boolean;
     } = {},
   ): 'hit' | 'immune' | 'blocked' {
     if (victim.gamemode !== 'survival' || victim.survival.dead) return 'immune';
@@ -1923,6 +1927,7 @@ export class ServerGameplay {
     const result = victim.survival.damage(amount, cause, {
       armor: victim.inventory,
       swordBlocking: victim.combat.swordBlocking,
+      ...(extras.forceLethal ? { forceLethal: true } : {}),
     });
     if (!result.accepted) return 'immune';
     this.events.emit('playerDamaged', {

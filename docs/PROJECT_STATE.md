@@ -1,5 +1,13 @@
 # Состояние проекта
 
+## Последний проход: Меч бога — 2026-10-05
+
+- `god_sword` — отдельный одноразовый меч, не следующий material tier после Titanium. `hiddenFromGameplay: true`: нет крафта, плавки, лута и каталога Creative. `/give god_sword 1` работает, потому что команда ищет known item id.
+- Урон по игроку — `DamageOptions.forceLethal` внутри `SurvivalSystem.damage`. Сервер ставит флаг только если authoritative слот атаки содержит `ItemId.GodSword`. Клиент не присылает lethal-флаг. `attackDamage` остаётся 10 и используется против мобов. Броня, блок мечом, absorption и HurtResistance этот удар не снижают и броню не изнашивают. Источник остаётся `melee`. `dealt` равен здоровью до удара.
+- Смерть идёт в существующий `setDeathProtection` → `consumeOffhandTotem`. Тотем в offhand спасает (1 HP и обычные эффекты); тотем в обычном слоте не спасает. После принятого удара `damageItem` снимает единственную прочность и удаляет меч, в том числе если тотем спас цель. Промах, отказ PvP, отменённый `playerDamage`, Creative, стена, дистанция и сломанный блок меч не тратят.
+- Спрайт `public/textures/item/god_sword.png` — 32×32, та же alpha-маска, что `assets/minecraft/textures/items/iron_sword.png`. Геометрия, scale и pose `sword` общие с остальными мечами. Отличие только текстура: тёмный металл и 30 красных акцентов внутри силуэта.
+- Подробности: `docs/reports/2026-10-05_god-sword.md`.
+
 ## Последний проход: масштаб меню — 2026-10-05
 
 - Короткий landscape увеличивает меню одним `--menu-fit`: 0.65 до высоты 520px и 0.55 до 430px. Второго scale нет.

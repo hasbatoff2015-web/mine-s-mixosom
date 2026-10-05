@@ -190,6 +190,8 @@ export const ItemId = Object.freeze({
   DiamondSword: 'diamond_sword',
   RubySword: 'ruby_sword',
   TitaniumSword: 'titanium_sword',
+  /** Donation weapon. Not a mining tier and not part of the crafted sword line. */
+  GodSword: 'god_sword',
   Bow: 'bow',
 
   LeatherHelmet: 'leather_helmet',
