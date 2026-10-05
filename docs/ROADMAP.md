@@ -10,6 +10,7 @@
 - [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
 - [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
 - [ ] Owner PNG `public/ui/menu/icon_duels.png` is not in the tree. Two-client browser QA is not done.
+- [ ] Not merged. Draft PR **#122**.
 
 ## 2026-10-05: Private friend chat
 

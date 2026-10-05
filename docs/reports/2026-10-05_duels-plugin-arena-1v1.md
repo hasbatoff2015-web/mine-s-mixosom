@@ -89,4 +89,4 @@
 
 ## Git
 
-Ветка `cursor/duels-plugin-arena-1v1-6694` от `origin/main` `c621d804a51004ecb53f214e8843b0022303dd27`. Draft PR. Не смержено.
+Ветка `cursor/duels-plugin-arena-1v1-6694` от `origin/main` `c621d804a51004ecb53f214e8843b0022303dd27`. Feature HEAD `cf07c0af59de3928ea51585aea45e7eea94540eb`. Draft PR https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/122. Не смержено.
