@@ -10,6 +10,12 @@
 - [x] Controls help matches the current input code and omits the diagnostics hotkeys.
 - [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
 
+## 2026-10-05: Responsive menu scale
+
+- [x] Short landscape uses one `--menu-fit`: 0.65, and 0.55 below 430px.
+- [x] Skin selector preview and card grid fill the window down to the footer in that layout.
+- [x] Desktop main menu is larger. Logo, buttons, and the character panel stay inside 1366×768.
+
 ## 2026-10-05: Server PNG logos
 
 - [x] Online server rows use the owner PNGs in `public/ui/server-logos/`. Inline server SVG is gone.

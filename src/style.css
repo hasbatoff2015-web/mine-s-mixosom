@@ -4165,7 +4165,7 @@ textarea,
 
 .megacraft-logo__title {
   color: #d8dad6;
-  font-size: clamp(56px, 7vw, 112px);
+  font-size: clamp(64px, 7.8vw, 128px);
   letter-spacing: -0.04em;
   line-height: 1.05;
   -webkit-text-stroke: clamp(1px, 0.15vw, 3px) #171717;
@@ -4178,7 +4178,7 @@ textarea,
 .megacraft-logo__subtitle {
   margin-top: 6px;
   color: #d2dc62;
-  font-size: clamp(22px, 2.9vw, 42px);
+  font-size: clamp(26px, 3.2vw, 46px);
   letter-spacing: 0.08em;
   line-height: 1.05;
   -webkit-text-stroke: clamp(1px, 0.08vw, 2px) #1c240c;
@@ -4192,10 +4192,10 @@ textarea,
   align-self: center;
   justify-self: center;
   display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(260px, 380px);
-  gap: 28px;
+  grid-template-columns: minmax(340px, 1fr) minmax(300px, 420px);
+  gap: 32px;
   align-items: stretch;
-  width: min(1080px, calc(100vw - 42px));
+  width: min(1180px, calc(100vw - 48px));
 }
 
 .main-menu-actions {
@@ -4209,9 +4209,9 @@ textarea,
   display: grid;
   align-content: start;
   justify-items: stretch;
-  gap: 14px;
+  gap: 16px;
   min-width: 0;
-  padding: 18px 18px 20px;
+  padding: 22px;
   border: 2px solid var(--menu-edge);
   color: var(--menu-ink);
   background: linear-gradient(var(--menu-face-light), var(--menu-face-dark));
@@ -4225,7 +4225,7 @@ textarea,
   margin: 0;
   color: var(--menu-ink);
   font-family: var(--font-display);
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 400;
   font-synthesis: none;
   line-height: 1.5;
@@ -4235,7 +4235,7 @@ textarea,
 .character-preview-canvas {
   display: block;
   width: 100%;
-  height: clamp(320px, 36vh, 380px);
+  height: clamp(340px, 38vh, 420px);
   background:
     radial-gradient(circle at 50% 30%, rgba(255, 255, 255, 0.16), transparent 62%),
     linear-gradient(180deg, #2a3340, #151a22);
@@ -4385,13 +4385,14 @@ textarea,
 }
 
 .main-menu-screen .main-menu-actions .game-button {
-  min-height: 62px;
-  font-size: 13px;
+  min-height: 70px;
+  padding: 12px 22px;
+  font-size: 14px;
 }
 
 .main-menu-screen .character-panel .game-button {
-  min-height: 58px;
-  font-size: 12px;
+  min-height: 64px;
+  font-size: 13px;
 }
 
 .submenu-screen {
@@ -5241,7 +5242,7 @@ textarea,
 
 /* Phone landscape is short. Scale the desktop menu instead of restacking it. */
 @media (max-height: 520px) {
-  #app { --menu-fit: 0.5; }
+  #app { --menu-fit: 0.65; }
 
   .main-menu-screen {
     place-items: center;
@@ -5278,15 +5279,48 @@ textarea,
     min-height: 52px;
   }
 
+  .main-menu-center {
+    grid-template-columns: minmax(300px, 1fr) minmax(260px, 380px);
+    gap: 28px;
+    width: min(1080px, calc(100vw - 42px));
+  }
+
   .menu-window {
-    width: min(920px, calc((100vw - 48px) / var(--menu-fit)));
-    min-height: 620px;
-    max-height: 720px;
+    width: min(920px, calc((100vw - 32px) / var(--menu-fit)));
+    min-height: min(620px, calc((100dvh - 20px) / var(--menu-fit)));
+    max-height: calc((100dvh - 20px) / var(--menu-fit));
+  }
+
+  .skin-selector-window .skin-selector-body {
+    height: 100%;
+    min-height: 0;
+    align-items: stretch;
+  }
+
+  .skin-selector-window .skin-selector-preview {
+    height: 100%;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr) auto;
+    align-content: stretch;
+  }
+
+  .skin-selector-window .character-preview-canvas.large {
+    height: 100%;
+    min-height: 0;
+    max-height: none;
+  }
+
+  .skin-selector-window .skin-card-grid {
+    height: 100%;
+    max-height: none;
+    min-height: 0;
+    align-content: start;
+    overflow-y: auto;
   }
 }
 
 @media (max-height: 430px) {
-  #app { --menu-fit: 0.42; }
+  #app { --menu-fit: 0.55; }
 }
 
 
