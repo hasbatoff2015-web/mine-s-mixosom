@@ -35,7 +35,8 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
     const loading = sourceSection(gameUiSource, 'showLoading(', 'updateWorldLoading(');
     expect(loading).toContain('>МЕГАКРАФТ<');
-    expect(loading).not.toContain('ОНЛАЙН');
+    expect(loading).toContain('class="brand-subtitle">ОНЛАЙН<');
+    expect(loading).toContain('brand--megacraft');
     expect(loading).not.toContain('FRONTIER');
     expect(loading).not.toContain('survival alpha');
     expect(loading).not.toContain('brand-mark');
@@ -120,6 +121,8 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(styleSource).toContain('--menu-fit: 0.42');
     expect(styleSource).not.toContain('.brand-mark');
     expect(styleSource).toMatch(/#loading-screen \.brand h1 \{[^}]*font-size: clamp\(34px, 4\.8vw, 46px\)/);
+    expect(styleSource).toMatch(/#loading-screen \.brand-subtitle \{[^}]*font-family: var\(--font-display\)/);
+    expect(styleSource).toMatch(/#loading-screen \.brand-subtitle \{[^}]*color: #d2dc62/);
     expect(styleSource).toMatch(/\.setting-row > span strong \{[^}]*font-family: var\(--font-display\)/);
     expect(styleSource).toMatch(/\.setting-row > span strong \{[^}]*font-size: 11px/);
   });
