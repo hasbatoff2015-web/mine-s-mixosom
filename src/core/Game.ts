@@ -6632,6 +6632,11 @@ export class Game {
       hunger: session.summary.mode === 'creative' ? 20 : session.survival.hunger,
       armor: getArmorPoints(session.inventory),
       absorption: session.survival.absorption,
+      airTicks: session.survival.airTicks,
+      airVisible: session.summary.mode === 'survival'
+        && session.player.headSubmerged
+        && session.player.inWater
+        && !session.player.inLava,
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),

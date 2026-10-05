@@ -105,6 +105,15 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   const layers: { -readonly [K in keyof PlayerSkinLayers]: boolean } = { ...ALL_PLAYER_SKIN_LAYERS };
   let invisible = false;
   let hurt = false;
+  let wallOn = false;
+  const occlusionWall = new THREE.Mesh(
+    new THREE.BoxGeometry(2.6, 2.6, 0.45),
+    new THREE.MeshBasicMaterial({ color: 0x6d7278 }),
+  );
+  occlusionWall.name = 'player-qa:occlusion-wall';
+  occlusionWall.position.set(0, 1.25, -1.2);
+  occlusionWall.visible = false;
+  scene.add(occlusionWall);
   let viewYaw = 0;
   let viewPitch = 0;
   let cameraOrbit = 0;
@@ -135,7 +144,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       <label for="qa-camera-orbit">camera orbit</label><input id="qa-camera-orbit" type="range" min="-180" max="180" value="0">
       <label for="qa-camera-distance">camera distance</label><input id="qa-camera-distance" type="range" min="2" max="8" step="0.1" value="4.2">
     </div>
-    <div style="margin-top:8px"><button data-camera="firstPerson">first</button> <button data-camera="thirdPersonBack">back</button> <button data-camera="thirdPersonFront">front</button> <button data-toggle="hurt">hurt off</button> <button data-toggle="invisible">invis off</button></div>
+    <div style="margin-top:8px"><button data-camera="firstPerson">first</button> <button data-camera="thirdPersonBack">back</button> <button data-camera="thirdPersonFront">front</button> <button data-toggle="hurt">hurt off</button> <button data-toggle="invisible">invis off</button> <button data-toggle="wall">wall off</button></div>
     <div style="margin-top:6px">${Object.entries(QA_SKIN_LAYER_LABELS).map(([layer, label]) => `<button data-layer="${layer}">${label} on</button>`).join(' ')}</div>
     <output style="display:block;margin-top:8px;white-space:pre"></output>
   </div>`;
@@ -214,8 +223,34 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       invisible = !invisible;
       target.textContent = `invis ${invisible ? 'on' : 'off'}`;
     }
+    if (target.dataset.toggle === 'wall') {
+      wallOn = !wallOn;
+      occlusionWall.visible = wallOn;
+      target.textContent = `wall ${wallOn ? 'on' : 'off'}`;
+    }
   };
   root.addEventListener('click', onClick);
+  const params = new URLSearchParams(location.search);
+  if (params.get('armor') === 'none') {
+    for (const { slot, select } of armorSelects) {
+      equipment[slot] = null;
+      select.value = '';
+    }
+    player.setArmor(equipment);
+  }
+  if (params.get('invis') === '1') {
+    invisible = true;
+    root.querySelector<HTMLButtonElement>('[data-toggle="invisible"]')!.textContent = 'invis on';
+  }
+  if (params.get('wall') === '1') {
+    wallOn = true;
+    occlusionWall.visible = true;
+    root.querySelector<HTMLButtonElement>('[data-toggle="wall"]')!.textContent = 'wall on';
+  }
+  const cameraParam = params.get('camera');
+  if (cameraParam === 'first' || cameraParam === 'firstPerson') perspective = 'firstPerson';
+  else if (cameraParam === 'back' || cameraParam === 'thirdPersonBack') perspective = 'thirdPersonBack';
+  else if (cameraParam === 'front' || cameraParam === 'thirdPersonFront') perspective = 'thirdPersonFront';
   const onKeyDown = (event: KeyboardEvent): void => {
     if (event.code !== 'KeyC' || event.repeat) return;
     event.preventDefault();
@@ -287,6 +322,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     firstPersonState.bowCharge = playerState.bowCharge;
     firstPersonState.swordBlocking = playerState.swordBlocking;
     firstPersonState.invisible = playerState.invisible;
+    firstPersonState.potionActive = playerState.invisible;
+    firstPersonState.potionKind = 'invisibility';
     firstPerson.update(delta, firstPersonState);
 
     const cameraAngle = cameraOrbit + (perspective === 'thirdPersonBack' ? 0 : Math.PI);
@@ -310,6 +347,8 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     removeEventListener('resize', resize);
     removeEventListener('keydown', onKeyDown);
     root.removeEventListener('click', onClick);
+    occlusionWall.geometry.dispose();
+    (occlusionWall.material as THREE.Material).dispose();
     player.dispose();
     firstPerson.dispose();
     geometries.dispose();

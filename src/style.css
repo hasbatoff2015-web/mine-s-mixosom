@@ -515,13 +515,26 @@ textarea,
   gap: 1px;
 }
 
+.status-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+}
+
 .hearts,
 .armor,
-.hunger {
+.hunger,
+.air {
   display: flex;
   gap: var(--hud-status-icon-gap);
   letter-spacing: 0;
   line-height: 0;
+}
+
+.air {
+  justify-content: flex-end;
+  width: calc(10 * var(--hud-status-icon-size) + 9 * var(--hud-status-icon-gap));
 }
 
 @media (min-width: 1600px) and (min-height: 800px) {
@@ -530,7 +543,8 @@ textarea,
 
 .heart-icon,
 .armor-icon,
-.hunger-icon {
+.hunger-icon,
+.air-icon {
   width: var(--hud-status-icon-size);
   height: var(--hud-status-icon-size);
   object-fit: contain;

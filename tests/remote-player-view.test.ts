@@ -126,6 +126,11 @@ describe('remote player view presentation', () => {
     expect(visual.armor.meshes('chest').every((pair) => pair.base.visible)).toBe(true);
     expect(visual.heldItem).toBe('diamond_sword');
     expect(visual.rig.heldItem.visible).toBe(true);
+    expect(visual.invisibilityParticles.active).toBe(true);
+    expect(visual.invisibilityParticles.group.visible).toBe(true);
+    expect(visual.invisibilityParticles.group.parent).toBe(visual.root);
+    expect(visual.invisibilityParticles.activeCount).toBeGreaterThan(0);
+    expect(visual.invisibilityParticles.activeCount).toBeLessThanOrEqual(7);
 
     for (let tick = 17; tick <= 23; tick += 1) {
       view.applySnapshot(snapshot({
@@ -142,6 +147,9 @@ describe('remote player view presentation', () => {
     expect(visual.armor.meshes('head')[0]!.base.visible).toBe(true);
     expect(visual.armor.meshes('chest').every((pair) => pair.base.visible)).toBe(true);
     expect(visual.rig.heldItem.visible).toBe(true);
+    expect(visual.invisibilityParticles.active).toBe(false);
+    expect(visual.invisibilityParticles.group.visible).toBe(false);
+    expect(visual.invisibilityParticles.activeCount).toBe(0);
 
     view.reset(remoteInfo);
     expect(view.buffer.sampleCount).toBe(0);

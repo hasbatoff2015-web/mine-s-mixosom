@@ -50,6 +50,7 @@ import {
   humanoidDeathScale,
 } from '../../entities/humanoidDeath';
 import { SharedFireTexture } from '../fireTexture';
+import { InvisibilityWorldParticles } from '../InvisibilityWorldParticles';
 
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly bedRest?: BedRestState | null;
@@ -142,6 +143,7 @@ export class PlayerVisual {
   private hurtFlashStartedAt = -1;
   private disposed = false;
   private fireOverlay?: THREE.Mesh;
+  private readonly worldParticles = new InvisibilityWorldParticles();
   private readonly ownedArmorResources?: PlayerArmorResources;
 
   constructor(
@@ -203,6 +205,11 @@ export class PlayerVisual {
     this.rebuildMeshes();
     bindEntityLightReceiver(this.root);
     setEntityLight(this.root, [1, 1, 1]);
+    this.root.add(this.worldParticles.group);
+  }
+
+  get invisibilityParticles(): InvisibilityWorldParticles {
+    return this.worldParticles;
   }
 
   get appearance(): PlayerAppearance {
@@ -342,6 +349,8 @@ export class PlayerVisual {
       this.root.scale.setScalar(1);
     }
     this.syncLayerVisibility();
+    this.worldParticles.setActive(this.invisible);
+    this.worldParticles.update(deltaSeconds);
     if (this.heldModel && this.heldItemId && itemRenderProfile(this.heldItemId).category === 'bow') {
       const texturePath = bowPullingTexturePath(state.bowCharge);
       if (texturePath !== this.bowTexturePath) {
@@ -373,6 +382,7 @@ export class PlayerVisual {
 
   dispose(): void {
     if (this.disposed) return;
+    this.worldParticles.dispose();
     this.root.removeFromParent();
     this.heldModel?.removeFromParent();
     this.offhandModel?.removeFromParent();
