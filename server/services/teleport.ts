@@ -16,7 +16,8 @@ export type TeleportReason =
   | 'death'
   | 'automine'
   | 'friends'
-  | 'clan';
+  | 'clan'
+  | 'duel';
 
 export interface TeleportLocation {
   readonly worldId: string;
@@ -86,6 +87,12 @@ export class TeleportHistoryService {
 export class TeleportService {
   private readonly pending = new Map<string, PendingTeleport>();
   private readonly cooldownUntil = new Map<string, number>();
+  private externalDeny?: (playerId: string, reason: TeleportReason) => string | undefined;
+
+  /** Central deny for player-facing teleports. Reason `duel` is the trusted internal bypass. */
+  setExternalDeny(deny: (playerId: string, reason: TeleportReason) => string | undefined): void {
+    this.externalDeny = deny;
+  }
 
   constructor(
     private readonly worldId: string,
@@ -140,6 +147,10 @@ export class TeleportService {
     if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
       return { ok: false, error: WORLD_BORDER_TELEPORT_ERROR };
     }
+    if (reason !== 'duel') {
+      const denied = this.externalDeny?.(playerId, reason);
+      if (denied) return { ok: false, error: denied };
+    }
     const from = actor.position();
     if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {
       return { ok: false, error: 'Teleport failed.' };
@@ -158,6 +169,10 @@ export class TeleportService {
     reason: TeleportReason,
     options: TeleportScheduleOptions = {},
   ): { ok: boolean; error?: string } {
+    if (reason !== 'duel') {
+      const denied = this.externalDeny?.(playerId, reason);
+      if (denied) return { ok: false, error: denied };
+    }
     const remaining = this.cooldownRemaining(playerId, reason);
     if (remaining > 0) {
       return { ok: false, error: `Please wait ${(remaining / 1000).toFixed(1)}s before using this again.` };

@@ -190,6 +190,8 @@ function applyEditorUpdate(
 /** Server-owned hologram list. WorldInstance broadcasts; plugins do not send packets. */
 export class HologramNetwork {
   private records: HologramRecord[] = [];
+  /** Countdown and other runtime text. Never written by persist. */
+  private transient: HologramRecord[] = [];
   private persist?: (records: readonly HologramRecord[]) => void;
 
   constructor(private readonly onChange: (holograms: readonly NetworkHologram[]) => void) {}
@@ -199,7 +201,9 @@ export class HologramNetwork {
   }
 
   list(): readonly NetworkHologram[] {
-    return this.records.filter((entry) => entry.enabled).map(toNetworkHologram);
+    return [...this.records, ...this.transient]
+      .filter((entry) => entry.enabled)
+      .map(toNetworkHologram);
   }
 
   listRecords(): readonly HologramRecord[] {
@@ -230,6 +234,32 @@ export class HologramNetwork {
     this.emit();
     this.persist?.(this.records);
     return normalized;
+  }
+
+  /** Visible to clients immediately. Omitted from plugin persistence and admin record storage. */
+  upsertTransient(record: HologramRecord): HologramRecord | undefined {
+    const normalized = normalizeHologramRecord(record, record.worldId);
+    if (!normalized) return undefined;
+    const index = this.transient.findIndex((entry) => entry.name === normalized.name);
+    if (index >= 0) this.transient[index] = normalized;
+    else this.transient.push(normalized);
+    this.emit();
+    return normalized;
+  }
+
+  removeTransient(name: string): boolean {
+    const key = name.trim().toLowerCase().slice(0, HOLOGRAM_MAX_NAME);
+    const next = this.transient.filter((entry) => entry.name !== key);
+    if (next.length === this.transient.length) return false;
+    this.transient = next;
+    this.emit();
+    return true;
+  }
+
+  clearTransient(): void {
+    if (this.transient.length === 0) return;
+    this.transient = [];
+    this.emit();
   }
 
   remove(name: string): boolean {

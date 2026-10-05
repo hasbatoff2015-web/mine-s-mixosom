@@ -1,6 +1,7 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
+import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
@@ -686,7 +687,11 @@ export type MenuActionKind =
   | 'auction_sell'
   | 'auction_history'
   | 'rating_set'
-  | 'rating_page';
+  | 'rating_page'
+  | 'duel_refresh'
+  | 'duel_challenge'
+  | 'duel_accept'
+  | 'duel_decline';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -703,6 +708,7 @@ export type GameMenuScreenKind =
   | 'auction'
   | 'auction-history'
   | 'rating'
+  | 'duels'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -1448,6 +1454,13 @@ export interface ServerMenuMessage {
   readonly personalText?: string;
   readonly notifications?: NetworkMenuNotifications;
   readonly auctionHistory?: readonly NetworkAuctionHistoryRow[];
+  readonly duelStats?: DuelMenuStats;
+  readonly duelIncoming?: readonly DuelIncomingRow[];
+  readonly duelOutgoing?: DuelOutgoingRow;
+  readonly duelNearby?: readonly DuelNearbyRow[];
+  readonly duelArenaBusy?: boolean;
+  readonly duelArenaConfigured?: boolean;
+  readonly duelCooldownMs?: number;
 }
 
 export interface NetworkMenuNotifications {
@@ -1455,6 +1468,7 @@ export interface NetworkMenuNotifications {
   readonly clans: number;
   readonly auction: number;
   readonly trade: number;
+  readonly duels: number;
 }
 
 export interface NetworkAuctionHistoryRow {
@@ -1671,11 +1685,12 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
   'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
+  'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'closed',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {

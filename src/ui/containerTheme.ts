@@ -94,7 +94,7 @@ export function containerUiScale(
 
 /** In-game social menu: compact dark panel, not a fullscreen overlay. */
 export const MC_MENU_WIDTH = 248;
-export const MC_MENU_ROOT_HEIGHT = 176;
+export const MC_MENU_ROOT_HEIGHT = 238;
 export const MC_MENU_MAX_SCALE = 3;
 
 export function menuLogicalHeight(screen: string): number {
@@ -105,6 +105,7 @@ export function menuLogicalHeight(screen: string): number {
   if (screen === 'trade') return 268;
   if (screen === 'auction-history') return 248;
   if (screen === 'rating') return 292;
+  if (screen === 'duels') return 292;
   return 216;
 }
 

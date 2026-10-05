@@ -233,6 +233,10 @@ export class ServerGameplay {
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
   onPersistentStateChanged?: () => void;
+  /** After survival death loot is spawned once. Duels bind these exact entity ids. */
+  onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
+  /** Reject Q / cursor drops before the inventory mutates. */
+  blocksManualItemDrop?: (playerId: string) => boolean;
   private pendingUseReject: string | undefined;
   private lastVehicleEnterReject: string | undefined;
   maxTickMs = 0;
@@ -564,21 +568,48 @@ export class ServerGameplay {
     });
   }
 
-  private scatterDeathDrop(player: GameplayPlayer, stack: ItemStack): void {
+  /**
+   * Survival death resources: hotbar, main inventory, armor, offhand, cursor, crafting.
+   * Same scatter as a normal death. Returns the spawned entity ids (`merge: false`).
+   */
+  dropAllPlayerResources(player: GameplayPlayer): readonly string[] {
+    const ids: string[] = [];
+    const take = (stack: ItemStack | null | undefined): void => {
+      if (!stack) return;
+      const id = this.scatterDeathDrop(player, stack);
+      if (id) ids.push(id);
+    };
+    for (const stack of player.inventory.slots) take(stack);
+    for (const stack of Object.values(player.inventory.armor)) take(stack);
+    take(player.inventory.offhand);
+    take(player.cursor);
+    for (const stack of player.craftSlots) take(stack);
+    player.inventory.clear();
+    player.cursor = null;
+    player.craftSlots = player.craftSlots.map(() => null);
+    player.inventoryDirty = true;
+    return ids;
+  }
+
+  removeDroppedItems(ids: readonly string[]): void {
+    for (const id of ids) this.drops.remove(id);
+  }
+
+  private scatterDeathDrop(player: GameplayPlayer, stack: ItemStack): string | undefined {
     const origin = dropScatterOrigin(player.controller.position, this.random, {
       horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
     });
     const position = new Vec3(origin[0], origin[1], origin[2]);
     const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, player.id);
     this.events.emit('itemDrop', event);
-    if (event.cancelled) return;
-    this.drops.spawn(stack, position, {
+    if (event.cancelled) return undefined;
+    return this.drops.spawn(stack, position, {
       velocity: new Vec3(...dropScatterVelocity(this.random, {
         horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
       })),
       merge: false,
       pickupDelaySeconds: 1.25,
-    });
+    }).id;
   }
 
   snapshotsNear(origin: Vec3, passengers?: ReadonlyMap<string, string>): EntitySnapshot[] {
@@ -719,6 +750,12 @@ export class ServerGameplay {
   }
 
   applyInventory(player: GameplayPlayer, action: ClientInventoryActionMessage) {
+    if (
+      (action.action === 'drop_selected' || action.action === 'drop_cursor')
+      && this.blocksManualItemDrop?.(player.id)
+    ) {
+      return { ok: false, dropped: [] };
+    }
     const chest = player.window.kind === 'portal-chest'
       ? player.portalChest
       : player.window.kind === 'chest' && player.window.x !== undefined
@@ -1435,17 +1472,8 @@ export class ServerGameplay {
         vehicleForward: 0,
       };
     }
-    if (player.gamemode === 'survival') {
-      for (const stack of player.inventory.slots) if (stack) this.scatterDeathDrop(player, stack);
-      for (const stack of Object.values(player.inventory.armor)) if (stack) this.scatterDeathDrop(player, stack);
-      if (player.inventory.offhand) this.scatterDeathDrop(player, player.inventory.offhand);
-      if (player.cursor) this.scatterDeathDrop(player, player.cursor);
-      for (const stack of player.craftSlots) if (stack) this.scatterDeathDrop(player, stack);
-      player.inventory.clear();
-      player.cursor = null;
-      player.craftSlots = player.craftSlots.map(() => null);
-      player.inventoryDirty = true;
-    }
+    const droppedIds = player.gamemode === 'survival' ? this.dropAllPlayerResources(player) : [];
+    this.onDeathLoot?.(player, droppedIds);
   }
 
   /** Client-requested respawn. Rejected unless the player is actually dead. */

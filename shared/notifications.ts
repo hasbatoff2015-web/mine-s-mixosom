@@ -1,4 +1,4 @@
-export const NOTIFICATION_CATEGORIES = ['friends', 'clans', 'auction', 'trade'] as const;
+export const NOTIFICATION_CATEGORIES = ['friends', 'clans', 'auction', 'trade', 'duels'] as const;
 export type NotificationCategory = (typeof NOTIFICATION_CATEGORIES)[number];
 
 export interface NotificationCounts {
@@ -6,12 +6,13 @@ export interface NotificationCounts {
   clans: number;
   auction: number;
   trade: number;
+  duels: number;
 }
 
 export const NOTIFICATION_BADGE_MAX = 99;
 
 export function emptyNotificationCounts(): NotificationCounts {
-  return { friends: 0, clans: 0, auction: 0, trade: 0 };
+  return { friends: 0, clans: 0, auction: 0, trade: 0, duels: 0 };
 }
 
 export function isNotificationCategory(value: string | undefined): value is NotificationCategory {
@@ -27,6 +28,7 @@ export function notificationCategoryForScreen(screen: string): NotificationCateg
   if (screen === 'clans') return 'clans';
   if (screen === 'auction' || screen === 'auction-history') return 'auction';
   if (screen === 'trade') return 'trade';
+  if (screen === 'duels') return 'duels';
   return undefined;
 }
 

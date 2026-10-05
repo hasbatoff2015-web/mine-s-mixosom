@@ -1,5 +1,16 @@
 # Roadmap
 
+## 2026-10-05: Duels 1v1
+
+- [x] Builtin `duels` plugin and server-authoritative `DuelService`.
+- [x] Root menu is 3×3. Ninth tile is «Дуэли». Panel width stays 248.
+- [x] Invites within 20 blocks, 30 s TTL, 10 s reject cooldown, one outgoing invite.
+- [x] One arena, two `/duel setspawn` points, 5 s countdown hologram, 5 minute fight, 15 s loot.
+- [x] Fighting disconnect forfeits. Timeout is a loss for both. Countdown and shutdown cancel write no result.
+- [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
+- [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
+- [ ] Owner PNG `public/ui/menu/icon_duels.png` is not in the tree. Two-client browser QA is not done.
+
 ## 2026-10-05: Private friend chat
 
 - [x] Green `Чат` button on every friend row, immediately left of `Удалить`.

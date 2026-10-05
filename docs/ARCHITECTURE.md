@@ -1,5 +1,21 @@
 # Архитектура
 
+## Duels 1v1 — 2026-10-05
+
+One physical arena per world. `DuelService` (`server/services/duels.ts`) is constructed on `WorldInstance` before plugins load, so economy, teleport, damage, and pickup do not depend on plugin registration order. The builtin `duels` plugin only owns `/duel`, the repeating 100 ms tick, and `onDisable`. Active invites, cooldowns, and the match are memory. Restart drops them. Disk stores `plugin-data/duels/stats` and `plugin-data/duels/arena`.
+
+The client sends `menu_action` (`duel_refresh`, `duel_challenge`, `duel_accept`, `duel_decline`) with a player id or request id. The server validates distance, gamemode, life, arena config, and occupancy. Distance is 3D Euclidean, radius 20. Invite TTL is 30 s. Reject cooldown is 10 s for that challenger→target pair. A reverse invite does not auto-accept.
+
+Phases are `idle`, `countdown`, `fighting`, `loot`, and `timeout_cleanup`. Countdown is a real 5 s from `startedAt`. The hologram glyph is equal thirds (`3`, `2`, `1`) and `БОЙ!` for 800 ms after the transition. The 5-minute deadline is `countdownStartedAt + 5000 + 300000`. Fight disconnect is a forfeit. Countdown disconnect, plugin disable, and graceful shutdown during countdown or fighting restore the saved pre-duel poses and write no stats and no drops. Timeout is a loss for both and no win. A finished loot or timeout result is not rolled back on shutdown; remaining tracked drops are deleted and the winner (or both timeout players) is moved to world spawn.
+
+Loot is the entity ids returned by `ServerGameplay.dropAllPlayerResources`, the same helper normal death uses. Pickup of those ids is winner-only during `loot` and nobody during `timeout_cleanup`. Cleanup removes those ids after 15 s. Manual `drop_selected` / `drop_cursor` is rejected before the inventory mutation while the participant is in countdown or fighting.
+
+`shouldSuppressNormalPvpSettlement` is true only for the fighting pair. Economy returns before `recordPvpKill` and `rewardPlayerKill`. Claim PvP is not bypassed. Pair damage still goes through the normal combat path. Countdown cancels all damage to the participants and blocks melee and projectile release before a shot is queued. Food and potions stay usable.
+
+External teleport is one policy: `TeleportService.setExternalDeny` and `RtpSessionManager.setExternalDeny`. `reason: 'duel'` and `hardRelocatePlayer({ bypass: 'duel' })` are the server-only exceptions. The public plugin API does not gain inventory or drop methods. `DuelRuntime` is on `BuiltinPluginContext` only.
+
+Countdown text is a transient hologram named `duel-countdown`. `HologramNetwork.list()` includes it. `persist()` and `listRecords()` do not. The root menu is three full rows of three tiles. `MC_MENU_WIDTH` stays 248. Root logical height is 238. `menuLogicalHeight('duels')` is 292. `menuUiScale` is still the only scale.
+
 ## Private friend chat — 2026-10-05
 
 `DirectMessageService` is separate from `FriendsService`. It may call `isFriend`, and every send and history request does that again. The client sends `direct_message_action` with `send` or `history`, a friend id, and text or `beforeSeq`. A send may also carry optional `clientRequestId`. That token is echoed only on the sender's `append` or `error` so the composer can match one intent. It is not a message id, it is not stored, and the recipient copy omits it. The server still fills sender id, message id, `seq`, `createdAt`, and the normalized text. The composer clears a draft only when that request's draft revision is still current. There is no client `mark_read`: opening `friend-chat` marks that conversation read through the latest seq, and an append does the same when the recipient already has that exact chat open.
@@ -671,7 +687,7 @@ WorldInstance
 PluginManager.scopedApi (permissions, teleport, config, data, help)
         │
         ▼
-builtin-plugins (permissions, tpa, spawn, home, friends, trade, menu, back, rtp, rtpportal, claims, holograms, wand, world-events, automine, economy, auction, clan, buyer)
+builtin-plugins (permissions, tpa, spawn, home, friends, trade, menu, back, rtp, rtpportal, claims, holograms, wand, world-events, automine, economy, auction, clan, buyer, duels)
 disk plugins from server/plugins/
 ```
 
@@ -1397,7 +1413,7 @@ EventBus  ──►  Plugins (ServerAPI)
 
 `src/gameplay/simulationEvents.ts` is the shared catalog + `SimulationEventSink`. Singleplayer uses `IGNORE_SIMULATION_EVENTS`. `server/pluginEventAdapter.ts` maps names onto `server/events.ts`. `ServerGameplay` emits pre-events before mutation and post-events after. Shared code does not import `PluginManager`.
 
-Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
+Plugins load from `server/plugins/` after the world is READY. A missing directory is fine. Failed plugins are isolated. The canonical `/hello` example lives in `server/plugin-examples/` and is not auto-loaded; copy it into `server/plugins/` or set `FC_EXAMPLE_PLUGIN=1`. Core Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers, Duels) are registered from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. Lifecycle, API, cancellation, and the trusted-code model: `docs/PLUGINS.md`.
 
 **Not here:** kits / bidding auctions. Homes, TPA, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers, Friends, and Trade **are** the current Anarchy plugin pack.
 
