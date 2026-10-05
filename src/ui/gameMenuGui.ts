@@ -1,4 +1,9 @@
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../../shared/gameMenu';
+import { MAX_CHAT_LENGTH } from '../../shared/config';
+import {
+  DIRECT_MESSAGE_EMPTY_HISTORY,
+  formatDirectMessageClock,
+} from '../../shared/directMessages';
 import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { formatMegacoinAmount } from '../../shared/megacoins';
@@ -8,7 +13,7 @@ import {
   type NotificationCounts,
 } from '../../shared/notifications';
 import { AUCTION_HISTORY_EMPTY } from '../../shared/auctionHistory';
-import type { ServerMenuMessage } from '../../shared/protocol';
+import type { NetworkDirectMessage, ServerMenuMessage } from '../../shared/protocol';
 
 const MENU_SPRITE_FILES = {
   '--mc-menu-close': 'close.png',
@@ -203,14 +208,22 @@ export function menuFriendsHtml(state: ServerMenuMessage, escape: (value: string
     const teleport = row.canTeleport
       ? `<button type="button" class="mc-ah-btn" data-menu-friend-tp="${escape(row.playerId)}">Телепорт</button>`
       : '';
-    return `<div class="mc-player-row">
+    const badge = formatNotificationBadge(row.unreadCount ?? 0);
+    const badgeHtml = badge
+      ? `<span class="mc-menu-badge mc-friend-unread">${escape(badge)}</span>`
+      : '';
+    return `<div class="mc-player-row mc-friend-row">
       <span class="mc-status-dot ${row.online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
       <div class="mc-player-main">
-        <span class="mc-player-name ${row.online ? 'mc-menu-online' : 'mc-menu-offline'}">${escape(row.name)}</span>
+        <span class="mc-friend-name-line">
+          <span class="mc-player-name ${row.online ? 'mc-menu-online' : 'mc-menu-offline'}">${escape(row.name)}</span>
+          ${badgeHtml}
+        </span>
         <span class="${row.online ? 'mc-menu-online' : 'mc-menu-offline'}">${row.online ? 'Онлайн' : 'Оффлайн'}</span>
       </div>
       <span class="mc-menu-row-actions">
         ${teleport}
+        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-friend-chat="${escape(row.playerId)}">Чат</button>
         <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-friend-delete="${escape(row.playerId)}">Удалить</button>
       </span>
     </div>`;
@@ -232,6 +245,42 @@ export function menuFriendsHtml(state: ServerMenuMessage, escape: (value: string
     <div class="mc-menu-count">Мои друзья (${state.friendCount ?? 0}/${state.friendMax ?? FRIENDS_MAX}):</div>
     <div class="mc-menu-list">${friends || '<p class="mc-menu-empty">Нет друзей.</p>'}</div>
     ${menuMessage(state.message, escape)}
+  </div>`;
+}
+
+export function friendChatMessageHtml(
+  message: NetworkDirectMessage,
+  selfId: string,
+  escape: (value: string) => string,
+): string {
+  const outgoing = message.senderId === selfId;
+  return `<div class="mc-dm ${outgoing ? 'is-out' : 'is-in'}" data-dm-id="${escape(message.messageId)}">
+    <div class="mc-dm-text">${escape(message.text)}</div>
+    <div class="mc-dm-time">${escape(formatDirectMessageClock(message.createdAt))}</div>
+  </div>`;
+}
+
+export function menuFriendChatHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const name = state.activeFriendName ?? '';
+  const online = state.activeFriendOnline === true;
+  return `<div class="mc-menu-body mc-friend-chat" data-menu-screen="friend-chat" data-friend-id="${escape(state.activeFriendId ?? '')}">
+    <div class="mc-friend-chat-head">
+      ${menuHeadingHtml(`Чат с ${name}`)}
+    </div>
+    <div class="mc-friend-chat-status" data-friend-chat-status>
+      <span class="mc-status-dot ${online ? 'is-online' : 'is-offline'}" aria-hidden="true"></span>
+      <span class="${online ? 'mc-menu-online' : 'mc-menu-offline'}" data-friend-chat-presence>${online ? 'Онлайн' : 'Оффлайн'}</span>
+    </div>
+    <div class="mc-friend-chat-log" data-friend-chat-log>
+      <p class="mc-friend-chat-empty">${escape(DIRECT_MESSAGE_EMPTY_HISTORY)}</p>
+    </div>
+    <div class="mc-friend-chat-compose-wrap">
+      <p class="mc-friend-chat-error" data-friend-chat-error hidden></p>
+      <div class="mc-friend-chat-compose">
+        <input data-friend-chat-input type="text" maxlength="${MAX_CHAT_LENGTH}" placeholder="Сообщение..." autocomplete="off" spellcheck="false" enterkeyhint="send" />
+        <button type="button" class="mc-ah-btn mc-btn-positive" data-friend-chat-send>Отправить</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -437,6 +486,7 @@ export function menuRatingHtml(state: ServerMenuMessage, escape: (value: string)
 export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   if (state.screen === 'homes' || state.screen === 'home-delete-confirm') return menuHomesHtml(state, escape);
   if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') return menuFriendsHtml(state, escape);
+  if (state.screen === 'friend-chat') return menuFriendChatHtml(state, escape);
   if (state.screen === 'clans') return menuClansHtml(state);
   if (state.screen === 'claims' || state.screen === 'claim-settings' || state.screen === 'claim-delete-confirm') {
     return menuClaimsHtml(state, escape);

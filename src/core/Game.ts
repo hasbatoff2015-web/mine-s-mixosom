@@ -1459,6 +1459,9 @@ export class Game {
       case 'menu':
         this.openGameMenuHouse(message);
         return;
+      case 'direct_message':
+        this.ui.applyDirectMessage(message);
+        return;
       case 'trade':
         this.openTradeHouse(message);
         return;
@@ -2652,6 +2655,8 @@ export class Game {
     }
     this.ui.openGameMenu(message, {
       send: (action) => session.online?.client.send(action),
+      sendDirect: (action) => session.online?.client.send(action),
+      selfId: session.online.playerId,
       close: () => this.closeGameMenuAndResumeLook(true),
     });
   }
@@ -6938,5 +6943,6 @@ export class Game {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.firstPerson?.resize(width, height);
+    this.ui.relayoutGameMenu();
   }
 }

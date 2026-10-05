@@ -20,6 +20,7 @@ export type GameMenuScreen =
   | 'home-delete-confirm'
   | 'friends'
   | 'friend-delete-confirm'
+  | 'friend-chat'
   | 'clans'
   | 'claims'
   | 'claim-settings'

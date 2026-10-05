@@ -31,7 +31,7 @@ if (import.meta.env.DEV) {
   const qaLighting = search.get('qaLighting');
   const qaUi = search.get('qaUi');
   const hudEditor = search.get('hudEditor') === '1';
-  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-homes', 'menu-friends', 'menu-trade', 'menu-rating', 'clan-ranking', 'trade-session', 'chat-open', 'pause']);
+  const uiScenes = new Set(['loading', 'hud-full', 'hud-low', 'hud-absorption', 'creative', 'world-list', 'menu-root', 'menu-homes', 'menu-friends', 'menu-friend-chat', 'menu-trade', 'menu-rating', 'clan-ranking', 'trade-session', 'chat-open', 'pause']);
   const qaBreaking = search.get('qaBreaking') === '1' || search.get('qaBreaking') === 'true';
   const lightingScenes = ['room', 'closed', 'hole', 'cave', 'forest', 'sources', 'high'];
   const qaTime = search.get('qaTime') === 'night' ? 'night' : 'day';

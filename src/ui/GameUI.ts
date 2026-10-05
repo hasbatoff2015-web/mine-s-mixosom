@@ -96,10 +96,31 @@ import {
   clampBuyerAmount,
   keepBuyerDraft,
 } from './buyerGui';
-import { chatChromeStyle, hudChromeStyle, menuBackHtml, menuBodyHtml, overlayStageStyle } from './gameMenuGui';
+import {
+  chatChromeStyle,
+  friendChatMessageHtml,
+  hudChromeStyle,
+  menuBackHtml,
+  menuBodyHtml,
+  overlayStageStyle,
+} from './gameMenuGui';
+import {
+  DIRECT_MESSAGE_EMPTY_HISTORY,
+  chatScrollPinnedToBottom,
+  chatShouldRequestOlder,
+  mergeDirectMessagePage,
+  planDirectMessageScroll,
+} from '../../shared/directMessages';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
-import { isClanActionKind, isGameMenuScreenKind, isMenuActionKind } from '../../shared/protocol';
+import {
+  isClanActionKind,
+  isGameMenuScreenKind,
+  isMenuActionKind,
+  type ClientDirectMessageActionMessage,
+  type NetworkDirectMessage,
+  type ServerDirectMessage,
+} from '../../shared/protocol';
 import {
   HOLOGRAM_BG_HEIGHT_MAX,
   HOLOGRAM_BG_HEIGHT_MIN,
@@ -209,6 +230,8 @@ export interface BuyerGuiActions {
 
 export interface MenuGuiActions {
   send(message: ClientMenuActionMessage): void;
+  sendDirect?(message: ClientDirectMessageActionMessage): void;
+  selfId?: string;
   close(): void;
 }
 
@@ -341,6 +364,16 @@ export class GameUI {
   private buyerActions?: BuyerGuiActions;
   private menuState?: ServerMenuMessage;
   private menuActions?: MenuGuiActions;
+  private menuForceRender = false;
+  /** Logical px copied from the friends panel so opening a chat does not resize it. */
+  private friendChatLogicalHeight?: number;
+  private friendChatDrafts = new Map<string, string>();
+  private friendChat?: {
+    friendId: string;
+    messages: NetworkDirectMessage[];
+    hasMore: boolean;
+    loadingOlder: boolean;
+  };
   private tradeState?: ServerTradeMessage;
   private tradeActions?: TradeGuiActions;
   onHudPause?: () => void;
@@ -1636,7 +1669,48 @@ export class GameUI {
   closeGameMenu(options?: OverlayCloseOptions): void {
     if (!this.menuState) return;
     this.menuState = undefined;
+    this.friendChat = undefined;
+    this.friendChatLogicalHeight = undefined;
     this.releaseOverlay(options);
+  }
+
+  applyDirectMessage(message: ServerDirectMessage): void {
+    const state = this.menuState;
+    if (!state || state.screen !== 'friend-chat' || state.activeFriendId !== message.friendId) return;
+    if (!this.friendChat || this.friendChat.friendId !== message.friendId) {
+      this.friendChat = { friendId: message.friendId, messages: [], hasMore: false, loadingOlder: false };
+    }
+    const view = this.friendChat;
+    if (message.event === 'error') {
+      view.loadingOlder = false;
+      this.showFriendChatError(message.error ?? 'Не удалось отправить сообщение.');
+      return;
+    }
+    const incoming = message.messages ?? [];
+    const mode = message.event === 'append' ? 'append' : view.loadingOlder ? 'prepend' : 'replace';
+    view.messages = mergeDirectMessagePage(view.messages, incoming, mode);
+    if (message.event === 'history') {
+      view.hasMore = message.hasMore === true;
+      view.loadingOlder = false;
+    }
+    this.showFriendChatError('');
+    if (message.event === 'append') this.clearAcceptedFriendChatDraft(message.friendId, incoming);
+    this.paintFriendChatLog(mode);
+  }
+
+  relayoutGameMenu(): void {
+    const state = this.menuState;
+    if (!state || state.screen === 'closed' || !this.modal) return;
+    const scale = this.menuScale(MC_MENU_WIDTH, menuLogicalHeight(state.screen));
+    const stage = this.modal.querySelector<HTMLElement>('.mc-menu-stage');
+    const current = Number(stage?.style.getPropertyValue('--mc-ui-scale'));
+    if (Number.isFinite(current) && Math.abs(current - scale) < 0.01) return;
+    this.menuForceRender = true;
+    try {
+      this.renderGameMenu();
+    } finally {
+      this.menuForceRender = false;
+    }
   }
 
   openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
@@ -3880,23 +3954,215 @@ export class GameUI {
     const state = this.menuState;
     const actions = this.menuActions;
     if (!state || !actions || state.screen === 'closed') return;
+    if (!this.menuForceRender && this.tryPatchFriendChat(state)) return;
+    if (state.screen === 'friend-chat') this.rememberFriendsPanelHeight();
+    else this.friendChatLogicalHeight = undefined;
+    const sameChat = state.screen === 'friend-chat'
+      && !!state.activeFriendId
+      && this.friendChat?.friendId === state.activeFriendId;
+    const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
+    if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
     const logicalWidth = MC_MENU_WIDTH;
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
+    const panelClass = state.screen === 'friend-chat'
+      ? 'mc-panel mc-menu-panel mc-menu-panel-chat'
+      : 'mc-panel mc-menu-panel';
     const modal = this.resetOverlayModal();
     modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         ${menuBackHtml(state.screen)}
-        <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+        <div class="${panelClass}" data-container-kind="chest" data-menu-panel>
           ${menuBodyHtml(state, (value) => this.escape(value))}
         </div>
         ${this.closeButtonHtml()}
       </div>`;
     this.bindGameMenuChrome();
+    this.applyFriendChatPanelHeight();
+    this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
+    if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
+      this.paintFriendChatLog('restore', preservedScroll);
+    }
+  }
+
+  private rememberFriendsPanelHeight(): void {
+    const panel = this.modal?.querySelector<HTMLElement>('[data-menu-panel]');
+    const friends = this.modal?.querySelector('[data-menu-screen="friends"]');
+    const stage = this.modal?.querySelector<HTMLElement>('.mc-menu-stage');
+    if (!panel || !friends || !stage) return;
+    const scale = Number(stage.style.getPropertyValue('--mc-ui-scale'));
+    if (!Number.isFinite(scale) || scale <= 0) return;
+    const height = panel.getBoundingClientRect().height;
+    if (height < 40) return;
+    this.friendChatLogicalHeight = height / scale;
+  }
+
+  private applyFriendChatPanelHeight(): void {
+    if (this.menuState?.screen !== 'friend-chat') return;
+    const logical = this.friendChatLogicalHeight;
+    const panel = this.modal?.querySelector<HTMLElement>('[data-menu-panel]');
+    if (!panel || logical === undefined) return;
+    panel.style.height = `calc(${logical}px * var(--mc-ui-scale, 3))`;
+  }
+
+  /** Same open chat: refresh heading and presence without rebuilding the log or composer. */
+  private tryPatchFriendChat(state: ServerMenuMessage): boolean {
+    if (state.screen !== 'friend-chat' || !state.activeFriendId || !this.modal) return false;
+    const body = this.modal.querySelector<HTMLElement>('[data-menu-screen="friend-chat"]');
+    if (!body || body.dataset.friendId !== state.activeFriendId) return false;
+    const heading = body.querySelector('.mc-menu-heading');
+    if (heading) heading.textContent = `Чат с ${state.activeFriendName ?? ''}`;
+    const online = state.activeFriendOnline === true;
+    const dot = body.querySelector('.mc-status-dot');
+    dot?.classList.toggle('is-online', online);
+    dot?.classList.toggle('is-offline', !online);
+    const presence = body.querySelector('[data-friend-chat-presence]');
+    if (presence) {
+      presence.textContent = online ? 'Онлайн' : 'Оффлайн';
+      presence.classList.toggle('mc-menu-online', online);
+      presence.classList.toggle('mc-menu-offline', !online);
+    }
+    return true;
+  }
+
+  private friendChatLog(): HTMLElement | null {
+    return this.modal?.querySelector<HTMLElement>('[data-friend-chat-log]') ?? null;
+  }
+
+  private friendChatInput(): HTMLInputElement | null {
+    return this.modal?.querySelector<HTMLInputElement>('[data-friend-chat-input]') ?? null;
+  }
+
+  private captureFriendChatScroll(): { scrollTop: number; scrollHeight: number; clientHeight: number; pinned: boolean } | undefined {
+    const log = this.friendChatLog();
+    if (!log) return undefined;
+    return {
+      scrollTop: log.scrollTop,
+      scrollHeight: log.scrollHeight,
+      clientHeight: log.clientHeight,
+      pinned: chatScrollPinnedToBottom(log.scrollTop, log.scrollHeight, log.clientHeight),
+    };
+  }
+
+  private restoreFriendChatDraft(): void {
+    const input = this.friendChatInput();
+    const friendId = this.menuState?.activeFriendId;
+    if (!input || !friendId) return;
+    const draft = this.friendChatDrafts.get(friendId);
+    if (draft === undefined) return;
+    input.value = draft;
+  }
+
+  private bindFriendChatComposer(): void {
+    const input = this.friendChatInput();
+    if (input) {
+      input.addEventListener('pointerdown', (event) => event.stopPropagation());
+      input.addEventListener('keydown', (event) => {
+        event.stopPropagation();
+        if (event.isComposing || event.key === 'Process') return;
+        if (event.key !== 'Enter' || event.shiftKey) return;
+        event.preventDefault();
+        this.submitFriendChat();
+      });
+      input.addEventListener('keyup', (event) => event.stopPropagation());
+      input.addEventListener('input', () => {
+        const friendId = this.menuState?.activeFriendId;
+        if (!friendId) return;
+        this.friendChatDrafts.set(friendId, input.value);
+      });
+    }
+    const log = this.friendChatLog();
+    log?.addEventListener('scroll', () => {
+      const view = this.friendChat;
+      if (!view || !view.hasMore || view.loadingOlder || view.messages.length === 0) return;
+      if (log.scrollHeight <= log.clientHeight + 1) return;
+      if (!chatShouldRequestOlder(log.scrollTop)) return;
+      const oldest = view.messages[0];
+      if (!oldest) return;
+      view.loadingOlder = true;
+      this.menuActions?.sendDirect?.({
+        type: 'direct_message_action',
+        action: 'history',
+        friendId: view.friendId,
+        beforeSeq: oldest.seq,
+      });
+    });
+  }
+
+  private submitFriendChat(): void {
+    const input = this.friendChatInput();
+    const friendId = this.menuState?.activeFriendId;
+    if (!input || !friendId) return;
+    this.menuActions?.sendDirect?.({
+      type: 'direct_message_action',
+      action: 'send',
+      friendId,
+      text: input.value,
+    });
+  }
+
+  private paintFriendChatLog(
+    reason: 'replace' | 'append' | 'prepend' | 'restore',
+    preserved?: { scrollTop: number; scrollHeight: number; clientHeight: number; pinned: boolean },
+  ): void {
+    const log = this.friendChatLog();
+    const view = this.friendChat;
+    if (!log || !view) return;
+    const before = preserved ?? {
+      scrollTop: log.scrollTop,
+      scrollHeight: log.scrollHeight,
+      clientHeight: log.clientHeight,
+      pinned: chatScrollPinnedToBottom(log.scrollTop, log.scrollHeight, log.clientHeight),
+    };
+    const selfId = this.menuActions?.selfId ?? '';
+    if (view.messages.length === 0) {
+      log.innerHTML = `<p class="mc-friend-chat-empty">${this.escape(DIRECT_MESSAGE_EMPTY_HISTORY)}</p>`;
+    } else {
+      log.innerHTML = view.messages
+        .map((message) => friendChatMessageHtml(message, selfId, (value) => this.escape(value)))
+        .join('');
+    }
+    const nextTop = planDirectMessageScroll({
+      reason,
+      pinnedToBottom: reason === 'replace' ? true : before.pinned,
+      scrollTop: before.scrollTop,
+      scrollHeight: before.scrollHeight,
+      nextScrollHeight: log.scrollHeight,
+    });
+    log.scrollTop = nextTop;
+    if (reason === 'replace') {
+      const pin = () => {
+        if (!log.isConnected) return;
+        log.scrollTop = log.scrollHeight;
+      };
+      requestAnimationFrame(pin);
+    }
+  }
+
+  private showFriendChatError(text: string): void {
+    const line = this.modal?.querySelector<HTMLElement>('[data-friend-chat-error]');
+    if (!line) return;
+    if (!text) {
+      line.hidden = true;
+      line.textContent = '';
+      return;
+    }
+    line.hidden = false;
+    line.textContent = text;
+  }
+
+  private clearAcceptedFriendChatDraft(friendId: string, incoming: readonly NetworkDirectMessage[]): void {
+    const selfId = this.menuActions?.selfId ?? '';
+    const own = incoming.find((message) => message.senderId === selfId);
+    if (!own) return;
+    const input = this.friendChatInput();
+    if (!input || input.value !== own.text) return;
+    input.value = '';
+    this.friendChatDrafts.delete(friendId);
   }
 
   private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
@@ -3907,7 +4173,8 @@ export class GameUI {
         : el.hasAttribute('data-menu-claim-name') ? '[data-menu-claim-name]'
           : el.hasAttribute('data-menu-claim-member') ? '[data-menu-claim-member]'
             : el.hasAttribute('data-menu-trade-name') ? '[data-menu-trade-name]'
-              : undefined;
+              : el.hasAttribute('data-friend-chat-input') ? '[data-friend-chat-input]'
+                : undefined;
     if (!selector) return undefined;
     return {
       selector,
@@ -3947,7 +4214,8 @@ export class GameUI {
     bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
-    const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list');
+    this.bindFriendChatComposer();
+    const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
     for (const list of lists) {
       list.addEventListener('wheel', (event) => {
         event.stopPropagation();
@@ -4009,6 +4277,16 @@ export class GameUI {
       const friendDelete = target.closest<HTMLElement>('[data-menu-friend-delete]');
       if (friendDelete?.dataset.menuFriendDelete) {
         actions.send({ type: 'menu_action', action: 'friends_delete', playerId: friendDelete.dataset.menuFriendDelete });
+        return;
+      }
+      const friendChat = target.closest<HTMLElement>('[data-menu-friend-chat]');
+      if (friendChat?.dataset.menuFriendChat) {
+        actions.send({ type: 'menu_action', action: 'friends_chat', playerId: friendChat.dataset.menuFriendChat });
+        return;
+      }
+      if (target.closest('[data-friend-chat-send]')) {
+        event.preventDefault();
+        this.submitFriendChat();
         return;
       }
       const tp = target.closest<HTMLElement>('[data-menu-tp]');

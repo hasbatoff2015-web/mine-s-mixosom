@@ -1,6 +1,7 @@
 import type { ClientMenuActionMessage, GameMenuScreenKind } from '../../shared/protocol';
 import { isGameMenuScreenKind } from '../../shared/protocol';
 import { FRIENDS_EMPTY_NAME_ERROR } from '../../shared/friends';
+import { DIRECT_MESSAGE_NOT_FRIEND_ERROR } from '../../shared/directMessages';
 import { HOME_MISSING_ERROR, validateHomeName } from '../../shared/homes';
 import { TRADE_EMPTY_NAME_ERROR } from '../../shared/trade';
 import type { HomeService } from './home';
@@ -30,6 +31,7 @@ export type MenuActionOutcome =
   | { kind: 'spawn' }
   | { kind: 'home-teleport'; name: string }
   | { kind: 'friend-teleport'; playerId: string }
+  | { kind: 'open-friend-chat'; friendId: string }
   | { kind: 'open-clan'; view: 'ranking' | 'create' | 'mine' | 'accept' }
   | { kind: 'open-auction'; view: 'browse' | 'list' | 'sell' }
   | { kind: 'trade-request'; affected: readonly string[] }
@@ -60,6 +62,12 @@ export function applyGameMenuAction(
     const requested = message.screen && message.screen !== 'closed'
       ? message.screen
       : (isGameMenuScreenKind(message.name) && message.name !== 'closed' ? message.name : 'root');
+    if (requested === 'friend-chat') {
+      session.screen = 'friends';
+      session.activeFriendId = undefined;
+      return { kind: 'flush' };
+    }
+    session.activeFriendId = undefined;
     session.screen = requested as GameMenuSession['screen'];
     if (session.screen === 'rating') {
       session.ratingKind = session.ratingKind || 'players-money';
@@ -81,6 +89,7 @@ export function applyGameMenuAction(
     return { kind: 'flush' };
   }
   if (action === 'back') {
+    if (session.screen === 'friend-chat') session.activeFriendId = undefined;
     session.screen = parentMenuScreen(session.screen);
     return { kind: 'flush' };
   }
@@ -188,6 +197,18 @@ export function applyGameMenuAction(
     session.pendingFriendName = undefined;
     session.screen = 'friends';
     return { kind: 'flush' };
+  }
+  if (action === 'friends_chat' && message.playerId) {
+    if (!host.friends.isFriend(player.id, message.playerId)) {
+      session.message = DIRECT_MESSAGE_NOT_FRIEND_ERROR;
+      session.screen = 'friends';
+      session.activeFriendId = undefined;
+      return { kind: 'flush' };
+    }
+    session.activeFriendId = message.playerId;
+    session.screen = 'friend-chat';
+    session.message = undefined;
+    return { kind: 'open-friend-chat', friendId: message.playerId };
   }
   if (action === 'friends_confirm_delete') {
     const affected = [player.id];

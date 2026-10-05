@@ -532,6 +532,9 @@ export class AnarchyServer {
       case 'menu_action':
         this.world.handleMenuAction(player, message);
         return;
+      case 'direct_message_action':
+        this.world.handleDirectMessage(player, message, { connectionId });
+        return;
       case 'buyer_interact':
         this.world.interactBuyer(player, message.buyerId);
         return;

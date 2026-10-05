@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-05: Private friend chat
+
+- [x] Green `Чат` button on every friend row, immediately left of `Удалить`.
+- [x] Nested `friend-chat` screen at the friends menu width. Opening it from Friends keeps the panel footprint.
+- [x] File-per-conversation history, 200-message cap, monotonic `seq`, per-player `lastReadSeq`.
+- [x] Direct messages stay out of Global, Nearby, Clan, ChatLog, and player chat bubbles.
+- [ ] Not merged. Wait for an explicit merge command.
+
 ## 2026-10-05: God Sword texture and Creative catalog
 
 - [x] Recolor the same 32×32 silhouette: dark metal with a short ridge, an authored crimson edge, two fissures, a dark grip, and a small guard core.

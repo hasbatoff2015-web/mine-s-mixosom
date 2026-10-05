@@ -1,11 +1,14 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
+import { CHAT_CHANNELS } from '../shared/chat';
+import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from '../shared/config';
+import { DIRECT_MESSAGE_EMPTY_HISTORY } from '../shared/directMessages';
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
 import { HOME_MAX_DEFAULT } from '../shared/homes';
 import { formatMegacoinAmount } from '../shared/megacoins';
-import { menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
-import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuUiScale } from '../src/ui/containerTheme';
+import { friendChatMessageHtml, menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuLogicalHeight, menuUiScale } from '../src/ui/containerTheme';
 import type { ServerMenuMessage } from '../shared/protocol';
 
 const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'utf8');
@@ -309,5 +312,147 @@ describe('main menu HUD and chrome', () => {
     expect(filled).toContain('2 часа назад');
     expect(filled).not.toContain('История сделок пуста');
     expect(menuBackHtml('auction-history')).toContain('data-menu-action="back"');
+  });
+
+  it('puts a green Chat button immediately left of Delete on every friend row', () => {
+    const escape = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const withTeleport = menuBodyHtml(menu({
+      screen: 'friends',
+      allowFriendTeleport: true,
+      friends: [{
+        playerId: 'ada',
+        name: 'ThirteenChars',
+        online: true,
+        canTeleport: true,
+        unreadCount: 3,
+      }],
+      friendCount: 1,
+      friendMax: 50,
+    }), escape);
+    const teleportRow = withTeleport.slice(withTeleport.indexOf('mc-friend-row'));
+    const teleportAt = teleportRow.indexOf('data-menu-friend-tp');
+    const chatAt = teleportRow.indexOf('data-menu-friend-chat');
+    const deleteAt = teleportRow.indexOf('data-menu-friend-delete');
+    expect(teleportAt).toBeGreaterThan(0);
+    expect(teleportAt).toBeLessThan(chatAt);
+    expect(chatAt).toBeLessThan(deleteAt);
+    expect(teleportRow).toContain('>Телепорт</button>');
+    expect(teleportRow).toContain('class="mc-ah-btn mc-btn-positive" data-menu-friend-chat="ada"');
+    expect(teleportRow).toContain('class="mc-ah-btn mc-btn-danger" data-menu-friend-delete="ada"');
+    expect(teleportRow).toContain('ThirteenChars');
+    expect(teleportRow).toContain('class="mc-menu-badge mc-friend-unread">3</span>');
+    expect(teleportRow).toContain('Онлайн');
+
+    const withoutTeleport = menuBodyHtml(menu({
+      screen: 'friends',
+      friends: [
+        { playerId: 'bob', name: 'Bo', online: false, canTeleport: false, unreadCount: 0 },
+        { playerId: 'cara', name: 'Cara', online: true, canTeleport: false, unreadCount: 100 },
+      ],
+    }), escape);
+    expect(withoutTeleport).not.toContain('data-menu-friend-tp');
+    const bobRow = withoutTeleport.slice(withoutTeleport.indexOf('data-menu-friend-chat="bob"') - 80);
+    expect(bobRow.indexOf('data-menu-friend-chat="bob"')).toBeLessThan(bobRow.indexOf('data-menu-friend-delete="bob"'));
+    expect(bobRow).toContain('>Чат</button>');
+    expect(bobRow).toContain('>Удалить</button>');
+    expect(withoutTeleport).not.toContain('mc-friend-unread">0');
+    expect(withoutTeleport).toContain('class="mc-menu-badge mc-friend-unread">99+</span>');
+    expect(withoutTeleport).toContain('Оффлайн');
+    expect(cssRule('.mc-friend-row')).toContain('flex-wrap: nowrap;');
+    expect(cssRule('.mc-friend-row .mc-ah-btn')).toContain('min-width: calc(32px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-badge.mc-friend-unread')).toContain('position: static;');
+  });
+
+  it('renders the friend chat screen inside the friends footprint and escapes message text', () => {
+    const escape = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/'/g, '&#39;')
+      .replace(/"/g, '&quot;');
+    expect(MC_MENU_WIDTH).toBe(248);
+    expect(MC_MENU_MAX_SCALE).toBe(3);
+    expect(menuLogicalHeight('friends')).toBe(268);
+    expect(menuLogicalHeight('friend-chat')).toBe(268);
+    expect(showsMenuBack('friend-chat')).toBe(true);
+    expect(menuBackHtml('friend-chat')).toContain('data-menu-action="back"');
+    expect(CHAT_CHANNELS).toEqual(['global', 'nearby', 'clan']);
+    expect(PROTOCOL_VERSION).toBe(4);
+    expect(MAX_CHAT_LENGTH).toBe(128);
+
+    const online = menuBodyHtml(menu({
+      screen: 'friend-chat',
+      title: 'Чат',
+      activeFriendId: 'ada',
+      activeFriendName: 'ThirteenChars',
+      activeFriendOnline: true,
+    }), escape);
+    expect(online).toContain('Чат с ThirteenChars');
+    expect(online).toContain('data-menu-screen="friend-chat"');
+    expect(online).toContain('data-friend-id="ada"');
+    expect(online).toContain('is-online');
+    expect(online).toContain('data-friend-chat-presence');
+    expect(online).toContain('Онлайн');
+    expect(online).toContain(DIRECT_MESSAGE_EMPTY_HISTORY);
+    expect(online).toContain(`maxlength="${MAX_CHAT_LENGTH}"`);
+    expect(online).toContain('placeholder="Сообщение..."');
+    expect(online).toContain('data-friend-chat-input');
+    expect(online).toContain('data-friend-chat-send');
+    expect(online).toContain('>Отправить</button>');
+    expect(online).toContain('mc-btn-positive');
+
+    const offline = menuBodyHtml(menu({
+      screen: 'friend-chat',
+      activeFriendId: 'bob',
+      activeFriendName: 'Bob',
+      activeFriendOnline: false,
+    }), escape);
+    expect(offline).toContain('Чат с Bob');
+    expect(offline).toContain('is-offline');
+    expect(offline).toContain('Оффлайн');
+
+    const hostile = '<img src=x onerror=alert(1)>';
+    const incoming = friendChatMessageHtml({
+      messageId: 'm1',
+      seq: 1,
+      senderId: 'ada',
+      recipientId: 'bob',
+      text: hostile,
+      createdAt: Date.UTC(2026, 0, 2, 15, 4),
+    }, 'bob', escape);
+    expect(incoming).toContain('mc-dm is-in');
+    expect(incoming).toContain('data-dm-id="m1"');
+    expect(incoming).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(incoming).not.toContain('<img');
+    expect(incoming).toContain('mc-dm-time');
+    const outgoing = friendChatMessageHtml({
+      messageId: 'm2',
+      seq: 2,
+      senderId: 'bob',
+      recipientId: 'ada',
+      text: 'привет',
+      createdAt: Date.UTC(2026, 0, 2, 15, 5),
+    }, 'bob', escape);
+    expect(outgoing).toContain('mc-dm is-out');
+    expect(outgoing).toContain('привет');
+    expect(cssRule('.mc-menu-panel.mc-menu-panel-chat')).toContain('height: calc(268px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-panel-chat .mc-friend-chat')).toContain('minmax(0, 1fr)');
+    expect(cssRule('.mc-friend-chat-log')).toContain('touch-action: pan-y;');
+    expect(cssRule('.mc-friend-chat-log')).toContain('scrollbar-width: none;');
+    expect(cssRule('.mc-friend-chat-log')).toContain('background: #15171b;');
+    expect(cssRule('.mc-dm.is-in .mc-dm-text')).toContain('background: #2c3036;');
+    expect(cssRule('.mc-dm.is-out .mc-dm-text')).toContain('background: #24412d;');
+    expect(cssRule('.mc-dm')).toContain('max-width: 78%;');
+    expect(cssRule('.mc-dm-text')).toContain('border-radius: 2px;');
+    expect(gameUi).toContain('data-friend-chat-input');
+    expect(gameUi).toContain('sendDirect');
+    expect(gameUi).toContain("action: 'friends_chat'");
+    expect(gameUi).toContain('event.isComposing');
+    expect(gameUi).toContain('planDirectMessageScroll');
+    expect(gameSource).toContain("case 'direct_message'");
   });
 });
