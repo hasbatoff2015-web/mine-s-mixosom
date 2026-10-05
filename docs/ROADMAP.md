@@ -1,8 +1,51 @@
 # Roadmap
 
+## 2026-10-05: Responsive menu scale
+
+- [x] Short landscape uses one `--menu-fit`: 0.65, and 0.55 below 430px.
+- [x] Skin selector preview and card grid fill the window down to the footer in that layout.
+- [x] Desktop main menu is larger. Logo, buttons, and the character panel stay inside 1366×768.
+
+## 2026-10-05: Server PNG logos
+
+- [x] Online server rows use the owner PNGs in `public/ui/server-logos/`. Inline server SVG is gone.
+
+## 2026-10-05: Server icons and loading brand
+
+- [x] Server icons are heavier block emblems. Shield and sword, house and leaf, broken shield and blast stay distinct.
+- [x] Initial loading and world loading use the two-line «МЕГАКРАФТ / ОНЛАЙН» brand.
+
+## 2026-10-05: Megacraft logo and nickname length
+
+- [x] Main-menu logo is two lines: «МЕГАКРАФТ» and a smaller olive «ОНЛАЙН».
+- [x] Main-menu buttons, center block, and character panel are larger. The background file is unchanged.
+- [x] Shared nickname maximum is 13. The online hint says 2–13. Pattern and minimum stay the same.
+
+## 2026-10-05: Megacraft menu polish
+
+- [x] Loading title is larger and has no decorative mark.
+- [x] World-load detail no longer repeats the percent under the bar.
+- [x] Main menu is one centered group. The empty footer row is gone.
+- [x] Preview yaw turns an outer group. The gameplay animator keeps a neutral view yaw.
+- [x] Preview camera leaves the head and feet inside the canvas.
+- [x] Setting names are 11px Press Start. That pass drew solid block icons; the PNG pass replaced them.
+
+## 2026-10-04: Megacraft menu UI
+
+First pass only. The 2026-10-05 sections above replace the one-line brand, the 2–20 nickname limit, and the inline SVG icons.
+
+- [x] Player-visible menu brand started as one line, «МЕГАКРАФТ». The menu background file is unchanged.
+- [x] Account screen is gone. Nickname editing is on the online-server screen.
+- [x] The first shared nickname contract was 2–20 characters. The current maximum is 13.
+- [x] Server rows started with inline SVG icons and a CSS caption cycle. Names and order are unchanged. The icons are now the owner PNGs.
+- [x] Skin selector hides Classic/Slim. `defaultModel` still selects the arm geometry. The large preview can be yaw-dragged.
+- [x] Controls help matches the current input code and omits the diagnostics hotkeys.
+- [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
+
 ## 2026-09-29: saplings, flint, silent glass steps, fall damage, chat Tab
 
 Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and add a 0.2 sapling. Gravel is 0.1 flint or gravel. Growth uses the existing tree shape after two real minutes stored on the block state. Glass-group footsteps are silent. Fall damage is halved once and cannot kill. The chat close sprite says TAB and Tab still closes chat. Main HUD places TAB and CHAT ON with the editor coordinates from a 2560×1279 viewport (`#chat-close` right -6px / top 113.3px / 166.78×159.38, `#chat-visibility` right 7.61px / top 255.8px / 137.78×124.8).
+
 ## 2026-10-04: mobile flight descend
 
 - [x] Ground crouch, including grounded creative, stays a toggle.

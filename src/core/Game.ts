@@ -167,11 +167,10 @@ import {
   createPlayerAppearance,
   toNetworkAppearance,
   type PlayerAppearance,
-  type PlayerModelVariant,
 } from '../player/appearance/PlayerAppearance';
 import { PlayerSkinSelectorSession } from '../player/appearance/PlayerSkinSelector';
 import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
-import { PlayerAppearancePreview } from '../rendering/player/PlayerAppearancePreview';
+import { PlayerAppearancePreview, PREVIEW_DRAG_RADIANS_PER_PIXEL } from '../rendering/player/PlayerAppearancePreview';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
 import { FirstPersonRenderer, type FirstPersonFrameState } from '../rendering/FirstPersonRenderer';
 import { ItemVisualFactory } from '../rendering/ItemVisualFactory';
@@ -939,7 +938,6 @@ export class Game {
     this.ui.showMainMenu({
       singleplayer: () => void this.showWorldList(),
       online: () => void this.showOnlineServerList(),
-      account: () => this.showAccount(),
       settings: () => {
         this.screenBeforeSettings = 'main';
         this.showSettings();
@@ -957,12 +955,12 @@ export class Game {
         const next = this.skinSelector?.selectSkin(skinId);
         if (!next) return;
         this.characterPreview?.setAppearance(next);
-        this.ui.markSkinModel(next.model);
       },
-      setModel: (model: PlayerModelVariant) => {
-        const next = this.skinSelector?.setModel(model);
-        if (!next) return;
-        this.characterPreview?.setAppearance(next);
+      rotatePreview: (deltaPixels) => {
+        this.characterPreview?.rotateYaw(deltaPixels * PREVIEW_DRAG_RADIANS_PER_PIXEL);
+      },
+      setPreviewRotationActive: (active) => {
+        this.characterPreview?.setAutoRotatePaused(active);
       },
       confirm: () => {
         const next = this.skinSelector?.confirm();
@@ -1000,25 +998,18 @@ export class Game {
     this.characterPreview = undefined;
   }
 
-  private showAccount(): void {
-    this.disposeCharacterPreview();
-    this.ui.showAccount(loadPlayerNickname(), {
-      save: (raw) => {
-        const result = savePlayerNickname(raw);
-        if (result.ok) this.ui.toast('Никнейм сохранён. Он будет использован при подключении к серверу.');
-        return result;
-      },
-      back: () => this.showMainMenu(),
-    });
-  }
-
   private async showOnlineServerList(): Promise<void> {
     this.disposeCharacterPreview();
     const statuses = await fetchLocalServerStatuses();
     this.ui.showOnlineServers({
       back: () => this.showMainMenu(),
       connect: (id) => void this.connectOnlineServer(id),
-    }, statuses);
+      saveNickname: (raw) => {
+        const result = savePlayerNickname(raw);
+        if (result.ok) this.ui.toast('Ник сохранён. Он будет использован при подключении к серверу.');
+        return result;
+      },
+    }, statuses, undefined, loadPlayerNickname());
   }
 
   private async connectOnlineServer(id: string): Promise<void> {
@@ -3477,7 +3468,7 @@ export class Game {
     };
     this.lastLoadPercent = 8;
     this.lifecycle.setState('LOADING_WORLD');
-    this.ui.showLoading('Загрузка мира', this.lastLoadPercent, 'Подготовка мира…');
+    this.ui.showLoading('Загрузка мира', this.lastLoadPercent);
     this.input.releasePointerLock();
   }
 

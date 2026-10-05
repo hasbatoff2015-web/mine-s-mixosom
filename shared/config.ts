@@ -28,6 +28,7 @@ export const PROTOCOL_VERSION = 4;
 /** Max JSON text payload accepted from a client. */
 export const MAX_CLIENT_MESSAGE_BYTES = 16_384;
 export const MAX_CHAT_LENGTH = 128;
+export const MIN_PLAYER_NAME_LENGTH = 2;
 export const MAX_PLAYER_NAME_LENGTH = 13;
 export const SESSION_RESUME_MS = 5 * 60_000;
 

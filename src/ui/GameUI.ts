@@ -76,7 +76,8 @@ import {
   shouldShowClanEmptyHint,
   type ChatMessage,
 } from '../chat';
-import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH } from '../../shared/config';
+import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
+import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
   FRIENDS_OUTGOING_LABEL,
@@ -138,22 +139,26 @@ import {
 } from './itemTooltip';
 import {
   DESKTOP_CONTROL_SECTIONS,
+  MOBILE_CONTROL_FOOTNOTE,
+  MOBILE_CONTROL_ITEMS,
+  ONLINE_NICKNAME_HINT,
   formatPlayTime,
   formatSettingValue,
   isMenuServerId,
+  onlineNicknameMessage,
   renderOnlineServerRows,
   type MenuServerLiveStatus,
 } from './menuModel';
+import { SkinPreviewDragTracker } from './skinPreviewDrag';
 import type { LocalServerName } from '../../shared/config';
 import { clientUrlForServer, endpointLabel, selectedLocalServer } from '../net/AnarchyClient';
 import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
-import type { PlayerAppearance, PlayerModelVariant } from '../player/appearance/PlayerAppearance';
+import type { PlayerAppearance } from '../player/appearance/PlayerAppearance';
 import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
 
 export interface MainMenuActions {
   singleplayer(): void;
   online(): void;
-  account(): void;
   settings(): void;
   selectSkin(): void;
   onCharacterCanvas?(canvas: HTMLCanvasElement): void;
@@ -161,9 +166,10 @@ export interface MainMenuActions {
 
 export interface SkinSelectorActions {
   preview(skinId: string): void;
-  setModel(model: PlayerModelVariant): void;
   confirm(): void;
   cancel(): void;
+  rotatePreview(deltaPixels: number): void;
+  setPreviewRotationActive(active: boolean): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
 }
 
@@ -222,14 +228,10 @@ export interface CreateWorldActions {
   back(): void;
 }
 
-export interface AccountMenuActions {
-  save(nickname: string): { ok: true; name: string } | { ok: false; error: string };
-  back(): void;
-}
-
 export interface OnlineServersActions {
   back(): void;
   connect(id: string): void;
+  saveNickname(raw: string): { ok: true; name: string } | { ok: false; error: string };
 }
 
 export interface PauseActions {
@@ -545,7 +547,7 @@ export class GameUI {
     this.setScreen(`
       <div id="loading-screen" class="screen">
         <div class="menu-card loading-card">
-          <div class="brand"><div class="brand-mark"></div><h1>FRONTIER CUBES</h1><p>survival alpha</p></div>
+          <div class="brand brand--megacraft" aria-label="Мегакрафт Онлайн"><h1>МЕГАКРАФТ</h1><p class="brand-subtitle">ОНЛАЙН</p></div>
           <div class="loading-phase"><span class="loading-kicker">Загрузка мира</span><strong data-loading-label>${this.escape(label)}</strong></div>
           ${bar}
           <div class="loading-progress-meta"><span data-loading-percent>${progress === undefined ? '' : `${Math.round(progress)}%`}</span></div>
@@ -604,14 +606,14 @@ export class GameUI {
     this.setScreen(`
       <section class="screen menu-screen main-menu-screen">
         <div class="main-menu-layout">
-          <div class="frontier-logo" aria-label="Frontier Cubes">
-            <span>FRONTIER</span><strong>CUBES</strong><small>survival alpha</small>
+          <div class="megacraft-logo" aria-label="Мегакрафт Онлайн">
+            <span class="megacraft-logo__title">МЕГАКРАФТ</span>
+            <span class="megacraft-logo__subtitle">ОНЛАЙН</span>
           </div>
           <div class="main-menu-center">
             <div class="menu-stack main-menu-actions">
               <button class="game-button" data-action="singleplayer">Одиночная игра</button>
               <button class="game-button" data-action="online">Играть онлайн</button>
-              <button class="game-button" data-action="account">Аккаунт</button>
               <button class="game-button" data-action="settings">Настройки</button>
             </div>
             <aside class="character-panel" aria-label="Персонаж">
@@ -620,12 +622,10 @@ export class GameUI {
               <button class="game-button primary" data-action="select-skin">Выбрать скин</button>
             </aside>
           </div>
-          <footer class="main-menu-footer"><span>Frontier Cubes 0.1 · playable alpha</span><span>Локальная браузерная версия</span></footer>
         </div>
       </section>`);
     this.bindAction('singleplayer', actions.singleplayer);
     this.bindAction('online', actions.online);
-    this.bindAction('account', actions.account);
     this.bindAction('settings', actions.settings);
     this.bindAction('select-skin', actions.selectSkin);
     const canvas = this.screen?.querySelector<HTMLCanvasElement>('[data-character-preview]');
@@ -639,7 +639,6 @@ export class GameUI {
     const cards = PRODUCTION_PLAYER_SKINS.map((skin) => `
       <button type="button" class="skin-card${skin.id === appearance.skinId ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" aria-pressed="${skin.id === appearance.skinId}">
         <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(skin.id)}" data-skin-model="${skin.defaultModel}" aria-hidden="true"></canvas>
-        <span class="skin-card-model">${skin.defaultModel === 'slim' ? 'Slim' : 'Classic'}</span>
       </button>`).join('');
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window skin-selector-window">
@@ -647,10 +646,7 @@ export class GameUI {
         <div class="skin-selector-body">
           <aside class="skin-selector-preview">
             <canvas class="character-preview-canvas large" data-skin-preview width="320" height="420" aria-hidden="true"></canvas>
-            <div class="skin-model-toggle" role="group" aria-label="Модель">
-              <button type="button" class="game-button${appearance.model === 'classic' ? ' primary' : ''}" data-model="classic">Classic</button>
-              <button type="button" class="game-button${appearance.model === 'slim' ? ' primary' : ''}" data-model="slim">Slim</button>
-            </div>
+            <p class="skin-preview-hint">Потяните модель, чтобы повернуть</p>
           </aside>
           <div class="skin-card-grid" role="listbox" aria-label="Доступные скины">${cards}</div>
         </div>
@@ -662,7 +658,10 @@ export class GameUI {
     this.bindAction('cancel', actions.cancel);
     this.bindAction('confirm', actions.confirm);
     const preview = this.screen?.querySelector<HTMLCanvasElement>('[data-skin-preview]');
-    if (preview) actions.onPreviewCanvas?.(preview);
+    if (preview) {
+      actions.onPreviewCanvas?.(preview);
+      this.bindSkinPreviewDrag(preview, actions);
+    }
     for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-skin-id]')) {
       button.addEventListener('click', () => {
         const skinId = button.dataset.skinId;
@@ -675,61 +674,7 @@ export class GameUI {
         actions.preview(skinId);
       });
     }
-    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-model]')) {
-      button.addEventListener('click', () => {
-        const model = button.dataset.model as PlayerModelVariant;
-        for (const toggle of this.screen!.querySelectorAll<HTMLButtonElement>('[data-model]')) {
-          toggle.classList.toggle('primary', toggle === button);
-        }
-        actions.setModel(model);
-      });
-    }
     this.paintSkinThumbs();
-  }
-
-  markSkinModel(model: PlayerModelVariant): void {
-    for (const toggle of this.screen?.querySelectorAll<HTMLButtonElement>('[data-model]') ?? []) {
-      toggle.classList.toggle('primary', toggle.dataset.model === model);
-    }
-  }
-
-  showAccount(current: string | undefined, actions: AccountMenuActions): void {
-    const currentLabel = current
-      ? this.escape(current)
-      : 'не задан — на сервере будет имя вида Player-XXXX';
-    this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><form class="menu-card menu-window account-window" id="account-form">
-        <header class="menu-heading"><div><span class="eyebrow">Профиль</span><h1>Аккаунт</h1></div></header>
-        <div class="form-grid">
-          <p class="menu-notice">Текущий никнейм: <strong data-account-current>${currentLabel}</strong></p>
-          <label class="field"><span>Новый никнейм</span><input id="account-nickname" name="player-display-name" type="text" inputmode="text" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" value="${current ? this.escape(current) : ''}" placeholder="Misha" /></label>
-          <p class="menu-notice account-hint">Только отображаемое имя. Оно применяется при следующем подключении к серверу и не меняет внутренний идентификатор игрока.</p>
-          <p class="menu-notice account-error hidden" data-account-error></p>
-        </div>
-        <footer class="menu-footer"><button class="game-button primary" type="submit">Сохранить</button><button type="button" class="game-button" data-action="back">Назад</button></footer>
-      </form></section>`, actions.back);
-    this.bindAction('back', actions.back);
-    const nicknameInput = this.screen!.querySelector<HTMLInputElement>('#account-nickname');
-    nicknameInput?.focus();
-    this.screen!.querySelector<HTMLFormElement>('#account-form')!.addEventListener('submit', (event) => {
-      event.preventDefault();
-      const typed = nicknameInput?.value ?? '';
-      const result = actions.save(typed);
-      const errorNode = this.screen?.querySelector<HTMLElement>('[data-account-error]');
-      const currentNode = this.screen?.querySelector<HTMLElement>('[data-account-current]');
-      if (!result.ok) {
-        if (errorNode) {
-          errorNode.textContent = result.error;
-          errorNode.classList.remove('hidden');
-        }
-        return;
-      }
-      if (errorNode) {
-        errorNode.textContent = '';
-        errorNode.classList.add('hidden');
-      }
-      if (currentNode) currentNode.textContent = result.name;
-    });
   }
 
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {
@@ -822,15 +767,24 @@ export class GameUI {
     actions: OnlineServersActions,
     statuses?: Partial<Record<LocalServerName, MenuServerLiveStatus>>,
     selectedId = selectedLocalServer(),
+    currentNickname?: string,
   ): void {
     let current: LocalServerName = isMenuServerId(selectedId) ? selectedId : 'anarchy';
     const connectionBadge = (): string => endpointLabel(clientUrlForServer(current));
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
         <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${connectionBadge()}</span></header>
+        <form class="online-nickname-editor" id="online-nickname-form" autocomplete="off" novalidate>
+          <div class="online-nickname-controls">
+            <input id="online-nickname" name="nickname" type="text" inputmode="text" placeholder="Ваш ник" aria-label="Ваш ник" aria-describedby="online-nickname-message" minlength="${MIN_PLAYER_NAME_LENGTH}" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+            <button type="submit" class="game-button">Изменить</button>
+          </div>
+          <small class="online-nickname-message" id="online-nickname-message" aria-live="polite">${ONLINE_NICKNAME_HINT}</small>
+        </form>
         <div class="server-list">${renderOnlineServerRows(statuses, current)}</div>
         <footer class="menu-footer"><button class="game-button primary" data-action="connect">Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
       </div></section>`, actions.back);
+    this.bindOnlineNickname(actions, currentNickname);
     this.bindAction('back', actions.back);
     this.bindAction('connect', () => {
       actions.connect(current);
@@ -944,11 +898,13 @@ export class GameUI {
       <section class="control-section"><h2>${section.title}</h2><div class="control-list">
         ${section.bindings.map((binding) => `<div class="control-row"><span><strong>${binding.action}</strong>${binding.note ? `<small>${binding.note}</small>` : ''}</span><kbd>${binding.key}</kbd></div>`).join('')}
       </div></section>`).join('');
+    const mobileRows = MOBILE_CONTROL_ITEMS.map((item) => `
+      <div class="control-row mobile-control-row"><span><strong>${item.action}</strong>${item.note ? `<small>${item.note}</small>` : ''}</span><kbd>${item.control}</kbd></div>`).join('');
     const shell = overlayWorld ? 'screen pause-overlay' : 'screen menu-screen submenu-screen';
     this.setScreen(`
       <section class="${shell}"${overlayWorld ? ' data-pause-overlay="world"' : ''}><div class="menu-card menu-window controls-window">
         <header class="menu-heading"><div><span class="eyebrow">Справка</span><h1>Управление</h1></div></header>
-        <div class="controls-scroll">${sections}<p class="touch-controls-note"><strong>Сенсорное управление:</strong> левый стик — движение и бег, прыжок — кнопка, в выживании двойное касание прыжка держит его, в творческом оно включает полёт, приседание — переключатель. Свайп по экрану вращает камеру. Короткое касание бьёт, использует или ставит блок, удержание копает. Удержание лука тоже вращает камеру, стрела летит в прицел. Играть в landscape.</p></div>
+        <div class="controls-scroll">${sections}<section class="control-section mobile-control-section"><h2>Мобильное управление</h2><div class="mobile-control-list">${mobileRows}</div><p class="touch-controls-note">${MOBILE_CONTROL_FOOTNOTE}</p></section></div>
         <footer class="menu-footer"><button class="game-button" data-action="back">Готово</button></footer>
       </div></section>`, onBack);
     this.bindAction('back', onBack);
@@ -4244,6 +4200,105 @@ export class GameUI {
       if (button instanceof HTMLButtonElement && button.disabled) return;
       actions.send({ type: 'trade_action', action: kind as ClientTradeActionMessage['action'] });
     });
+  }
+
+  private bindOnlineNickname(actions: OnlineServersActions, currentNickname?: string): void {
+    const form = this.screen?.querySelector<HTMLFormElement>('#online-nickname-form');
+    const input = this.screen?.querySelector<HTMLInputElement>('#online-nickname');
+    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"]');
+    const message = this.screen?.querySelector<HTMLElement>('#online-nickname-message');
+    if (!form || !input || !button || !message) return;
+    let saved = currentNickname ?? '';
+    input.value = saved;
+    let savedFlashTimer: number | undefined;
+    const paint = (submitError?: string, savedFlash = false): void => {
+      const state = onlineNicknameMessage({
+        draft: input.value,
+        saved: saved || undefined,
+        submitError,
+        savedFlash,
+      });
+      button.disabled = !state.canSave;
+      message.textContent = state.text;
+      message.classList.toggle('is-error', state.tone === 'error');
+      message.classList.toggle('is-saved', state.tone === 'saved');
+      if (state.tone === 'error') {
+        message.setAttribute('role', 'alert');
+        input.setAttribute('aria-invalid', 'true');
+      } else {
+        message.removeAttribute('role');
+        input.removeAttribute('aria-invalid');
+      }
+    };
+    const clearFlash = (): void => {
+      if (savedFlashTimer === undefined) return;
+      window.clearTimeout(savedFlashTimer);
+      savedFlashTimer = undefined;
+    };
+    input.addEventListener('input', () => {
+      clearFlash();
+      paint();
+    });
+    const submit = (): void => {
+      clearFlash();
+      const draft = input.value;
+      const error = playerNicknameError(draft);
+      if (error) {
+        paint(error);
+        return;
+      }
+      if (draft === saved) {
+        paint();
+        return;
+      }
+      const result = actions.saveNickname(draft);
+      if (!result.ok) {
+        paint(result.error);
+        return;
+      }
+      saved = result.name;
+      input.value = result.name;
+      paint(undefined, true);
+      savedFlashTimer = window.setTimeout(() => {
+        savedFlashTimer = undefined;
+        if (!input.isConnected) return;
+        paint();
+      }, 1600);
+    };
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      submit();
+    });
+    input.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' || !button.disabled) return;
+      event.preventDefault();
+      submit();
+    });
+    paint();
+  }
+
+  private bindSkinPreviewDrag(canvas: HTMLCanvasElement, actions: SkinSelectorActions): void {
+    const drag = new SkinPreviewDragTracker();
+    const stop = (pointerId: number): void => {
+      if (!drag.end(pointerId)) return;
+      canvas.classList.remove('is-dragging');
+      actions.setPreviewRotationActive(false);
+    };
+    canvas.addEventListener('pointerdown', (event) => {
+      if (!drag.begin(event)) return;
+      event.preventDefault();
+      canvas.setPointerCapture(event.pointerId);
+      canvas.classList.add('is-dragging');
+      actions.setPreviewRotationActive(true);
+    });
+    canvas.addEventListener('pointermove', (event) => {
+      const delta = drag.move(event);
+      if (delta === undefined || delta === 0) return;
+      actions.rotatePreview(delta);
+    });
+    canvas.addEventListener('pointerup', (event) => stop(event.pointerId));
+    canvas.addEventListener('pointercancel', (event) => stop(event.pointerId));
+    canvas.addEventListener('lostpointercapture', (event) => stop(event.pointerId));
   }
 
   private settingRange(label: string, name: string, min: number, max: number, step: number, value: number): string {

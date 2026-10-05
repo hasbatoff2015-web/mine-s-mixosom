@@ -23,6 +23,15 @@ import {
 import gameSource from '../src/core/Game.ts?raw';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
 import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?raw';
+import {
+  PREVIEW_AUTO_YAW_PER_SECOND,
+  PREVIEW_DRAG_RADIANS_PER_PIXEL,
+  PREVIEW_CAMERA_Z,
+  PREVIEW_LOOK_AT_Y,
+  PREVIEW_NEUTRAL_VIEW_YAW,
+  PreviewRotation,
+} from '../src/rendering/player/PlayerAppearancePreview';
+import { SkinPreviewDragTracker } from '../src/ui/skinPreviewDrag';
 import buyerNpcSource from '../src/net/BuyerNpcView.ts?raw';
 
 function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage & { data: Record<string, string> } {
@@ -143,5 +152,79 @@ describe('player skin selector', () => {
     expect(gameSource).toContain('new PlayerVisual(');
     expect(previewSource).toContain('this.visual = new PlayerVisual(');
     expect(previewSource).toContain('this.visual.setAppearance(');
+  });
+
+  it('hides Classic/Slim from the selector and still selects the skin default model', () => {
+    const selector = gameUiSource.slice(gameUiSource.indexOf('showSkinSelector('), gameUiSource.indexOf('showWorldList('));
+    expect(selector).not.toContain('skin-model-toggle');
+    expect(selector).not.toContain('skin-card-model');
+    expect(selector).not.toContain('>Classic<');
+    expect(selector).not.toContain('>Slim<');
+    expect(selector).not.toContain('[data-model]');
+    expect(selector).not.toContain('data-model="');
+    expect(selector).toContain('data-skin-preview');
+    expect(selector).toContain('data-skin-thumb');
+    expect(selector).toContain('Потяните модель, чтобы повернуть');
+    expect(selector.match(/data-skin-id=/g)).toHaveLength(1);
+    expect(gameSource).not.toContain('setModel:');
+    expect(gameSource).not.toContain('markSkinModel');
+    expect(gameSource).toContain('this.skinSelector?.selectSkin(skinId)');
+    expect(gameSource).toContain('this.characterPreview?.setAppearance(next)');
+    const main = gameUiSource.slice(gameUiSource.indexOf('showMainMenu('), gameUiSource.indexOf('showSkinSelector('));
+    expect(main).toContain('data-character-preview');
+    expect(main).not.toContain('bindSkinPreviewDrag');
+    expect(main).not.toContain('data-skin-preview');
+  });
+
+  it('pauses auto yaw only while a drag is active and wraps manual rotation', () => {
+    expect(PREVIEW_AUTO_YAW_PER_SECOND).toBe(0.35);
+    expect(PREVIEW_DRAG_RADIANS_PER_PIXEL).toBe(0.012);
+    const rotation = new PreviewRotation();
+    const start = rotation.read();
+    rotation.advance(1, true);
+    expect(rotation.read()).toBe(start);
+    rotation.advance(1, false);
+    expect(rotation.read()).toBeCloseTo(Math.atan2(Math.sin(start + 0.35), Math.cos(start + 0.35)), 6);
+    const before = rotation.read();
+    rotation.rotate(0.012 * 30);
+    expect(rotation.read()).not.toBe(before);
+    rotation.rotate(Math.PI * 20);
+    expect(Math.abs(rotation.read())).toBeLessThanOrEqual(Math.PI);
+    expect(previewSource).toContain('private autoRotatePaused = false');
+    expect(previewSource).toContain('this.rotation.advance(deltaSeconds, this.autoRotatePaused)');
+    expect(previewSource).toContain('if (this.disposed) return');
+    expect(gameSource).toContain('deltaPixels * PREVIEW_DRAG_RADIANS_PER_PIXEL');
+    expect(gameSource).toContain('setAutoRotatePaused(active)');
+    expect(previewSource).toContain('private readonly turntable = new THREE.Group()');
+    expect(previewSource).toContain('this.turntable.add(this.visual.root)');
+    expect(previewSource).toContain('this.turntable.rotation.y = this.rotation.read()');
+    expect(previewSource).not.toContain('viewYaw: this.rotation.read()');
+    expect(previewSource).toContain('viewYaw: PREVIEW_NEUTRAL_VIEW_YAW');
+    expect(PREVIEW_NEUTRAL_VIEW_YAW).toBe(0);
+    expect(PREVIEW_CAMERA_Z).toBeGreaterThan(3.05);
+    expect(PREVIEW_CAMERA_Z).toBe(4.2);
+    expect(PREVIEW_LOOK_AT_Y).toBe(0.9);
+    expect(previewSource).toContain('this.camera.position.set(1.35, 1.15, PREVIEW_CAMERA_Z)');
+    expect(previewSource).toContain('this.camera.lookAt(0, PREVIEW_LOOK_AT_Y, 0)');
+  });
+
+  it('tracks one primary pointer for the skin preview drag', () => {
+    const drag = new SkinPreviewDragTracker();
+    expect(drag.begin({ pointerId: 2, pointerType: 'mouse', button: 2, clientX: 10 })).toBe(false);
+    expect(drag.begin({ pointerId: 1, pointerType: 'mouse', button: 0, clientX: 10 })).toBe(true);
+    expect(drag.begin({ pointerId: 4, pointerType: 'touch', button: 0, clientX: 40 })).toBe(false);
+    expect(drag.move({ pointerId: 4, clientX: 70 })).toBeUndefined();
+    expect(drag.move({ pointerId: 1, clientX: 40 })).toBe(30);
+    expect(drag.end(4)).toBe(false);
+    expect(drag.end(1)).toBe(true);
+    expect(drag.end(1)).toBe(false);
+    const touch = new SkinPreviewDragTracker();
+    expect(touch.begin({ pointerId: 7, pointerType: 'touch', button: 0, clientX: 0 })).toBe(true);
+    expect(touch.move({ pointerId: 7, clientX: 12 })).toBe(12);
+    expect(touch.end(7)).toBe(true);
+    expect(gameUiSource).toContain('pointercancel');
+    expect(gameUiSource).toContain('lostpointercapture');
+    expect(gameUiSource).toContain('setPreviewRotationActive(false)');
+    expect(gameUiSource).toContain('actions.rotatePreview(delta)');
   });
 });

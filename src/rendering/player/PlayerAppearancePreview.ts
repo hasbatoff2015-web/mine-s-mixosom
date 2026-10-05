@@ -10,6 +10,37 @@ import { PlayerVisual } from './PlayerVisual';
 import type { PlayerArmorResources } from './PlayerArmorVisual';
 import { setEntityLight } from '../worldLighting';
 
+export const PREVIEW_AUTO_YAW_PER_SECOND = 0.35;
+export const PREVIEW_DRAG_RADIANS_PER_PIXEL = 0.012;
+export const PREVIEW_CAMERA_Z = 4.2;
+export const PREVIEW_LOOK_AT_Y = 0.9;
+export const PREVIEW_NEUTRAL_VIEW_YAW = 0;
+const PREVIEW_INITIAL_YAW = 0.45;
+
+export function normalizePreviewYaw(yaw: number): number {
+  if (!Number.isFinite(yaw)) return PREVIEW_INITIAL_YAW;
+  return Math.atan2(Math.sin(yaw), Math.cos(yaw));
+}
+
+/** Yaw state shared by the menu preview. Auto spin pauses only while a drag holds it. */
+export class PreviewRotation {
+  private yaw = PREVIEW_INITIAL_YAW;
+
+  rotate(deltaRadians: number): void {
+    if (!Number.isFinite(deltaRadians) || deltaRadians === 0) return;
+    this.yaw = normalizePreviewYaw(this.yaw + deltaRadians);
+  }
+
+  advance(deltaSeconds: number, paused: boolean): void {
+    if (paused || !Number.isFinite(deltaSeconds) || deltaSeconds === 0) return;
+    this.yaw = normalizePreviewYaw(this.yaw + deltaSeconds * PREVIEW_AUTO_YAW_PER_SECOND);
+  }
+
+  read(): number {
+    return this.yaw;
+  }
+}
+
 export interface PlayerAppearancePreviewOptions {
   readonly canvas: HTMLCanvasElement;
   readonly skins: MinecraftSkinRegistry;
@@ -24,10 +55,12 @@ export class PlayerAppearancePreview {
   readonly visual: PlayerVisual;
   private readonly renderer: THREE.WebGLRenderer;
   private readonly scene = new THREE.Scene();
+  private readonly turntable = new THREE.Group();
   private readonly camera = new THREE.PerspectiveCamera(28, 1, 0.05, 20);
   private readonly canvas: HTMLCanvasElement;
   private disposed = false;
-  private yaw = 0.45;
+  private readonly rotation = new PreviewRotation();
+  private autoRotatePaused = false;
 
   constructor(options: PlayerAppearancePreviewOptions) {
     this.canvas = options.canvas;
@@ -56,10 +89,11 @@ export class PlayerAppearancePreview {
       { armorResources: options.armorResources },
     );
     this.visual.root.position.set(0, 0, 0);
-    this.scene.add(this.visual.root);
+    this.scene.add(this.turntable);
+    this.turntable.add(this.visual.root);
     setEntityLight(this.visual.root, [1.05, 1.02, 0.98]);
-    this.camera.position.set(1.35, 1.15, 3.05);
-    this.camera.lookAt(0, 0.95, 0);
+    this.camera.position.set(1.35, 1.15, PREVIEW_CAMERA_Z);
+    this.camera.lookAt(0, PREVIEW_LOOK_AT_Y, 0);
     this.resize();
   }
 
@@ -68,13 +102,24 @@ export class PlayerAppearancePreview {
     this.visual.setAppearance(createPlayerAppearance(appearance));
   }
 
+  setAutoRotatePaused(paused: boolean): void {
+    if (this.disposed) return;
+    this.autoRotatePaused = paused;
+  }
+
+  rotateYaw(deltaRadians: number): void {
+    if (this.disposed) return;
+    this.rotation.rotate(deltaRadians);
+  }
+
   render(deltaSeconds: number): void {
     if (this.disposed || this.canvas.width === 0) return;
     this.resize();
-    this.yaw += deltaSeconds * 0.35;
+    this.rotation.advance(deltaSeconds, this.autoRotatePaused);
+    this.turntable.rotation.y = this.rotation.read();
     this.visual.update(deltaSeconds, {
-      viewYaw: this.yaw,
-      viewPitch: -0.08,
+      viewYaw: PREVIEW_NEUTRAL_VIEW_YAW,
+      viewPitch: 0,
       movementSpeed: 0,
       onGround: true,
       sneaking: false,

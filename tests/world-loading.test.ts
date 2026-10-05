@@ -4,6 +4,7 @@ import {
   initialReadyChunkRadius,
   monotonicPercent,
   worldLoadPercent,
+  worldLoadView,
 } from '../src/core/worldLoading';
 import { playerGameplayAllowed, worldSimulationActive } from '../src/core/gameplayModal';
 import { shouldRequestPointerLock } from '../src/input/pointerLock';
@@ -66,6 +67,53 @@ describe('world loading readiness', () => {
       meshTotal: 25,
       error: 'boom',
     })).toBeLessThan(100);
+  });
+
+  it('keeps the phase label and leaves the percent out of the detail line', () => {
+    const generating = worldLoadView({
+      phase: 'generate',
+      generated: 10,
+      generateTotal: 25,
+      lit: 4,
+      litTotal: 25,
+      meshed: 0,
+      meshTotal: 25,
+    }, 63);
+    expect(generating.detail).toBe('');
+    expect(generating.percent).toBe(63);
+    expect(generating.label.length).toBeGreaterThan(0);
+    const ready = worldLoadView({
+      phase: 'ready',
+      generated: 25,
+      generateTotal: 25,
+      lit: 25,
+      litTotal: 25,
+      meshed: 25,
+      meshTotal: 25,
+    }, 100);
+    expect(ready.detail).toBe('');
+    expect(ready.percent).toBe(100);
+    const failed = worldLoadView({
+      phase: 'error',
+      generated: 4,
+      generateTotal: 25,
+      lit: 0,
+      litTotal: 25,
+      meshed: 0,
+      meshTotal: 25,
+      error: 'Не хватает чанка',
+    }, 12);
+    expect(failed.detail).toBe('Не хватает чанка');
+    const unknown = worldLoadView({
+      phase: 'error',
+      generated: 0,
+      generateTotal: 1,
+      lit: 0,
+      litTotal: 1,
+      meshed: 0,
+      meshTotal: 1,
+    }, 0);
+    expect(unknown.detail).toBe('Неизвестная ошибка генерации');
   });
 
   it('initialAreaReady requires generated, lit and meshed chunks in the radius', () => {
