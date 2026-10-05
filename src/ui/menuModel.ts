@@ -129,54 +129,14 @@ function escapeMenuText(value: string): string {
   ));
 }
 
-function serverIconSvg(id: LocalServerName): string {
-  const svg = (body: string): string => `<svg viewBox="0 0 48 48" width="48" height="48" shape-rendering="crispEdges" aria-hidden="true" focusable="false">${body}</svg>`;
-  if (id === 'survival') {
-    return svg(`
-      <polygon points="5,3 34,3 34,24 18,45 5,26" fill="#07140c"/>
-      <polygon points="7,5 32,5 32,22 18,41 7,24" fill="#2ea04a"/>
-      <polygon points="7,5 17,5 17,20 13,30 7,24" fill="#67d36c"/>
-      <polygon points="21,7 32,7 32,22 18,39 18,20" fill="#176832"/>
-      <polygon points="2,38 14,46 46,10 34,2" fill="#12161a"/>
-      <polygon points="5,38 12,44 43,12 36,6" fill="#f4f7fa"/>
-      <polygon points="9,40 12,44 43,12 40,14" fill="#c5d0d8"/>
-      <polygon points="1,28 18,28 22,40 5,40" fill="#6a4010"/>
-      <polygon points="3,30 16,30 20,38 7,38" fill="#f0c14a"/>
-      <polygon points="3,38 12,38 10,46 1,46" fill="#c48a2a"/>
-    `);
-  }
-  if (id === 'peaceful') {
-    return svg(`
-      <polygon points="2,24 24,4 46,24" fill="#3a2010"/>
-      <polygon points="5,22 24,7 43,22" fill="#b8743c"/>
-      <polygon points="5,22 24,7 24,22" fill="#e2b15e"/>
-      <polygon points="24,9 43,22 24,22" fill="#7a4524"/>
-      <rect x="7" y="21" width="34" height="24" fill="#5a3820"/>
-      <rect x="9" y="21" width="30" height="22" fill="#f2d7ae"/>
-      <rect x="29" y="21" width="10" height="22" fill="#d2b184"/>
-      <rect x="12" y="26" width="8" height="8" fill="#16343c"/>
-      <rect x="14" y="28" width="4" height="4" fill="#5ed4ea"/>
-      <rect x="20" y="30" width="8" height="13" fill="#3a2414"/>
-      <polygon points="33,1 46,4 43,14 31,9" fill="#145c28"/>
-      <polygon points="35,3 44,5 41,12 33,8" fill="#4ad864"/>
-      <polygon points="38,6 44,8 41,12 36,9" fill="#1c8a38"/>
-    `);
-  }
-  return svg(`
-    <polygon points="24,1 33,13 47,13 37,24 47,35 33,35 24,47 15,35 1,35 11,24 1,13 15,13" fill="#ff6a28"/>
-    <polygon points="24,9 30,17 39,17 32,24 39,31 30,31 24,39 18,31 9,31 16,24 9,17 18,17" fill="#ffd15a"/>
-    <polygon points="6,8 23,8 22,18 20,30 14,43 6,26" fill="#3a1016"/>
-    <polygon points="8,10 21,10 20,18 18,28 14,39 8,24" fill="#c43240"/>
-    <polygon points="8,10 14,10 14,20 11,28 8,22" fill="#e86870"/>
-    <polygon points="26,8 42,8 42,26 34,43 28,30 27,18" fill="#4a120c"/>
-    <polygon points="28,10 40,10 40,24 34,39 30,30 29,18" fill="#f05a30"/>
-    <polygon points="34,12 40,12 40,24 35,34 34,22" fill="#c43a22"/>
-    <rect x="20" y="8" width="6" height="6" fill="#ffe14a"/>
-    <rect x="18" y="14" width="6" height="6" fill="#ffe14a"/>
-    <rect x="22" y="20" width="6" height="6" fill="#ffe14a"/>
-    <rect x="18" y="26" width="6" height="6" fill="#ffe14a"/>
-    <rect x="21" y="32" width="6" height="8" fill="#ffe14a"/>
-  `);
+const SERVER_LOGO_SRC: Record<LocalServerName, string> = {
+  anarchy: '/ui/server-logos/anarchy_logo.png',
+  survival: '/ui/server-logos/survival_pvp_logo.png',
+  peaceful: '/ui/server-logos/peaceful_logo.png',
+};
+
+function serverIconHtml(id: LocalServerName): string {
+  return `<img class="server-icon-image" src="${SERVER_LOGO_SRC[id]}" alt="" aria-hidden="true" />`;
 }
 
 function serverCaptionsHtml(server: MenuServerRow): string {
@@ -193,7 +153,7 @@ export function renderOnlineServerRows(
 ): string {
   return onlineServerRows(statuses, selectedId).map((server) => `
       <button class="server-row${server.selected ? ' selected' : ''}${server.label === 'оффлайн' ? ' is-offline' : ''}" data-server-id="${server.id}" aria-pressed="${server.selected}">
-        <span class="server-icon server-icon--${server.id}" aria-hidden="true">${serverIconSvg(server.id)}</span>
+        <span class="server-icon server-icon--${server.id}">${serverIconHtml(server.id)}</span>
         <span class="server-copy"><strong>${escapeMenuText(server.name)}</strong>${serverCaptionsHtml(server)}</span>
         <span class="server-status"><span class="server-online">${server.label}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
       </button>`).join('');

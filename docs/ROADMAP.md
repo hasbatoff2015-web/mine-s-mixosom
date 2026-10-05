@@ -10,6 +10,10 @@
 - [x] Controls help matches the current input code and omits the diagnostics hotkeys.
 - [ ] Owner QA on a phone: portrait main menu, touch-drag the skin preview, and the mobile controls section.
 
+## 2026-10-05: Server PNG logos
+
+- [x] Online server rows use the owner PNGs in `public/ui/server-logos/`. Inline server SVG is gone.
+
 ## 2026-10-05: Server icons and loading brand
 
 - [x] Server icons are heavier block emblems. Shield and sword, house and leaf, broken shield and blast stay distinct.

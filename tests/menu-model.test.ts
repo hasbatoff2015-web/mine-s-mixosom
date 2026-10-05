@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import gameSource from '../src/core/Game.ts?raw';
 import {
@@ -36,19 +37,26 @@ describe('menu model', () => {
     ]);
   });
 
-  it('renders inline icons and cycling captions without an FC mark', () => {
+  it('renders the owner PNG logos and cycling captions without an FC mark', () => {
     const html = renderOnlineServerRows(undefined, 'anarchy');
-    expect(html.match(/<svg /g)).toHaveLength(3);
-    expect(html).toContain('server-icon--anarchy');
-    expect(html).toContain('server-icon--survival');
-    expect(html).toContain('server-icon--peaceful');
+    expect(html).not.toContain('<svg');
+    expect(html).not.toContain('shape-rendering');
+    expect(html).toContain('class="server-icon server-icon--anarchy"');
+    expect(html).toContain('src="/ui/server-logos/anarchy_logo.png"');
+    expect(html).toContain('class="server-icon server-icon--survival"');
+    expect(html).toContain('src="/ui/server-logos/survival_pvp_logo.png"');
+    expect(html).toContain('class="server-icon server-icon--peaceful"');
+    expect(html).toContain('src="/ui/server-logos/peaceful_logo.png"');
+    expect(html.match(/class="server-icon-image"/g)).toHaveLength(3);
+    expect(html).toContain('alt=""');
+    expect(existsSync('public/ui/server-logos/anarchy_logo.png')).toBe(true);
+    expect(existsSync('public/ui/server-logos/survival_pvp_logo.png')).toBe(true);
+    expect(existsSync('public/ui/server-logos/peaceful_logo.png')).toBe(true);
     expect(html).not.toContain('>FC<');
     expect(html).toContain('server-caption-cycle');
     expect(html.match(/class="server-caption /g)).toHaveLength(9);
     expect(html).toContain('aria-label="приваты взрываются. гриф разрешён. полная свобода и хаос"');
     expect(html).toContain('aria-hidden="true"');
-    expect(html.match(/viewBox="0 0 48 48"/g)).toHaveLength(3);
-    expect(html.match(/shape-rendering="crispEdges"/g)).toHaveLength(3);
   });
 
   it('documents the real desktop bindings and hides developer diagnostics', () => {
