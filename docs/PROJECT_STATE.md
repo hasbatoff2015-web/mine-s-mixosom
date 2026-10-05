@@ -6,7 +6,7 @@
 - Экран `friend-chat` живёт внутри текущего меню. Ширина панели остаётся 248. При переходе из списка друзей высота панели копируется, поэтому окно не прыгает. `menuLogicalHeight('friend-chat')` равен 268, как у друзей.
 - `DirectMessageService` хранит диалог в `plugin-data/friends/messages/<conversation-key>.json`. Ключ строится из player id, не из ника. История не больше 200 сообщений, `nextSeq` не сбрасывается. Непрочитанное — это `lastReadSeq`, а не счётчик `NotificationService`.
 - Протокол добавил `direct_message_action` и `direct_message`. `CHAT_CHANNELS` и `PROTOCOL_VERSION` 4 не менялись. Личное сообщение не попадает в Global, Nearby, Clan, ChatLog и не создаёт bubble.
-- Подробности: `docs/reports/2026-10-05_friend-private-chat.md`.
+- Подробности: `docs/reports/2026-10-05_friend-private-chat.md`. Draft PR **#120**. Не смержено.
 
 ## Последний проход: визуал Меча бога по референсу — 2026-10-05
 

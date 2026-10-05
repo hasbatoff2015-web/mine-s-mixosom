@@ -91,4 +91,9 @@ DEV `http://localhost:5173/?qaUi=menu-friends`, headed Chrome на `DISPLAY=:1` 
 
 ## Git
 
-Ветка `cursor/friend-private-chat-7fd5` от `origin/main` `49e782d841b023593a76e31b180f51073d000cee`. Draft PR. Production не менялся.
+- `origin/main` HEAD: `49e782d841b023593a76e31b180f51073d000cee`
+- Ветка: `cursor/friend-private-chat-7fd5`
+- Implementation: `0d7e2ef4afd7414f4234cf0e7afc532338fecac8`
+- Merge base: `49e782d841b023593a76e31b180f51073d000cee`
+- Draft PR: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/120
+- Production не менялся. Не смержено.

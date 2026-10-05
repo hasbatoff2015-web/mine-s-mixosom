@@ -6,7 +6,7 @@
 - [x] Nested `friend-chat` screen at the friends menu width. Opening it from Friends keeps the panel footprint.
 - [x] File-per-conversation history, 200-message cap, monotonic `seq`, per-player `lastReadSeq`.
 - [x] Direct messages stay out of Global, Nearby, Clan, ChatLog, and player chat bubbles.
-- [ ] Not merged. Wait for an explicit merge command.
+- [ ] Not merged. Draft PR **#120**. Wait for an explicit merge command.
 
 ## 2026-10-05: God Sword texture and Creative catalog
 
