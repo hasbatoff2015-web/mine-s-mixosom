@@ -22,6 +22,8 @@
 
 ## Tests
 
-`npx vitest run tests/menu-model.test.ts tests/online-server-menu.test.ts tests/ui-main-integration.test.ts` — см. финальный прогон.
+`npx vitest run tests/menu-model.test.ts tests/online-server-menu.test.ts tests/ui-main-integration.test.ts`
 
-`typecheck:client`, `check:boundaries`, `build`, `git diff --check`.
+PASS: 3 files, 21 tests.
+
+`npm run typecheck:client` PASS. `npm run check:boundaries` PASS. `npm run build` PASS. `git diff --check` PASS.
