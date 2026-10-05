@@ -81,17 +81,16 @@ TITANIUM_ORE_PALETTE = tuple(
     map(hex_rgb, ("#2A3038", "#4D5968", "#7C8E9E", "#D1D9E1"))
 )
 
-# Dark titanium. The two lightest shades are reserved for a short authored ridge.
+# Graphite body. The lightest step is a broad facet, not a handful of silver dots.
 DARK_GOD_PALETTE = tuple(
     map(
         hex_rgb,
         (
-            "#080A0E",  # deep outline
-            "#0E141B",  # deep shadow
-            "#18232D",  # dark metal
-            "#263542",  # mid metal
-            "#384B5B",  # bevel
-            "#52697A",  # cold highlight
+            "#080A0E",
+            "#121820",
+            "#1C2834",
+            "#2C3C4A",
+            "#3E5364",
         ),
     )
 )
@@ -109,79 +108,74 @@ GOD_GRIP_PALETTE = tuple(
     )
 )
 
-GOD_RED_DEEP = hex_rgb("#4B0711")
-GOD_RED_DARK = hex_rgb("#700B19")
-GOD_RED_RUBY = hex_rgb("#A61127")
-GOD_RED_BRIGHT = hex_rgb("#D91E37")
-GOD_RED_HOT = hex_rgb("#FF3F4C")
-GOD_RED_CORE = hex_rgb("#FF776D")
+GOD_RED_CRIMSON = hex_rgb("#4A0812")
+GOD_RED_DEEP = hex_rgb("#7A1020")
+GOD_RED_RUBY = hex_rgb("#C4142C")
+GOD_RED_BRIGHT = hex_rgb("#FF2438")
+GOD_RED_HOT = hex_rgb("#FF5A62")
+GOD_RED_CORE = hex_rgb("#FFE8E2")
 GOD_RED_PALETTE = (
+    GOD_RED_CRIMSON,
     GOD_RED_DEEP,
-    GOD_RED_DARK,
     GOD_RED_RUBY,
     GOD_RED_BRIGHT,
     GOD_RED_HOT,
     GOD_RED_CORE,
 )
-GOD_RED_BRIGHT_OR_HOTTER = frozenset((GOD_RED_BRIGHT, GOD_RED_HOT, GOD_RED_CORE))
 
-# Upper-left cutting edge of iron_sword.png, tip to guard. One pixel wide.
-GOD_SWORD_EDGE_PIXELS = (
-    (28, 0), (27, 1), (26, 2), (25, 3), (24, 4), (23, 5), (22, 6), (21, 7),
-    (20, 8), (19, 9), (18, 10), (17, 11), (16, 12), (15, 13), (14, 14),
-    (13, 15), (12, 16), (11, 17),
+# Cutting edge of iron_sword.png, tip to guard. Hot, with authored pulses.
+GOD_SWORD_EDGE = (
+    (28, 0, GOD_RED_CORE), (27, 1, GOD_RED_HOT), (26, 2, GOD_RED_BRIGHT),
+    (25, 3, GOD_RED_HOT), (24, 4, GOD_RED_BRIGHT), (23, 5, GOD_RED_BRIGHT),
+    (22, 6, GOD_RED_HOT), (21, 7, GOD_RED_BRIGHT), (20, 8, GOD_RED_HOT),
+    (19, 9, GOD_RED_BRIGHT), (18, 10, GOD_RED_HOT), (17, 11, GOD_RED_BRIGHT),
+    (16, 12, GOD_RED_HOT), (15, 13, GOD_RED_BRIGHT), (14, 14, GOD_RED_HOT),
+    (13, 15, GOD_RED_BRIGHT), (12, 16, GOD_RED_HOT), (11, 17, GOD_RED_RUBY),
 )
 
-# Authored intensity. Dark ruby is the body of the edge; brightness sits in three peaks.
-GOD_SWORD_EDGE_COLORS = (
-    GOD_RED_DEEP, GOD_RED_DEEP, GOD_RED_RUBY, GOD_RED_BRIGHT, GOD_RED_RUBY,
-    GOD_RED_DARK, GOD_RED_DEEP, GOD_RED_RUBY, GOD_RED_BRIGHT, GOD_RED_HOT,
-    GOD_RED_BRIGHT, GOD_RED_RUBY, GOD_RED_DARK, GOD_RED_DEEP, GOD_RED_RUBY,
-    GOD_RED_BRIGHT, GOD_RED_RUBY, GOD_RED_DARK,
+# Inner half of the cutting edge. Darker than the outer pixel, so the edge falls off
+# into the metal instead of staying one flat red stair.
+GOD_SWORD_EDGE_GLOW = (
+    (29, 0, GOD_RED_BRIGHT), (30, 0, GOD_RED_RUBY), (31, 0, GOD_RED_DEEP),
+    (28, 1, GOD_RED_RUBY), (27, 2, GOD_RED_RUBY), (26, 3, GOD_RED_DEEP),
+    (25, 4, GOD_RED_RUBY), (24, 5, GOD_RED_DEEP), (23, 6, GOD_RED_RUBY),
+    (22, 7, GOD_RED_DEEP), (21, 8, GOD_RED_RUBY), (20, 9, GOD_RED_DEEP),
+    (19, 10, GOD_RED_RUBY), (18, 11, GOD_RED_DEEP), (17, 12, GOD_RED_RUBY),
+    (16, 13, GOD_RED_DEEP), (15, 14, GOD_RED_RUBY), (14, 15, GOD_RED_DEEP),
+    (13, 16, GOD_RED_RUBY), (12, 17, GOD_RED_CRIMSON),
 )
 
-# One interior pixel beside each of the two brightest edge regions.
-GOD_SWORD_REFLECTION_PIXELS = (
-    (26, 3, GOD_RED_DARK),  # beside the tip bright peak (25, 3)
-    (19, 10, GOD_RED_DEEP),  # beside the single hot peak (18, 10)
+# Centerline, separated from the edge by the unpainted metal pixels between them.
+# Four white-hot nodes, the rest a darker ember so it stays one vein.
+GOD_SWORD_VEIN = (
+    (29, 1, GOD_RED_DEEP),
+    (29, 2, GOD_RED_RUBY), (28, 3, GOD_RED_CORE), (27, 4, GOD_RED_RUBY),
+    (26, 5, GOD_RED_DEEP), (25, 6, GOD_RED_CORE), (24, 7, GOD_RED_RUBY),
+    (23, 8, GOD_RED_DEEP), (22, 9, GOD_RED_CORE), (21, 10, GOD_RED_RUBY),
+    (20, 11, GOD_RED_DEEP), (19, 12, GOD_RED_RUBY), (18, 13, GOD_RED_DEEP),
+    (17, 14, GOD_RED_RUBY), (16, 15, GOD_RED_CORE), (15, 16, GOD_RED_DEEP),
+    (14, 17, GOD_RED_CRIMSON),
 )
 
-# Upper third, across the blade toward the tip peak. Not parallel to the edge.
-GOD_SWORD_UPPER_FISSURE = (
-    (28, 3, GOD_RED_DARK),
-    (27, 3, GOD_RED_RUBY),
-    (27, 2, GOD_RED_RUBY),
+# Guard stays the iron-sword shape. The center is the bright energy core.
+GOD_SWORD_GUARD = (
+    (8, 18, GOD_RED_CORE), (7, 18, GOD_RED_HOT), (9, 18, GOD_RED_BRIGHT),
+    (8, 17, GOD_RED_HOT), (7, 17, GOD_RED_RUBY), (9, 17, GOD_RED_RUBY),
+    (8, 19, GOD_RED_RUBY), (7, 19, GOD_RED_DEEP), (6, 18, GOD_RED_DEEP),
+    (6, 16, GOD_RED_HOT), (5, 16, GOD_RED_DEEP),
+    (10, 20, GOD_RED_BRIGHT), (9, 20, GOD_RED_RUBY),
 )
 
-# Lower blade, a short vertical fissure. Not a second cutting edge.
-GOD_SWORD_LOWER_FISSURE = (
-    (16, 14, GOD_RED_DEEP),
-    (16, 15, GOD_RED_RUBY),
+# Pommel gem. Same silhouette, one hot core.
+GOD_SWORD_POMMEL = (
+    (1, 29, GOD_RED_CORE), (2, 29, GOD_RED_HOT), (1, 28, GOD_RED_BRIGHT),
+    (2, 28, GOD_RED_RUBY), (0, 29, GOD_RED_DEEP), (1, 30, GOD_RED_RUBY),
+    (2, 30, GOD_RED_DEEP),
 )
 
-# Broken inner facet. The only pixels allowed to use the two lightest metal shades.
-GOD_SWORD_RIDGE_PIXELS = (
-    (27, 4, hex_rgb("#384B5B")),
-    (26, 5, hex_rgb("#52697A")),
-    (25, 6, hex_rgb("#384B5B")),
-    (23, 8, hex_rgb("#52697A")),
-    (22, 9, hex_rgb("#384B5B")),
-    (20, 11, hex_rgb("#384B5B")),
-    (19, 12, hex_rgb("#52697A")),
-)
-
-# Guard core stays inside the existing guard. One hottest pixel on the whole sprite.
-GOD_SWORD_GUARD_CORE = (
-    (8, 17, GOD_RED_DARK),
-    (7, 18, GOD_RED_RUBY),
-    (8, 18, GOD_RED_CORE),
-)
-
-# Back edge of the blade. Alternating the two darkest shades keeps a rim without a black slab.
-GOD_SWORD_SPINE_PIXELS = (
-    (31, 1), (31, 2), (31, 3), (30, 4), (29, 5), (28, 6), (27, 7), (26, 8),
-    (25, 9), (24, 10), (23, 11), (22, 12), (21, 13), (20, 14), (19, 15),
-    (18, 16), (17, 17),
+# A few energy sparks in the wrapped grip. The rest of the handle stays dark.
+GOD_SWORD_GRIP_SPARKS = (
+    (7, 24, GOD_RED_RUBY), (6, 25, GOD_RED_HOT), (5, 26, GOD_RED_DEEP),
 )
 
 TOOL_NAMES = ("sword", "pickaxe", "axe", "shovel", "hoe")
@@ -352,29 +346,20 @@ def generate_ingots() -> list[GeneratedAsset]:
 
 
 def god_sword_red_colors() -> dict[tuple[int, int], tuple[int, int, int]]:
-    if len(GOD_SWORD_EDGE_PIXELS) != len(GOD_SWORD_EDGE_COLORS):
-        raise ValueError("God Sword edge colors must match the edge path")
     accents: dict[tuple[int, int], tuple[int, int, int]] = {}
-    for (x, y), color in zip(GOD_SWORD_EDGE_PIXELS, GOD_SWORD_EDGE_COLORS):
-        accents[(x, y)] = color
     for group in (
-        GOD_SWORD_REFLECTION_PIXELS,
-        GOD_SWORD_UPPER_FISSURE,
-        GOD_SWORD_LOWER_FISSURE,
-        GOD_SWORD_GUARD_CORE,
+        GOD_SWORD_EDGE,
+        GOD_SWORD_EDGE_GLOW,
+        GOD_SWORD_VEIN,
+        GOD_SWORD_GUARD,
+        GOD_SWORD_POMMEL,
+        GOD_SWORD_GRIP_SPARKS,
     ):
         for x, y, color in group:
             if (x, y) in accents:
                 raise ValueError(f"God Sword red groups overlap at {(x, y)}")
             accents[(x, y)] = color
     return accents
-
-
-def god_sword_ridge_colors() -> dict[tuple[int, int], tuple[int, int, int]]:
-    ridge = {(x, y): color for x, y, color in GOD_SWORD_RIDGE_PIXELS}
-    if len(ridge) != len(GOD_SWORD_RIDGE_PIXELS):
-        raise ValueError("God Sword ridge coordinates must be unique")
-    return ridge
 
 
 def god_grip_ranks() -> dict[tuple[int, int, int], int]:
@@ -387,31 +372,17 @@ def god_grip_ranks() -> dict[tuple[int, int, int], int]:
     return {color: index for index, color in enumerate(ranked)}
 
 
-def god_blade_metal_color(
-    x: int,
-    y: int,
-    rgb: tuple[int, int, int],
-    ridge: dict[tuple[int, int], tuple[int, int, int]],
-) -> tuple[int, int, int]:
-    painted = ridge.get((x, y))
-    if painted is not None:
-        return painted
-    deep, shadow, dark, mid, _bevel, _highlight = DARK_GOD_PALETTE
-    try:
-        spine_index = GOD_SWORD_SPINE_PIXELS.index((x, y))
-    except ValueError:
-        spine_index = -1
-    if spine_index >= 0:
-        if spine_index % 4 == 0:
-            return deep
-        if spine_index % 4 == 1:
-            return shadow
+def god_blade_metal_color(x: int, y: int, rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+    outline, shadow, dark, mid, facet = DARK_GOD_PALETTE
+    shade = rgb[0] if rgb[0] == rgb[1] == rgb[2] else round(luminance(rgb))
+    if shade <= 24:
+        # The blade spine stays the darkest step. Other outlines stay one step up.
+        return outline if x >= 17 and y <= 17 else shadow
+    if shade <= 68:
         return dark
-    # Source gray 24 and 68 stay dark metal. Brighter source facets become mid metal.
-    # The two lightest palette colors are applied only by the authored ridge.
-    if rgb[0] <= 68 and rgb[0] == rgb[1] == rgb[2]:
-        return dark
-    return mid
+    if shade <= 150:
+        return mid
+    return facet
 
 
 def generate_god_sword() -> GeneratedAsset:
@@ -420,9 +391,7 @@ def generate_god_sword() -> GeneratedAsset:
     handles = handle_colors()
     grip_ranks = god_grip_ranks()
     reds = god_sword_red_colors()
-    ridge = god_sword_ridge_colors()
-    if set(reds) & set(ridge):
-        raise ValueError("God Sword ridge overlaps a red accent")
+    grip_sparks = {(x, y) for x, y, _color in GOD_SWORD_GRIP_SPARKS}
     source_pixels = pixel_data(source)
     result: list[tuple[int, int, int, int]] = []
     mask: list[bool] = []
@@ -436,14 +405,15 @@ def generate_god_sword() -> GeneratedAsset:
         mask.append(True)
         red = reds.get((x, y))
         if red is not None:
-            if pixel[:3] in handles:
-                raise ValueError(f"God Sword red accent {(x, y)} landed on the grip")
+            on_grip = pixel[:3] in handles
+            if on_grip != ((x, y) in grip_sparks):
+                raise ValueError(f"God Sword red accent {(x, y)} is on the wrong material")
             result.append((*red, pixel[3]))
             continue
         if pixel[:3] in handles:
             result.append((*GOD_GRIP_PALETTE[grip_ranks[pixel[:3]]], pixel[3]))
             continue
-        result.append((*god_blade_metal_color(x, y, pixel[:3], ridge), pixel[3]))
+        result.append((*god_blade_metal_color(x, y, pixel[:3]), pixel[3]))
     image = Image.new("RGBA", source.size)
     image.putdata(result)
     return GeneratedAsset(
@@ -493,19 +463,16 @@ def validate_god_sword(asset: GeneratedAsset, output: Image.Image, source: Image
     if [pixel[3] for pixel in output_pixels] != [pixel[3] for pixel in source_pixels]:
         raise ValueError(f"{asset.path}: alpha mask differs from the iron sword")
     accents = god_sword_red_colors()
-    ridge = god_sword_ridge_colors()
     handles = handle_colors()
     grip = frozenset(GOD_GRIP_PALETTE)
     dark = frozenset(DARK_GOD_PALETTE)
     red = frozenset(GOD_RED_PALETTE)
-    light_metal = frozenset(DARK_GOD_PALETTE[-2:])
     metal_colors: set[tuple[int, int, int]] = set()
-    bright = 0
-    hottest = 0
-    light_count = 0
+    cores = 0
     god_luminance = 0.0
     god_count = 0
     titanium_luminance = 0.0
+    opaque = 0
     titanium = pixel_data(load_rgba(ITEM_OUTPUT_DIR / "titanium_sword.png"))
     for index, source_pixel in enumerate(source_pixels):
         x = index % source.width
@@ -515,14 +482,13 @@ def validate_god_sword(asset: GeneratedAsset, output: Image.Image, source: Image
             if output_pixel[3] != 0:
                 raise ValueError(f"{asset.path}: new opaque pixel at {(x, y)}")
             continue
+        opaque += 1
         expected = accents.get((x, y))
         if expected is not None:
             if output_pixel[:3] != expected or output_pixel[:3] not in red:
                 raise ValueError(f"{asset.path}: unexpected accent at {(x, y)}")
-            if output_pixel[:3] in GOD_RED_BRIGHT_OR_HOTTER:
-                bright += 1
             if output_pixel[:3] == GOD_RED_CORE:
-                hottest += 1
+                cores += 1
             continue
         if source_pixel[:3] in handles:
             if output_pixel[:3] not in grip or output_pixel[:3] in handles:
@@ -531,32 +497,25 @@ def validate_god_sword(asset: GeneratedAsset, output: Image.Image, source: Image
         if output_pixel[:3] not in dark:
             raise ValueError(f"{asset.path}: metal pixel left the dark palette at {(x, y)}")
         metal_colors.add(output_pixel[:3])
-        if output_pixel[:3] in light_metal:
-            light_count += 1
         god_luminance += luminance(output_pixel[:3])
         titanium_luminance += luminance(titanium[index][:3])
         god_count += 1
-    if len(accents) < 24 or len(accents) > 29:
-        raise ValueError(f"{asset.path}: red accent count {len(accents)} is outside 24-29")
-    if bright > 7:
-        raise ValueError(f"{asset.path}: {bright} bright red pixels")
-    if hottest > 2:
-        raise ValueError(f"{asset.path}: {hottest} hottest core pixels")
-    if light_count < 6 or light_count > 9:
-        raise ValueError(f"{asset.path}: ridge highlight count {light_count}")
-    if len(metal_colors) < 5:
+    # The earlier 24–29 red cap forced a thin outline. The reference needs a vein,
+    # an inner glow, and guard/pommel cores, while metal stays the majority.
+    if not 60 <= len(accents) <= opaque // 2:
+        raise ValueError(f"{asset.path}: red accent count {len(accents)} / {opaque}")
+    if cores < 6:
+        raise ValueError(f"{asset.path}: only {cores} energy cores")
+    if len(metal_colors) < 4:
         raise ValueError(f"{asset.path}: only {len(metal_colors)} metal colors")
     if god_count == 0:
         raise ValueError(f"{asset.path}: no blade metal pixels")
     god_mean = god_luminance / god_count
     titanium_mean = titanium_luminance / god_count
-    if not titanium_mean * 0.50 < god_mean < titanium_mean * 0.70:
+    if not titanium_mean * 0.28 < god_mean < titanium_mean * 0.85:
         raise ValueError(
-            f"{asset.path}: metal luminance {god_mean:.2f} is outside "
-            f"50-70% of titanium {titanium_mean:.2f}"
+            f"{asset.path}: metal luminance {god_mean:.2f} vs titanium {titanium_mean:.2f}"
         )
-    if any(color not in metal_colors for color in ridge.values()):
-        raise ValueError(f"{asset.path}: ridge color missing from the blade")
 
 
 def validate_asset(asset: GeneratedAsset, actual: Image.Image | None = None) -> None:
