@@ -349,8 +349,6 @@ export class PlayerVisual {
       this.root.scale.setScalar(1);
     }
     this.syncLayerVisibility();
-    this.worldParticles.setActive(this.invisible);
-    this.worldParticles.update(deltaSeconds);
     if (this.heldModel && this.heldItemId && itemRenderProfile(this.heldItemId).category === 'bow') {
       const texturePath = bowPullingTexturePath(state.bowCharge);
       if (texturePath !== this.bowTexturePath) {
@@ -360,6 +358,16 @@ export class PlayerVisual {
     }
     this.lastBlockingProgress = blocking ? pose.blockingProgress : 0;
     return pose;
+  }
+
+  /**
+   * Call after PlayerVisual.root has its final render position.
+   * Spawned swirls stay in world space while the parent keeps moving.
+   */
+  updateWorldParticles(deltaSeconds: number): void {
+    this.assertActive();
+    this.worldParticles.setActive(this.invisible);
+    this.worldParticles.update(deltaSeconds);
   }
 
   applyWorldLight(world: VoxelWorld, x: number, y: number, z: number, daylight = 1): void {

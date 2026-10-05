@@ -24,6 +24,8 @@ export const WORLD_INVIS_MIN_DRIFT = 0.04;
 export const WORLD_INVIS_MAX_DRIFT = 0.08;
 export const WORLD_INVIS_MIN_INTERVAL = 0.28;
 export const WORLD_INVIS_MAX_INTERVAL = 0.45;
+/** Same scale as a remote hard snap. A sprint step never reaches it. */
+export const WORLD_INVIS_RELOCATE_RESET_DISTANCE = 6;
 export const INVISIBILITY_WORLD_PARTICLE_GROUP = 'player:invisibility-particles';
 
 /**
@@ -48,7 +50,7 @@ function configureSwirlTexture(texture: THREE.Texture): void {
 }
 
 /**
- * Eight atlas slices shared by every invisible player.
+ * Eight atlas slices shared for the life of the page.
  * PlayerVisual dispose releases sprites, not these maps.
  */
 class SharedInvisibilitySwirlFrames {
@@ -85,23 +87,14 @@ class SharedInvisibilitySwirlFrames {
 }
 
 let sharedFrames: SharedInvisibilitySwirlFrames | undefined;
-let sharedFramesLive = false;
 
 function swirlFrames(): SharedInvisibilitySwirlFrames {
-  if (!sharedFrames) {
-    sharedFrames = new SharedInvisibilitySwirlFrames();
-    sharedFramesLive = true;
-  }
+  if (!sharedFrames) sharedFrames = new SharedInvisibilitySwirlFrames();
   return sharedFrames;
 }
 
 export function invisibilitySwirlFrames(): readonly THREE.Texture[] {
   return swirlFrames().frames;
-}
-
-/** False only if the shared owner itself is released. Per-player dispose does not clear it. */
-export function invisibilitySwirlFramesLive(): boolean {
-  return sharedFramesLive;
 }
 
 interface WorldParticleSlot {
@@ -110,9 +103,9 @@ interface WorldParticleSlot {
   active: boolean;
   life: number;
   duration: number;
-  originX: number;
-  originY: number;
-  originZ: number;
+  worldOriginX: number;
+  worldOriginY: number;
+  worldOriginZ: number;
   driftX: number;
   driftZ: number;
   rise: number;
@@ -132,6 +125,13 @@ export class InvisibilityWorldParticles {
   private spawnWait = 0;
   private spawnInterval = WORLD_INVIS_MIN_INTERVAL;
   private spawned = 0;
+  private hasAnchor = false;
+  private readonly inverseWorld = new THREE.Matrix4();
+  private readonly scratchLocal = new THREE.Vector3();
+  private readonly scratchWorld = new THREE.Vector3();
+  private readonly spawnLocal = new THREE.Vector3();
+  private readonly anchorWorld = new THREE.Vector3();
+  private readonly previousAnchor = new THREE.Vector3();
 
   constructor() {
     this.group.name = INVISIBILITY_WORLD_PARTICLE_GROUP;
@@ -163,9 +163,9 @@ export class InvisibilityWorldParticles {
         active: false,
         life: 0,
         duration: WORLD_INVIS_MIN_LIFE,
-        originX: 0,
-        originY: WORLD_INVIS_MIN_Y,
-        originZ: 0,
+        worldOriginX: 0,
+        worldOriginY: WORLD_INVIS_MIN_Y,
+        worldOriginZ: 0,
         driftX: 0,
         driftZ: 0,
         rise: WORLD_INVIS_MIN_RISE,
@@ -197,14 +197,17 @@ export class InvisibilityWorldParticles {
     if (this.disposed || this.enabled === active) return;
     this.enabled = active;
     if (!active) {
+      this.hasAnchor = false;
       this.group.visible = false;
       this.spawnWait = 0;
       for (const slot of this.slots) this.deactivate(slot);
       return;
     }
+    this.hasAnchor = false;
     this.group.visible = true;
     this.spawnWait = 0;
     this.spawnInterval = this.randomRange(WORLD_INVIS_MIN_INTERVAL, WORLD_INVIS_MAX_INTERVAL);
+    this.syncWorldMatrix();
     this.activateSlot(0.18);
     this.activateSlot(0.42);
   }
@@ -213,6 +216,16 @@ export class InvisibilityWorldParticles {
     if (this.disposed || !this.enabled) return;
     const dt = Math.max(0, Math.min(0.1, deltaSeconds));
     if (dt <= 0) return;
+    this.syncWorldMatrix();
+    if (this.hasAnchor && this.anchorWorld.distanceTo(this.previousAnchor) >= WORLD_INVIS_RELOCATE_RESET_DISTANCE) {
+      this.spawnWait = 0;
+      this.spawnInterval = this.randomRange(WORLD_INVIS_MIN_INTERVAL, WORLD_INVIS_MAX_INTERVAL);
+      for (const slot of this.slots) this.deactivate(slot);
+      this.activateSlot(0.18);
+      this.activateSlot(0.42);
+    }
+    this.previousAnchor.copy(this.anchorWorld);
+    this.hasAnchor = true;
     for (const slot of this.slots) {
       if (!slot.active) continue;
       slot.life += dt / slot.duration;
@@ -253,9 +266,15 @@ export class InvisibilityWorldParticles {
     slot.active = true;
     slot.life = Math.min(0.7, Math.max(0, initialLife));
     slot.duration = this.randomRange(WORLD_INVIS_MIN_LIFE, WORLD_INVIS_MAX_LIFE);
-    slot.originX = Math.cos(angle) * radius;
-    slot.originZ = Math.sin(angle) * radius;
-    slot.originY = this.randomRange(WORLD_INVIS_MIN_Y, WORLD_INVIS_MAX_Y);
+    this.spawnLocal.set(
+      Math.cos(angle) * radius,
+      this.randomRange(WORLD_INVIS_MIN_Y, WORLD_INVIS_MAX_Y),
+      Math.sin(angle) * radius,
+    );
+    this.scratchWorld.copy(this.spawnLocal).applyMatrix4(this.group.matrixWorld);
+    slot.worldOriginX = this.scratchWorld.x;
+    slot.worldOriginY = this.scratchWorld.y;
+    slot.worldOriginZ = this.scratchWorld.z;
     slot.driftX = Math.cos(driftAngle) * drift;
     slot.driftZ = Math.sin(driftAngle) * drift;
     slot.rise = this.randomRange(WORLD_INVIS_MIN_RISE, WORLD_INVIS_MAX_RISE);
@@ -272,21 +291,20 @@ export class InvisibilityWorldParticles {
     const opacity = invisibilityWorldParticleOpacity(life);
     slot.material.opacity = opacity;
     slot.sprite.visible = opacity > 0.01;
-    slot.sprite.position.set(
-      slot.originX + slot.driftX * life,
-      slot.originY + slot.rise * life,
-      slot.originZ + slot.driftZ * life,
+    this.scratchWorld.set(
+      slot.worldOriginX + slot.driftX * life,
+      slot.worldOriginY + slot.rise * life,
+      slot.worldOriginZ + slot.driftZ * life,
     );
+    this.scratchLocal.copy(this.scratchWorld).applyMatrix4(this.inverseWorld);
+    slot.sprite.position.copy(this.scratchLocal);
     const scale = slot.size * (1 - 0.08 * life);
     slot.sprite.scale.set(scale, scale, 1);
     const frame = Math.min(POTION_SWIRL_FRAMES - 1, Math.floor(life * POTION_SWIRL_FRAMES));
     if (frame !== slot.frame) {
       slot.frame = frame;
       const map = swirlFrames().frames[frame] ?? swirlFrames().frames[0];
-      if (map) {
-        slot.material.map = map;
-        slot.material.needsUpdate = true;
-      }
+      if (map) slot.material.map = map;
     }
     slot.sprite.userData.life = life;
     slot.sprite.userData.frame = frame;
@@ -298,6 +316,12 @@ export class InvisibilityWorldParticles {
     slot.sprite.visible = false;
     slot.material.opacity = 0;
     slot.sprite.userData.life = 0;
+  }
+
+  private syncWorldMatrix(): void {
+    this.group.updateWorldMatrix(true, false);
+    this.inverseWorld.copy(this.group.matrixWorld).invert();
+    this.anchorWorld.set(0, 0, 0).applyMatrix4(this.group.matrixWorld);
   }
 
   private randomRange(min: number, max: number): number {

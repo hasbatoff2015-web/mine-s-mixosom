@@ -3,6 +3,7 @@
 ## 2026-10-05: Invisibility world particles and air HUD
 
 - [x] Sparse white swirl particles on `PlayerVisual.root` while `invisible` is true. Pool of 7, depth test on, no protocol field.
+- [x] A spawned swirl stays at its world origin while the player moves. A relocation of 6 blocks reseeds the cloud.
 - [x] First-person keeps the existing screen potion overlay. The world group follows the hidden third-person root.
 - [x] Survival air row sits above hunger. Ten icons, bursting bubble on the left of the remaining cluster. Shown only with the head underwater.
 - [x] `MAX_AIR_TICKS`, drain, refill and drowning damage stay at the existing numbers.

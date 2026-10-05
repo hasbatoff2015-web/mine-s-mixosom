@@ -6415,6 +6415,7 @@ export class Game {
       pose.bodyYaw,
       seated,
     );
+    session.playerVisual.updateWorldParticles(this.renderDeltaSeconds);
     session.playerVisual.applyWorldLight(
       session.world,
       position.x,

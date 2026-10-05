@@ -53,7 +53,7 @@ describe('third-person camera', () => {
         root: { position: new THREE.Vector3() },
         setArmor: vi.fn(), setOffhandItem: vi.fn(),
         setVisible: (value: boolean) => visible.push(value),
-        update: vi.fn(() => ({ bodyYaw: 0 })), applyWorldLight: vi.fn(),
+        update: vi.fn(() => ({ bodyYaw: 0 })), applyWorldLight: vi.fn(), updateWorldParticles: vi.fn(),
       },
       player: { velocity: { x: 0, y: 0, z: 0 }, eyeHeight: 1.62,
         onGround: true, sneaking: false, sprinting: false },

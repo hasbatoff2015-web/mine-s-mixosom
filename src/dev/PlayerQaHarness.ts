@@ -28,6 +28,15 @@ import type { ArmorSlot } from '../items';
 
 type QaPose = 'idle' | 'walk' | 'sprint' | 'sneak' | 'jump' | 'attack' | 'mining' | 'bow' | 'block' | 'eat';
 
+/** Out, hold, back, hold. Peak step stays far under the 6-block particle reset. */
+function playerQaPathX(elapsed: number): number {
+  const phase = elapsed % 8;
+  if (phase < 3) return (phase / 3) * 4;
+  if (phase < 4) return 4;
+  if (phase < 7) return 4 - ((phase - 4) / 3) * 4;
+  return 0;
+}
+
 const QA_ITEMS = Object.freeze({
   none: '',
   sword: 'diamond_sword',
@@ -106,6 +115,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
   let invisible = false;
   let hurt = false;
   let wallOn = false;
+  let pathOn = false;
   const occlusionWall = new THREE.Mesh(
     new THREE.BoxGeometry(2.6, 2.6, 0.45),
     new THREE.MeshBasicMaterial({ color: 0x6d7278 }),
@@ -144,7 +154,7 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       <label for="qa-camera-orbit">camera orbit</label><input id="qa-camera-orbit" type="range" min="-180" max="180" value="0">
       <label for="qa-camera-distance">camera distance</label><input id="qa-camera-distance" type="range" min="2" max="8" step="0.1" value="4.2">
     </div>
-    <div style="margin-top:8px"><button data-camera="firstPerson">first</button> <button data-camera="thirdPersonBack">back</button> <button data-camera="thirdPersonFront">front</button> <button data-toggle="hurt">hurt off</button> <button data-toggle="invisible">invis off</button> <button data-toggle="wall">wall off</button></div>
+    <div style="margin-top:8px"><button data-camera="firstPerson">first</button> <button data-camera="thirdPersonBack">back</button> <button data-camera="thirdPersonFront">front</button> <button data-toggle="hurt">hurt off</button> <button data-toggle="invisible">invis off</button> <button data-toggle="wall">wall off</button> <button data-toggle="path">path off</button></div>
     <div style="margin-top:6px">${Object.entries(QA_SKIN_LAYER_LABELS).map(([layer, label]) => `<button data-layer="${layer}">${label} on</button>`).join(' ')}</div>
     <output style="display:block;margin-top:8px;white-space:pre"></output>
   </div>`;
@@ -228,6 +238,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       occlusionWall.visible = wallOn;
       target.textContent = `wall ${wallOn ? 'on' : 'off'}`;
     }
+    if (target.dataset.toggle === 'path') {
+      pathOn = !pathOn;
+      target.textContent = `path ${pathOn ? 'on' : 'off'}`;
+    }
   };
   root.addEventListener('click', onClick);
   const params = new URLSearchParams(location.search);
@@ -246,6 +260,10 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     wallOn = true;
     occlusionWall.visible = true;
     root.querySelector<HTMLButtonElement>('[data-toggle="wall"]')!.textContent = 'wall on';
+  }
+  if (params.get('path') === '1') {
+    pathOn = true;
+    root.querySelector<HTMLButtonElement>('[data-toggle="path"]')!.textContent = 'path on';
   }
   const cameraParam = params.get('camera');
   if (cameraParam === 'first' || cameraParam === 'firstPerson') perspective = 'firstPerson';
@@ -310,6 +328,9 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
       lastAttack = now;
     }
     player.update(delta, playerState);
+    const travel = pathOn ? playerQaPathX(elapsed) : 0;
+    player.root.position.set(travel, 0, 0);
+    player.updateWorldParticles(delta);
     setEntityLight(player.root, hurt ? [1.2, 0.48, 0.48] : [1, 1, 1]);
     player.setVisible(perspective !== 'firstPerson');
 
@@ -327,12 +348,17 @@ export async function startPlayerQaHarness(canvas: HTMLCanvasElement, uiRoot: HT
     firstPerson.update(delta, firstPersonState);
 
     const cameraAngle = cameraOrbit + (perspective === 'thirdPersonBack' ? 0 : Math.PI);
-    camera.position.set(
-      Math.sin(cameraAngle) * cameraDistance,
-      1.55,
-      Math.cos(cameraAngle) * cameraDistance,
-    );
-    camera.lookAt(0, 1.05, 0);
+    if (pathOn) {
+      camera.position.set(2, 3.1, 7.5);
+      camera.lookAt(2, 0.7, 0);
+    } else {
+      camera.position.set(
+        Math.sin(cameraAngle) * cameraDistance,
+        1.55,
+        Math.cos(cameraAngle) * cameraDistance,
+      );
+      camera.lookAt(0, 1.05, 0);
+    }
     renderer.info.reset();
     renderer.render(scene, camera);
     firstPerson.render(renderer);

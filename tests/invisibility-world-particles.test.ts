@@ -19,8 +19,8 @@ import {
   WORLD_INVIS_PARTICLE_POOL,
   WORLD_INVIS_PARTICLE_TINT,
   WORLD_INVIS_SPAWN_RADIUS,
+  WORLD_INVIS_RELOCATE_RESET_DISTANCE,
   invisibilitySwirlFrames,
-  invisibilitySwirlFramesLive,
   invisibilityWorldParticleOpacity,
 } from '../src/rendering/InvisibilityWorldParticles';
 import { POTION_PARTICLE_MAX_OPACITY, POTION_SWIRL_FRAMES, potionSwirlUv } from '../src/rendering/potionParticles';
@@ -66,6 +66,15 @@ function sprites(visual: PlayerVisual): THREE.Sprite[] {
   return visual.invisibilityParticles.group.children.filter((child): child is THREE.Sprite => child instanceof THREE.Sprite);
 }
 
+function present(visual: PlayerVisual, deltaSeconds: number, invisible: boolean): void {
+  visual.update(deltaSeconds, { ...frame, invisible });
+  visual.updateWorldParticles(deltaSeconds);
+}
+
+function worldPosition(sprite: THREE.Sprite, target = new THREE.Vector3()): THREE.Vector3 {
+  return sprite.getWorldPosition(target);
+}
+
 describe('invisibility world particles', () => {
   it('keeps a sparse neutral swirl inside the player volume', () => {
     expect(WORLD_INVIS_PARTICLE_POOL).toBe(7);
@@ -109,7 +118,7 @@ describe('invisibility world particles', () => {
     expect(visual.root.getObjectByName('player-visual:yaw')!.children).not.toContain(particles.group);
     expect(visual.rig.head.children).not.toContain(particles.group);
 
-    visual.update(0.05, { ...frame, invisible: false });
+    present(visual, 0.05, false);
     expect(particles.active).toBe(false);
     expect(particles.activeCount).toBe(0);
     expect(sprites(visual).every((sprite) => sprite.visible === false)).toBe(true);
@@ -117,7 +126,7 @@ describe('invisibility world particles', () => {
     const identities = sprites(visual).map((sprite) => sprite.uuid);
     visual.setHeldItem('diamond_sword');
     visual.setArmor({ head: 'iron_helmet', chest: null, legs: null, feet: null });
-    visual.update(0.05, { ...frame, invisible: true });
+    present(visual, 0.05, true);
     expect(particles.active).toBe(true);
     expect(particles.group.visible).toBe(true);
     expect(particles.activeCount).toBeGreaterThanOrEqual(1);
@@ -132,8 +141,9 @@ describe('invisibility world particles', () => {
     const framesSeen = new Set<number>();
     let sawStrong = false;
     const started = particles.spawnCount;
+    const materialVersions = new Map(sprites(visual).map((sprite) => [sprite.uuid, sprite.material.version]));
     for (let step = 0; step < 80; step += 1) {
-      visual.update(0.05, { ...frame, invisible: true });
+      present(visual, 0.05, true);
       expect(particles.activeCount).toBeLessThanOrEqual(WORLD_INVIS_PARTICLE_POOL);
       expect(sprites(visual)).toHaveLength(WORLD_INVIS_PARTICLE_POOL);
       expect(sprites(visual).map((sprite) => sprite.uuid)).toEqual(identities);
@@ -149,6 +159,7 @@ describe('invisibility world particles', () => {
         expect(material.opacity).toBeLessThanOrEqual(WORLD_INVIS_PARTICLE_MAX_OPACITY + 1e-6);
         expect(material.opacity).toBeGreaterThanOrEqual(0);
         expect(shared).toContain(material.map);
+        expect(material.version).toBe(materialVersions.get(sprite.uuid));
         if (material.opacity >= 0.5) sawStrong = true;
         if (!sprite.visible) continue;
         framesSeen.add(sprite.userData.frame as number);
@@ -172,7 +183,7 @@ describe('invisibility world particles', () => {
     expect(particles.group.parent).toBe(visual.root);
     expect(particles.active).toBe(true);
 
-    visual.update(0.05, { ...frame, invisible: false });
+    present(visual, 0.05, false);
     expect(particles.active).toBe(false);
     expect(particles.group.visible).toBe(false);
     expect(particles.activeCount).toBe(0);
@@ -180,15 +191,14 @@ describe('invisibility world particles', () => {
     expect((visual.rig.head.getObjectByName('player:head:base') as THREE.Mesh).visible).toBe(true);
 
     const other = createVisual();
-    other.visual.update(0.05, { ...frame, invisible: true });
+    present(other.visual, 0.05, true);
     const sharedMap = sprites(other.visual)[0]!.material.map;
     expect(shared).toContain(sharedMap);
     created.dispose();
     expect(visual.root.getObjectByName(INVISIBILITY_WORLD_PARTICLE_GROUP)).toBeUndefined();
     expect(particles.group.parent).toBeNull();
     expect(particles.group.children).toHaveLength(0);
-    expect(invisibilitySwirlFramesLive()).toBe(true);
-    expect(() => other.visual.update(0.05, { ...frame, invisible: true })).not.toThrow();
+    expect(() => present(other.visual, 0.05, true)).not.toThrow();
     expect(shared).toContain(sprites(other.visual)[0]!.material.map);
     other.dispose();
 
@@ -198,5 +208,71 @@ describe('invisibility world particles', () => {
     expect(viewmodel.scene.getObjectByName('first-person:potion-overlay')).toBeTruthy();
     viewmodel.dispose();
     factory.dispose();
+  });
+
+  it('keeps an existing swirl behind a moving player and spawns the next one at the new position', () => {
+    const created = createVisual();
+    const { visual } = created;
+    visual.root.position.set(0, 0, 0);
+    present(visual, 0.05, true);
+    const sprite = sprites(visual).find((entry) => entry.visible);
+    expect(sprite).toBeTruthy();
+    const before = worldPosition(sprite!).clone();
+    visual.root.position.set(2, 0, 0);
+    present(visual, 0.016, true);
+    const moved = worldPosition(sprite!);
+    expect(Math.abs(moved.x - before.x)).toBeLessThan(0.15);
+    expect(Math.abs(moved.x - (before.x + 2))).toBeGreaterThan(1);
+
+    const seen = new Set(sprites(visual).filter((entry) => entry.visible).map((entry) => entry.uuid));
+    let fresh: THREE.Sprite | undefined;
+    for (let step = 0; step < 20 && !fresh; step += 1) {
+      present(visual, 0.05, true);
+      fresh = sprites(visual).find((entry) => entry.visible && !seen.has(entry.uuid));
+    }
+    expect(fresh).toBeTruthy();
+    const freshWorld = worldPosition(fresh!);
+    expect(Math.hypot(freshWorld.x - visual.root.position.x, freshWorld.z - visual.root.position.z))
+      .toBeLessThanOrEqual(WORLD_INVIS_SPAWN_RADIUS + WORLD_INVIS_MAX_DRIFT + 0.05);
+    expect(Math.abs(worldPosition(sprite!).x - before.x)).toBeLessThan(0.2);
+    created.dispose();
+  });
+
+  it('does not swing an old swirl around the player when the root turns', () => {
+    const created = createVisual();
+    const random = Math.random;
+    Math.random = () => 0.25;
+    try {
+      present(created.visual, 0.05, true);
+    } finally {
+      Math.random = random;
+    }
+    const sprite = sprites(created.visual).find((entry) => entry.visible);
+    expect(sprite).toBeTruthy();
+    const before = worldPosition(sprite!).clone();
+    expect(Math.hypot(before.x, before.z)).toBeGreaterThan(0.1);
+    created.visual.root.rotation.y = Math.PI / 2;
+    present(created.visual, 0.016, true);
+    expect(worldPosition(sprite!).distanceTo(before)).toBeLessThan(0.05);
+    created.dispose();
+  });
+
+  it('drops the old cloud when the player relocates by at least six blocks', () => {
+    const created = createVisual();
+    const { visual } = created;
+    present(visual, 0.05, true);
+    expect(sprites(visual).some((entry) => entry.visible)).toBe(true);
+    visual.root.position.set(WORLD_INVIS_RELOCATE_RESET_DISTANCE + 2, 0, 0);
+    present(visual, 0.05, true);
+    const visible = sprites(visual).filter((entry) => entry.visible);
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.length).toBeLessThanOrEqual(WORLD_INVIS_PARTICLE_POOL);
+    for (const sprite of visible) {
+      const point = worldPosition(sprite);
+      expect(Math.abs(point.x)).toBeGreaterThan(1);
+      expect(Math.hypot(point.x - visual.root.position.x, point.z))
+        .toBeLessThanOrEqual(WORLD_INVIS_SPAWN_RADIUS + WORLD_INVIS_MAX_DRIFT + 0.08);
+    }
+    created.dispose();
   });
 });

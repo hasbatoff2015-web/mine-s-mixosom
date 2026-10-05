@@ -9,6 +9,11 @@ import { MinecraftSkinRegistry } from '../src/rendering/player/MinecraftSkin';
 import { ItemVisualFactory } from '../src/rendering/ItemVisualFactory';
 import { PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
 import { PlayerVisual } from '../src/rendering/player/PlayerVisual';
+import {
+  WORLD_INVIS_MAX_DRIFT,
+  WORLD_INVIS_RELOCATE_RESET_DISTANCE,
+  WORLD_INVIS_SPAWN_RADIUS,
+} from '../src/rendering/InvisibilityWorldParticles';
 import { VoxelWorld } from '../src/world/World';
 import { ItemId } from '../src/items';
 
@@ -179,6 +184,74 @@ describe('remote player view presentation', () => {
     }
     view.interpolate(28 * REMOTE_TICK_MS, 1 / 20, 1);
     expect(visual.rig.rightLeg.rotation.x).not.toBe(0);
+    view.dispose();
+    geometries.dispose();
+    items.dispose();
+    skins.dispose();
+  });
+
+  it('keeps remote swirls on the rendered path instead of the moving body', () => {
+    const skins = new MinecraftSkinRegistry();
+    const geometries = new PlayerSkinGeometryCache();
+    const items = new ItemVisualFactory();
+    const visual = new PlayerVisual(skins, geometries, items, DEFAULT_PLAYER_APPEARANCE);
+    const view = new RemotePlayerView(remoteInfo, { visual, world: new VoxelWorld('remote-invis-trail') }, 0);
+    const push = (tick: number, x: number): void => {
+      view.applySnapshot(snapshot({
+        x,
+        y: 70,
+        z: 0,
+        yaw: 0,
+        pitch: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        invisible: true,
+      }), tick * REMOTE_TICK_MS, tick);
+    };
+    for (let tick = 1; tick <= 12; tick += 1) push(tick, 0);
+    view.interpolate(12 * REMOTE_TICK_MS, 0.05);
+    expect(visual.invisibilityParticles.active).toBe(true);
+    const sprite = visual.invisibilityParticles.group.children.find((child): child is THREE.Sprite => (
+      child instanceof THREE.Sprite && child.visible
+    ));
+    expect(sprite).toBeTruthy();
+    const origin = sprite!.getWorldPosition(new THREE.Vector3());
+    const startX = view.group.position.x;
+    let rendered = startX;
+    for (let step = 1; step <= 20 && rendered - startX < 1.6; step += 1) {
+      push(12 + step, Math.min(2, step * 0.2));
+      view.interpolate((12 + step) * REMOTE_TICK_MS, 0.05);
+      rendered = view.group.position.x;
+    }
+    expect(rendered - startX).toBeGreaterThan(1.2);
+    expect(rendered - startX).toBeLessThan(WORLD_INVIS_RELOCATE_RESET_DISTANCE);
+    const stayed = sprite!.getWorldPosition(new THREE.Vector3());
+    expect(Math.abs(stayed.x - origin.x)).toBeLessThan(0.25);
+    expect(Math.abs(stayed.x - view.group.position.x)).toBeGreaterThan(0.8);
+
+    const seen = new Set(visual.invisibilityParticles.group.children
+      .filter((child) => child instanceof THREE.Sprite && child.visible)
+      .map((child) => child.uuid));
+    let fresh: THREE.Sprite | undefined;
+    for (let extra = 1; extra <= 16 && !fresh; extra += 1) {
+      const tick = 40 + extra;
+      push(tick, 2);
+      view.interpolate(tick * REMOTE_TICK_MS, 0.2);
+      fresh = visual.invisibilityParticles.group.children.find((child): child is THREE.Sprite => (
+        child instanceof THREE.Sprite && child.visible && !seen.has(child.uuid)
+      ));
+    }
+    expect(fresh).toBeTruthy();
+    const freshWorld = fresh!.getWorldPosition(new THREE.Vector3());
+    expect(Math.hypot(freshWorld.x - view.group.position.x, freshWorld.z - view.group.position.z))
+      .toBeLessThanOrEqual(WORLD_INVIS_SPAWN_RADIUS + WORLD_INVIS_MAX_DRIFT + 0.08);
+
+    view.reset(remoteInfo);
+    view.interpolate(10_000, 0.05);
+    expect(visual.invisibilityParticles.active).toBe(false);
+    expect(visual.invisibilityParticles.activeCount).toBe(0);
+
     view.dispose();
     geometries.dispose();
     items.dispose();
