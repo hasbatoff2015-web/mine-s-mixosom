@@ -57,7 +57,7 @@ Zombie, skeleton и spider бьют вдвое слабее и в 1.5 раза �
 
 Точечно PASS: `tests/hostile-mob-balance.test.ts`, `tests/creeper-fuse-network.test.ts`, `tests/inventory-vegetation-tint.test.ts`, плюс соседние `entities`, `item-rendering`, `vegetation-lighting`, `icon-scroll-fixes`.
 
-Полный `npm test` — в этом же проходе, результат дописывается после прогона.
+Полный `npm test`: 3122 passed, 25 failed, 1 skipped. Те же падения воспроизводятся на `main` без этого патча: minecart geometry cache, sword-blocking `Game.tick`, fence jump, `readMeshSkyLight` в stub overlay, pet hit timing, bow draw ticks, нет Pillow, в `public/audio/sfx` 27 файлов вместо 26. Тест скелета в полном прогоне один раз не попал стрелой и отдельно проходит.
 
 ## Visual QA
 
