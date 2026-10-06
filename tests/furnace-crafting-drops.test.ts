@@ -307,6 +307,37 @@ describe('furnace smelting, lava fuel and progress', () => {
     expect(inventory.getSlot(0)).toBeNull();
   });
 
+  it('does not apply legacy cookTime to an input when cookInputId was never stored', () => {
+    const saved = new VoxelWorld('legacy-cook-save');
+    const stored = saved.getFurnace(4, 5, 6);
+    stored.slots = [null, createItemStack(ItemId.Coal), null];
+    stored.burnTime = 500;
+    stored.burnTotal = 1_600;
+    stored.cookTime = 199;
+    delete stored.cookInputId;
+    const snapshot = JSON.parse(JSON.stringify({
+      timeOfDay: 1_000,
+      modifications: {},
+      chests: {},
+      furnaces: Object.fromEntries(saved.furnaces),
+      blockStates: {},
+      signs: {},
+    })) as Parameters<VoxelWorld['restore']>[0];
+    expect(snapshot.furnaces['4,5,6']).not.toHaveProperty('cookInputId');
+
+    const world = new VoxelWorld('legacy-cook');
+    world.restore(snapshot);
+    const furnace = world.getFurnace(4, 5, 6);
+    expect(furnace.cookInputId).toBeUndefined();
+    expect(furnace.cookTime).toBe(199);
+    furnace.slots[0] = createItemStack('gold_ore');
+    world.tick();
+    expect(furnace.slots[2]).toBeNull();
+    expect(furnace.slots[0]).toEqual(createItemStack('gold_ore'));
+    expect(furnace.cookTime).toBe(1);
+    expect(furnace.cookInputId).toBe('gold_ore');
+  });
+
   it('resets cook progress when the input changes and does not light with nothing to cook', () => {
     const world = new VoxelWorld('cook-edges');
     const furnace = world.getFurnace(8, 8, 8);

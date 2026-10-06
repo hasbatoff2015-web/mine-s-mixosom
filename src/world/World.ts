@@ -178,7 +178,10 @@ export interface FurnaceState {
   burnTime: number;
   burnTotal: number;
   cookTime: number;
-  /** Item the current cookTime belongs to. Missing on older saves. */
+  /**
+   * Item the current cookTime belongs to.
+   * Missing on older saves: that cookTime is not valid for whatever is in the input slot.
+   */
   cookInputId?: string;
 }
 
@@ -1716,7 +1719,10 @@ export class VoxelWorld {
       const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
       const inputId = input?.itemId;
-      if (furnace.cookInputId !== undefined && furnace.cookInputId !== inputId) furnace.cookTime = 0;
+      const legacyCook = furnace.cookInputId === undefined && furnace.cookTime > 0;
+      if (legacyCook || (furnace.cookInputId !== undefined && furnace.cookInputId !== inputId)) {
+        furnace.cookTime = 0;
+      }
       furnace.cookInputId = inputId;
 
       const recipe = input ? findSmeltingRecipe(input.itemId) : undefined;
