@@ -85,7 +85,7 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
   zombie: Object.freeze({
     kind: 'zombie', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,
     eyeHeight: 1.62, speed: 2.3, detectionRange: 16, attackRange: 1.45,
-    attackDamage: 3, attackCooldownSeconds: 1,
+    attackDamage: 1.5, attackCooldownSeconds: 1.5,
     loot: Object.freeze([
       { itemId: ItemId.IronIngot, min: 1, max: 1, chance: 0.025 },
       { itemId: ItemId.Carrot, min: 1, max: 1, chance: 0.0125 },
@@ -95,7 +95,7 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
   skeleton: Object.freeze({
     kind: 'skeleton', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,
     eyeHeight: 1.62, speed: 2.35, detectionRange: 18, attackRange: 14,
-    attackDamage: 4, attackCooldownSeconds: 1.6,
+    attackDamage: 2, attackCooldownSeconds: 2.4,
     loot: Object.freeze([
       { itemId: ItemId.Arrow, min: 0, max: 2 },
       { itemId: ItemId.Bone, min: 0, max: 2 },
@@ -111,7 +111,7 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
   spider: Object.freeze({
     kind: 'spider', disposition: 'hostile', maxHealth: 16, width: 1.4, height: 0.9,
     eyeHeight: 0.65, speed: 3.2, detectionRange: 16, attackRange: 1.55,
-    attackDamage: 2, attackCooldownSeconds: 0.9,
+    attackDamage: 1, attackCooldownSeconds: 1.35,
     loot: Object.freeze([{ itemId: ItemId.String, min: 0, max: 2 }]),
   }),
 });

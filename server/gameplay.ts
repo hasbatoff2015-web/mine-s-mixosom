@@ -676,6 +676,7 @@ export class ServerGameplay {
         ...(mob.sitting ? { sitting: true } : {}),
         ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
         ...(mob.angry ? { angry: true } : {}),
+        ...(mob.kind === 'creeper' ? { fuse: mob.fuseSeconds } : {}),
       });
     }
     const items: EntitySnapshot[] = [];

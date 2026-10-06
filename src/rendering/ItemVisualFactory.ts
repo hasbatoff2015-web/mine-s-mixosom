@@ -31,6 +31,7 @@ import {
 } from './GeneratedItemGeometry';
 import { TextureAtlas, type AtlasTile, BED_SHEET_KEY } from './TextureAtlas';
 import { bindEntityLightReceiver, createEntityMaterial } from './worldLighting';
+import { vegetationTextureTint, WHITE_TINT } from './vegetationTint';
 import { CHEST_TEXTURE_KEY, chestTextureKeyForBlock, createClosedChestGeometry } from './chestModel';
 
 interface AtlasSource {
@@ -553,12 +554,17 @@ export class ItemVisualFactory {
     const positions: number[] = [];
     const normals: number[] = [];
     const uvs: number[] = [];
+    const colors: number[] = [];
     const indices: number[] = [];
+    let vegetation = false;
     for (const face of CUBE_FACES) {
       const base = positions.length / 3;
+      const tint = this.faceTint(block, face.texture);
+      if (tint !== WHITE_TINT) vegetation = true;
       for (const corner of face.corners) {
         positions.push(corner[0] - 0.5, corner[1] - 0.5, corner[2] - 0.5);
         normals.push(...face.normal);
+        colors.push(tint[0], tint[1], tint[2]);
       }
       const tile = this.atlas?.tile(this.textureForFace(block, face.texture)) ?? FULL_TILE;
       uvs.push(tile.u0, tile.v0, tile.u1, tile.v0, tile.u1, tile.v1, tile.u0, tile.v1);
@@ -568,24 +574,43 @@ export class ItemVisualFactory {
     geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
     geometry.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
     geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+    if (vegetation) geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
     geometry.setIndex(indices);
     geometry.computeBoundingSphere();
     this.blockGeometries.set(block.id, geometry);
     return geometry;
   }
 
+  private faceTint(
+    block: BlockDefinition,
+    face: CubeFace['texture'],
+  ): readonly [number, number, number] {
+    return vegetationTextureTint(block.biomeTint, this.textureForFace(block, face));
+  }
+
+  private blockUsesVegetationTint(block: BlockDefinition): boolean {
+    if (block.renderShape !== 'cube') return false;
+    return CUBE_FACES.some((face) => this.faceTint(block, face.texture) !== WHITE_TINT);
+  }
+
   private blockMaterial(block: BlockDefinition): THREE.MeshBasicMaterial {
-    const layer = block.renderLayer;
+    const vegetation = this.blockUsesVegetationTint(block);
+    const layer = vegetation ? `${block.renderLayer}:vegetation-tint` : block.renderLayer;
     let material = this.blockMaterials.get(layer);
     if (material) return material;
     const map = this.atlas?.texture ?? this.fallbackTexture;
     material = createEntityMaterial({
       map,
-      alphaTest: layer === 'cutout' ? 0.42 : 0,
-      transparent: layer === 'translucent',
-      opacity: layer === 'translucent' ? 0.72 : 1,
-      depthWrite: layer !== 'translucent',
+      alphaTest: block.renderLayer === 'cutout' ? 0.42 : 0,
+      transparent: block.renderLayer === 'translucent',
+      opacity: block.renderLayer === 'translucent' ? 0.72 : 1,
+      depthWrite: block.renderLayer !== 'translucent',
     });
+    if (vegetation) {
+      material.vertexColors = true;
+      const baseKey = material.customProgramCacheKey;
+      material.customProgramCacheKey = () => `${baseKey()}:vegetation-tint`;
+    }
     this.blockMaterials.set(layer, material);
     return material;
   }

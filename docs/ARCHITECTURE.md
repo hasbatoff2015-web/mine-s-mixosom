@@ -1,5 +1,13 @@
 # Архитектура
 
+## Hostile balance, creeper fuse, inventory tint — 2026-10-06
+
+Hostile damage and attack timing stay on `MobDefinition`. Zombie, skeleton and spider use half the previous `attackDamage` and `attackCooldownSeconds * 1.5`. Melee and the skeleton arrow both read those fields. Creeper `attackDamage` stays 0; the explosion is still the 1.5s fuse in `MobManager.updateCreeper`. Wolf and passive definitions are unchanged.
+
+Online clients do not simulate creeper fuse. `ServerGameplay.snapshotsNear` copies `mob.fuseSeconds` onto the existing `EntitySnapshot.fuse` for creepers, including 0. `applyEntitySnapshots` writes that number to `MobEntity.fuseSeconds` and treats a missing or non-finite value as 0. The render frame already calls `interpolateVisuals` → `syncMob`. `creeperFuseVisualScale` is that same swell: progress `fuseSeconds / 1.5`, vertical scale `1 + progress * 0.08`, and the horizontal pulse. TNT and minecart snapshots still use `fuse` for their own timers.
+
+Inventory cubes are `ItemVisualFactory.blockGeometry`. A face is tinted only when `vegetationTextureTint` says so — the same rule as `ChunkMesher.tintFor`. Icons have no column biome, so the tint is plains (`biomeGrassTint(0)`). Grass-block sides and bottoms stay white. The color lives on the block's cached geometry. The shared layer material is not recolored. Vegetation cubes take a separate cache key `${renderLayer}:vegetation-tint` with `vertexColors`. `prepareSpecialIconPreview` multiplies an existing vertex color by the GUI face shade instead of replacing it.
+
 ## Private friend chat — 2026-10-05
 
 `DirectMessageService` is separate from `FriendsService`. It may call `isFriend`, and every send and history request does that again. The client sends `direct_message_action` with `send` or `history`, a friend id, and text or `beforeSeq`. A send may also carry optional `clientRequestId`. That token is echoed only on the sender's `append` or `error` so the composer can match one intent. It is not a message id, it is not stored, and the recipient copy omits it. The server still fills sender id, message id, `seq`, `createdAt`, and the normalized text. The composer clears a draft only when that request's draft revision is still current. There is no client `mark_read`: opening `friend-chat` marks that conversation read through the latest seq, and an append does the same when the recipient already has that exact chat open.

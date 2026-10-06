@@ -58,6 +58,9 @@ import { fluidCellGeometry } from '../world/fluidSurface';
 import { fireBlockPlanes, FIRE_PLANE_COUNT } from './fireGeometry';
 import { sampleSurfaceVertexLight, type SurfaceLight } from '../world/lightSampling';
 import { attachedStemDirection, cropAge, cropTextureStage, isStemBlock } from '../farming';
+import { vegetationTextureTint, WHITE_TINT } from './vegetationTint';
+
+export { biomeGrassTint } from './vegetationTint';
 
 export { leverHandleAngle } from './specialBlockGeometry';
 export { bakedVertexLight } from './worldLighting';
@@ -140,12 +143,6 @@ const resetBuffers = (buffers: GeometryBuffers): void => {
   buffers.faceShades.length = 0;
   buffers.emissions.length = 0;
 };
-const WHITE_TINT = [1, 1, 1] as const;
-const PLAINS_TINT = [0.54, 0.9, 0.42] as const;
-const FOREST_TINT = [0.42, 0.78, 0.36] as const;
-const DESERT_TINT = [0.74, 0.78, 0.4] as const;
-const SNOWY_TINT = [0.52, 0.72, 0.5] as const;
-
 /** Lighting normal written into vegetation quads so they sample/share the grass-top profile. */
 export const VEGETATION_LIGHTING_NORMAL = [0, 1, 0] as const;
 
@@ -249,13 +246,6 @@ function ladderFrontCorners(
         corners: [[x + 1, y, pz], [x, y, pz], [x, y + 1, pz], [x + 1, y + 1, pz]],
       };
   }
-}
-
-export function biomeGrassTint(biome: number): readonly [number, number, number] {
-  if (biome === 1) return FOREST_TINT;
-  if (biome === 2) return DESERT_TINT;
-  if (biome === 3) return SNOWY_TINT;
-  return PLAINS_TINT;
 }
 
 export interface MeshedChunk {
@@ -1565,10 +1555,7 @@ export class ChunkMesher {
     texture: string,
     biome: number,
   ): readonly [number, number, number] {
-    if (definition.biomeTint !== 'grass'
-      && !texture.includes('grass_block_top')
-      && !texture.includes('leaves')) return WHITE_TINT;
-    return biomeGrassTint(biome);
+    return vegetationTextureTint(definition.biomeTint, texture, biome);
   }
 
   private cacheColumns(chunk: Chunk, world: VoxelWorld): void {

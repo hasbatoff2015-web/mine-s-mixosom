@@ -16,13 +16,18 @@ export function specialIconFaceShade(nx: number, ny: number, nz: number): number
 function applyFaceVertexColors(geometry: THREE.BufferGeometry): void {
   const normal = geometry.getAttribute('normal');
   if (!normal) return;
+  const existing = geometry.getAttribute('color');
+  const hasTint = existing !== undefined && existing.count === normal.count && existing.itemSize >= 3;
   const colors = new Float32Array(normal.count * 3);
   for (let index = 0; index < normal.count; index += 1) {
     const shade = specialIconFaceShade(normal.getX(index), normal.getY(index), normal.getZ(index));
     const offset = index * 3;
-    colors[offset] = shade;
-    colors[offset + 1] = shade;
-    colors[offset + 2] = shade;
+    const red = hasTint ? existing.getX(index) : 1;
+    const green = hasTint ? existing.getY(index) : 1;
+    const blue = hasTint ? existing.getZ(index) : 1;
+    colors[offset] = red * shade;
+    colors[offset + 1] = green * shade;
+    colors[offset + 2] = blue * shade;
   }
   geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
 }
