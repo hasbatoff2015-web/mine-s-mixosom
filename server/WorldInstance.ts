@@ -147,11 +147,11 @@ import { HologramNetwork, createHologramRecord, toNetworkHologram } from './serv
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
 import {
   DUEL_COUNTDOWN_HOLOGRAM,
+  DUEL_COUNTDOWN_HOLOGRAM_SIZE,
   DUEL_HOLOGRAM_RANGE,
   DUEL_TELEPORT_DENIED,
   type DuelPose,
 } from '../shared/duels';
-import { HOLOGRAM_SIZE_MAX } from '../shared/hologramStyle';
 import type { NotificationCategory } from '../shared/notifications';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
@@ -973,6 +973,7 @@ export class WorldInstance {
       runtime: this.createDuelRuntime(),
     });
     this.gameplay.blocksManualItemDrop = (playerId) => this.duels.blocksManualDrop(playerId);
+    this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
     this.gameplay.onDeathLoot = (player, ids) => {
       this.duels.finalizeDeath(player.id, ids);
     };
@@ -981,7 +982,7 @@ export class WorldInstance {
     ));
     this.rtpSessions.setExternalDeny((playerId) => this.duels.externalTeleportError(playerId));
     this.events.on('playerDamage', (event) => {
-      if (this.duels.shouldCancelPlayerDamage(event.playerId, event.attackerId)) event.cancel();
+      if (this.duels.shouldCancelPlayerDamage(event.playerId, event.attackerId, event.cause)) event.cancel();
     });
     this.events.on('itemPickup', (event) => {
       if (!this.duels.allowsPickup(event.playerId, event.entityId)) event.cancel();
@@ -2337,6 +2338,7 @@ export class WorldInstance {
         duelNearby: view.nearby,
         duelArenaBusy: view.arenaBusy,
         duelArenaConfigured: view.arenaConfigured,
+        duelAvailable: view.available,
         duelCooldownMs: view.cooldownMs,
         ...(view.outgoing ? { duelOutgoing: view.outgoing } : {}),
       };
@@ -4267,6 +4269,7 @@ export class WorldInstance {
           inFire: player.controller.inFire,
           sprinting: player.controller.sprinting,
           swimming: player.controller.inWater,
+          preventDamage: this.duels.suppressesIncomingDamage(player.id),
         });
         this.flushHealthIfDeadThenRespawn(player);
       }
@@ -4385,6 +4388,10 @@ export class WorldInstance {
         const pendingTicks = this.tickNumber - pending.receivedServerTick;
         if (pendingTicks > MAX_PENDING_BOW_TICKS) {
           this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'pending_timeout'));
+          continue;
+        }
+        if (this.duels.blocksCombatIntent(player.id, 'projectile')) {
+          this.sendBowActionResult(player, action, this.bowFailure(pending, 'duel', 'duel'));
           continue;
         }
         const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
@@ -4618,6 +4625,7 @@ export class WorldInstance {
       clearCountdownHologram: () => {
         this.holograms.removeTransient(DUEL_COUNTDOWN_HOLOGRAM);
       },
+      emitFightStartBurst: (x, y, z) => this.emitDuelFightStartBurst(x, y, z),
     };
   }
 
@@ -4727,10 +4735,27 @@ export class WorldInstance {
       lines: [text],
       range: DUEL_HOLOGRAM_RANGE,
     });
-    record.size = HOLOGRAM_SIZE_MAX;
+    record.font = 'display';
+    record.style = 'normal';
+    record.size = DUEL_COUNTDOWN_HOLOGRAM_SIZE;
     record.backgroundEnabled = false;
     record.billboard = true;
+    record.interactive = false;
     this.holograms.upsertTransient(record);
+  }
+
+  private emitDuelFightStartBurst(x: number, y: number, z: number): void {
+    const message = { type: 'duel_effect' as const, effect: 'fight_start_burst' as const, x, y, z };
+    const rangeSq = DUEL_HOLOGRAM_RANGE * DUEL_HOLOGRAM_RANGE;
+    const participants = new Set(this.duels.participantIds());
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const dx = player.controller.position.x - x;
+      const dy = player.controller.position.y - y;
+      const dz = player.controller.position.z - z;
+      const near = dx * dx + dy * dy + dz * dz <= rangeSq;
+      if (participants.has(player.id) || near) this.sendTo(player, message);
+    }
   }
 
   private freezeDuelMovement(player: ServerPlayer): void {

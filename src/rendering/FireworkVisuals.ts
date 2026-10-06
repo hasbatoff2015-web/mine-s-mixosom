@@ -117,17 +117,33 @@ export class FireworkVisuals {
     (this.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
   }
 
-  private burst(x: number, y: number, z: number): void {
+  /**
+   * Particle burst only. Defaults match a finished firework rocket.
+   * velocityScale and lifeScale multiply the ordinary speed and lifetime.
+   */
+  spawnBurst(
+    x: number,
+    y: number,
+    z: number,
+    options: { readonly velocityScale?: number; readonly lifeScale?: number } = {},
+  ): void {
+    const velocityScale = options.velocityScale ?? 1;
+    const lifeScale = options.lifeScale ?? 1;
     const accent = chooseFireworkBurstColor();
     for (let i = 0; i < 88; i += 1) {
       const angle = i * Math.PI * (3 - Math.sqrt(5));
       const elevation = 1 - 2 * (i + 0.5) / 88;
       const horizontal = Math.sqrt(1 - elevation * elevation);
-      const speed = 2.6 + (i % 4) * 0.18;
+      const speed = (2.6 + (i % 4) * 0.18) * velocityScale;
+      const life = (1.1 + (i % 3) * 0.13) * lifeScale;
       this.addParticle(x, y, z, Math.cos(angle) * horizontal * speed,
-        elevation * speed, Math.sin(angle) * horizontal * speed, 1.1 + (i % 3) * 0.13,
+        elevation * speed, Math.sin(angle) * horizontal * speed, life,
         i % 5 === 0 ? accent : 0xffffff);
     }
+  }
+
+  private burst(x: number, y: number, z: number): void {
+    this.spawnBurst(x, y, z);
   }
 
   private addParticle(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, color: number): void {

@@ -9,8 +9,13 @@ export const DUEL_LOOT_WINDOW_MS = 15_000;
 export const DUEL_COUNTDOWN_MS = 5_000;
 export const DUEL_FIGHT_BANNER_MS = 800;
 export const DUEL_COUNTDOWN_HOLOGRAM = 'duel-countdown';
+export const DUEL_COUNTDOWN_HOLOGRAM_SIZE = 3.2;
 export const DUEL_HOLOGRAM_RANGE = 48;
 export const DUEL_HOLOGRAM_Y_OFFSET = 2.2;
+export const DUEL_START_BURST_Y_OFFSET = 0.75;
+export const DUEL_BURST_VELOCITY_SCALE = 0.5;
+export const DUEL_BURST_LIFE_SCALE = 0.75;
+export const DUEL_COMBAT_CAUSES = ['melee', 'arrow', 'projectile'] as const;
 
 export const DUEL_TELEPORT_DENIED = 'Телепортация недоступна во время дуэли.';
 export const DUEL_ARENA_BUSY = 'Арена занята.';
@@ -18,6 +23,7 @@ export const DUEL_TOO_FAR = 'Игрок слишком далеко.';
 export const DUEL_CROSS_INVITE = 'У вас уже есть входящий вызов от этого игрока.';
 export const DUEL_ARENA_UNCONFIGURED = 'Арена не настроена.';
 export const DUEL_STARTED = 'Дуэль началась!';
+export const DUEL_UNAVAILABLE = 'Дуэли временно недоступны.';
 
 export function duelCooldownMessage(remainingMs: number): string {
   const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
@@ -88,6 +94,7 @@ export interface DuelNearbyRow {
 
 export interface DuelMenuView {
   readonly stats: DuelMenuStats;
+  readonly available: boolean;
   readonly arenaConfigured: boolean;
   readonly arenaBusy: boolean;
   readonly cooldownMs: number;
@@ -132,6 +139,18 @@ export function duelHologramPosition(
     y: Math.max(spawn1.y, spawn2.y) + DUEL_HOLOGRAM_Y_OFFSET,
     z: (spawn1.z + spawn2.z) / 2,
   };
+}
+
+export function duelStartBurstPosition(
+  spawn1: { readonly x: number; readonly y: number; readonly z: number },
+  spawn2: { readonly x: number; readonly y: number; readonly z: number },
+): { x: number; y: number; z: number } {
+  const hologram = duelHologramPosition(spawn1, spawn2);
+  return { x: hologram.x, y: hologram.y + DUEL_START_BURST_Y_OFFSET, z: hologram.z };
+}
+
+export function isDuelCombatCause(cause: string | undefined): boolean {
+  return cause !== undefined && (DUEL_COMBAT_CAUSES as readonly string[]).includes(cause);
 }
 
 export function duelBlockDistance(

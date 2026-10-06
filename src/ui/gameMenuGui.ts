@@ -488,11 +488,19 @@ export function menuRatingHtml(state: ServerMenuMessage, escape: (value: string)
 export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   const wins = state.duelStats?.wins ?? 0;
   const losses = state.duelStats?.losses ?? 0;
+  const available = state.duelAvailable !== false;
   const configured = state.duelArenaConfigured !== false;
   const busy = state.duelArenaBusy === true;
   const cooldownMs = state.duelCooldownMs ?? 0;
-  const arenaClass = !configured ? 'is-missing' : busy ? 'is-busy' : 'is-free';
-  const arenaText = !configured ? 'Арена не настроена.' : busy ? '● Арена занята' : '● Арена свободна';
+  const arenaClass = !available || !configured ? 'is-missing' : busy ? 'is-busy' : 'is-free';
+  const arenaText = !available
+    ? 'Дуэли временно недоступны.'
+    : !configured
+      ? 'Арена не настроена.'
+      : busy
+        ? '● Арена занята'
+        : '● Арена свободна';
+  const actionsLocked = !available || busy || !configured || cooldownMs > 0;
   const cooldown = cooldownMs > 0
     ? `<p class="mc-duel-cooldown">${escape(`Подождите ${Math.max(1, Math.ceil(cooldownMs / 1000))} сек.`)}</p>`
     : '';
@@ -503,8 +511,8 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
         <span class="mc-player-meta mc-duel-score">Счёт: ${row.wins} : ${row.losses}</span>
       </div>
       <span class="mc-menu-row-actions">
-        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-duel-accept="${escape(row.requestId)}"${busy || !configured || cooldownMs > 0 ? ' disabled' : ''}>Принять</button>
-        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-duel-decline="${escape(row.requestId)}">Отклонить</button>
+        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-duel-accept="${escape(row.requestId)}"${actionsLocked ? ' disabled' : ''}>Принять</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-duel-decline="${escape(row.requestId)}"${!available ? ' disabled' : ''}>Отклонить</button>
       </span>
     </div>`).join('');
   const incoming = (state.duelIncoming ?? []).length === 0 ? '' : `

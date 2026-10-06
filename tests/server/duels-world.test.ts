@@ -11,12 +11,15 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import {
   DUEL_COUNTDOWN_HOLOGRAM,
+  DUEL_COUNTDOWN_HOLOGRAM_SIZE,
   DUEL_COUNTDOWN_MS,
   DUEL_LOOT_WINDOW_MS,
   DUEL_MATCH_DURATION_MS,
   DUEL_TELEPORT_DENIED,
+  DUEL_UNAVAILABLE,
+  duelStartBurstPosition,
 } from '../../shared/duels';
-import type { ClientInventoryActionMessage, ClientInputMessage, ServerMenuMessage } from '../../shared/protocol';
+import { parseServerMessage, type ClientInventoryActionMessage, type ClientInputMessage, type ServerMenuMessage } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-duels-'));
@@ -48,6 +51,17 @@ function testConfig(dataDir: string) {
 class MemorySink implements ConnectedSink {
   readonly payloads: unknown[] = [];
   send(payload: unknown): void { this.payloads.push(payload); }
+}
+
+function duelEffects(sink: MemorySink): Array<{ x: number; y: number; z: number; effect?: string }> {
+  const effects: Array<{ x: number; y: number; z: number; effect?: string }> = [];
+  for (const payload of sink.payloads) {
+    const record = payload as { type?: string; effect?: string; x?: number; y?: number; z?: number };
+    if (record.type === 'duel_effect') {
+      effects.push({ effect: record.effect, x: record.x ?? 0, y: record.y ?? 0, z: record.z ?? 0 });
+    }
+  }
+  return effects;
 }
 
 function texts(sink: MemorySink): string[] {
@@ -715,5 +729,214 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     world.duels.onPlayerQuit(ada.player.id);
     expect(world.duels.phaseKind()).toBe('idle');
     expect(world.duels.accept(dan.player.id, waiting).ok).toBe(true);
+  });
+
+  it('sends one fight-start burst at the arena center to participants and nearby spectators', async () => {
+    const { world, clock } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const near = join(world, 'Near');
+    const far = join(world, 'Far');
+    const { spawn1, spawn2 } = arena(world);
+    stand(ada.player, 8.5, 80, 8.5);
+    stand(bob.player, 10.5, 80, 8.5);
+    const started = clock.now();
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
+    expect(world.duels.accept(bob.player.id, world.duels.menu(bob.player.id).incoming[0]!.requestId).ok).toBe(true);
+    const countdown = world.holograms.list().find((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM);
+    expect(countdown).toMatchObject({
+      font: 'display',
+      style: 'normal',
+      size: DUEL_COUNTDOWN_HOLOGRAM_SIZE,
+      backgroundEnabled: false,
+      billboard: true,
+      interactive: false,
+      lines: ['3'],
+    });
+    expect(world.holograms.listRecords().some((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM)).toBe(false);
+    const parsed = parseServerMessage({ type: 'holograms', holograms: world.holograms.list() });
+    expect(parsed).toMatchObject({
+      type: 'holograms',
+      holograms: expect.arrayContaining([
+        expect.objectContaining({
+          name: DUEL_COUNTDOWN_HOLOGRAM,
+          font: 'display',
+          size: 3.2,
+          interactive: false,
+        }),
+      ]),
+    });
+    expect(duelEffects(ada.sink)).toEqual([]);
+    expect(duelEffects(bob.sink)).toEqual([]);
+    clock.advance(1_670);
+    world.duels.tick();
+    expect(world.duels.shownCountdownText()).toBe('2');
+    clock.advance(1_670);
+    world.duels.tick();
+    expect(world.duels.shownCountdownText()).toBe('1');
+    expect(duelEffects(ada.sink)).toEqual([]);
+    expect(duelEffects(near.sink)).toEqual([]);
+    ada.player.controller.teleport([500, 80, 500]);
+    near.player.controller.teleport([25.5, 100, 21.5]);
+    far.player.controller.teleport([400, 80, 400]);
+    clock.set(started + DUEL_COUNTDOWN_MS);
+    world.duels.tick();
+    expect(world.duels.phaseKind()).toBe('fighting');
+    const burst = duelStartBurstPosition(spawn1, spawn2);
+    const expected = [{ effect: 'fight_start_burst', x: burst.x, y: burst.y, z: burst.z }];
+    expect(duelEffects(ada.sink)).toEqual(expected);
+    expect(duelEffects(bob.sink)).toEqual(expected);
+    expect(duelEffects(near.sink)).toEqual(expected);
+    expect(duelEffects(far.sink)).toEqual([]);
+    world.duels.tick();
+    expect(duelEffects(ada.sink)).toEqual(expected);
+    expect(duelEffects(bob.sink)).toEqual(expected);
+    expect(duelEffects(near.sink)).toEqual(expected);
+  });
+
+  it('blocks loot-window damage and restores duels after disable without duplicating listeners', async () => {
+    const { world, clock } = await boot();
+    const damageListeners = world.events.listenerCount('playerDamage');
+    const pickupListeners = world.events.listenerCount('itemPickup');
+    const quitListeners = world.events.listenerCount('playerQuit');
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const cara = join(world, 'Cara');
+    arena(world);
+    stand(ada.player, 8.5, 80, 8.5);
+    stand(bob.player, 10.5, 80, 8.5);
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
+    expect(world.duels.accept(bob.player.id, world.duels.menu(bob.player.id).incoming[0]!.requestId).ok).toBe(true);
+    await world.plugins.reload('duels');
+    await world.plugins.reload('duels');
+    expect(world.events.listenerCount('playerDamage')).toBe(damageListeners);
+    expect(world.events.listenerCount('itemPickup')).toBe(pickupListeners);
+    expect(world.events.listenerCount('playerQuit')).toBe(quitListeners);
+    expect(world.duels.phaseKind()).toBe('idle');
+    expect(world.duels.isEnabled()).toBe(true);
+    expect(world.duels.statsOf(ada.player.id).wins).toBe(0);
+    world.duels.setNow(() => clock.now());
+
+    fight(world, clock, ada.player, bob.player);
+    const fightingMelee = world.events.createPlayerDamage(ada.player.id, 4, 'melee');
+    world.events.emit('playerDamage', fightingMelee);
+    expect(fightingMelee.cancelled).toBe(true);
+    const fightingFall = world.events.createPlayerDamage(ada.player.id, 4, 'fall');
+    world.events.emit('playerDamage', fightingFall);
+    expect(fightingFall.cancelled).toBe(false);
+    expect(ada.player.survival.health).toBe(MAX_HEALTH);
+
+    giveSword(ada.player);
+    ada.player.controller.teleport([20.5, 100, 20.5]);
+    ada.player.controller.yaw = Math.PI;
+    ada.player.controller.pitch = 0;
+    bob.player.controller.teleport([20.5, 100, 22.5]);
+    bob.player.controller.velocity.set(0, 0, 0);
+    bob.player.inventory.clear();
+    bob.player.inventory.setSlot(0, stack('dirt', 2));
+    world.attack(ada.player);
+    expect(world.duels.phaseKind()).toBe('loot');
+    const ids = world.duels.trackedDropIds();
+    expect(ids.length).toBeGreaterThan(0);
+
+    ada.player.controller.teleport([20.5, 100, 20.5]);
+    ada.player.controller.velocity.set(0, 0, 0);
+    ada.player.survival.health = 12;
+    cara.player.controller.teleport([20.5, 100, 21.6]);
+    cara.player.controller.velocity.set(0, 0, 0);
+    giveSword(cara.player);
+    cara.player.controller.yaw = 0;
+    cara.player.controller.pitch = 0;
+    const incoming = world.gameplay.attack(cara.player, [ada.player, cara.player]);
+    expect(incoming.result).toBe('blocked');
+    expect(ada.player.survival.health).toBe(12);
+    const mobMelee = world.events.createPlayerDamage(ada.player.id, 6, 'melee');
+    world.events.emit('playerDamage', mobMelee);
+    expect(mobMelee.cancelled).toBe(true);
+    const mobArrow = world.events.createPlayerDamage(ada.player.id, 6, 'arrow');
+    world.events.emit('playerDamage', mobArrow);
+    expect(mobArrow.cancelled).toBe(true);
+    const mobProjectile = world.events.createPlayerDamage(ada.player.id, 6, 'projectile');
+    world.events.emit('playerDamage', mobProjectile);
+    expect(mobProjectile.cancelled).toBe(true);
+    const lootFall = world.events.createPlayerDamage(ada.player.id, 6, 'fall');
+    world.events.emit('playerDamage', lootFall);
+    expect(lootFall.cancelled).toBe(true);
+    expect(ada.player.survival.health).toBe(12);
+
+    const caraHealth = cara.player.survival.health;
+    giveSword(ada.player);
+    ada.player.controller.teleport([20.5, 100, 20.5]);
+    ada.player.controller.yaw = Math.PI;
+    ada.player.controller.pitch = 0;
+    expect(world.duels.blocksCombatIntent(ada.player.id, 'melee')).toBe(true);
+    expect(world.duels.blocksCombatIntent(ada.player.id, 'projectile')).toBe(true);
+    world.attack(ada.player);
+    const outgoing = world.gameplay.attack(ada.player, [ada.player, cara.player]);
+    expect(outgoing.result).toBe('blocked');
+    expect(cara.player.survival.health).toBe(caraHealth);
+    ada.player.inventory.setSlot(0, stack(ItemId.Bow));
+    ada.player.bowUseTicks = 20;
+    expect(world.releaseBow(ada.player, { yaw: Math.PI, pitch: 0, actionSeq: 4, commandSeq: 4 }).ok).toBe(false);
+    expect(world.gameplay.arrows.count).toBe(0);
+
+    for (let step = 0; step < 6; step += 1) world.gameplay.drops.update(0.25);
+    const loot = world.gameplay.drops.serialize().find((entry) => ids.includes(entry.id));
+    expect(loot).toBeTruthy();
+    cara.player.inventory.clear();
+    cara.player.controller.teleport([loot!.position[0], loot!.position[1], loot!.position[2]]);
+    world.gameplay.collectFor(cara.player);
+    expect(cara.player.inventory.count('dirt')).toBe(0);
+    ada.player.controller.teleport([loot!.position[0], loot!.position[1], loot!.position[2]]);
+    world.gameplay.collectFor(ada.player);
+    expect(ada.player.inventory.count('dirt')).toBeGreaterThan(0);
+
+    ada.player.controller.teleport([20.5, 100, 20.5]);
+    ada.player.controller.velocity.set(0, 0, 0);
+    ada.player.survival.health = 12;
+    ada.player.survival.hunger = 0;
+    ada.player.survival.saturation = 0;
+    ada.player.survival.ignite(80);
+    for (let step = 0; step < 25; step += 1) world.tick();
+    expect(ada.player.survival.health).toBe(12);
+    expect(world.duels.phaseKind()).toBe('loot');
+
+    clock.advance(DUEL_LOOT_WINDOW_MS);
+    world.duels.tick();
+    expect(world.duels.phaseKind()).toBe('idle');
+    expect(world.gameplay.drops.serialize().some((entry) => ids.includes(entry.id))).toBe(false);
+    expect(ada.player.controller.position.x).toBeCloseTo(world.spawn[0], 3);
+    expect(ada.player.controller.position.z).toBeCloseTo(world.spawn[2], 3);
+    expect(world.duels.suppressesIncomingDamage(ada.player.id)).toBe(false);
+    const after = world.events.createPlayerDamage(ada.player.id, 4, 'melee');
+    world.events.emit('playerDamage', after);
+    expect(after.cancelled).toBe(false);
+    stand(ada.player, 20.5, 100, 20.5);
+    ada.player.survival.health = 12;
+    ada.player.survival.hunger = 0;
+    ada.player.survival.saturation = 0;
+    ada.player.survival.ignite(80);
+    for (let step = 0; step < 25; step += 1) world.tick();
+    expect(ada.player.survival.health).toBeLessThan(12);
+
+    await world.plugins.disable('duels');
+    expect(world.duels.isEnabled()).toBe(false);
+    world.openGameMenu(ada.player.id, 'duels');
+    world.handleMenuAction(ada.player, {
+      type: 'menu_action',
+      action: 'duel_challenge',
+      playerId: bob.player.id,
+    });
+    const blocked = lastMenu(ada.sink);
+    expect(blocked?.duelAvailable).toBe(false);
+    expect(blocked?.message).toBe(DUEL_UNAVAILABLE);
+    expect(world.duels.phaseKind()).toBe('idle');
+    await world.plugins.enable('duels');
+    world.duels.setNow(() => clock.now());
+    expect(world.duels.isEnabled()).toBe(true);
+    expect(world.events.listenerCount('playerDamage')).toBe(damageListeners);
+    stand(ada.player, 8.5, 80, 8.5);
+    stand(bob.player, 10.5, 80, 8.5);
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
   });
 });

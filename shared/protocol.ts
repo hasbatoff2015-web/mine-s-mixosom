@@ -1067,6 +1067,8 @@ export interface NetworkHologram {
   readonly backgroundHeight: number;
   readonly billboard: boolean;
   readonly yaw: number;
+  /** Missing on older payloads means interactive. */
+  readonly interactive?: boolean;
 }
 
 export interface ServerHologramsMessage {
@@ -1460,7 +1462,16 @@ export interface ServerMenuMessage {
   readonly duelNearby?: readonly DuelNearbyRow[];
   readonly duelArenaBusy?: boolean;
   readonly duelArenaConfigured?: boolean;
+  readonly duelAvailable?: boolean;
   readonly duelCooldownMs?: number;
+}
+
+export interface ServerDuelEffectMessage {
+  readonly type: 'duel_effect';
+  readonly effect: 'fight_start_burst';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
 }
 
 export interface NetworkMenuNotifications {
@@ -1562,7 +1573,8 @@ export type ServerMessage =
   | ServerBuyerMessage
   | ServerMenuMessage
   | ServerTradeMessage
-  | ServerDirectMessage;
+  | ServerDirectMessage
+  | ServerDuelEffectMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1633,6 +1645,7 @@ export const SERVER_MESSAGE_TYPES = [
   'menu',
   'trade',
   'direct_message',
+  'duel_effect',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1803,6 +1816,7 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     backgroundHeight: appearance.backgroundHeight,
     billboard: appearance.billboard,
     yaw,
+    interactive: raw.interactive !== false,
   };
 }
 
@@ -2725,6 +2739,11 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         ...(errorText ? { error: errorText } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
       };
+    }
+    case 'duel_effect': {
+      if (raw.effect !== 'fight_start_burst') return { error: 'duel_effect.effect invalid' };
+      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) return { error: 'duel_effect coordinates invalid' };
+      return { type: 'duel_effect', effect: 'fight_start_burst', x: raw.x, y: raw.y, z: raw.z };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

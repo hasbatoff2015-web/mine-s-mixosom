@@ -541,6 +541,20 @@ describe('main menu HUD and chrome', () => {
     }), escape);
     expect(missing).toContain('Арена не настроена.');
     expect(missing).toContain('data-menu-duel-challenge="d" disabled');
+    const unavailable = menuBodyHtml(menu({
+      screen: 'duels',
+      duelAvailable: false,
+      duelArenaConfigured: true,
+      duelArenaBusy: false,
+      duelIncoming: [{ requestId: 'req-3', playerId: 'b', name: 'Bob', wins: 1, losses: 0 }],
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 0, losses: 0, distance: 4, canChallenge: false }],
+    }), escape);
+    expect(unavailable).toContain('Дуэли временно недоступны.');
+    expect(unavailable).toContain('is-missing');
+    expect(unavailable).not.toContain('● Арена свободна');
+    expect(unavailable).toContain('data-menu-duel-accept="req-3" disabled');
+    expect(unavailable).toContain('data-menu-duel-decline="req-3" disabled');
+    expect(unavailable).toContain('data-menu-duel-challenge="d" disabled');
     expect(cssRule('.mc-duel-summary')).toContain('justify-content: space-between;');
     expect(cssRule('.mc-duel-summary')).toContain('var(--mc-ui-scale, 3)');
     expect(cssRule('.mc-duel-incoming')).toContain('max-height: calc(60px * var(--mc-ui-scale, 3));');

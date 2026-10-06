@@ -237,6 +237,8 @@ export class ServerGameplay {
   onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
   /** Reject Q / cursor drops before the inventory mutates. */
   blocksManualItemDrop?: (playerId: string) => boolean;
+  /** Loot-window winner is immune to blast damage. */
+  suppressIncomingDamage?: (playerId: string) => boolean;
   private pendingUseReject: string | undefined;
   private lastVehicleEnterReject: string | undefined;
   maxTickMs = 0;
@@ -1765,6 +1767,7 @@ export class ServerGameplay {
   ): void {
     for (const player of players) {
       if (player.gamemode !== 'survival') continue;
+      if (this.suppressIncomingDamage?.(player.id)) continue;
       const dx = player.controller.position.x - originX;
       const dy = player.controller.position.y + player.controller.height * 0.5 - originY;
       const dz = player.controller.position.z - originZ;

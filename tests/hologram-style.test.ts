@@ -128,6 +128,72 @@ describe('hologram style serialization', () => {
     })).toEqual({ ok: false, error: 'hologram lines invalid' });
     expect(clampHologramSize(9)).toBe(HOLOGRAM_SIZE_MAX);
     expect(clampHologramSize(0.01)).toBe(HOLOGRAM_SIZE_MIN);
+    expect(HOLOGRAM_SIZE_DEFAULT).toBe(1);
+    expect(HOLOGRAM_SIZE_MAX).toBe(3.2);
+    expect(parseHologramAppearanceStrict({
+      lines: ['3'],
+      font: 'display',
+      size: 3.2,
+      style: 'normal',
+    }).ok).toBe(true);
+    expect(parseHologramAppearanceStrict({
+      lines: ['3'],
+      font: 'display',
+      size: 3.3,
+      style: 'normal',
+    })).toEqual({ ok: false, error: 'hologram size invalid' });
+    expect(clampHologramSize(2.5)).toBe(2.5);
+    expect(clampHologramSize(3.2)).toBe(3.2);
+  });
+
+  it('keeps missing interactive holograms clickable and preserves an explicit false', () => {
+    const legacy = parseNetworkHologram({
+      name: 'spawn', x: 0, y: 1, z: 2, lines: ['Hi'], range: 16,
+    });
+    expect(legacy).toMatchObject({ interactive: true, size: 1, font: 'sans' });
+    const quiet = parseNetworkHologram({
+      name: 'duel-countdown',
+      x: 1,
+      y: 2,
+      z: 3,
+      lines: ['3'],
+      range: 48,
+      font: 'display',
+      size: 3.2,
+      style: 'normal',
+      backgroundEnabled: false,
+      billboard: true,
+      interactive: false,
+    });
+    expect(quiet).toMatchObject({
+      font: 'display',
+      style: 'normal',
+      size: 3.2,
+      backgroundEnabled: false,
+      billboard: true,
+      interactive: false,
+    });
+    const stored = normalizeHologramRecord({
+      name: 'legacy',
+      worldId: 'anarchy',
+      x: 0,
+      y: 1,
+      z: 2,
+      lines: ['Old'],
+      range: 32,
+      enabled: true,
+      size: 2.5,
+    });
+    expect(stored).toMatchObject({ size: 2.5, font: 'sans', interactive: true });
+    expect(toNetworkHologram(stored!).interactive).toBe(true);
+    const parsed = parseServerMessage({
+      type: 'holograms',
+      holograms: [quiet],
+    });
+    expect(parsed).toMatchObject({
+      type: 'holograms',
+      holograms: [{ name: 'duel-countdown', interactive: false, size: 3.2, font: 'display' }],
+    });
   });
 
   it('keeps multiline text through \\n and rejects unknown editor fonts', () => {

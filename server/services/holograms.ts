@@ -34,6 +34,7 @@ export interface HologramRecord {
   backgroundHeight: number;
   billboard: boolean;
   yaw: number;
+  interactive: boolean;
 }
 
 export interface HologramEditorContext {
@@ -92,6 +93,7 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     backgroundHeight: appearance.backgroundHeight,
     billboard: appearance.billboard,
     yaw,
+    interactive: raw.interactive !== false,
   };
 }
 
@@ -130,6 +132,7 @@ export function createHologramRecord(input: {
     backgroundHeight: appearance.backgroundHeight,
     billboard: true,
     yaw: 0,
+    interactive: true,
   };
 }
 
@@ -154,6 +157,7 @@ export function toNetworkHologram(hologram: HologramRecord): NetworkHologram {
     backgroundHeight: appearance.backgroundHeight,
     billboard: appearance.billboard,
     yaw: hologram.yaw,
+    interactive: hologram.interactive !== false,
   };
 }
 

@@ -9,6 +9,10 @@
 - [x] Fighting disconnect forfeits. Timeout is a loss for both. Countdown and shutdown cancel write no result.
 - [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
 - [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
+- [x] Countdown hologram is display font, size 3.2, and `interactive: false`.
+- [x] Fight start sends one `duel_effect` burst. Velocity scale 0.5, life scale 0.75. No rocket entity.
+- [x] `WorldInstance` owns the duel tick and combat hooks. Plugin disable blocks new matches.
+- [x] Loot winner is protected for 15 s. Attacker-less melee, arrow, and projectile damage is cancelled in fighting.
 - [ ] Owner PNG `public/ui/menu/icon_duels.png` is not in the tree. Two-client browser QA is not done.
 - [ ] Not merged. Draft PR **#122**.
 

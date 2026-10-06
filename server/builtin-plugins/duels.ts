@@ -22,6 +22,7 @@ export function createDuelsPlugin(ctx: BuiltinPluginContext): Plugin {
     apiVersion: 1,
     onEnable(api) {
       const duels = ctx.duels;
+      duels.enable();
       const admin = (playerId: string, name: string): boolean => (
         api.hasPermission(playerId, 'duels.admin')
         || api.hasPermission(playerId, 'server.admin')
@@ -31,22 +32,6 @@ export function createDuelsPlugin(ctx: BuiltinPluginContext): Plugin {
 
       api.registerEvent('playerJoin', (event) => {
         duels.noteIdentity(event.playerId, event.name);
-      });
-
-      api.registerEvent('playerQuit', (event) => {
-        duels.onPlayerQuit(event.playerId);
-      });
-
-      api.registerEvent('playerDamage', (event) => {
-        if (duels.shouldCancelPlayerDamage(event.playerId, event.attackerId)) event.cancel();
-      });
-
-      api.registerEvent('itemPickup', (event) => {
-        if (!duels.allowsPickup(event.playerId, event.entityId)) event.cancel();
-      });
-
-      api.scheduleRepeating(100, () => {
-        duels.tick();
       });
 
       api.registerCommand({
@@ -94,7 +79,7 @@ export function createDuelsPlugin(ctx: BuiltinPluginContext): Plugin {
       });
     },
     onDisable() {
-      ctx.duels.shutdown();
+      ctx.duels.disable();
     },
   };
 }

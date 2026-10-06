@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createHologramRecord, HologramNetwork } from '../server/services/holograms';
-import { DUEL_COUNTDOWN_HOLOGRAM } from '../shared/duels';
+import { DUEL_COUNTDOWN_HOLOGRAM, DUEL_COUNTDOWN_HOLOGRAM_SIZE } from '../shared/duels';
 
 function record(name: string, lines: string[]) {
   return createHologramRecord({
@@ -24,14 +24,26 @@ describe('transient holograms', () => {
     const permanent = record('Welcome', ['hello']);
     expect(network.upsert(permanent)?.name).toBe('welcome');
     const countdown = record(DUEL_COUNTDOWN_HOLOGRAM, ['3']);
-    countdown.size = 2.5;
+    countdown.font = 'display';
+    countdown.style = 'normal';
+    countdown.size = DUEL_COUNTDOWN_HOLOGRAM_SIZE;
     countdown.backgroundEnabled = false;
     countdown.billboard = true;
+    countdown.interactive = false;
     expect(network.upsertTransient(countdown)?.name).toBe(DUEL_COUNTDOWN_HOLOGRAM);
 
     const listed = network.list();
     expect(listed.map((entry) => entry.name)).toEqual(['welcome', DUEL_COUNTDOWN_HOLOGRAM]);
-    expect(listed[1]?.lines).toEqual(['3']);
+    expect(listed[1]).toMatchObject({
+      lines: ['3'],
+      font: 'display',
+      style: 'normal',
+      size: 3.2,
+      backgroundEnabled: false,
+      billboard: true,
+      interactive: false,
+    });
+    expect(network.listRecords().some((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM)).toBe(false);
     expect(network.listRecords().map((entry) => entry.name)).toEqual(['welcome']);
     expect(persisted).toEqual([['welcome']]);
     expect(persisted.flat()).not.toContain(DUEL_COUNTDOWN_HOLOGRAM);

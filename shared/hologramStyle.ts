@@ -15,7 +15,7 @@ export const HOLOGRAM_KINDS = ['normal', 'timer'] as const;
 export type HologramKind = (typeof HOLOGRAM_KINDS)[number];
 
 export const HOLOGRAM_SIZE_MIN = 0.5;
-export const HOLOGRAM_SIZE_MAX = 2.5;
+export const HOLOGRAM_SIZE_MAX = 3.2;
 export const HOLOGRAM_SIZE_STEP = 0.1;
 export const HOLOGRAM_SIZE_DEFAULT = 1;
 export const HOLOGRAM_FONT_DEFAULT: HologramFont = 'sans';
