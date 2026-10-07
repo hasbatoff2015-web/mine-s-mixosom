@@ -2,6 +2,7 @@ import type * as THREE from 'three';
 import {
   createTexturedCuboidGeometry,
   cuboidUvRects,
+  type CuboidFace,
   type LogicalUvRect,
   type TexturedCuboidDefinition,
 } from '../TexturedCuboid';
@@ -33,6 +34,17 @@ const OUTER_OFFSETS: Readonly<Record<PlayerSkinPart, readonly [number, number]>>
   leftLeg: [0, 48],
 });
 
+/**
+ * Java side islands store the front-adjacent column at +U.
+ * Cuboid `left` (−X) and `right` (+X) walk Z the other way, so those two
+ * faces flip U. The names are geometry normals, not the player's limbs.
+ * Front, back, top and bottom keep the historical corner order.
+ */
+const SKIN_SIDE_FACE_UV_FLIP_U: Partial<Readonly<Record<CuboidFace, boolean>>> = Object.freeze({
+  left: true,
+  right: true,
+});
+
 export function playerSkinPartSize(part: PlayerSkinPart, variant: PlayerModelVariant): readonly [number, number, number] {
   if (part === 'head') return [8, 8, 8];
   if (part === 'body') return [8, 12, 4];
@@ -54,6 +66,7 @@ export function playerSkinPartDefinition(
     logicalTextureSize: [64, 64],
     physicalSize: [size[0] * pixel, size[1] * pixel, size[2] * pixel],
     inflate: layer === 'outer' ? (part === 'head' ? 0.5 : 0.25) * pixel : 0,
+    faceUvFlipU: SKIN_SIDE_FACE_UV_FLIP_U,
   };
 }
 

@@ -1,10 +1,12 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { FirstPersonRenderer } from '../src/rendering/FirstPersonRenderer';
+import { createTexturedCuboidGeometry } from '../src/rendering/TexturedCuboid';
 import {
   ALL_PLAYER_SKIN_LAYERS,
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
+  type PlayerModelVariant,
 } from '../src/player/appearance/PlayerAppearance';
 import {
   BUILTIN_MINECRAFT_SKINS,
@@ -19,8 +21,11 @@ import {
   playerSkinPartDefinition,
   playerSkinPartSize,
   playerSkinUvRects,
+  type PlayerSkinLayer,
   type PlayerSkinPart,
+  type PlayerSkinPresentation,
 } from '../src/rendering/player/PlayerSkinGeometry';
+import { axisSpan, sideEdgeU, sideEdgeUv } from './cuboidUvSample';
 import {
   PlayerVisual,
   SKIN_BASE_RENDER_ORDER,
@@ -348,5 +353,126 @@ describe('Minecraft-compatible player skins', () => {
     geometries.dispose();
     items.dispose();
     registry.dispose();
+  });
+});
+
+const SKIN_VARIANTS = ['classic', 'slim'] as const satisfies readonly PlayerModelVariant[];
+const SKIN_LAYERS = ['base', 'outer'] as const satisfies readonly PlayerSkinLayer[];
+
+function expectSideUvFrontBack(
+  geometries: PlayerSkinGeometryCache,
+  part: PlayerSkinPart,
+  variant: PlayerModelVariant,
+  layer: PlayerSkinLayer,
+  presentation: PlayerSkinPresentation = 'world',
+): void {
+  const geometry = geometries.get(part, variant, layer, presentation);
+  const rects = playerSkinUvRects(part, variant, layer);
+  const label = `${presentation}:${variant}:${part}:${layer}`;
+  for (const yEdge of ['top', 'bottom'] as const) {
+    expect(sideEdgeU(geometry, -1, 'front', yEdge), `${label}:-X front ${yEdge}`)
+      .toBeCloseTo((rects.left.u + rects.left.width) / 64);
+    expect(sideEdgeU(geometry, -1, 'back', yEdge), `${label}:-X back ${yEdge}`)
+      .toBeCloseTo(rects.left.u / 64);
+    expect(sideEdgeU(geometry, 1, 'front', yEdge), `${label}:+X front ${yEdge}`)
+      .toBeCloseTo(rects.right.u / 64);
+    expect(sideEdgeU(geometry, 1, 'back', yEdge), `${label}:+X back ${yEdge}`)
+      .toBeCloseTo((rects.right.u + rects.right.width) / 64);
+  }
+}
+
+describe('player skin side-face UV orientation', () => {
+  it('keeps the canonical head islands and maps their front edge onto model −Z', () => {
+    expect(playerSkinUvRects('head', 'classic', 'base')).toMatchObject({
+      left: { u: 0, v: 8, width: 8, height: 8 },
+      front: { u: 8, v: 8, width: 8, height: 8 },
+      right: { u: 16, v: 8, width: 8, height: 8 },
+      back: { u: 24, v: 8, width: 8, height: 8 },
+    });
+    expect(playerSkinUvRects('head', 'classic', 'outer')).toMatchObject({
+      left: { u: 32, v: 8, width: 8, height: 8 },
+      right: { u: 48, v: 8, width: 8, height: 8 },
+    });
+
+    const geometries = new PlayerSkinGeometryCache();
+    const base = geometries.get('head', 'classic', 'base');
+    const hat = geometries.get('head', 'classic', 'outer');
+    for (const yEdge of ['top', 'bottom'] as const) {
+      expect(sideEdgeU(base, -1, 'front', yEdge)).toBeCloseTo(8 / 64);
+      expect(sideEdgeU(base, -1, 'back', yEdge)).toBeCloseTo(0 / 64);
+      expect(sideEdgeU(base, 1, 'front', yEdge)).toBeCloseTo(16 / 64);
+      expect(sideEdgeU(base, 1, 'back', yEdge)).toBeCloseTo(24 / 64);
+      expect(sideEdgeU(hat, -1, 'front', yEdge)).toBeCloseTo(40 / 64);
+      expect(sideEdgeU(hat, -1, 'back', yEdge)).toBeCloseTo(32 / 64);
+      expect(sideEdgeU(hat, 1, 'front', yEdge)).toBeCloseTo(48 / 64);
+      expect(sideEdgeU(hat, 1, 'back', yEdge)).toBeCloseTo(56 / 64);
+    }
+    expect(sideEdgeUv(base, -1, 'front', 'bottom')[1]).toBeCloseTo(1 - 16 / 64);
+    expect(sideEdgeUv(base, -1, 'front', 'top')[1]).toBeCloseTo(1 - 8 / 64);
+    expect(sideEdgeUv(hat, 1, 'back', 'top')[1]).toBeCloseTo(1 - 8 / 64);
+    geometries.dispose();
+  });
+
+  it('corrects side orientation for every part, layer, classic and slim model', () => {
+    const geometries = new PlayerSkinGeometryCache();
+    for (const variant of SKIN_VARIANTS) {
+      for (const part of SKIN_PARTS) {
+        for (const layer of SKIN_LAYERS) {
+          expectSideUvFrontBack(geometries, part, variant, layer);
+          const definition = playerSkinPartDefinition(part, variant, layer);
+          const { faceUvFlipU: _sideFlip, ...historical } = definition;
+          const actual = geometries.get(part, variant, layer);
+          const reference = createTexturedCuboidGeometry(historical);
+          const position = actual.getAttribute('position');
+          const normal = actual.getAttribute('normal');
+          const uv = actual.getAttribute('uv');
+          const referencePosition = reference.getAttribute('position');
+          const referenceNormal = reference.getAttribute('normal');
+          const referenceUv = reference.getAttribute('uv');
+          expect(position.array).toEqual(referencePosition.array);
+          expect(normal.array).toEqual(referenceNormal.array);
+          let flippedSideTexels = 0;
+          for (let index = 0; index < uv.count; index += 1) {
+            expect(uv.getY(index), `${variant}:${part}:${layer}:v`).toBeCloseTo(referenceUv.getY(index));
+            if (Math.abs(normal.getX(index)) === 1) {
+              if (Math.abs(uv.getX(index) - referenceUv.getX(index)) > 1e-6) flippedSideTexels += 1;
+            } else {
+              expect(uv.getX(index), `${variant}:${part}:${layer}:non-side-u`).toBeCloseTo(referenceUv.getX(index));
+            }
+          }
+          expect(flippedSideTexels, `${variant}:${part}:${layer}`).toBe(8);
+          reference.dispose();
+        }
+      }
+    }
+    const classicFront = sideEdgeU(geometries.get('rightArm', 'classic', 'base'), 1, 'front', 'bottom');
+    const slimFront = sideEdgeU(geometries.get('rightArm', 'slim', 'base'), 1, 'front', 'bottom');
+    expect(classicFront).toBeCloseTo(48 / 64);
+    expect(slimFront).toBeCloseTo(47 / 64);
+    geometries.dispose();
+  });
+
+  it('uses the same side UV orientation on the first-person right arm', () => {
+    const geometries = new PlayerSkinGeometryCache();
+    for (const variant of SKIN_VARIANTS) {
+      for (const layer of SKIN_LAYERS) {
+        expectSideUvFrontBack(geometries, 'rightArm', variant, layer, 'firstPerson');
+        const world = geometries.get('rightArm', variant, layer, 'world');
+        const firstPerson = geometries.get('rightArm', variant, layer, 'firstPerson');
+        for (const normalX of [-1, 1] as const) {
+          for (const zEdge of ['front', 'back'] as const) {
+            for (const yEdge of ['top', 'bottom'] as const) {
+              expect(sideEdgeUv(firstPerson, normalX, zEdge, yEdge))
+                .toEqual(sideEdgeUv(world, normalX, zEdge, yEdge));
+            }
+          }
+        }
+        expect(axisSpan(firstPerson, 'x')).not.toBeCloseTo(axisSpan(world, 'x'));
+      }
+    }
+    expect(axisSpan(geometries.get('rightArm', 'classic', 'base', 'world'), 'x')).toBeCloseTo(4 * PLAYER_MODEL_PIXEL);
+    expect(axisSpan(geometries.get('rightArm', 'classic', 'base', 'firstPerson'), 'x')).toBeCloseTo(4 * 0.04);
+    expect(axisSpan(geometries.get('rightArm', 'slim', 'base', 'firstPerson'), 'x')).toBeCloseTo(3 * 0.04);
+    geometries.dispose();
   });
 });
