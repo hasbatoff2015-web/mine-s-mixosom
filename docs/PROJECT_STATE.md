@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: ориентация боковых UV скина — 2026-10-07
+
+- Боковые грани Java-скина больше не зеркалятся по U. `PlayerSkinGeometry` для всех частей, слоёв, Classic/Slim и first-person ставит `faceUvFlipU` на геометрические `left` (−X) и `right` (+X). Острова на листе не переставлялись. Front, back, top и bottom не менялись.
+- У головы base передний край player-right (−X) читает `u=8`, задний `u=0`; player-left (+X) — `u=16` и `u=24`. Hat layer: −X `40/32`, +X `48/56`.
+- `mirror` у брони и мобов работает как раньше: per-face flip с ним XOR, и без карты поведение прежнее.
+- Подробности: `docs/reports/2026-10-07_player-skin-side-uv.md`. Draft PR **#124**. Не смержен.
+
 ## Последний проход: дуэли, остановка сервера и отсчёт — 2026-10-07
 
 - `AnarchyServer.stop()` сначала вызывает `WorldInstance.prepareForServerShutdown()`. Тот вызывает `DuelService.shutdown()`, пока участники ещё подключены. Незаконченный отсчёт или бой отменяется: позы возвращаются, статистика не пишется, инвентарь из-за остановки не выбрасывается. Обычный выход во время боя по-прежнему поражение.
@@ -53,7 +60,7 @@
 - `DirectMessageService` хранит диалог в `plugin-data/friends/messages/<conversation-key>.json`. Ключ строится из player id, не из ника. История не больше 200 сообщений, `nextSeq` не сбрасывается. Непрочитанное — это `lastReadSeq`, а не счётчик `NotificationService`.
 - Протокол добавил `direct_message_action` и `direct_message`. `CHAT_CHANNELS` и `PROTOCOL_VERSION` 4 не менялись. Личное сообщение не попадает в Global, Nearby, Clan, ChatLog и не создаёт bubble.
 - Поле очищается по `clientRequestId` и revision черновика. Совпадение текста с нормализованным сообщением сервера для этого не используется.
-- Подробности: `docs/reports/2026-10-05_friend-private-chat.md`. Draft PR **#120**. Не смержено.
+- Подробности: `docs/reports/2026-10-05_friend-private-chat.md`. Смержено в `main` как PR **#120** (`c621d804`).
 
 ## Последний проход: частицы невидимости и воздух — 2026-10-05
 

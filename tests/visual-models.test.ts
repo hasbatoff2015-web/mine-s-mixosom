@@ -35,6 +35,7 @@ import {
   logicalUvToNormalized,
 } from '../src/rendering/TexturedCuboid';
 import { ATLAS_GUTTER, ATLAS_TILE_SIZE, calculateAtlasLayout } from '../src/rendering/TextureAtlas';
+import { frontEdgeU, sideEdgeU } from './cuboidUvSample';
 // @ts-expect-error untyped ESM PNG decoder shared with pet-textures.test.mjs
 import { decodeRgbaPng } from '../scripts/png-rgba.mjs';
 
@@ -545,3 +546,73 @@ function sheetOpaqueRatio(
   }
   return total === 0 ? 0 : opaque / total;
 }
+
+describe('textured cuboid mirror and per-face U flip', () => {
+  const base = {
+    size: [8, 8, 8] as const,
+    textureOffset: [0, 0] as const,
+    logicalTextureSize: [64, 64] as const,
+  };
+
+  it('keeps the historical side U order when faceUvFlipU is omitted', () => {
+    const geometry = createTexturedCuboidGeometry(base);
+    for (const yEdge of ['top', 'bottom'] as const) {
+      expect(sideEdgeU(geometry, -1, 'front', yEdge)).toBeCloseTo(0 / 64);
+      expect(sideEdgeU(geometry, -1, 'back', yEdge)).toBeCloseTo(8 / 64);
+      expect(sideEdgeU(geometry, 1, 'front', yEdge)).toBeCloseTo(24 / 64);
+      expect(sideEdgeU(geometry, 1, 'back', yEdge)).toBeCloseTo(16 / 64);
+    }
+    expect(frontEdgeU(geometry, 'min', 'bottom')).toBeCloseTo(16 / 64);
+    expect(frontEdgeU(geometry, 'max', 'bottom')).toBeCloseTo(8 / 64);
+    geometry.dispose();
+  });
+
+  it('keeps global mirror as a U flip of every face', () => {
+    const geometry = createTexturedCuboidGeometry({ ...base, mirror: true });
+    for (const yEdge of ['top', 'bottom'] as const) {
+      expect(sideEdgeU(geometry, -1, 'front', yEdge)).toBeCloseTo(8 / 64);
+      expect(sideEdgeU(geometry, -1, 'back', yEdge)).toBeCloseTo(0 / 64);
+      expect(sideEdgeU(geometry, 1, 'front', yEdge)).toBeCloseTo(16 / 64);
+      expect(sideEdgeU(geometry, 1, 'back', yEdge)).toBeCloseTo(24 / 64);
+    }
+    expect(frontEdgeU(geometry, 'min', 'bottom')).toBeCloseTo(8 / 64);
+    expect(frontEdgeU(geometry, 'max', 'top')).toBeCloseTo(16 / 64);
+    geometry.dispose();
+  });
+
+  it('XORs a per-face U flip with the global mirror', () => {
+    const local = createTexturedCuboidGeometry({
+      ...base,
+      faceUvFlipU: { left: true, right: true },
+    });
+    expect(sideEdgeU(local, -1, 'front', 'bottom')).toBeCloseTo(8 / 64);
+    expect(sideEdgeU(local, -1, 'back', 'top')).toBeCloseTo(0 / 64);
+    expect(sideEdgeU(local, 1, 'front', 'bottom')).toBeCloseTo(16 / 64);
+    expect(sideEdgeU(local, 1, 'back', 'top')).toBeCloseTo(24 / 64);
+    expect(frontEdgeU(local, 'min', 'bottom')).toBeCloseTo(16 / 64);
+
+    const mirrorWithoutLocal = createTexturedCuboidGeometry({
+      ...base,
+      mirror: true,
+      faceUvFlipU: { left: false, right: false },
+    });
+    expect(sideEdgeU(mirrorWithoutLocal, -1, 'front', 'bottom')).toBeCloseTo(8 / 64);
+    expect(sideEdgeU(mirrorWithoutLocal, 1, 'back', 'bottom')).toBeCloseTo(24 / 64);
+
+    const cancelled = createTexturedCuboidGeometry({
+      ...base,
+      mirror: true,
+      faceUvFlipU: { left: true, right: true },
+    });
+    expect(sideEdgeU(cancelled, -1, 'front', 'bottom')).toBeCloseTo(0 / 64);
+    expect(sideEdgeU(cancelled, -1, 'back', 'top')).toBeCloseTo(8 / 64);
+    expect(sideEdgeU(cancelled, 1, 'front', 'bottom')).toBeCloseTo(24 / 64);
+    expect(sideEdgeU(cancelled, 1, 'back', 'top')).toBeCloseTo(16 / 64);
+    expect(frontEdgeU(cancelled, 'min', 'bottom')).toBeCloseTo(8 / 64);
+    expect(frontEdgeU(cancelled, 'max', 'top')).toBeCloseTo(16 / 64);
+
+    local.dispose();
+    mirrorWithoutLocal.dispose();
+    cancelled.dispose();
+  });
+});
