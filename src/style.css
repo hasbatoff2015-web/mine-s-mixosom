@@ -2416,7 +2416,6 @@ textarea,
 .mc-duel-losses { color: #d67b7b; }
 
 .mc-duel-arena-status,
-.mc-duel-cooldown,
 .mc-duel-outgoing {
   margin: 0;
   font-size: calc(8px * var(--mc-ui-scale, 3));
@@ -2427,7 +2426,6 @@ textarea,
 .mc-duel-arena-status.is-free { color: #7d9a78; }
 .mc-duel-arena-status.is-busy { color: #e0a84a; }
 .mc-duel-arena-status.is-missing { color: #b7b7b7; }
-.mc-duel-cooldown { color: #e0a84a; }
 
 .mc-duel-outgoing {
   display: flex;

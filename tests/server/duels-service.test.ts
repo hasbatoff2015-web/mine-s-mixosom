@@ -8,7 +8,6 @@ import {
   DUEL_INVITE_TTL_MS,
   DUEL_LOOT_WINDOW_MS,
   DUEL_MATCH_DURATION_MS,
-  DUEL_POST_MATCH_COOLDOWN_MS,
   DUEL_REJECT_COOLDOWN_MS,
   DUEL_STARTED,
   DUEL_START_BURST_Y_OFFSET,
@@ -60,6 +59,8 @@ function harness() {
   const restores: string[] = [];
   const relocates: string[] = [];
   const bursts: Array<{ x: number; y: number; z: number }> = [];
+  const refreshPhases: string[] = [];
+  let service!: DuelService;
   let stats: unknown = { players: {} };
   let arena: unknown = {};
   const store: DuelStore = {
@@ -81,7 +82,10 @@ function harness() {
     respawnAtWorldSpawn: () => true,
     relocateToWorldSpawn: (playerId) => { relocates.push(playerId); return true; },
     closeTransientUi: () => undefined,
-    refreshGameMenu: (playerId) => { refreshed.push(playerId); },
+    refreshGameMenu: (playerId) => {
+      refreshed.push(playerId);
+      refreshPhases.push(service.phaseKind());
+    },
     sendMessage: (playerId, text) => { messages.push({ id: playerId, text }); },
     notifyDuels: (playerId) => { notified.push(playerId); },
     capturePose: (playerId) => {
@@ -93,7 +97,7 @@ function harness() {
     clearCountdownHologram: () => { holograms.push('clear'); },
     emitFightStartBurst: (x, y, z) => { bursts.push({ x, y, z }); },
   };
-  const service = new DuelService({
+  service = new DuelService({
     worldId: 'anarchy',
     store,
     directory: {
@@ -116,6 +120,7 @@ function harness() {
     removed,
     restores,
     relocates,
+    refreshPhases,
     stats: () => stats as { players: Record<string, { wins: number; losses: number; displayName: string; opponents: Record<string, { wins: number; losses: number; displayName: string }> }> },
     setNow: (value: number) => { now = value; },
     advance: (ms: number) => { now += ms; },
@@ -352,7 +357,7 @@ describe('DuelService matches', () => {
     expect(env.service.externalTeleportError('b')).toBe(DUEL_TELEPORT_DENIED);
   });
 
-  it('records one mirrored win and a 3s cooldown', () => {
+  it('records one mirrored win and keeps the winner in the loot window', () => {
     const env = harness();
     begin(env);
     env.advance(DUEL_COUNTDOWN_MS);
@@ -374,12 +379,9 @@ describe('DuelService matches', () => {
     expect(env.service.shouldCancelPlayerDamage('a', undefined, 'fall')).toBe(true);
     expect(env.service.shouldCancelPlayerDamage('b', 'c', 'projectile')).toBe(false);
     expect(env.service.allowsPickup('a', 'other')).toBe(true);
-    expect(env.service.cooldownRemaining('a')).toBe(DUEL_POST_MATCH_COOLDOWN_MS);
-    expect(env.service.cooldownRemaining('b')).toBe(DUEL_POST_MATCH_COOLDOWN_MS);
-    expect(env.service.challenge('b', 'a').message).toMatch(/Подождите/);
+    expect(env.service.menu('a').arenaBusy).toBe(true);
+    expect(env.service.challenge('b', 'a').message).toMatch(/уже участвует/);
     expect(env.service.challenge('a', 'b').message).toMatch(/уже участвует/);
-    env.advance(DUEL_POST_MATCH_COOLDOWN_MS);
-    expect(env.service.cooldownRemaining('a')).toBe(0);
     env.service.noteIdentity('b', 'Bobby');
     expect(env.stats().players.b!.displayName).toBe('Bobby');
     expect(env.stats().players.a!.opponents.b!.displayName).toBe('Bobby');
@@ -399,7 +401,8 @@ describe('DuelService matches', () => {
     expect(env.service.statsOf('b').losses).toBe(0);
     expect(env.drops).toEqual([]);
     expect(env.restores.sort()).toEqual(['a', 'b']);
-    expect(env.service.cooldownRemaining('a')).toBe(0);
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.refreshPhases.at(-1)).toBe('idle');
     expect(env.holograms.at(-1)).toBe('clear');
 
     const again = begin(env);
@@ -573,18 +576,67 @@ describe('DuelService matches', () => {
     env.advance(DUEL_COUNTDOWN_MS);
     env.service.tick();
     env.service.finalizeDeath('b', ['kept']);
-    expect(env.service.cooldownRemaining('a')).toBe(DUEL_POST_MATCH_COOLDOWN_MS);
+    expect(env.service.phaseKind()).toBe('loot');
+    expect(env.service.challenge('a', 'b').ok).toBe(false);
     const wins = env.service.statsOf('a').wins;
     env.service.disable();
     expect(env.service.phaseKind()).toBe('idle');
     expect(env.service.statsOf('a').wins).toBe(wins);
     expect(env.service.statsOf('b').losses).toBe(1);
-    expect(env.service.cooldownRemaining('a')).toBe(0);
+    expect(env.refreshPhases.at(-1)).toBe('idle');
     expect(env.removed.flat()).toContain('kept');
     env.service.enable();
     expect(env.service.challenge('a', 'b').ok).toBe(true);
     const reloaded = env.reload();
     expect(reloaded.statsOf('a').wins).toBe(wins);
     expect(reloaded.isEnabled()).toBe(true);
+  });
+
+  it('allows an immediate rematch after the loot window with no extra cooldown', () => {
+    const env = harness();
+    begin(env);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    env.service.finalizeDeath('b', ['loot-1']);
+    expect(env.service.phaseKind()).toBe('loot');
+    expect(env.service.menu('a').arenaBusy).toBe(true);
+    expect(env.service.challenge('a', 'b').ok).toBe(false);
+    env.advance(DUEL_LOOT_WINDOW_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.service.menu('a').arenaBusy).toBe(false);
+    expect(env.service.menu('a')).not.toHaveProperty('cooldownMs');
+    expect(env.service.menu('a').nearby.find((row) => row.playerId === 'b')?.canChallenge).toBe(true);
+    expect(env.refreshPhases.at(-1)).toBe('idle');
+    expect(env.refreshPhases.at(-2)).toBe('idle');
+    expect(env.service.challenge('a', 'b').ok).toBe(true);
+  });
+
+  it('allows an immediate rematch after forfeit cleanup and after timeout cleanup', () => {
+    const env = harness();
+    begin(env);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    env.service.onPlayerQuit('b');
+    expect(env.service.phaseKind()).toBe('loot');
+    expect(env.service.challenge('a', 'b').ok).toBe(false);
+    env.advance(DUEL_LOOT_WINDOW_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.refreshPhases.at(-1)).toBe('idle');
+    expect(env.service.challenge('a', 'b').ok).toBe(true);
+
+    const timed = harness();
+    const started = begin(timed);
+    timed.setNow(started + DUEL_COUNTDOWN_MS + DUEL_MATCH_DURATION_MS);
+    timed.service.tick();
+    expect(timed.service.phaseKind()).toBe('timeout_cleanup');
+    expect(timed.service.challenge('a', 'b').ok).toBe(false);
+    timed.advance(DUEL_LOOT_WINDOW_MS);
+    timed.service.tick();
+    expect(timed.service.phaseKind()).toBe('idle');
+    expect(timed.refreshPhases.at(-1)).toBe('idle');
+    expect(timed.refreshPhases.at(-2)).toBe('idle');
+    expect(timed.service.challenge('a', 'b').ok).toBe(true);
   });
 });

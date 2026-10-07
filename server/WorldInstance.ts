@@ -2339,7 +2339,6 @@ export class WorldInstance {
         duelArenaBusy: view.arenaBusy,
         duelArenaConfigured: view.arenaConfigured,
         duelAvailable: view.available,
-        duelCooldownMs: view.cooldownMs,
         ...(view.outgoing ? { duelOutgoing: view.outgoing } : {}),
       };
     }

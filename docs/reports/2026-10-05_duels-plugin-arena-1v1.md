@@ -14,7 +14,7 @@
 
 ## Implemented
 
-- `shared/duels.ts`: радиус 20, TTL 30 с, отказ 10 с, кулдаун после матча 3 с, бой 5 минут, лут 15 с, отсчёт 5 с. Глиф отсчёта — равные трети.
+- `shared/duels.ts`: радиус 20, TTL 30 с, отказ 10 с, бой 5 минут, лут 15 с, отсчёт 5 с. Глиф отсчёта — равные трети. Кулдаун после матча 3 с из этого прохода убран 2026-10-07.
 - `server/services/duels.ts`: фазы `idle`, `countdown`, `fighting`, `loot`, `timeout_cleanup`. Один исходящий вызов. Несколько входящих. `matchId` коммитит статистику один раз.
 - `server/builtin-plugins/duels.ts`: `/duel`, `/duel setspawn 1|2`, `/duel info`. Право `duels.admin`, `server.admin` или оператор.
 - Меню: девять плиток, три ряда `.mc-menu-grid-row-3-full`. `MC_MENU_WIDTH` 248. Высота корня 238. `menuLogicalHeight('duels')` 292.

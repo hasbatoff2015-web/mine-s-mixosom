@@ -1463,7 +1463,6 @@ export interface ServerMenuMessage {
   readonly duelArenaBusy?: boolean;
   readonly duelArenaConfigured?: boolean;
   readonly duelAvailable?: boolean;
-  readonly duelCooldownMs?: number;
 }
 
 export interface ServerDuelEffectMessage {

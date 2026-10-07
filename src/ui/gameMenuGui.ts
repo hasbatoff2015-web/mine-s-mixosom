@@ -491,7 +491,6 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
   const available = state.duelAvailable !== false;
   const configured = state.duelArenaConfigured !== false;
   const busy = state.duelArenaBusy === true;
-  const cooldownMs = state.duelCooldownMs ?? 0;
   const arenaClass = !available || !configured ? 'is-missing' : busy ? 'is-busy' : 'is-free';
   const arenaText = !available
     ? 'Дуэли временно недоступны.'
@@ -500,10 +499,7 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
       : busy
         ? '● Арена занята'
         : '● Арена свободна';
-  const actionsLocked = !available || busy || !configured || cooldownMs > 0;
-  const cooldown = cooldownMs > 0
-    ? `<p class="mc-duel-cooldown">${escape(`Подождите ${Math.max(1, Math.ceil(cooldownMs / 1000))} сек.`)}</p>`
-    : '';
+  const actionsLocked = !available || busy || !configured;
   const incomingRows = (state.duelIncoming ?? []).map((row) => `
     <div class="mc-player-row mc-duel-row">
       <div class="mc-player-main">
@@ -538,7 +534,6 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
       <span class="mc-duel-losses">Поражения: ${losses}</span>
     </div>
     <div class="mc-duel-arena-status ${arenaClass}">${escape(arenaText)}</div>
-    ${cooldown}
     ${incoming}
     ${outgoing}
     <div class="mc-duel-section-head">

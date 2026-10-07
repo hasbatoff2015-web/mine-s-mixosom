@@ -38,7 +38,7 @@ describe('transient holograms', () => {
       lines: ['3'],
       font: 'display',
       style: 'normal',
-      size: 3.2,
+      size: 2.8,
       backgroundEnabled: false,
       billboard: true,
       interactive: false,

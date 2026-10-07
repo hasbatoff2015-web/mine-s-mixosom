@@ -543,7 +543,6 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(bob.player.controller.position.x).toBeCloseTo(preB.x, 3);
     expect(bob.player.controller.position.z).toBeCloseTo(preB.z, 3);
     expect(world.holograms.list().some((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM)).toBe(false);
-    expect(world.duels.cooldownRemaining(ada.player.id)).toBe(0);
     const resumed = join(world, 'Bob', token);
     expect(resumed.player.controller.position.x).toBeCloseTo(preB.x, 3);
 
@@ -761,7 +760,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
         expect.objectContaining({
           name: DUEL_COUNTDOWN_HOLOGRAM,
           font: 'display',
-          size: 3.2,
+          size: 2.8,
           interactive: false,
         }),
       ]),
@@ -937,6 +936,46 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(world.events.listenerCount('playerDamage')).toBe(damageListeners);
     stand(ada.player, 8.5, 80, 8.5);
     stand(bob.player, 10.5, 80, 8.5);
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
+  });
+
+  it('refreshes an open duel menu to idle and allows an immediate rematch when loot ends', async () => {
+    const { world, clock } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    arena(world);
+    fight(world, clock, ada.player, bob.player);
+    giveSword(ada.player);
+    ada.player.controller.teleport([20.5, 100, 20.5]);
+    ada.player.controller.yaw = Math.PI;
+    ada.player.controller.pitch = 0;
+    ada.player.controller.velocity.set(0, 0, 0);
+    bob.player.controller.teleport([20.5, 100, 22.5]);
+    bob.player.controller.velocity.set(0, 0, 0);
+    world.attack(ada.player);
+    expect(world.duels.phaseKind()).toBe('loot');
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(false);
+
+    world.openGameMenu(ada.player.id, 'duels');
+    world.openGameMenu(bob.player.id, 'duels');
+    expect(lastMenu(ada.sink)?.duelArenaBusy).toBe(true);
+    expect(lastMenu(bob.sink)?.duelArenaBusy).toBe(true);
+    const adaMenus = ada.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').length;
+    const bobMenus = bob.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').length;
+
+    clock.advance(DUEL_LOOT_WINDOW_MS);
+    world.duels.tick();
+    expect(world.duels.phaseKind()).toBe('idle');
+    expect(ada.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').length).toBe(adaMenus + 1);
+    expect(bob.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').length).toBe(bobMenus + 1);
+    const idleAda = lastMenu(ada.sink);
+    const idleBob = lastMenu(bob.sink);
+    expect(idleAda?.duelArenaBusy).toBe(false);
+    expect(idleBob?.duelArenaBusy).toBe(false);
+    expect(idleAda && 'duelCooldownMs' in idleAda).toBe(false);
+    expect(idleBob && 'duelCooldownMs' in idleBob).toBe(false);
+    expect(idleAda?.duelNearby?.find((row) => row.playerId === bob.player.id)?.canChallenge).toBe(true);
+    expect(idleBob?.duelNearby?.find((row) => row.playerId === ada.player.id)?.canChallenge).toBe(true);
     expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
   });
 });

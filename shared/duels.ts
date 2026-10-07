@@ -3,13 +3,12 @@
 export const DUEL_NEARBY_RADIUS = 20;
 export const DUEL_INVITE_TTL_MS = 30_000;
 export const DUEL_REJECT_COOLDOWN_MS = 10_000;
-export const DUEL_POST_MATCH_COOLDOWN_MS = 3_000;
 export const DUEL_MATCH_DURATION_MS = 5 * 60_000;
 export const DUEL_LOOT_WINDOW_MS = 15_000;
 export const DUEL_COUNTDOWN_MS = 5_000;
 export const DUEL_FIGHT_BANNER_MS = 800;
 export const DUEL_COUNTDOWN_HOLOGRAM = 'duel-countdown';
-export const DUEL_COUNTDOWN_HOLOGRAM_SIZE = 3.2;
+export const DUEL_COUNTDOWN_HOLOGRAM_SIZE = 2.8;
 export const DUEL_HOLOGRAM_RANGE = 48;
 export const DUEL_HOLOGRAM_Y_OFFSET = 2.2;
 export const DUEL_START_BURST_Y_OFFSET = 0.75;
@@ -24,11 +23,6 @@ export const DUEL_CROSS_INVITE = 'У вас уже есть входящий в�
 export const DUEL_ARENA_UNCONFIGURED = 'Арена не настроена.';
 export const DUEL_STARTED = 'Дуэль началась!';
 export const DUEL_UNAVAILABLE = 'Дуэли временно недоступны.';
-
-export function duelCooldownMessage(remainingMs: number): string {
-  const seconds = Math.max(1, Math.ceil(remainingMs / 1000));
-  return `Подождите ${seconds} сек.`;
-}
 
 export function duelRejectedMessage(name: string): string {
   return `${name} отклонил вызов на дуэль.`;
@@ -97,7 +91,6 @@ export interface DuelMenuView {
   readonly available: boolean;
   readonly arenaConfigured: boolean;
   readonly arenaBusy: boolean;
-  readonly cooldownMs: number;
   readonly incoming: readonly DuelIncomingRow[];
   readonly outgoing?: DuelOutgoingRow;
   readonly nearby: readonly DuelNearbyRow[];

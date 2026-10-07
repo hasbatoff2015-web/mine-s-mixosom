@@ -11,7 +11,6 @@ import {
   DUEL_LOOT_WINDOW_MS,
   DUEL_MATCH_DURATION_MS,
   DUEL_NEARBY_RADIUS,
-  DUEL_POST_MATCH_COOLDOWN_MS,
   DUEL_REJECT_COOLDOWN_MS,
   DUEL_STARTED,
   DUEL_TELEPORT_DENIED,
@@ -19,7 +18,6 @@ import {
   DUEL_UNAVAILABLE,
   duelBlockDistance,
   duelChallengeMessage,
-  duelCooldownMessage,
   duelCountdownGlyph,
   duelExpiredMessage,
   duelHologramPosition,
@@ -212,7 +210,6 @@ export class DuelService {
   private arena: ArenaConfig;
   private readonly invites = new Map<string, DuelInvite>();
   private readonly rejectUntil = new Map<string, number>();
-  private readonly cooldownUntil = new Map<string, number>();
   private phase: DuelPhase = { kind: 'idle' };
   private readonly committed = new Set<string>();
   private shownHologram: string | undefined;
@@ -345,10 +342,6 @@ export class DuelService {
     if (changed) this.persistStats();
   }
 
-  cooldownRemaining(playerId: string, now = this.now()): number {
-    return Math.max(0, (this.cooldownUntil.get(playerId) ?? 0) - now);
-  }
-
   menu(playerId: string): DuelMenuView {
     const now = this.now();
     this.pruneEphemeral(now);
@@ -357,7 +350,6 @@ export class DuelService {
     const self = this.deps.directory.get(playerId);
     if (self) this.noteIdentity(self.id, self.name);
     const stats = this.statsOf(playerId);
-    const cooldownMs = this.cooldownRemaining(playerId, now);
     const outgoingInvite = [...this.invites.values()].find((invite) => invite.fromId === playerId);
     const outgoing = outgoingInvite ? this.outgoingView(outgoingInvite, now) : undefined;
     const incoming = [...this.invites.values()]
@@ -369,7 +361,6 @@ export class DuelService {
       available: this.enabled,
       arenaConfigured: this.configured(),
       arenaBusy: this.busy(),
-      cooldownMs,
       incoming,
       ...(outgoing ? { outgoing } : {}),
       nearby: this.nearbyRows(playerId, now),
@@ -387,7 +378,7 @@ export class DuelService {
     if (from.id === target.id) return { ok: false, message: 'Нельзя вызвать самого себя.' };
     const fromCheck = this.validateReady(from, now);
     if (!fromCheck.ok) return fromCheck;
-    const targetCheck = this.validateReady(target, now, { ignoreCooldown: true });
+    const targetCheck = this.validateReady(target, now);
     if (!targetCheck.ok) return targetCheck;
     if (!this.configured()) return { ok: false, message: DUEL_ARENA_UNCONFIGURED };
     if ([...this.invites.values()].some((invite) => invite.fromId === from.id)) {
@@ -548,7 +539,6 @@ export class DuelService {
     const winnerId = phase.players[0] === loserId ? phase.players[1] : phase.players[0];
     if (!this.commitOnce(phase.matchId)) return;
     this.recordWin(winnerId, loserId);
-    this.armCooldown(winnerId, loserId);
     this.deps.runtime.respawnAtWorldSpawn(loserId);
     this.deps.runtime.sendMessage(winnerId, 'Вы победили в дуэли.');
     this.deps.runtime.sendMessage(loserId, 'Вы проиграли дуэль.');
@@ -570,21 +560,24 @@ export class DuelService {
     if (phase.kind === 'countdown' || phase.kind === 'fighting') {
       this.cancelMatch(phase.matchId, phase.players, phase.poses);
     } else if (phase.kind === 'loot') {
+      const refreshIds = [phase.winnerId, phase.loserId];
       this.deps.runtime.removeDroppedItems(phase.dropIds);
       this.deps.runtime.relocateToWorldSpawn(phase.winnerId);
-      this.committed.delete(phase.matchId);
       this.phase = { kind: 'idle' };
+      this.committed.delete(phase.matchId);
       this.clearHologram();
+      for (const id of refreshIds) this.deps.runtime.refreshGameMenu(id);
     } else if (phase.kind === 'timeout_cleanup') {
+      const refreshIds = [...phase.players];
       this.deps.runtime.removeDroppedItems(phase.dropIds);
       for (const id of phase.players) this.deps.runtime.relocateToWorldSpawn(id);
-      this.committed.delete(phase.matchId);
       this.phase = { kind: 'idle' };
+      this.committed.delete(phase.matchId);
       this.clearHologram();
+      for (const id of refreshIds) this.deps.runtime.refreshGameMenu(id);
     }
     this.invites.clear();
     this.rejectUntil.clear();
-    this.cooldownUntil.clear();
   }
 
   blocksManualDrop(playerId: string): boolean {
@@ -669,7 +662,7 @@ export class DuelService {
           && viewerReady
           && challengeLocked === undefined
           && this.configured()
-          && this.validateReady(actor, now, { ignoreCooldown: true }).ok,
+          && this.validateReady(actor, now).ok,
       });
     }
     rows.sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ru') || a.playerId.localeCompare(b.playerId));
@@ -680,7 +673,6 @@ export class DuelService {
     if ([...this.invites.values()].some((invite) => invite.fromId === playerId && invite.expiresAt > now)) {
       return 'outgoing';
     }
-    if (this.cooldownRemaining(playerId, now) > 0) return 'cooldown';
     if (!this.configured()) return 'arena';
     return undefined;
   }
@@ -706,18 +698,11 @@ export class DuelService {
     };
   }
 
-  private validateReady(
-    actor: DuelActor,
-    now: number,
-    options: { ignoreCooldown?: boolean } = {},
-  ): DuelActionResult {
+  private validateReady(actor: DuelActor, _now: number): DuelActionResult {
     if (!actor.connected) return { ok: false, message: 'Игрок недоступен.' };
     if (actor.gamemode !== 'survival') return { ok: false, message: 'Дуэль доступна только в режиме выживания.' };
     if (!actor.alive) return { ok: false, message: 'Игрок мёртв.' };
     if (this.isInLifecycle(actor.id)) return { ok: false, message: 'Игрок уже участвует в дуэли.' };
-    if (!options.ignoreCooldown && this.cooldownRemaining(actor.id, now) > 0) {
-      return { ok: false, message: duelCooldownMessage(this.cooldownRemaining(actor.id, now)) };
-    }
     return { ok: true };
   }
 
@@ -793,7 +778,6 @@ export class DuelService {
     const dropIds = this.deps.runtime.dropAllResources(quitterId);
     this.deps.runtime.relocateToWorldSpawn(quitterId);
     this.recordWin(winnerId, quitterId);
-    this.armCooldown(winnerId, quitterId);
     this.deps.runtime.sendMessage(winnerId, 'Соперник вышел. Победа за вами.');
     this.phase = {
       kind: 'loot',
@@ -815,7 +799,6 @@ export class DuelService {
     this.deps.runtime.relocateToWorldSpawn(a);
     this.deps.runtime.relocateToWorldSpawn(b);
     this.recordTimeout(a, b);
-    this.armCooldown(a, b);
     this.deps.runtime.sendMessage(a, 'Время дуэли вышло. Оба игрока получают поражение.');
     this.deps.runtime.sendMessage(b, 'Время дуэли вышло. Оба игрока получают поражение.');
     this.phase = {
@@ -841,36 +824,34 @@ export class DuelService {
       const pose = poses[id];
       if (pose) this.deps.runtime.restorePreDuelPose(id, pose);
       this.deps.runtime.sendMessage(id, 'Дуэль отменена.');
-      this.deps.runtime.refreshGameMenu(id);
     }
     this.phase = { kind: 'idle' };
     this.clearHologram();
     this.committed.delete(matchId);
+    for (const id of players) this.deps.runtime.refreshGameMenu(id);
   }
 
   private finishCleanup(_now: number): void {
     const phase = this.phase;
     const matchId = phase.kind === 'loot' || phase.kind === 'timeout_cleanup' ? phase.matchId : undefined;
+    const refreshIds: string[] = [];
     if (phase.kind === 'loot') {
+      refreshIds.push(phase.winnerId, phase.loserId);
       this.deps.runtime.removeDroppedItems(phase.dropIds);
       this.deps.runtime.relocateToWorldSpawn(phase.winnerId);
-      this.deps.runtime.refreshGameMenu(phase.winnerId);
-      this.deps.runtime.refreshGameMenu(phase.loserId);
     } else if (phase.kind === 'timeout_cleanup') {
+      refreshIds.push(...phase.players);
       this.deps.runtime.removeDroppedItems(phase.dropIds);
-      for (const id of phase.players) this.deps.runtime.refreshGameMenu(id);
     }
     this.phase = { kind: 'idle' };
-    this.clearHologram();
     if (matchId) this.committed.delete(matchId);
+    this.clearHologram();
+    for (const id of refreshIds) this.deps.runtime.refreshGameMenu(id);
   }
 
   private pruneEphemeral(now: number): void {
     for (const [key, until] of this.rejectUntil) {
       if (until <= now) this.rejectUntil.delete(key);
-    }
-    for (const [id, until] of this.cooldownUntil) {
-      if (until <= now) this.cooldownUntil.delete(id);
     }
   }
 
@@ -930,11 +911,6 @@ export class DuelService {
     this.persistStats();
   }
 
-  private armCooldown(...playerIds: string[]): void {
-    const until = this.now() + DUEL_POST_MATCH_COOLDOWN_MS;
-    for (const id of playerIds) this.cooldownUntil.set(id, until);
-  }
-
   private ensure(playerId: string): DuelPlayerStats {
     const existing = this.statsPlayers[playerId];
     if (existing) {
@@ -971,6 +947,5 @@ export class DuelService {
 export function duelMenuMessage(view: DuelMenuView): string | undefined {
   if (!view.available) return DUEL_UNAVAILABLE;
   if (!view.arenaConfigured) return DUEL_ARENA_UNCONFIGURED;
-  if (view.cooldownMs > 0) return duelCooldownMessage(view.cooldownMs);
   return undefined;
 }

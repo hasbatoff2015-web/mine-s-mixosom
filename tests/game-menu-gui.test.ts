@@ -492,7 +492,6 @@ describe('main menu HUD and chrome', () => {
       duelStats: { wins: 12, losses: 7 },
       duelArenaConfigured: true,
       duelArenaBusy: false,
-      duelCooldownMs: 0,
       duelIncoming: [{ requestId: 'req-1', playerId: 'b', name: '<Bob>', wins: 3, losses: 1 }],
       duelOutgoing: { playerId: 'c', name: 'Cara', secondsLeft: 24 },
       duelNearby: [{ playerId: 'd', name: 'Dan', wins: 0, losses: 0, distance: 8, canChallenge: true }],
@@ -521,6 +520,7 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('data-menu-duel-challenge="d"');
     expect(html).toContain('Вызвать');
     expect(html).toContain('Арена свободна.');
+    expect(html).not.toContain('Подождите');
     expect(html).toContain('mc-player-row');
     expect(html).toContain('mc-btn-positive');
     expect(html).toContain('mc-btn-danger');
