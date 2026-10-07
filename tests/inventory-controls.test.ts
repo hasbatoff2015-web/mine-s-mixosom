@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { creativeCatalogItems } from '../src/items';
 import { Inventory, createItemStack } from '../src/inventory';
+import { itemMergeIdentity } from '../src/inventory/inventoryActions';
 import { applyInventoryUiAction, isManualDropAction, type InventoryUiState } from '../src/inventory/inventoryUiAction';
 import { initialStackAmount, splitAmountAllowed } from '../src/inventory/stackAmount';
 import { parseClientMessage, type ClientInventoryActionMessage } from '../shared/protocol';
@@ -525,5 +526,203 @@ describe('inventory action protocol', () => {
     expect(forged).not.toHaveProperty('itemId');
     expect(forged).not.toHaveProperty('sourceCount');
     expect(forged).toMatchObject({ action: 'drop_slot', key: 'inventory-0', count: 2 });
+  });
+});
+
+describe('online shift double-click bulk transfer', () => {
+  const dirtHint = itemMergeIdentity(createItemStack('dirt', 1));
+
+  it('moves the rest of main after the first shift click has emptied the origin', () => {
+    const state = inventoryState();
+    state.inventory.setSlot(9, createItemStack('dirt', 10));
+    state.inventory.setSlot(10, createItemStack('dirt', 4));
+    act(state, { action: 'click', key: 'inventory-9', button: 'left', shift: true });
+    expect(state.inventory.getSlot(9)).toBeNull();
+    expect(state.inventory.getSlot(10)?.count).toBe(4);
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(10);
+
+    const stale = act(state, { action: 'quick_move_matching', key: 'inventory-9' });
+    expect(stale.ok).toBe(false);
+    expect(state.inventory.getSlot(10)?.count).toBe(4);
+
+    const bulk = act(state, { action: 'quick_move_matching', key: 'inventory-9', signature: dirtHint });
+    expect(bulk.ok).toBe(true);
+    expect(state.inventory.getSlot(9)).toBeNull();
+    expect(state.inventory.getSlot(10)).toBeNull();
+    expect(countInRange(state.inventory, 'dirt', 9, 36)).toBe(0);
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(14);
+    expect(state.inventory.count('dirt')).toBe(14);
+  });
+
+  it('moves the rest of the hotbar after the origin shift click', () => {
+    const state = inventoryState();
+    state.inventory.setSlot(0, createItemStack('dirt', 10));
+    state.inventory.setSlot(1, createItemStack('dirt', 4));
+    act(state, { action: 'click', key: 'inventory-0', button: 'left', shift: true });
+    expect(state.inventory.getSlot(0)).toBeNull();
+    act(state, { action: 'quick_move_matching', key: 'inventory-0', signature: dirtHint });
+    expect(state.inventory.getSlot(0)).toBeNull();
+    expect(state.inventory.getSlot(1)).toBeNull();
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(0);
+    expect(countInRange(state.inventory, 'dirt', 9, 36)).toBe(14);
+    expect(state.inventory.count('dirt')).toBe(14);
+  });
+
+  it('finishes a player-to-chest bulk after the first stack has already left', () => {
+    const stored = chest();
+    const state = inventoryState({ window: { kind: 'chest' }, chest: stored });
+    state.inventory.setSlot(0, createItemStack('dirt', 10));
+    state.inventory.setSlot(1, createItemStack('dirt', 4));
+    state.inventory.setSlot(2, createItemStack('dirt', 2, { metadata: { kind: 'other' } }));
+    act(state, { action: 'click', key: 'inventory-0', button: 'left', shift: true });
+    expect(state.inventory.getSlot(0)).toBeNull();
+    act(state, { action: 'quick_move_matching', key: 'inventory-0', signature: dirtHint });
+    expect(state.inventory.getSlot(1)).toBeNull();
+    expect(state.inventory.getSlot(2)?.count).toBe(2);
+    expect(stored.slots.reduce((sum, slot) => sum + (slot?.itemId === 'dirt' && slot.metadata === undefined ? slot.count : 0), 0)).toBe(14);
+    expect(state.inventory.count('dirt')).toBe(2);
+  });
+
+  it('finishes a chest-to-player bulk after the origin container slot is empty', () => {
+    const stored = chest();
+    stored.slots[0] = createItemStack('dirt', 10);
+    stored.slots[1] = createItemStack('dirt', 4);
+    stored.slots[4] = createItemStack('dirt', 2, { metadata: { kind: 'other' } });
+    const state = inventoryState({ window: { kind: 'chest' }, chest: stored });
+    act(state, { action: 'click', key: 'container-0', button: 'left', shift: true });
+    expect(stored.slots[0]).toBeNull();
+    act(state, { action: 'quick_move_matching', key: 'container-0', signature: dirtHint });
+    expect(stored.slots[1]).toBeNull();
+    expect(stored.slots[4]?.count).toBe(2);
+    expect(state.inventory.count('dirt')).toBe(14);
+  });
+
+  it('finishes both portal-chest directions from an emptied origin', () => {
+    const intoChest = chest();
+    const deposit = inventoryState({ window: { kind: 'portal-chest' }, chest: intoChest });
+    deposit.inventory.setSlot(3, createItemStack('cobblestone', 5));
+    deposit.inventory.setSlot(4, createItemStack('cobblestone', 2));
+    const cobbleHint = itemMergeIdentity(createItemStack('cobblestone', 1));
+    act(deposit, { action: 'click', key: 'inventory-3', button: 'left', shift: true });
+    act(deposit, { action: 'quick_move_matching', key: 'inventory-3', signature: cobbleHint });
+    expect(deposit.inventory.count('cobblestone')).toBe(0);
+    expect(intoChest.slots.reduce((sum, slot) => sum + (slot?.count ?? 0), 0)).toBe(7);
+
+    const stored = chest();
+    stored.slots[3] = createItemStack('cobblestone', 5);
+    stored.slots[8] = createItemStack('cobblestone', 2);
+    const withdraw = inventoryState({ window: { kind: 'portal-chest' }, chest: stored });
+    act(withdraw, { action: 'click', key: 'container-3', button: 'left', shift: true });
+    act(withdraw, { action: 'quick_move_matching', key: 'container-3', signature: cobbleHint });
+    expect(stored.slots[3]).toBeNull();
+    expect(stored.slots[8]).toBeNull();
+    expect(withdraw.inventory.count('cobblestone')).toBe(7);
+  });
+
+  it('routes the remaining furnace ores after the first shift click', () => {
+    const smelter = furnace();
+    const state = inventoryState({ window: { kind: 'furnace' }, furnace: smelter });
+    state.inventory.setSlot(0, createItemStack('iron_ore', 3));
+    state.inventory.setSlot(9, createItemStack('iron_ore', 2));
+    const hint = itemMergeIdentity(createItemStack('iron_ore', 1));
+    act(state, { action: 'click', key: 'inventory-0', button: 'left', shift: true });
+    expect(state.inventory.getSlot(0)).toBeNull();
+    expect(state.inventory.getSlot(9)?.count).toBe(2);
+    act(state, { action: 'quick_move_matching', key: 'inventory-0', signature: hint });
+    expect(smelter.slots[0]?.count).toBe(5);
+    expect(state.inventory.count('iron_ore')).toBe(0);
+  });
+
+  it('moves the remaining craft inputs after the origin input is empty', () => {
+    const state = inventoryState();
+    state.craftSlots[0] = createItemStack('oak_log', 3);
+    state.craftSlots[1] = createItemStack('oak_log', 2);
+    state.craftSlots[2] = createItemStack('stone', 1);
+    const hint = itemMergeIdentity(createItemStack('oak_log', 1));
+    act(state, { action: 'click', key: 'craft-0', button: 'left', shift: true });
+    expect(state.craftSlots[0]).toBeNull();
+    act(state, { action: 'quick_move_matching', key: 'craft-0', signature: hint });
+    expect(state.craftSlots[0]).toBeNull();
+    expect(state.craftSlots[1]).toBeNull();
+    expect(state.craftSlots[2]?.itemId).toBe('stone');
+    expect(state.inventory.count('oak_log')).toBe(5);
+  });
+
+  it('does not duplicate an equipped item when the armor slot is already empty', () => {
+    const state = inventoryState();
+    state.inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack('diamond_helmet', 1, { durability: 80 }));
+    const hint = itemMergeIdentity(createItemStack('diamond_helmet', 1, { durability: 80 }));
+    act(state, { action: 'click', key: 'armor-head', button: 'left', shift: true });
+    expect(state.inventory.getSlot({ section: 'armor', slot: 'head' })).toBeNull();
+    const bulk = act(state, { action: 'quick_move_matching', key: 'armor-head', signature: hint });
+    expect(bulk.ok).toBe(false);
+    expect(state.inventory.count('diamond_helmet')).toBe(1);
+  });
+
+  it('leaves an incompatible replacement in the origin and does not mint the hinted item', () => {
+    const state = inventoryState();
+    state.inventory.setSlot(9, createItemStack('dirt', 10));
+    state.inventory.setSlot(10, createItemStack('dirt', 4));
+    act(state, { action: 'click', key: 'inventory-9', button: 'left', shift: true });
+    state.inventory.setSlot(9, createItemStack('stone', 3));
+    act(state, { action: 'quick_move_matching', key: 'inventory-9', signature: dirtHint });
+    expect(state.inventory.getSlot(9)?.itemId).toBe('stone');
+    expect(state.inventory.getSlot(9)?.count).toBe(3);
+    expect(state.inventory.getSlot(10)).toBeNull();
+    expect(state.inventory.count('dirt')).toBe(14);
+    expect(state.inventory.count('diamond')).toBe(0);
+
+    const forged = inventoryState();
+    forged.inventory.setSlot(9, createItemStack('dirt', 10));
+    forged.inventory.setSlot(10, createItemStack('dirt', 4));
+    act(forged, { action: 'click', key: 'inventory-9', button: 'left', shift: true });
+    const rejected = act(forged, { action: 'quick_move_matching', key: 'inventory-9', signature: 'diamond||' });
+    expect(rejected.ok).toBe(false);
+    expect(forged.inventory.getSlot(10)?.count).toBe(4);
+    expect(forged.inventory.count('dirt')).toBe(14);
+    expect(forged.inventory.count('diamond')).toBe(0);
+  });
+
+  it('rejects a hinted bulk on a virtual result and a creative grant', () => {
+    const crafting = inventoryState({ window: { kind: 'crafting-table' }, craftSlots: Array.from({ length: 9 }, () => null) });
+    crafting.craftSlots[0] = createItemStack('oak_log', 1);
+    const result = act(crafting, { action: 'quick_move_matching', key: 'result', signature: 'oak_planks||' });
+    expect(result.ok).toBe(false);
+    expect(crafting.craftSlots[0]?.count).toBe(1);
+    expect(crafting.inventory.count('oak_planks')).toBe(0);
+
+    const creative = inventoryState({ gamemode: 'creative' });
+    const grant = act(creative, { action: 'quick_move_matching', key: 'creative-0', signature: 'stone||' });
+    expect(grant.ok).toBe(false);
+    expect(creative.inventory.count('stone')).toBe(0);
+  });
+
+  it('keeps the merge hint on the wire and ignores a forged count', () => {
+    const parsed = parseClientMessage({
+      type: 'inventory_action',
+      action: 'quick_move_matching',
+      key: 'inventory-9',
+      signature: dirtHint,
+      itemId: 'diamond',
+      count: 64,
+    });
+    expect(parsed).toMatchObject({
+      type: 'inventory_action',
+      action: 'quick_move_matching',
+      key: 'inventory-9',
+      signature: dirtHint,
+    });
+    expect(parsed).not.toHaveProperty('itemId');
+    if (!parsed || !('type' in parsed) || parsed.type !== 'inventory_action') {
+      throw new Error('hint did not survive the parser');
+    }
+
+    const state = inventoryState();
+    state.inventory.setSlot(9, createItemStack('dirt', 10));
+    state.inventory.setSlot(10, createItemStack('dirt', 4));
+    act(state, { action: 'click', key: 'inventory-9', button: 'left', shift: true });
+    applyInventoryUiAction(state, parsed);
+    expect(state.inventory.count('dirt')).toBe(14);
+    expect(state.inventory.count('diamond')).toBe(0);
   });
 });

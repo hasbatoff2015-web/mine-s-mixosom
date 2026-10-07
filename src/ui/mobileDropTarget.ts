@@ -1,5 +1,3 @@
-/** Logical gap between the close control and the mobile drop target. */
-export const MOBILE_DROP_GAP_LOGICAL = 6;
 /** Extra hit padding. The left edge never grows toward the inventory panel. */
 export const MOBILE_DROP_HIT_RIGHT_LOGICAL = 10;
 export const MOBILE_DROP_HIT_VERTICAL_LOGICAL = 4;

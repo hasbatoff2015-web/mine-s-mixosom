@@ -3696,50 +3696,70 @@ textarea,
   flex: none;
   flex-direction: column;
   align-items: flex-start;
-  align-self: flex-start;
-  gap: calc(6px * var(--mc-ui-scale));
+  align-self: stretch;
   overflow: visible;
   position: relative;
 }
 
 .mc-mobile-drop-target {
+  --drop-ink: #8d3034;
   display: none;
-  position: relative;
+  position: absolute;
+  top: 50%;
+  left: 0;
+  transform: translateY(-50%);
   box-sizing: border-box;
-  width: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
-  height: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
-  border: 0;
-  border-radius: 2px;
+  width: calc(26px * var(--mc-ui-scale, 3));
+  height: calc(34px * var(--mc-ui-scale, 3));
+  border: calc(1px * var(--mc-ui-scale, 3)) solid #6e2428;
+  border-radius: 0;
   overflow: visible;
-  background: var(--mc-slot-well);
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #0a0a0c,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #3a3d44;
+  background: rgba(92, 18, 24, 0.28);
+  box-shadow: none;
+  cursor: default;
+  pointer-events: auto;
 }
 
 .mc-backdrop.is-coarse .mc-mobile-drop-target {
-  display: grid;
-  place-items: center;
+  display: block;
 }
 
-.mc-mobile-drop-icon {
-  width: 0;
-  height: 0;
-  border-left: calc(5px * var(--mc-ui-scale)) solid transparent;
-  border-right: calc(5px * var(--mc-ui-scale)) solid transparent;
-  border-top: calc(7px * var(--mc-ui-scale)) solid #8a3a3a;
+.mc-mobile-drop-arrow {
+  position: absolute;
+  left: 50%;
+  top: calc(8px * var(--mc-ui-scale, 3));
+  width: calc(2px * var(--mc-ui-scale, 3));
+  height: calc(2px * var(--mc-ui-scale, 3));
+  background: var(--drop-ink);
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-shadow:
+    0 calc(2px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    0 calc(4px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    0 calc(6px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    calc(-4px * var(--mc-ui-scale, 3)) calc(6px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    calc(4px * var(--mc-ui-scale, 3)) calc(6px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    calc(-2px * var(--mc-ui-scale, 3)) calc(8px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    0 calc(8px * var(--mc-ui-scale, 3)) 0 var(--drop-ink),
+    calc(2px * var(--mc-ui-scale, 3)) calc(8px * var(--mc-ui-scale, 3)) 0 var(--drop-ink);
+}
+
+.mc-mobile-drop-receiver {
+  position: absolute;
+  left: 50%;
+  bottom: calc(4px * var(--mc-ui-scale, 3));
+  width: calc(12px * var(--mc-ui-scale, 3));
+  height: calc(2px * var(--mc-ui-scale, 3));
+  background: var(--drop-ink);
+  transform: translateX(-50%);
   pointer-events: none;
 }
 
 .mc-mobile-drop-target.is-armed {
-  background: #3a1818;
-  box-shadow:
-    inset calc(1px * var(--mc-ui-scale)) calc(1px * var(--mc-ui-scale)) 0 #ffb4b4,
-    inset calc(-1px * var(--mc-ui-scale)) calc(-1px * var(--mc-ui-scale)) 0 #5a1010;
-}
-
-.mc-mobile-drop-target.is-armed .mc-mobile-drop-icon {
-  border-top-color: #e23b3b;
+  --drop-ink: #ff8d8d;
+  background: rgba(196, 40, 44, 0.42);
+  border-color: #ff5c5c;
+  box-shadow: 0 0 calc(8px * var(--mc-ui-scale, 3)) rgba(255, 70, 70, 0.45);
 }
 
 .mc-mobile-drop-hit {

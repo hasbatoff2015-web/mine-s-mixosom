@@ -8,7 +8,7 @@ import {
 } from '../inventory';
 import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
-import { itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
+import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
 import { initialStackAmount, splitAmountAllowed } from '../inventory/stackAmount';
@@ -2692,8 +2692,9 @@ export class GameUI {
 
   private inventorySideRailHtml(): string {
     return `<div class="mc-container-side-rail">${this.closeButtonHtml()}`
-      + `<div class="mc-mobile-drop-target" data-mobile-drop aria-label="Выбросить">`
-      + `<span class="mc-mobile-drop-icon" aria-hidden="true"></span>`
+      + `<div class="mc-mobile-drop-target" data-mobile-drop role="img" aria-label="Выбросить">`
+      + `<span class="mc-mobile-drop-arrow" aria-hidden="true"></span>`
+      + `<span class="mc-mobile-drop-receiver" aria-hidden="true"></span>`
       + `<span class="mc-mobile-drop-hit" data-mobile-drop-hit></span>`
       + `</div></div>`;
   }
@@ -3063,12 +3064,20 @@ export class GameUI {
       identity,
       firstClickExpectedPickup: this.expectsStackPickup(key, button, shift),
     };
-    if (sameLeft && shift && previous.shift) {
-      const match = this.matchingQuickMoveKey(key, previous.identity);
-      if (match) {
-        this.submitInventoryAction({ type: 'inventory_action', action: 'quick_move_matching', key: match });
+    if (sameLeft && shift && previous.shift && previous.identity) {
+      const capability = slotCapability(parseSlotKey(key));
+      if (capability === 'mutable' || capability === 'output') {
+        const match = this.matchingQuickMoveKey(key, previous.identity);
+        if (match) {
+          this.submitInventoryAction({
+            type: 'inventory_action',
+            action: 'quick_move_matching',
+            key: match,
+            signature: previous.identity,
+          });
+          return;
+        }
       }
-      return;
     }
     if (sameLeft && !shift && !previous.shift && this.collectsFromPriorPickup(previous, key)) {
       this.submitInventoryAction({ type: 'inventory_action', action: 'collect_matching' });
@@ -3078,9 +3087,7 @@ export class GameUI {
   }
 
   private stackIdentity(stack: ItemStack | null): string {
-    if (!stack) return '';
-    const meta = stack.metadata === undefined ? '' : JSON.stringify(stack.metadata);
-    return `${stack.itemId}|${stack.durability ?? ''}|${meta}`;
+    return itemMergeIdentity(stack);
   }
 
   private sameSideKeys(key: string): readonly string[] {

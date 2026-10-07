@@ -408,8 +408,9 @@ export interface ClientInventoryActionMessage {
   readonly all?: boolean;
   /**
    * Stack identity the player saw when the gesture started.
-   * The server compares it with the live stack and rejects a mismatch.
-   * It is never used as the item to create.
+   * Move, drop, and split compare it with the live stack and reject a mismatch.
+   * `quick_move_matching` uses it as a merge-identity hint with no count.
+   * The server only selects live stacks with that identity. It never creates an item from it.
    */
   readonly signature?: string;
   readonly kind?: ContainerKind;

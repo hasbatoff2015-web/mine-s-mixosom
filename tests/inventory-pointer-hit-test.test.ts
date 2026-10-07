@@ -7,7 +7,9 @@
 import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Inventory, createItemStack, type ItemStack } from '../src/inventory';
-import type { ClientInventoryActionMessage } from '../shared/protocol';
+import { itemMergeIdentity } from '../src/inventory/inventoryActions';
+import { applyInventoryUiAction, type InventoryUiState } from '../src/inventory/inventoryUiAction';
+import { parseClientMessage, type ClientInventoryActionMessage } from '../shared/protocol';
 import { GameUI } from '../src/ui/GameUI';
 import {
   classifyInventoryPointerElement,
@@ -141,6 +143,23 @@ describe('inventory pointer hit classification', () => {
     const css = readFileSync('src/style.css', 'utf8');
     expect(css).toMatch(/#cursor-stack\s*\{[^}]*pointer-events:\s*none/);
     expect(css).toMatch(/\.mc-item-tooltip\s*\{[^}]*pointer-events:\s*none/);
+    const drop = css.match(/\.mc-mobile-drop-target \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(drop).toContain('position: absolute');
+    expect(drop).toContain('top: 50%');
+    expect(drop).toContain('width: calc(26px * var(--mc-ui-scale, 3))');
+    expect(drop).toContain('height: calc(34px * var(--mc-ui-scale, 3))');
+    expect(drop).toContain('display: none');
+    expect(drop).not.toContain('inset');
+    expect(drop).not.toContain('--mc-slot-well');
+    const armed = css.match(/\.mc-mobile-drop-target\.is-armed \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(armed).toContain('--drop-ink');
+    expect(armed).not.toContain('inset');
+    expect(armed).not.toMatch(/padding\s*:/);
+    const shown = css.match(/\.mc-backdrop\.is-coarse \.mc-mobile-drop-target \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(shown).toContain('display: block');
+    const rail = css.match(/\.mc-container-side-rail \{([\s\S]*?)\n\}/)?.[1] ?? '';
+    expect(rail).toContain('align-self: stretch');
+    expect(css).toMatch(/\.mc-mobile-drop-hit \{[^}]*left:\s*0/);
   });
 });
 
@@ -481,7 +500,143 @@ describe('online double click without a snapshot', () => {
     click(root, 'inventory-9', { shiftKey: true });
     click(root, 'inventory-9', { shiftKey: true });
     expect(messages.map((message) => message.action)).toEqual(['click', 'quick_move_matching']);
-    expect(messages[1]).toMatchObject({ action: 'quick_move_matching', key: 'inventory-9' });
+    expect(messages[1]).toMatchObject({
+      action: 'quick_move_matching',
+      key: 'inventory-9',
+      signature: itemMergeIdentity(createItemStack('dirt', 10)),
+    });
+  });
+
+  it('renders the mobile drop zone as a receiver beside the close button', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    openUi(root, new Inventory());
+    const zone = root.querySelector('.mc-mobile-drop-target');
+    const rail = root.querySelector('.mc-container-side-rail');
+    expect(zone?.tagName).toBe('DIV');
+    expect(zone?.getAttribute('role')).toBe('img');
+    expect(zone?.querySelector('button')).toBeNull();
+    expect(zone?.querySelector('.mc-mobile-drop-arrow')).toBeTruthy();
+    expect(zone?.querySelector('.mc-mobile-drop-receiver')).toBeTruthy();
+    expect(rail?.querySelector(':scope > .mc-close')).toBe(rail?.firstElementChild);
+    expect(root.querySelector('.mc-mobile-drop-icon')).toBeNull();
+  });
+
+  it('applies shift click then hinted bulk while the client inventory stays stale', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const client = new Inventory();
+    client.setSlot(9, createItemStack('dirt', 10));
+    client.setSlot(10, createItemStack('dirt', 4));
+    const messages: ClientInventoryActionMessage[] = [];
+    openUi(root, client, { submitAction: (message) => messages.push(message) });
+    click(root, 'inventory-9', { shiftKey: true });
+    click(root, 'inventory-9', { shiftKey: true });
+    expect(client.getSlot(9)?.count).toBe(10);
+    expect(client.getSlot(10)?.count).toBe(4);
+    expect(messages.map((message) => message.action)).toEqual(['click', 'quick_move_matching']);
+
+    const server: InventoryUiState = {
+      inventory: new Inventory(),
+      cursor: null,
+      craftSlots: [null, null, null, null],
+      window: { kind: 'inventory' },
+      gamemode: 'survival',
+    };
+    server.inventory.setSlot(9, createItemStack('dirt', 10));
+    server.inventory.setSlot(10, createItemStack('dirt', 4));
+    for (const message of messages) {
+      const parsed = parseClientMessage(message);
+      if (!parsed || !('type' in parsed) || parsed.type !== 'inventory_action') {
+        throw new Error('inventory action did not survive the parser');
+      }
+      applyInventoryUiAction(server, parsed);
+    }
+    expect(server.inventory.getSlot(9)).toBeNull();
+    expect(server.inventory.getSlot(10)).toBeNull();
+    expect(server.inventory.count('dirt')).toBe(14);
+    expect(server.cursor).toBeNull();
+  });
+
+  it('bulk-shifts the rest of main locally when the first click already moved the origin', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const inventory = new Inventory();
+    inventory.setSlot(9, createItemStack('dirt', 10));
+    inventory.setSlot(10, createItemStack('dirt', 4));
+    openUi(root, inventory);
+    click(root, 'inventory-9', { shiftKey: true });
+    expect(inventory.getSlot(9)).toBeNull();
+    expect(inventory.getSlot(10)?.count).toBe(4);
+    click(root, 'inventory-9', { shiftKey: true });
+    expect(inventory.getSlot(9)).toBeNull();
+    expect(inventory.getSlot(10)).toBeNull();
+    expect(inventory.count('dirt')).toBe(14);
+  });
+
+  it('sends a normal shift click once the double-click window has passed', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const inventory = new Inventory();
+    inventory.setSlot(9, createItemStack('dirt', 10));
+    inventory.setSlot(10, createItemStack('dirt', 4));
+    const messages: ClientInventoryActionMessage[] = [];
+    openUi(root, inventory, { submitAction: (message) => messages.push(message) });
+    let now = 5_000;
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+    click(root, 'inventory-9', { shiftKey: true });
+    now += 251;
+    click(root, 'inventory-9', { shiftKey: true });
+    clock.mockRestore();
+    expect(messages.map((message) => message.action)).toEqual(['click', 'click']);
+    expect(messages.every((message) => message.action !== 'quick_move_matching')).toBe(true);
+  });
+
+  it('does not bulk-shift an empty slot, a craft result, or a creative grant', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const inventory = new Inventory();
+    const messages: ClientInventoryActionMessage[] = [];
+    openUi(root, inventory, { submitAction: (message) => messages.push(message) });
+    click(root, 'inventory-4', { shiftKey: true });
+    click(root, 'inventory-4', { shiftKey: true });
+    expect(messages.map((message) => message.action)).toEqual(['click', 'click']);
+
+    messages.length = 0;
+    const crafting = document.createElement('div');
+    document.body.append(crafting);
+    const table = new Inventory();
+    table.setSlot(0, createItemStack('oak_log', 1));
+    const craftingContext = {
+      kind: 'crafting-table' as const,
+      mode: 'survival' as const,
+      inventory: table,
+      onClose() {},
+      onDrop() {},
+      onChanged() {},
+      submitAction: undefined as undefined | ((message: ClientInventoryActionMessage) => void),
+    };
+    const ui = new GameUI(crafting);
+    sessions.push(ui);
+    ui.openInventory(craftingContext);
+    click(crafting, 'inventory-0');
+    click(crafting, 'craft-0');
+    expect(crafting.querySelector('[data-slot="result"] img')).toBeTruthy();
+    craftingContext.submitAction = (message) => messages.push(message);
+    click(crafting, 'result', { shiftKey: true });
+    click(crafting, 'result', { shiftKey: true });
+    expect(messages.map((message) => message.action)).toEqual(['click', 'click']);
+
+    messages.length = 0;
+    const creativeRoot = document.createElement('div');
+    document.body.append(creativeRoot);
+    openUi(creativeRoot, new Inventory(), {
+      mode: 'creative',
+      submitAction: (message) => messages.push(message),
+    });
+    click(creativeRoot, 'creative-0', { shiftKey: true });
+    click(creativeRoot, 'creative-0', { shiftKey: true });
+    expect(messages.map((message) => message.action)).toEqual(['click', 'click']);
   });
 
   it('does not collect a virtual craft result or a creative catalog grant', () => {

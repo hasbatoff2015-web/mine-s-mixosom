@@ -153,7 +153,7 @@ export function applyInventoryUiAction(
     case 'drag_distribute':
       return dragDistribute(state, action.button === 'right' ? 'right' : 'left', action.keys ?? []);
     case 'quick_move_matching':
-      return quickMoveMatching(state, action.key ?? '');
+      return quickMoveMatching(state, action.key ?? '', action.signature);
     case 'recipe':
       return applyRecipe(state, action);
     case 'craft_recipe':

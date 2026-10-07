@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-07: Online shift bulk transfer and mobile drop zone
+
+- [x] Shift+double-click sends a merge-identity hint so the server can finish the bulk after the origin slot is empty.
+- [x] The hint only filters live stacks. Count and forged item fields do not create items.
+- [x] The coarse drop zone is a centered receiver to the right of the panel. Fine pointers still hide it.
+- [ ] Not merged. Draft PR **#125**. Wait for an explicit merge command.
+
 ## 2026-10-07: Inventory pointer hit-test, online double-click, shift matching
 
 - [x] Captured move/up uses `elementFromPoint`. A drag onto another slot moves, merges, or swaps.

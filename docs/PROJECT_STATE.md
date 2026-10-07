@@ -1,5 +1,11 @@
 # Состояние проекта
 
+## Последний проход: online Shift+double-click и зона выброса — 2026-10-07
+
+- Второй Shift+клик шлёт `quick_move_matching` с merge-identity hint. Сервер по этому hint находит живые стеки исходной стороны, даже если первый Shift-клик уже опустошил слот. Подсказка не создаёт предмет.
+- Мобильная зона выброса стоит справа по вертикальному центру панели. Это вытянутая рамка со стрелкой вниз, а не вторая кнопка под крестиком. Hit по-прежнему не растёт влево.
+- Подробности: `docs/reports/2026-10-07_inventory-shift-bulk-drop-zone.md`. Draft PR **#125**. Не смержен.
+
 ## Последний проход: hit-test под pointer capture, double-click и shift-matching — 2026-10-07
 
 - Drag внутри инвентаря больше не выбрасывает предмет. `setPointerCapture` по-прежнему на `.mc-backdrop`, но цель жеста на `pointermove` и `pointerup` берётся из `document.elementFromPoint`, а не из `event.target`.

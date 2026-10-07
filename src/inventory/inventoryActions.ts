@@ -37,6 +37,17 @@ export function itemStackSignature(stack: ItemStack | null): string {
   return raw.length <= STACK_SIGNATURE_MAX ? raw : raw.slice(0, STACK_SIGNATURE_MAX);
 }
 
+/**
+ * Merge identity without count. A quick-move hint may name this string.
+ * The server compares it with live stacks. It never builds an item from it.
+ */
+export function itemMergeIdentity(stack: ItemStack | null): string {
+  if (!stack) return '';
+  const meta = stack.metadata === undefined ? '' : JSON.stringify(stack.metadata);
+  const raw = `${stack.itemId}|${stack.durability ?? ''}|${meta}`;
+  return raw.length <= STACK_SIGNATURE_MAX ? raw : raw.slice(0, STACK_SIGNATURE_MAX);
+}
+
 function signatureOk(stack: ItemStack | null, expected: string | undefined): boolean {
   if (!expected) return true;
   return itemStackSignature(stack) === expected;
@@ -464,26 +475,41 @@ export function dragDistribute(
   return accepted();
 }
 
-export function quickMoveMatching(state: InventoryUiState, key: string): InventoryUiResult {
+export function quickMoveMatching(
+  state: InventoryUiState,
+  key: string,
+  matchIdentity?: string,
+): InventoryUiResult {
   const origin = bindSlot(state, key);
   const parsed = parseSlotKey(key);
   if (!origin || parsed.kind === 'invalid' || parsed.kind === 'result' || parsed.kind === 'creative') {
     return rejected();
   }
-  const sample = origin.get();
-  if (!sample) return rejected();
+  const hint = matchIdentity && matchIdentity.length > 0 ? matchIdentity : undefined;
   const keys = quickMoveMatchingSourceKeys(state, key);
   const ordered = [
     ...keys.filter((candidate) => candidate === key),
     ...keys.filter((candidate) => candidate !== key),
   ];
+  const liveOrigin = origin.get();
+  let sample: ItemStack | null = liveOrigin && (!hint || itemMergeIdentity(liveOrigin) === hint)
+    ? liveOrigin
+    : null;
   const matches: Array<{ key: string; signature: string }> = [];
   for (const candidate of ordered) {
     const slot = bindSlot(state, candidate);
-    const current = slot?.get();
-    if (!current || !canStacksMerge(current, sample)) continue;
+    const current = slot?.get() ?? null;
+    if (!current) continue;
+    if (sample) {
+      if (!canStacksMerge(current, sample)) continue;
+    } else if (hint && itemMergeIdentity(current) === hint) {
+      sample = current;
+    } else {
+      continue;
+    }
     matches.push({ key: candidate, signature: itemStackSignature(current) });
   }
+  if (!sample || matches.length === 0) return rejected();
   for (const candidate of matches) {
     const slot = bindSlot(state, candidate.key);
     if (itemStackSignature(slot?.get() ?? null) !== candidate.signature) continue;
