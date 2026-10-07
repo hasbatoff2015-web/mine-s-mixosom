@@ -376,9 +376,9 @@ export class DuelService {
     const target = this.deps.directory.get(targetId);
     if (!from || !target) return { ok: false, message: 'Игрок недоступен.' };
     if (from.id === target.id) return { ok: false, message: 'Нельзя вызвать самого себя.' };
-    const fromCheck = this.validateReady(from, now);
+    const fromCheck = this.invitationReady(from);
     if (!fromCheck.ok) return fromCheck;
-    const targetCheck = this.validateReady(target, now);
+    const targetCheck = this.invitationReady(target);
     if (!targetCheck.ok) return targetCheck;
     if (!this.configured()) return { ok: false, message: DUEL_ARENA_UNCONFIGURED };
     if ([...this.invites.values()].some((invite) => invite.fromId === from.id)) {
@@ -421,17 +421,17 @@ export class DuelService {
       this.expireInvite(invite, now);
       return { ok: false, message: 'Вызов истёк.' };
     }
-    const from = this.deps.directory.get(invite.fromId);
-    const to = this.deps.directory.get(invite.toId);
-    if (!from?.connected || !to?.connected) return { ok: false, message: 'Игрок недоступен.' };
-    const fromCheck = this.validateReady(from, now);
-    if (!fromCheck.ok) return fromCheck;
-    const toCheck = this.validateReady(to, now);
-    if (!toCheck.ok) return toCheck;
     if (!this.configured() || !this.arena.spawn1 || !this.arena.spawn2) {
       return { ok: false, message: DUEL_ARENA_UNCONFIGURED };
     }
     if (this.busy()) return { ok: false, message: DUEL_ARENA_BUSY };
+    const from = this.deps.directory.get(invite.fromId);
+    const to = this.deps.directory.get(invite.toId);
+    if (!from?.connected || !to?.connected) return { ok: false, message: 'Игрок недоступен.' };
+    const fromCheck = this.invitationReady(from);
+    if (!fromCheck.ok) return fromCheck;
+    const toCheck = this.invitationReady(to);
+    if (!toCheck.ok) return toCheck;
     if (!this.sameWorld(from, to) || !withinDuelRange(from, to)) {
       this.invites.delete(invite.requestId);
       this.deps.runtime.refreshGameMenu(from.id);
@@ -644,13 +644,12 @@ export class DuelService {
   private nearbyRows(playerId: string, now: number): DuelNearbyRow[] {
     const self = this.deps.directory.get(playerId);
     if (!self?.connected) return [];
-    const viewerReady = this.validateReady(self, now).ok;
+    const viewerReady = this.invitationReady(self).ok;
     const challengeLocked = this.challengeLocked(playerId, now);
     const rows: DuelNearbyRow[] = [];
     for (const actor of this.deps.directory.list()) {
       if (actor.id === playerId || !actor.connected || actor.gamemode !== 'survival' || !actor.alive) continue;
       if (!this.sameWorld(self, actor) || !withinDuelRange(self, actor)) continue;
-      if (this.isInLifecycle(actor.id)) continue;
       const score = this.headToHead(playerId, actor.id);
       rows.push({
         playerId: actor.id,
@@ -662,7 +661,7 @@ export class DuelService {
           && viewerReady
           && challengeLocked === undefined
           && this.configured()
-          && this.validateReady(actor, now).ok,
+          && this.invitationReady(actor).ok,
       });
     }
     rows.sort((a, b) => a.distance - b.distance || a.name.localeCompare(b.name, 'ru') || a.playerId.localeCompare(b.playerId));
@@ -698,11 +697,11 @@ export class DuelService {
     };
   }
 
-  private validateReady(actor: DuelActor, _now: number): DuelActionResult {
+  private invitationReady(actor: DuelActor): DuelActionResult {
     if (!actor.connected) return { ok: false, message: 'Игрок недоступен.' };
     if (actor.gamemode !== 'survival') return { ok: false, message: 'Дуэль доступна только в режиме выживания.' };
     if (!actor.alive) return { ok: false, message: 'Игрок мёртв.' };
-    if (this.isInLifecycle(actor.id)) return { ok: false, message: 'Игрок уже участвует в дуэли.' };
+    if (this.blocksInvitation(actor.id)) return { ok: false, message: 'Игрок уже участвует в дуэли.' };
     return { ok: true };
   }
 
@@ -710,13 +709,25 @@ export class DuelService {
     return a.worldId === b.worldId && a.worldId === this.deps.worldId;
   }
 
-  private isInLifecycle(playerId: string): boolean {
+  private isActiveCombatParticipant(playerId: string): boolean {
     const phase = this.phase;
-    if (phase.kind === 'countdown' || phase.kind === 'fighting' || phase.kind === 'timeout_cleanup') {
-      return phase.players.includes(playerId);
-    }
-    if (phase.kind === 'loot') return playerId === phase.winnerId;
-    return false;
+    return (phase.kind === 'countdown' || phase.kind === 'fighting') && phase.players.includes(playerId);
+  }
+
+  private isLootWinner(playerId: string): boolean {
+    return this.phase.kind === 'loot' && this.phase.winnerId === playerId;
+  }
+
+  private isTimeoutCleanupParticipant(playerId: string): boolean {
+    return this.phase.kind === 'timeout_cleanup' && this.phase.players.includes(playerId);
+  }
+
+  /** Countdown, fighting, and timeout cleanup block a new invitation. Loot does not. */
+  private blocksInvitation(playerId: string): boolean {
+    if (this.isLootWinner(playerId)) return false;
+    const phase = this.phase;
+    if (phase.kind === 'loot' && phase.loserId === playerId) return false;
+    return this.isActiveCombatParticipant(playerId) || this.isTimeoutCleanupParticipant(playerId);
   }
 
   private isTeleportLocked(playerId: string): boolean {

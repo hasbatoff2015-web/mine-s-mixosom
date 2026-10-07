@@ -10,6 +10,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import {
+  DUEL_ARENA_BUSY,
   DUEL_COUNTDOWN_HOLOGRAM,
   DUEL_COUNTDOWN_HOLOGRAM_SIZE,
   DUEL_COUNTDOWN_MS,
@@ -954,7 +955,6 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     bob.player.controller.velocity.set(0, 0, 0);
     world.attack(ada.player);
     expect(world.duels.phaseKind()).toBe('loot');
-    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(false);
 
     world.openGameMenu(ada.player.id, 'duels');
     world.openGameMenu(bob.player.id, 'duels');
@@ -977,5 +977,71 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(idleAda?.duelNearby?.find((row) => row.playerId === bob.player.id)?.canChallenge).toBe(true);
     expect(idleBob?.duelNearby?.find((row) => row.playerId === ada.player.id)?.canChallenge).toBe(true);
     expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
+  });
+
+  it('shows both duelists during loot and starts the same invite after cleanup', async () => {
+    const { world, clock } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const [sx, sy, sz] = world.spawn;
+    const spawn1 = { worldId: world.worldId, x: sx, y: sy, z: sz, yaw: Math.PI, pitch: 0 };
+    const spawn2 = { worldId: world.worldId, x: sx, y: sy, z: sz + 2, yaw: 0, pitch: 0 };
+    expect(world.duels.setSpawn(1, spawn1).ok).toBe(true);
+    expect(world.duels.setSpawn(2, spawn2).ok).toBe(true);
+    world.world.setBlock(Math.floor(sx), Math.floor(sy) - 1, Math.floor(sz), BlockId.Stone);
+    world.world.setBlock(Math.floor(sx), Math.floor(sy) - 1, Math.floor(sz + 2), BlockId.Stone);
+    stand(ada.player, sx, sy, sz);
+    stand(bob.player, sx, sy, sz + 2);
+    expect(world.duels.challenge(ada.player.id, bob.player.id).ok).toBe(true);
+    expect(world.duels.accept(bob.player.id, world.duels.menu(bob.player.id).incoming[0]!.requestId).ok).toBe(true);
+    clock.advance(DUEL_COUNTDOWN_MS);
+    world.duels.tick();
+    expect(world.duels.phaseKind()).toBe('fighting');
+
+    giveSword(ada.player);
+    ada.player.controller.teleport([spawn1.x, spawn1.y, spawn1.z]);
+    ada.player.controller.yaw = Math.PI;
+    ada.player.controller.pitch = 0;
+    ada.player.controller.velocity.set(0, 0, 0);
+    bob.player.controller.teleport([spawn2.x, spawn2.y, spawn2.z]);
+    bob.player.controller.velocity.set(0, 0, 0);
+    world.attack(ada.player);
+    expect(world.duels.phaseKind()).toBe('loot');
+    expect(world.duels.suppressesIncomingDamage(ada.player.id)).toBe(true);
+    expect(world.duels.externalTeleportError(ada.player.id)).toBe(DUEL_TELEPORT_DENIED);
+
+    world.openGameMenu(ada.player.id, 'duels');
+    world.openGameMenu(bob.player.id, 'duels');
+    const lootAda = lastMenu(ada.sink);
+    const lootBob = lastMenu(bob.sink);
+    expect(lootAda?.duelArenaBusy).toBe(true);
+    expect(lootBob?.duelArenaBusy).toBe(true);
+    expect(lootAda?.duelNearby?.find((row) => row.playerId === bob.player.id)?.canChallenge).toBe(true);
+    expect(lootBob?.duelNearby?.find((row) => row.playerId === ada.player.id)?.canChallenge).toBe(true);
+
+    expect(world.duels.challenge(bob.player.id, ada.player.id).ok).toBe(true);
+    const requestId = world.duels.menu(ada.player.id).incoming[0]?.requestId;
+    expect(requestId).toBeTruthy();
+    const adaAtLoot = ada.player.controller.position.clone();
+    const bobAtLoot = bob.player.controller.position.clone();
+    const busy = world.duels.accept(ada.player.id, requestId!);
+    expect(busy).toEqual({ ok: false, message: DUEL_ARENA_BUSY });
+    expect(world.duels.phaseKind()).toBe('loot');
+    expect(world.duels.menu(ada.player.id).incoming[0]?.requestId).toBe(requestId);
+    expect(ada.player.controller.position.x).toBeCloseTo(adaAtLoot.x, 4);
+    expect(bob.player.controller.position.x).toBeCloseTo(bobAtLoot.x, 4);
+
+    clock.advance(DUEL_LOOT_WINDOW_MS);
+    world.duels.tick();
+    expect(world.duels.phaseKind()).toBe('idle');
+    expect(lastMenu(ada.sink)?.duelArenaBusy).toBe(false);
+    expect(lastMenu(ada.sink)?.duelIncoming?.[0]?.requestId).toBe(requestId);
+    expect(world.duels.menu(ada.player.id).incoming[0]?.requestId).toBe(requestId);
+    expect(world.duels.accept(ada.player.id, requestId!).ok).toBe(true);
+    expect(world.duels.phaseKind()).toBe('countdown');
+    expect(bob.player.controller.position.x).toBeCloseTo(spawn1.x, 3);
+    expect(bob.player.controller.position.z).toBeCloseTo(spawn1.z, 3);
+    expect(ada.player.controller.position.x).toBeCloseTo(spawn2.x, 3);
+    expect(ada.player.controller.position.z).toBeCloseTo(spawn2.z, 3);
   });
 });

@@ -530,10 +530,15 @@ describe('main menu HUD and chrome', () => {
       duelArenaConfigured: true,
       duelArenaBusy: true,
       duelIncoming: [{ requestId: 'req-2', playerId: 'b', name: 'Bob', wins: 0, losses: 0 }],
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 1, losses: 2, distance: 6, canChallenge: true }],
     }), escape);
     expect(busy).toContain('● Арена занята');
     expect(busy).toContain('is-busy');
-    expect(busy).toContain('data-menu-duel-accept="req-2" disabled');
+    expect(busy).toContain('data-menu-duel-accept="req-2"');
+    expect(busy).not.toContain('data-menu-duel-accept="req-2" disabled');
+    expect(busy).toContain('data-menu-duel-challenge="d"');
+    expect(busy).not.toContain('data-menu-duel-challenge="d" disabled');
+    expect(busy).toContain('Dan');
     const missing = menuBodyHtml(menu({
       screen: 'duels',
       duelArenaConfigured: false,

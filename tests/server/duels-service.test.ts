@@ -380,8 +380,8 @@ describe('DuelService matches', () => {
     expect(env.service.shouldCancelPlayerDamage('b', 'c', 'projectile')).toBe(false);
     expect(env.service.allowsPickup('a', 'other')).toBe(true);
     expect(env.service.menu('a').arenaBusy).toBe(true);
-    expect(env.service.challenge('b', 'a').message).toMatch(/уже участвует/);
-    expect(env.service.challenge('a', 'b').message).toMatch(/уже участвует/);
+    expect(env.service.menu('a').nearby.find((row) => row.playerId === 'b')?.canChallenge).toBe(true);
+    expect(env.service.menu('b').nearby.find((row) => row.playerId === 'a')?.canChallenge).toBe(true);
     env.service.noteIdentity('b', 'Bobby');
     expect(env.stats().players.b!.displayName).toBe('Bobby');
     expect(env.stats().players.a!.opponents.b!.displayName).toBe('Bobby');
@@ -577,7 +577,8 @@ describe('DuelService matches', () => {
     env.service.tick();
     env.service.finalizeDeath('b', ['kept']);
     expect(env.service.phaseKind()).toBe('loot');
-    expect(env.service.challenge('a', 'b').ok).toBe(false);
+    expect(env.service.menu('a').nearby.find((row) => row.playerId === 'b')?.canChallenge).toBe(true);
+    expect(env.service.menu('b').nearby.find((row) => row.playerId === 'a')?.canChallenge).toBe(true);
     const wins = env.service.statsOf('a').wins;
     env.service.disable();
     expect(env.service.phaseKind()).toBe('idle');
@@ -600,7 +601,8 @@ describe('DuelService matches', () => {
     env.service.finalizeDeath('b', ['loot-1']);
     expect(env.service.phaseKind()).toBe('loot');
     expect(env.service.menu('a').arenaBusy).toBe(true);
-    expect(env.service.challenge('a', 'b').ok).toBe(false);
+    expect(env.service.menu('a').nearby.find((row) => row.playerId === 'b')?.canChallenge).toBe(true);
+    expect(env.service.menu('b').nearby.find((row) => row.playerId === 'a')?.canChallenge).toBe(true);
     env.advance(DUEL_LOOT_WINDOW_MS);
     env.service.tick();
     expect(env.service.phaseKind()).toBe('idle');
@@ -619,7 +621,7 @@ describe('DuelService matches', () => {
     env.service.tick();
     env.service.onPlayerQuit('b');
     expect(env.service.phaseKind()).toBe('loot');
-    expect(env.service.challenge('a', 'b').ok).toBe(false);
+    expect(env.service.menu('a').nearby.find((row) => row.playerId === 'b')?.canChallenge).toBe(true);
     env.advance(DUEL_LOOT_WINDOW_MS);
     env.service.tick();
     expect(env.service.phaseKind()).toBe('idle');
@@ -638,5 +640,82 @@ describe('DuelService matches', () => {
     expect(timed.refreshPhases.at(-1)).toBe('idle');
     expect(timed.refreshPhases.at(-2)).toBe('idle');
     expect(timed.service.challenge('a', 'b').ok).toBe(true);
+  });
+
+  it('lets either player invite during loot and keeps that invite through a busy accept', () => {
+    const env = harness();
+    begin(env);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    env.service.finalizeDeath('b', ['loot-1']);
+    expect(env.service.phaseKind()).toBe('loot');
+    expect(env.service.menu('a').arenaBusy).toBe(true);
+    expect(env.service.challenge('b', 'a').ok).toBe(true);
+    const requestId = env.service.menu('a').incoming[0]!.requestId;
+    const busy = env.service.accept('a', requestId);
+    expect(busy).toEqual({ ok: false, message: DUEL_ARENA_BUSY });
+    expect(env.service.phaseKind()).toBe('loot');
+    expect(env.service.menu('a').incoming.map((row) => row.requestId)).toEqual([requestId]);
+    expect(env.relocates).toEqual([]);
+    env.advance(DUEL_LOOT_WINDOW_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.service.menu('a').arenaBusy).toBe(false);
+    expect(env.service.menu('a').incoming[0]?.requestId).toBe(requestId);
+    expect(env.service.accept('a', requestId).ok).toBe(true);
+    expect(env.service.phaseKind()).toBe('countdown');
+
+    const other = harness();
+    begin(other);
+    other.advance(DUEL_COUNTDOWN_MS);
+    other.service.tick();
+    other.service.finalizeDeath('b', ['loot-2']);
+    expect(other.service.challenge('a', 'b').ok).toBe(true);
+    expect(other.service.menu('b').incoming).toHaveLength(1);
+    expect(other.service.accept('b', other.service.menu('b').incoming[0]!.requestId).message).toBe(DUEL_ARENA_BUSY);
+    expect(other.service.menu('b').incoming).toHaveLength(1);
+  });
+
+  it('blocks new invitations during countdown, fighting, and timeout cleanup', () => {
+    const env = harness();
+    begin(env);
+    expect(env.service.phaseKind()).toBe('countdown');
+    env.actors.set('c', actor('c', 'Cara', 11));
+    expect(env.service.challenge('a', 'c').message).toMatch(/уже участвует/);
+    expect(env.service.challenge('c', 'a').message).toMatch(/уже участвует/);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('fighting');
+    expect(env.service.challenge('b', 'c').message).toMatch(/уже участвует/);
+    expect(env.service.challenge('c', 'b').ok).toBe(false);
+    const started = env.now() - DUEL_COUNTDOWN_MS;
+    env.setNow(started + DUEL_COUNTDOWN_MS + DUEL_MATCH_DURATION_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('timeout_cleanup');
+    expect(env.service.challenge('a', 'b').message).toMatch(/уже участвует/);
+    expect(env.service.challenge('c', 'a').message).toMatch(/уже участвует/);
+    expect(env.service.menu('c').nearby.find((row) => row.playerId === 'a')?.canChallenge).toBe(false);
+    env.advance(DUEL_LOOT_WINDOW_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.service.challenge('c', 'a').ok).toBe(true);
+  });
+
+  it('expires a loot-window invite at the normal 30 second TTL', () => {
+    const env = harness();
+    begin(env);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    env.service.finalizeDeath('b', ['loot-1']);
+    expect(env.service.challenge('b', 'a').ok).toBe(true);
+    const requestId = env.service.menu('a').incoming[0]!.requestId;
+    env.advance(DUEL_INVITE_TTL_MS - 1);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.service.menu('a').incoming[0]?.requestId).toBe(requestId);
+    env.advance(1);
+    env.service.tick();
+    expect(env.service.menu('a').incoming).toEqual([]);
+    expect(env.service.accept('a', requestId).message).toBe('Вызов не найден.');
   });
 });

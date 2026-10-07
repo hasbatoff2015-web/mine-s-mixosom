@@ -10,7 +10,8 @@
 - [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
 - [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
 - [x] Countdown hologram is display font, size 2.8, and `interactive: false`. `HOLOGRAM_SIZE_MAX` stays 3.2.
-- [x] No post-match cooldown. After the 15 s loot window, idle is committed before open duel menus refresh, and a rematch is immediate.
+- [x] No post-match cooldown. After the 15 s loot window, idle is committed before open duel menus refresh.
+- [x] During loot both players can invite each other. Accept stays blocked until the arena is idle, and the same request survives.
 - [x] Fight start sends one `duel_effect` burst. Velocity scale 0.5, life scale 0.75. No rocket entity.
 - [x] `WorldInstance` owns the duel tick and combat hooks. Plugin disable blocks new matches.
 - [x] Loot winner is protected for 15 s. Attacker-less melee, arrow, and projectile damage is cancelled in fighting.

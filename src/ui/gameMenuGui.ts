@@ -499,7 +499,7 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
       : busy
         ? '● Арена занята'
         : '● Арена свободна';
-  const actionsLocked = !available || busy || !configured;
+  const acceptLocked = !available || !configured;
   const incomingRows = (state.duelIncoming ?? []).map((row) => `
     <div class="mc-player-row mc-duel-row">
       <div class="mc-player-main">
@@ -507,7 +507,7 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
         <span class="mc-player-meta mc-duel-score">Счёт: ${row.wins} : ${row.losses}</span>
       </div>
       <span class="mc-menu-row-actions">
-        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-duel-accept="${escape(row.requestId)}"${actionsLocked ? ' disabled' : ''}>Принять</button>
+        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-duel-accept="${escape(row.requestId)}"${acceptLocked ? ' disabled' : ''}>Принять</button>
         <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-duel-decline="${escape(row.requestId)}"${!available ? ' disabled' : ''}>Отклонить</button>
       </span>
     </div>`).join('');
