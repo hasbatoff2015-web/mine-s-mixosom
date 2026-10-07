@@ -149,4 +149,4 @@ Wait for an explicit merge command.
 
 ## Git
 
-Feature branch only. Draft PR. Not merged.
+Feature branch `cursor/player-skin-side-uv-fix-5b99`. HEAD `88939dff` plus the docs note for draft PR **#124**. Not merged.

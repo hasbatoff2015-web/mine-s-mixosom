@@ -5,7 +5,7 @@
 - Боковые грани Java-скина больше не зеркалятся по U. `PlayerSkinGeometry` для всех частей, слоёв, Classic/Slim и first-person ставит `faceUvFlipU` на геометрические `left` (−X) и `right` (+X). Острова на листе не переставлялись. Front, back, top и bottom не менялись.
 - У головы base передний край player-right (−X) читает `u=8`, задний `u=0`; player-left (+X) — `u=16` и `u=24`. Hat layer: −X `40/32`, +X `48/56`.
 - `mirror` у брони и мобов работает как раньше: per-face flip с ним XOR, и без карты поведение прежнее.
-- Подробности: `docs/reports/2026-10-07_player-skin-side-uv.md`. Draft PR, не смержен.
+- Подробности: `docs/reports/2026-10-07_player-skin-side-uv.md`. Draft PR **#124**. Не смержен.
 
 ## Последний проход: личные сообщения друзей — 2026-10-05
 

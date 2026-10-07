@@ -5,7 +5,7 @@
 - [x] Flip U only on cuboid side faces for every player skin part, layer, Classic/Slim, world and first-person.
 - [x] Keep Java UV islands, front/back/top/bottom, and the existing whole-cuboid `mirror` used by armor and mobs.
 - [x] Assert the correction on real `BufferGeometry` vertices, not only rectangle metadata.
-- [ ] Not merged. Draft PR. Wait for an explicit merge command.
+- [ ] Not merged. Draft PR **#124**. Wait for an explicit merge command.
 
 ## 2026-10-05: Private friend chat
 
