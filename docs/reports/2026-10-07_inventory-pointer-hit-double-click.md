@@ -85,5 +85,8 @@ Hit-test на move/up — один `elementFromPoint` и при необходи
 
 ## Git
 
-- До работы `origin/main`: `de2843bcfe8ee3c8ebe9901b0ebeed2fb4b331a7`. Feature HEAD: `cde850a5613a4626268441750bb91d090983081e`.
-- Во время работы в `main` влился PR #123 (`a14ec3ad3a810e7392f27e1803adac9f547cebd5`). В ветку сделан обычный merge, без rebase и force push.
+- До работы `origin/main`: `de2843bcfe8ee3c8ebe9901b0ebeed2fb4b331a7`. Feature HEAD: `cde850a5613a4626268441750bb91d090983081e`. Merge-base с тем `main` совпадал с ним.
+- Исправление hit-test: `09676bd72a6df5ee22ff8debc72b4c195f91b11d`.
+- Пока шла работа, в `main` влился PR #123. После финального fetch `origin/main`: `a14ec3ad3a810e7392f27e1803adac9f547cebd5`.
+- В ветку сделан обычный merge `origin/main`, без rebase и force push: `0548089e333da587556a6c8ff75bde3a186b3aa7`. Новый merge-base совпадает с `origin/main`. Ветка впереди `main` на коммиты инвентаря, позади не остаётся.
+- PR #125 остаётся OPEN DRAFT. Production не трогался.
