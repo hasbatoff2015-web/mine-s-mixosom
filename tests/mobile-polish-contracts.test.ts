@@ -423,7 +423,9 @@ describe('inventory scale and cursor position', () => {
     expect(style).toContain('left: -9999px');
     expect(gameUi).toContain('this.rememberCursorPointer(event)');
     const down = gameUi.slice(gameUi.indexOf("addEventListener('pointerdown'"), gameUi.indexOf("addEventListener('contextmenu'"));
-    expect(down.indexOf('this.rememberCursorPointer(event)')).toBeLessThan(down.indexOf('this.handleInventorySlot'));
+    expect(down).toContain('this.onInventoryPointerDown(event, context)');
+    expect(down).not.toContain('this.handleInventorySlot');
+    expect(gameUi).toContain('shouldFollowCarriedPointer');
     expect(gameUi).toContain('this.syncCursorStackElement()');
   });
 });

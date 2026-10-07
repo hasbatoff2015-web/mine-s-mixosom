@@ -1,14 +1,17 @@
 import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
 import {
   Inventory,
-  applySlotClick,
   createItemStack,
   isChestWindowKind,
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
 import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
-import { creativeCatalogGrant } from '../inventory/inventoryUiAction';
+import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
+import { itemStackSignature, splitDestinationIndex } from '../inventory/inventoryActions';
+import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
+import { cloneStack } from '../inventory/stack';
+import { initialStackAmount, splitAmountAllowed } from '../inventory/stackAmount';
 import type { GameMode, WorldSummary } from '../save/types';
 import type { ClientSettings } from './clientSettings';
 import type { ChestState, FurnaceState } from '../world/World';
@@ -41,6 +44,21 @@ import {
   menuUiScale,
 } from './containerTheme';
 import { viewportMetrics } from './visualViewport';
+import { isCoarsePointerMedia } from '../input/pointerLock';
+import { inventoryKeyDecision } from './inventoryKeys';
+import {
+  INVENTORY_DOUBLE_CLICK_MS,
+  INVENTORY_TOUCH_LONG_PRESS_MS,
+  shouldFollowCarriedPointer,
+  stepInventoryGesture,
+  type GestureEffect,
+  type GestureStep,
+  type InventoryGesture,
+  type PointerSample,
+  type PointerZone,
+  type SourceClass,
+} from './inventoryPointerGesture';
+import { mobileDropHitContains } from './mobileDropTarget';
 import {
   allCraftingBookEntries,
   inventoryAndGridCounts,
@@ -55,15 +73,10 @@ import {
 } from './recipeBook';
 import { CRAFT_BUTTON_LABEL, keepCraftSearchDraft } from './craftGui';
 import {
-  clickFurnaceSlot,
-  furnaceAccepts,
-  furnaceShiftRoute,
   ghostFromRecipe,
   hasRecipeBook,
   placeCraftingRecipe,
-  shiftMoveStack,
   showsCreativeCatalog,
-  takeCraftOutput,
   type GhostCraftState,
 } from './containerInteractions';
 import {
@@ -303,10 +316,6 @@ export interface InventoryContext {
   submitAction?: (message: ClientInventoryActionMessage) => void;
 }
 
-interface ContainerAdapter {
-  slots: Array<ItemStack | null>;
-}
-
 interface OverlayCloseOptions {
   keepModal?: boolean;
 }
@@ -354,6 +363,30 @@ export class GameUI {
   private cursorStack: ItemStack | null = null;
   /** Last pointer that can own the carried stack. Touch taps have no later move. */
   private cursorPointer: { x: number; y: number; pointerType: string } | null = null;
+  /** Coarse pointers keep this anchor. Empty backdrop taps must not replace it. */
+  private cursorAnchor: { x: number; y: number; pointerType: string } | null = null;
+  private pointerGesture: InventoryGesture | null = null;
+  private gestureSignature = '';
+  private dragPreview: ItemStack | null = null;
+  private longPressTimer?: number;
+  private hoveredSlotKey: string | null = null;
+  private coarsePointer = false;
+  private amountDialog: {
+    key: string;
+    count: number;
+    selected: number;
+    signature: string;
+    name: string;
+    itemId: string;
+  } | null = null;
+  private lastSlotClick: {
+    key: string;
+    button: 'left' | 'right';
+    shift: boolean;
+    at: number;
+    identity: string;
+  } | null = null;
+  private ignoreLostCapture = false;
   private craftSlots: Array<ItemStack | null> = [];
   private ghostCraft?: GhostCraftState;
   private recipeBookOpen = false;
@@ -523,8 +556,21 @@ export class GameUI {
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
     document.addEventListener('pointermove', (event) => {
+      if (this.pointerGesture?.pointerId === event.pointerId) return;
+      if (!shouldFollowCarriedPointer({
+        inventoryOpen: this.isInventoryOpen(),
+        carried: this.cursorStack !== null || this.dragPreview !== null,
+        pointerClass: this.coarsePointer ? 'coarse' : 'fine',
+        dragging: false,
+        amountOpen: this.amountDialog !== null,
+      })) return;
       this.rememberCursorPointer(event);
       this.syncCursorStackElement();
+    });
+    window.addEventListener('keydown', (event) => this.onInventoryKey(event), { capture: true });
+    window.addEventListener('blur', () => {
+      this.cancelInventoryGesture();
+      this.closeAmountDialog();
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1397,6 +1443,10 @@ export class GameUI {
   }
 
   applyAuthoritativeCursor(cursor: ItemStack | null, craftSlots?: Array<ItemStack | null>): void {
+    if (this.pointerGesture?.sourceKey && this.gestureSignature) {
+      const live = itemStackSignature(this.stackAt(this.pointerGesture.sourceKey));
+      if (live !== this.gestureSignature) this.cancelInventoryGesture();
+    }
     this.cursorStack = cursor;
     if (craftSlots) {
       this.craftSlots = craftSlots;
@@ -1410,7 +1460,11 @@ export class GameUI {
     this.closeTrade();
     this.closeInventory(false);
     this.inventoryContext = context;
+    this.syncCoarsePointer();
     this.cursorStack = null;
+    this.cursorAnchor = null;
+    this.cancelInventoryGesture();
+    this.closeAmountDialog();
     this.ghostCraft = undefined;
     this.recipeBookSearch = '';
     this.recipeBookCategory = 'all';
@@ -1427,6 +1481,8 @@ export class GameUI {
   closeInventory(returnStacks = true): void {
     const context = this.inventoryContext;
     if (!context) return;
+    this.cancelInventoryGesture();
+    this.closeAmountDialog();
     if (returnStacks) {
       for (const stack of [...this.craftSlots, this.cursorStack]) {
         if (!stack) continue;
@@ -2133,11 +2189,12 @@ export class GameUI {
             <div class="mc-craft-detail" data-craft-detail>${detail}</div>
           </div>
         </div>
-        ${this.closeButtonHtml()}
+        ${this.inventorySideRailHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindContainerChrome(context);
     this.bindCraftSearch();
+    this.finishInventoryChrome();
   }
 
   private bindCraftSearch(): void {
@@ -2194,12 +2251,12 @@ export class GameUI {
   private renderCreativeInventory(context: InventoryContext): void {
     const hotbar = this.playerHotbarHtml(context);
     const inventory = this.creativePlayerInventoryHtml(context);
-    const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
+    const cursor = this.carriedCursorHtml();
     if (inventoryPaintMode(this.modal !== undefined) === 'patch-dynamic'
       && this.modal
       && patchCreativeDynamic(this.modal, { hotbar, inventory, cursor, tab: this.creativeTab })) {
       this.syncCreativeTabs();
-      this.syncCursorStackElement();
+      this.finishInventoryChrome();
       return;
     }
     this.itemTooltip?.dispose();
@@ -2225,12 +2282,12 @@ export class GameUI {
           </div>
           <div data-player-hotbar class="mc-creative-hotbar">${hotbar}</div>
         </div>
-        ${this.closeButtonHtml()}
+        ${this.inventorySideRailHtml()}
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.bindContainerChrome(context);
-    this.syncCursorStackElement();
+    this.finishInventoryChrome();
   }
 
   private syncCreativeTabs(): void {
@@ -2252,14 +2309,14 @@ export class GameUI {
     const body = this.containerBodyHtml(context);
     const player = this.playerInventoryHtml(context, context.kind !== 'inventory');
     const recipe = showBook ? this.recipeBookHtml(context) : '';
-    const cursor = this.cursorStack ? this.slotHtml(this.cursorStack, 'cursor') : '';
+    const cursor = this.carriedCursorHtml();
     const layoutKey = `${showBook ? 1 : 0}:${bookOpen ? 1 : 0}`;
     if (this.modal?.classList.contains('mc-backdrop')
       && this.modal.dataset.bookUi === layoutKey
       && patchContainerDynamic(this.modal, { body, player, recipeGrid: this.recipeGridHtml(context), cursor })) {
       this.applyContainerScale(scale, stage.width);
       this.syncRecipeBookChrome(context);
-      this.syncCursorStackElement();
+      this.finishInventoryChrome();
       return;
     }
     this.itemTooltip?.dispose();
@@ -2273,13 +2330,13 @@ export class GameUI {
           <div data-container-body>${body}</div>
           <div data-player-inventory>${player}</div>
         </div>
-        ${this.closeButtonHtml()}
+        ${this.inventorySideRailHtml()}
         <div class="mc-item-tooltip"></div>
       </div>
       <div id="cursor-stack">${cursor}</div>`;
     this.bindContainerChrome(context);
     this.bindRecipeBookControls(context);
-    this.syncCursorStackElement();
+    this.finishInventoryChrome();
   }
 
   private containerScale(logicalWidth: number, logicalHeight: number): number {
@@ -2296,14 +2353,31 @@ export class GameUI {
     this.cursorPointer = { x: event.clientX, y: event.clientY, pointerType: event.pointerType };
   }
 
-  /** Places the carried stack on the pointer that created it, without waiting for pointermove. */
+  /** Places the carried stack on the active drag or the last valid anchor. */
   private syncCursorStackElement(): void {
     const cursor = this.modal?.querySelector<HTMLElement>('#cursor-stack');
-    const pointer = this.cursorPointer;
+    const pointer = this.carriedPointer();
     if (!cursor || !pointer) return;
     const position = cursorStackClientPosition(pointer.x, pointer.y, pointer.pointerType);
     cursor.style.left = `${position.left}px`;
     cursor.style.top = `${position.top}px`;
+  }
+
+  private carriedPointer(): { x: number; y: number; pointerType: string } | null {
+    if (this.pointerGesture?.phase === 'drag') {
+      return {
+        x: this.pointerGesture.x,
+        y: this.pointerGesture.y,
+        pointerType: this.pointerGesture.pointerClass === 'coarse' ? 'touch' : 'mouse',
+      };
+    }
+    if (this.coarsePointer) return this.cursorAnchor;
+    return this.cursorPointer ?? this.cursorAnchor;
+  }
+
+  private carriedCursorHtml(): string {
+    const shown = this.dragPreview ?? this.cursorStack;
+    return shown ? this.slotHtml(shown, 'cursor') : '';
   }
 
   private applyContainerScale(scale: number, logicalWidth: number): void {
@@ -2316,59 +2390,30 @@ export class GameUI {
   private bindContainerChrome(context: InventoryContext): void {
     this.itemTooltip?.dispose();
     this.itemTooltip = attachItemTooltip(this.modal!, {
-      cursorStackPresent: () => this.cursorStack !== null,
+      cursorStackPresent: () => this.cursorStack !== null || this.dragPreview !== null,
+      suspended: () => this.pointerGesture !== null || this.amountDialog !== null,
     });
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => {
       if (this.craftMenuOpen) this.closeCraftMenu();
       else context.onClose();
     });
-    this.modal!.addEventListener('pointerdown', (event) => {
-      this.rememberCursorPointer(event);
-      const tab = (event.target as HTMLElement).closest<HTMLElement>('[data-creative-tab]');
-      if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
-        event.preventDefault();
-        this.creativeTab = tab.dataset.creativeTab;
-        this.itemTooltip?.hide();
-        this.renderInventory();
-        return;
-      }
-      const craftMenu = (event.target as HTMLElement).closest('[data-craft-menu]');
-      if (craftMenu) {
-        event.preventDefault();
-        this.openCraftMenu();
-        return;
-      }
-      const craftItem = (event.target as HTMLElement).closest<HTMLElement>('[data-craft-item]');
-      if (craftItem?.dataset.craftItem) {
-        event.preventDefault();
-        this.craftSelectedId = craftItem.dataset.craftItem;
-        this.renderInventory();
-        return;
-      }
-      const craftOnce = (event.target as HTMLElement).closest('[data-craft-once]');
-      if (craftOnce) {
-        event.preventDefault();
-        this.handleCraftOnce();
-        return;
-      }
-      const toggle = (event.target as HTMLElement).closest('[data-recipe-toggle]');
-      if (toggle) {
-        event.preventDefault();
-        this.toggleRecipeBook(context.kind);
-        this.itemTooltip?.hide();
-        this.renderInventory();
-        return;
-      }
-      const recipe = (event.target as HTMLElement).closest<HTMLElement>('[data-recipe-id]');
-      if (recipe) {
-        event.preventDefault();
-        this.handleRecipeClick(recipe.dataset.recipeId!, event.button === 2, event.shiftKey);
-        return;
-      }
-      const slot = (event.target as HTMLElement).closest<HTMLElement>('[data-slot]');
-      if (!slot) return;
-      event.preventDefault();
-      this.handleInventorySlot(slot.dataset.slot!, event.button === 2 ? 'right' : 'left', event.shiftKey);
+    this.modal!.addEventListener('pointerover', (event) => {
+      const key = (event.target as Element | null)?.closest?.('[data-slot]')?.getAttribute('data-slot');
+      if (key && key !== 'cursor') this.hoveredSlotKey = key;
+    });
+    this.modal!.addEventListener('pointerout', (event) => {
+      const from = (event.target as Element | null)?.closest?.('[data-slot]');
+      const related = event.relatedTarget;
+      const to = related instanceof Element ? related.closest('[data-slot]') : null;
+      if (from && !to) this.hoveredSlotKey = null;
+    });
+    this.modal!.addEventListener('pointerdown', (event) => this.onInventoryPointerDown(event, context));
+    this.modal!.addEventListener('pointermove', (event) => this.onInventoryPointerMove(event));
+    this.modal!.addEventListener('pointerup', (event) => this.onInventoryPointerUp(event));
+    this.modal!.addEventListener('pointercancel', () => this.cancelInventoryGesture());
+    this.modal!.addEventListener('lostpointercapture', () => {
+      if (this.ignoreLostCapture) return;
+      if (this.pointerGesture) this.cancelInventoryGesture();
     });
     this.modal!.addEventListener('contextmenu', (event) => event.preventDefault());
   }
@@ -2637,103 +2682,664 @@ export class GameUI {
     this.renderInventory();
   }
 
-  private handleInventorySlot(key: string, button: 'left' | 'right', shift: boolean): void {
+  private syncCoarsePointer(): void {
+    this.coarsePointer = isCoarsePointerMedia();
+    this.modal?.classList.toggle('is-coarse', this.coarsePointer);
+  }
+
+  private inventorySideRailHtml(): string {
+    return `<div class="mc-container-side-rail">${this.closeButtonHtml()}`
+      + `<div class="mc-mobile-drop-target" data-mobile-drop aria-label="Выбросить">`
+      + `<span class="mc-mobile-drop-icon" aria-hidden="true"></span>`
+      + `<span class="mc-mobile-drop-hit" data-mobile-drop-hit></span>`
+      + `</div></div>`;
+  }
+
+  private finishInventoryChrome(): void {
+    this.syncCoarsePointer();
+    if (this.amountDialog) {
+      const live = this.stackAt(this.amountDialog.key);
+      if (!live || itemStackSignature(live) !== this.amountDialog.signature) {
+        this.closeAmountDialog();
+      }
+    }
+    this.syncCursorElementContents();
+    this.syncCursorStackElement();
+    this.syncDropArmed();
+    this.ensureAmountDialog();
+    this.positionAmountDialog();
+    if (this.pointerGesture || this.amountDialog) this.itemTooltip?.hide();
+  }
+
+  private uiScale(): number {
+    const stage = this.modal?.querySelector<HTMLElement>('.mc-stage');
+    const raw = Number(stage?.style.getPropertyValue('--mc-ui-scale'));
+    return Number.isFinite(raw) && raw > 0 ? raw : 1;
+  }
+
+  private stackAt(key: string): ItemStack | null {
     const context = this.inventoryContext;
-    if (!context || key === 'cursor') return;
-    if (context.submitAction) {
-      context.submitAction({ type: 'inventory_action', action: 'click', key, button, shift });
+    if (!context) return null;
+    const parsed = parseSlotKey(key);
+    if (parsed.kind === 'player' && parsed.playerRef !== undefined) return context.inventory.getSlot(parsed.playerRef);
+    if (parsed.kind === 'craft' && parsed.index !== undefined) return this.craftSlots[parsed.index] ?? null;
+    if (parsed.kind === 'container' && parsed.index !== undefined) return context.chest?.slots[parsed.index] ?? null;
+    if (parsed.kind === 'furnace' && parsed.furnaceIndex !== undefined) {
+      return context.furnace?.slots[parsed.furnaceIndex] ?? null;
+    }
+    if (parsed.kind === 'creative' && parsed.index !== undefined) {
+      const item = creativeCatalogItems()[parsed.index];
+      return item ? createItemStack(item.id, 1) : null;
+    }
+    if (parsed.kind === 'result') {
+      const size = context.kind === 'crafting-table' ? 3 : 2;
+      return matchCraftingRecipe(this.craftSlots, size, size)?.output ?? null;
+    }
+    return null;
+  }
+
+  private sourceClassFor(key: string): SourceClass {
+    const capability = slotCapability(parseSlotKey(key));
+    if (capability === 'creative') return 'creative';
+    if (capability === 'virtual') return 'virtual';
+    if (capability === 'invalid') return 'none';
+    return this.stackAt(key) ? 'real' : 'empty';
+  }
+
+  private pointInMobileDrop(x: number, y: number): boolean {
+    if (!this.coarsePointer) return false;
+    const visual = this.modal?.querySelector<HTMLElement>('.mc-mobile-drop-target');
+    if (!visual || visual.getClientRects().length === 0) return false;
+    const rect = visual.getBoundingClientRect();
+    return mobileDropHitContains(
+      { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom },
+      x,
+      y,
+      this.uiScale(),
+    );
+  }
+
+  private pointerZone(event: PointerEvent): { zone: PointerZone; slotKey: string | null } {
+    if (this.amountDialog) return { zone: 'dialog', slotKey: null };
+    const target = event.target instanceof Element ? event.target : null;
+    if (this.pointInMobileDrop(event.clientX, event.clientY) || target?.closest('[data-mobile-drop]')) {
+      return { zone: 'drop', slotKey: null };
+    }
+    const slotKey = target?.closest('[data-slot]')?.getAttribute('data-slot') ?? null;
+    if (slotKey && slotKey !== 'cursor') return { zone: 'slot', slotKey };
+    if (target?.closest('button, input, textarea, a, [data-recipe-id], [data-creative-tab], [data-craft-item]')) {
+      return { zone: 'blocked', slotKey: null };
+    }
+    if (target?.closest('.mc-panel, .mc-recipe-book, .mc-item-tooltip, .mc-stack-amount-dialog')) {
+      return { zone: 'panel', slotKey: null };
+    }
+    return { zone: 'backdrop', slotKey: null };
+  }
+
+  private pointerSample(event: PointerEvent): PointerSample {
+    const { zone, slotKey } = this.pointerZone(event);
+    return {
+      pointerId: event.pointerId,
+      pointerClass: this.coarsePointer ? 'coarse' : 'fine',
+      x: event.clientX,
+      y: event.clientY,
+      button: event.button === 2 ? 'right' : 'left',
+      shift: event.shiftKey,
+      zone,
+      slotKey,
+      now: performance.now(),
+    };
+  }
+
+  private onInventoryPointerDown(event: PointerEvent, context: InventoryContext): void {
+    const target = event.target instanceof Element ? event.target : null;
+    if (this.amountDialog) {
+      if (!target?.closest('[data-amount-dialog]')) {
+        event.preventDefault();
+        this.closeAmountDialog();
+      }
       return;
     }
-    if (key.startsWith('inventory-')) {
-      const index = Number(key.slice('inventory-'.length));
-      if (shift && isChestWindowKind(context.kind) && context.chest) this.quickMoveInventoryToContainer(index, context.chest);
-      else if (shift && context.kind === 'furnace' && context.furnace) this.shiftInventoryToFurnace(index);
-      else this.cursorStack = context.inventory.clickSlot(index, this.cursorStack, button);
-    } else if (key.startsWith('armor-')) {
-      const slot = key.slice('armor-'.length) as 'head' | 'chest' | 'legs' | 'feet';
-      this.cursorStack = context.inventory.clickSlot({ section: 'armor', slot }, this.cursorStack, button);
-    } else if (key === 'offhand') this.cursorStack = context.inventory.clickSlot({ section: 'offhand' }, this.cursorStack, button);
-    else if (key.startsWith('craft-')) {
-      const index = Number(key.slice('craft-'.length));
-      this.ghostCraft = undefined;
-      const result = applySlotClick(this.craftSlots[index] ?? null, this.cursorStack, button);
-      this.craftSlots[index] = result.slot;
-      this.cursorStack = result.cursor;
-    } else if (key === 'result') this.takeCraftResult(shift);
-    else if (key.startsWith('container-')) this.clickContainer(Number(key.slice('container-'.length)), button, shift);
-    else if (key.startsWith('furnace-')) this.clickFurnace(Number(key.slice('furnace-'.length)) as 0 | 1 | 2, button, shift);
-    else if (key.startsWith('creative-')) {
-      const granted = creativeCatalogGrant(Number(key.slice('creative-'.length)), button);
-      if (granted) this.cursorStack = granted;
+    const tab = target?.closest<HTMLElement>('[data-creative-tab]');
+    if (tab?.dataset.creativeTab === 'catalog' || tab?.dataset.creativeTab === 'inventory') {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.creativeTab = tab.dataset.creativeTab;
+      this.itemTooltip?.hide();
+      this.renderInventory();
+      return;
     }
+    if (target?.closest('[data-craft-menu]')) {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.openCraftMenu();
+      return;
+    }
+    const craftItem = target?.closest<HTMLElement>('[data-craft-item]');
+    if (craftItem?.dataset.craftItem) {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.craftSelectedId = craftItem.dataset.craftItem;
+      this.renderInventory();
+      return;
+    }
+    if (target?.closest('[data-craft-once]')) {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.handleCraftOnce();
+      return;
+    }
+    if (target?.closest('[data-recipe-toggle]')) {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.toggleRecipeBook(context.kind);
+      this.itemTooltip?.hide();
+      this.renderInventory();
+      return;
+    }
+    const recipe = target?.closest<HTMLElement>('[data-recipe-id]');
+    if (recipe?.dataset.recipeId) {
+      event.preventDefault();
+      this.cancelInventoryGesture();
+      this.handleRecipeClick(recipe.dataset.recipeId, event.button === 2, event.shiftKey);
+      return;
+    }
+    const sample = this.pointerSample(event);
+    if (sample.zone === 'slot' || sample.zone === 'drop') event.preventDefault();
+    const sourceKey = sample.slotKey;
+    const sourceClass = sourceKey ? this.sourceClassFor(sourceKey) : 'none';
+    const stack = sourceKey ? this.stackAt(sourceKey) : null;
+    const step = stepInventoryGesture(this.pointerGesture, {
+      type: 'down',
+      sample,
+      context: {
+        cursorOccupied: this.cursorStack !== null,
+        sourceOccupied: sourceClass === 'real' && stack !== null,
+        sourceClass,
+        allowLongPress: this.coarsePointer && sourceKey !== null && isPlayerAmountSlot(sourceKey) && stack !== null,
+      },
+    });
+    this.pointerGesture = step.gesture;
+    if (!step.gesture) return;
+    this.gestureSignature = step.gesture.sourceKey ? itemStackSignature(this.stackAt(step.gesture.sourceKey)) : '';
+    this.armLongPress();
+    try {
+      this.modal?.setPointerCapture(event.pointerId);
+    } catch {
+      /* Pointer capture is optional. The modal listener still sees the bubble. */
+    }
+  }
+
+  private onInventoryPointerMove(event: PointerEvent): void {
+    if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
+    const sample = this.pointerSample(event);
+    const before = this.pointerGesture.phase;
+    const step = stepInventoryGesture(this.pointerGesture, { type: 'move', sample });
+    this.pointerGesture = step.gesture;
+    if (before !== 'drag' && step.gesture?.phase === 'drag') {
+      this.clearLongPressTimer();
+      this.itemTooltip?.hide();
+      if (!this.cursorStack && step.gesture.sourceClass === 'real' && step.gesture.sourceKey) {
+        const live = itemStackSignature(this.stackAt(step.gesture.sourceKey));
+        if (live === this.gestureSignature) this.dragPreview = cloneStack(this.stackAt(step.gesture.sourceKey));
+      }
+      this.syncCursorElementContents();
+    }
+    this.syncDropArmed();
+    this.syncCursorStackElement();
+  }
+
+  private onInventoryPointerUp(event: PointerEvent): void {
+    if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
+    const sample = this.pointerSample(event);
+    const step = stepInventoryGesture(this.pointerGesture, { type: 'up', sample });
+    this.clearLongPressTimer();
+    this.ignoreLostCapture = true;
+    this.pointerGesture = null;
+    this.dragPreview = null;
+    this.syncDropArmed();
+    try {
+      this.modal?.releasePointerCapture(event.pointerId);
+    } catch {
+      /* Capture was never taken. */
+    }
+    this.ignoreLostCapture = false;
+    for (const effect of step.effects) this.applyGestureEffect(effect, sample);
+    this.gestureSignature = '';
+    this.syncCursorElementContents();
+    this.syncCursorStackElement();
+  }
+
+  private armLongPress(): void {
+    this.clearLongPressTimer();
+    if (!this.pointerGesture?.allowLongPress) return;
+    const startedAt = this.pointerGesture.startedAt;
+    this.longPressTimer = window.setTimeout(() => {
+      this.longPressTimer = undefined;
+      if (!this.pointerGesture) return;
+      const step = stepInventoryGesture(this.pointerGesture, {
+        type: 'tick',
+        now: Math.max(performance.now(), startedAt + INVENTORY_TOUCH_LONG_PRESS_MS),
+      });
+      const opened = step.effects.some((effect) => effect.type === 'long-press');
+      this.pointerGesture = step.gesture;
+      if (opened) this.itemTooltip?.hide();
+      this.syncDropArmed();
+      for (const effect of step.effects) this.applyGestureEffect(effect);
+    }, INVENTORY_TOUCH_LONG_PRESS_MS);
+  }
+
+  private clearLongPressTimer(): void {
+    if (this.longPressTimer === undefined) return;
+    window.clearTimeout(this.longPressTimer);
+    this.longPressTimer = undefined;
+  }
+
+  private cancelInventoryGesture(): void {
+    this.clearLongPressTimer();
+    const hadGesture = this.pointerGesture !== null || this.dragPreview !== null;
+    this.pointerGesture = null;
+    this.gestureSignature = '';
+    this.dragPreview = null;
+    this.syncDropArmed();
+    if (!hadGesture) return;
+    this.syncCursorElementContents();
+    this.syncCursorStackElement();
+  }
+
+  private applyGestureEffect(effect: GestureEffect, sample?: PointerSample): void {
+    if (effect.type === 'cancel') return;
+    if (effect.type === 'long-press') {
+      const pointerId = this.pointerGesture?.pointerId;
+      this.openAmountDialog(effect.key);
+      this.pointerGesture = null;
+      this.gestureSignature = '';
+      this.dragPreview = null;
+      this.syncDropArmed();
+      if (pointerId !== undefined) {
+        this.ignoreLostCapture = true;
+        try {
+          this.modal?.releasePointerCapture(pointerId);
+        } catch {
+          /* The hold already ended or capture was unavailable. */
+        }
+        this.ignoreLostCapture = false;
+      }
+      return;
+    }
+    if (effect.type === 'click' && sample) {
+      const point = {
+        x: sample.x,
+        y: sample.y,
+        pointerType: this.coarsePointer ? 'touch' : 'mouse',
+      };
+      if (this.coarsePointer) this.cursorAnchor = point;
+      else this.cursorPointer = point;
+      this.resolveSlotClick(effect.key, effect.button, effect.shift);
+      return;
+    }
+    if (effect.type === 'move') {
+      const live = itemStackSignature(this.stackAt(effect.sourceKey));
+      if (this.gestureSignature && live !== this.gestureSignature) return;
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'move_stack',
+        sourceKey: effect.sourceKey,
+        targetKey: effect.targetKey,
+        ...(this.gestureSignature ? { signature: this.gestureSignature } : {}),
+      });
+      return;
+    }
+    if (effect.type === 'drop-slot') {
+      const live = itemStackSignature(this.stackAt(effect.key));
+      if (this.gestureSignature && live !== this.gestureSignature) return;
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'drop_slot',
+        key: effect.key,
+        all: true,
+        ...(this.gestureSignature ? { signature: this.gestureSignature } : {}),
+      });
+      return;
+    }
+    if (effect.type === 'drop-cursor') {
+      this.submitInventoryAction(effect.mode === 'one'
+        ? { type: 'inventory_action', action: 'drop_cursor', count: 1 }
+        : { type: 'inventory_action', action: 'drop_cursor' });
+      return;
+    }
+    if (effect.type === 'distribute') {
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'drag_distribute',
+        button: effect.button,
+        keys: [...effect.keys],
+      });
+    }
+  }
+
+  private resolveSlotClick(key: string, button: 'left' | 'right', shift: boolean): void {
+    const now = performance.now();
+    const identity = this.stackIdentity(this.stackAt(key));
+    const previous = this.lastSlotClick;
+    const doubled = previous !== null
+      && previous.key === key
+      && previous.button === 'left'
+      && button === 'left'
+      && previous.shift === shift
+      && now - previous.at <= INVENTORY_DOUBLE_CLICK_MS;
+    this.lastSlotClick = { key, button, shift, at: now, identity };
+    if (doubled && shift) {
+      const match = this.matchingQuickMoveKey(key, previous.identity);
+      if (match) {
+        this.submitInventoryAction({ type: 'inventory_action', action: 'quick_move_matching', key: match });
+      }
+      return;
+    }
+    if (doubled && this.cursorStack) {
+      this.submitInventoryAction({ type: 'inventory_action', action: 'collect_matching' });
+      return;
+    }
+    this.submitInventoryAction({ type: 'inventory_action', action: 'click', key, button, shift });
+  }
+
+  private stackIdentity(stack: ItemStack | null): string {
+    if (!stack) return '';
+    const meta = stack.metadata === undefined ? '' : JSON.stringify(stack.metadata);
+    return `${stack.itemId}|${stack.durability ?? ''}|${meta}`;
+  }
+
+  private sameSideKeys(key: string): readonly string[] {
+    const context = this.inventoryContext;
+    const parsed = parseSlotKey(key);
+    if (!context) return [];
+    if (parsed.kind === 'player' && typeof parsed.playerRef === 'number') {
+      return Array.from({ length: Inventory.SLOT_COUNT }, (_unused, index) => `inventory-${index}`);
+    }
+    if (parsed.kind === 'player') return ['armor-head', 'armor-chest', 'armor-legs', 'armor-feet', 'offhand'];
+    if (parsed.kind === 'container' && context.chest) {
+      return context.chest.slots.map((_slot, index) => `container-${index}`);
+    }
+    if (parsed.kind === 'furnace') return ['furnace-0', 'furnace-1', 'furnace-2'];
+    if (parsed.kind === 'craft') return this.craftSlots.map((_slot, index) => `craft-${index}`);
+    return [];
+  }
+
+  private matchingQuickMoveKey(clicked: string, identity: string): string | null {
+    if (!identity) return null;
+    const ordered = [clicked, ...this.sameSideKeys(clicked).filter((key) => key !== clicked)];
+    for (const key of ordered) {
+      if (this.stackIdentity(this.stackAt(key)) === identity) return key;
+    }
+    return null;
+  }
+
+  private submitInventoryAction(message: ClientInventoryActionMessage): void {
+    const context = this.inventoryContext;
+    if (!context || this.amountDialog) return;
+    if (context.submitAction) {
+      context.submitAction(message);
+      this.dragPreview = null;
+      this.syncCursorElementContents();
+      this.syncCursorStackElement();
+      return;
+    }
+    const state: InventoryUiState = {
+      inventory: context.inventory,
+      cursor: this.cursorStack,
+      craftSlots: this.craftSlots,
+      window: { kind: context.kind },
+      gamemode: context.mode,
+      chest: context.chest,
+      furnace: context.furnace,
+    };
+    const result = applyInventoryUiAction(state, message);
+    this.cursorStack = state.cursor;
+    this.craftSlots = state.craftSlots;
+    const key = message.key ?? '';
+    if (
+      message.action === 'recipe'
+      || message.action === 'move_stack'
+      || message.action === 'drag_distribute'
+      || message.action === 'quick_move_matching'
+      || key.startsWith('craft-')
+      || key === 'result'
+    ) this.ghostCraft = undefined;
+    for (const stack of result.dropped) context.onDrop(stack);
+    if (!result.ok && result.reason === 'no-slot') this.toast('Нет свободной ячейки.');
     context.onChanged();
     this.renderInventory();
+    this.syncCursorStackElement();
   }
 
-  private takeCraftResult(shift = false): void {
-    const context = this.inventoryContext;
-    if (!context) return;
-    const size = context.kind === 'crafting-table' ? 3 : 2;
-    const taken = takeCraftOutput(this.craftSlots, this.cursorStack, size, shift, context.inventory);
-    this.craftSlots = taken.grid;
-    this.cursorStack = taken.cursor;
-    this.ghostCraft = undefined;
+  private syncCursorElementContents(): void {
+    const cursor = this.modal?.querySelector('#cursor-stack');
+    if (!cursor) return;
+    const html = this.carriedCursorHtml();
+    if (cursor.innerHTML !== html) cursor.innerHTML = html;
   }
 
-  private clickContainer(index: number, button: 'left' | 'right', shift: boolean): void {
+  private syncDropArmed(): void {
+    const target = this.modal?.querySelector('.mc-mobile-drop-target');
+    target?.classList.toggle('is-armed', this.pointerGesture?.armedDrop === true);
+  }
+
+  private openAmountDialog(key: string): void {
     const context = this.inventoryContext;
-    const container = context?.chest;
-    if (!context || !container) return;
-    const stack = container.slots[index] ?? null;
-    if (shift && stack) {
-      const remainder = context.inventory.add(stack);
-      container.slots[index] = remainder;
+    if (!context || !isPlayerAmountSlot(key)) return;
+    const stack = this.stackAt(key);
+    if (!stack) return;
+    const signature = itemStackSignature(stack);
+    if (this.gestureSignature && signature !== this.gestureSignature) return;
+    const parsed = parseSlotKey(key);
+    const hasEmpty = parsed.playerRef !== undefined
+      && splitDestinationIndex(context.inventory, parsed.playerRef) !== undefined;
+    if (!hasEmpty) this.toast('Нет свободной ячейки.');
+    this.amountDialog = {
+      key,
+      count: stack.count,
+      selected: initialStackAmount(stack.count),
+      signature,
+      name: getItemDefinition(stack.itemId).name,
+      itemId: stack.itemId,
+    };
+    this.itemTooltip?.hide();
+    this.modal?.classList.add('is-amount-open');
+    this.ensureAmountDialog();
+    this.positionAmountDialog();
+  }
+
+  private closeAmountDialog(): void {
+    this.amountDialog = null;
+    this.modal?.querySelector('[data-amount-scrim]')?.remove();
+    this.modal?.querySelector('[data-amount-dialog]')?.remove();
+    this.modal?.classList.remove('is-amount-open');
+  }
+
+  private ensureAmountDialog(): void {
+    const dialogState = this.amountDialog;
+    const modal = this.modal;
+    if (!dialogState || !modal) return;
+    let dialog = modal.querySelector<HTMLElement>('[data-amount-dialog]');
+    if (!dialog) {
+      const scrim = document.createElement('div');
+      scrim.className = 'mc-stack-amount-scrim';
+      scrim.dataset.amountScrim = '1';
+      dialog = document.createElement('div');
+      dialog.className = 'mc-stack-amount-dialog';
+      dialog.dataset.amountDialog = '1';
+      dialog.setAttribute('role', 'dialog');
+      dialog.setAttribute('aria-label', 'Количество');
+      dialog.innerHTML = `<div class="mc-stack-amount-title">Количество</div>`
+        + `<div class="mc-stack-amount-item">`
+        + `<img alt="" draggable="false" />`
+        + `<div class="mc-stack-amount-copy">`
+        + `<div class="mc-stack-amount-name"></div>`
+        + `<div class="mc-stack-amount-value" data-amount-value></div>`
+        + `</div></div>`
+        + `<input class="mc-stack-amount-slider" data-amount-slider type="range" min="1" step="1" />`
+        + `<div class="mc-stack-amount-actions">`
+        + `<button type="button" class="mc-stack-amount-drop" data-amount-drop>ВЫКИНУТЬ</button>`
+        + `<button type="button" class="mc-stack-amount-split" data-amount-split>РАЗДЕЛИТЬ</button>`
+        + `</div>`;
+      modal.append(scrim, dialog);
+      dialog.querySelector<HTMLInputElement>('[data-amount-slider]')?.addEventListener('input', (event) => {
+        const state = this.amountDialog;
+        const slider = event.currentTarget;
+        if (!state || !(slider instanceof HTMLInputElement)) return;
+        const next = Number(slider.value);
+        if (!Number.isInteger(next)) return;
+        state.selected = Math.min(state.count, Math.max(1, next));
+        this.syncAmountDialog();
+      });
+      dialog.querySelector('[data-amount-drop]')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.commitAmount('drop');
+      });
+      dialog.querySelector('[data-amount-split]')?.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.commitAmount('split');
+      });
+    }
+    const image = dialog.querySelector('img');
+    if (image) image.src = this.itemIcon(dialogState.itemId);
+    const name = dialog.querySelector('.mc-stack-amount-name');
+    if (name) name.textContent = dialogState.name;
+    const slider = dialog.querySelector<HTMLInputElement>('[data-amount-slider]');
+    if (slider) {
+      slider.max = String(dialogState.count);
+      if (document.activeElement !== slider) slider.value = String(dialogState.selected);
+    }
+    this.syncAmountDialog();
+  }
+
+  private syncAmountDialog(): void {
+    const state = this.amountDialog;
+    const dialog = this.modal?.querySelector<HTMLElement>('[data-amount-dialog]');
+    if (!state || !dialog) return;
+    const value = dialog.querySelector('[data-amount-value]');
+    if (value) value.textContent = `${state.selected} / ${state.count}`;
+    const split = dialog.querySelector<HTMLButtonElement>('[data-amount-split]');
+    const context = this.inventoryContext;
+    const parsed = parseSlotKey(state.key);
+    const hasEmpty = context !== undefined
+      && parsed.playerRef !== undefined
+      && splitDestinationIndex(context.inventory, parsed.playerRef) !== undefined;
+    if (split) split.disabled = !splitAmountAllowed(state.selected, state.count, hasEmpty);
+  }
+
+  private positionAmountDialog(): void {
+    const dialog = this.modal?.querySelector<HTMLElement>('[data-amount-dialog]');
+    const panel = this.modal?.querySelector<HTMLElement>('.mc-panel');
+    if (!dialog || !panel) return;
+    const rect = panel.getBoundingClientRect();
+    dialog.style.left = `${rect.left + rect.width / 2}px`;
+    dialog.style.top = `${rect.top + rect.height / 2}px`;
+    // The dialog is a backdrop overlay, not a child of `.mc-stage`, so it does not inherit the stage scale.
+    dialog.style.setProperty('--mc-ui-scale', String(this.uiScale()));
+  }
+
+  private commitAmount(kind: 'drop' | 'split'): void {
+    const dialog = this.amountDialog;
+    const context = this.inventoryContext;
+    if (!dialog || !context) return;
+    const stack = this.stackAt(dialog.key);
+    if (!stack || itemStackSignature(stack) !== dialog.signature) {
+      this.closeAmountDialog();
       return;
     }
-    const result = applySlotClick(stack, this.cursorStack, button);
-    container.slots[index] = result.slot;
-    this.cursorStack = result.cursor;
-  }
-
-  private clickFurnace(index: 0 | 1 | 2, button: 'left' | 'right', shift: boolean): void {
-    const context = this.inventoryContext;
-    const furnace = context?.furnace;
-    if (!context || !furnace) return;
-    const stack = furnace.slots[index];
-    if (shift && stack) {
-      const remainder = context.inventory.add(stack);
-      furnace.slots[index] = remainder;
+    const parsed = parseSlotKey(dialog.key);
+    const hasEmpty = parsed.playerRef !== undefined
+      && splitDestinationIndex(context.inventory, parsed.playerRef) !== undefined;
+    if (kind === 'split' && !splitAmountAllowed(dialog.selected, stack.count, hasEmpty)) {
+      if (!hasEmpty) this.toast('Нет свободной ячейки.');
+      this.syncAmountDialog();
       return;
     }
-    const clicked = clickFurnaceSlot(furnace.slots, index, this.cursorStack, button);
-    furnace.slots = clicked.slots;
-    this.cursorStack = clicked.cursor;
-  }
-
-  private shiftInventoryToFurnace(index: number): void {
-    const context = this.inventoryContext;
-    const furnace = context?.furnace;
-    if (!context || !furnace) return;
-    const moving = context.inventory.getSlot(index);
-    if (!moving) return;
-    const route = furnaceShiftRoute(moving, 'inventory');
-    if (route === 'inventory') {
-      context.inventory.quickMove(index);
+    const selected = dialog.selected;
+    const key = dialog.key;
+    const signature = dialog.signature;
+    this.closeAmountDialog();
+    if (kind === 'drop') {
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'drop_slot',
+        key,
+        count: selected,
+        signature,
+      });
       return;
     }
-    const slotIndex = route === 'input' ? 0 : 1;
-    const result = shiftMoveStack(moving, [furnace.slots[slotIndex]], (_slot, stack) => furnaceAccepts(slotIndex, stack));
-    furnace.slots[slotIndex] = result.targets[0] ?? null;
-    context.inventory.setSlot(index, result.remainder);
+    this.submitInventoryAction({
+      type: 'inventory_action',
+      action: 'split_stack',
+      key,
+      count: selected,
+      signature,
+    });
   }
 
-  private quickMoveInventoryToContainer(index: number, container: ContainerAdapter): void {
-    const inventory = this.inventoryContext!.inventory;
-    const moving = inventory.getSlot(index);
-    if (!moving) return;
-    const moved = shiftMoveStack(moving, container.slots);
-    container.slots.splice(0, container.slots.length, ...moved.targets);
-    inventory.setSlot(index, moved.remainder);
+  private onInventoryKey(event: KeyboardEvent): void {
+    const decision = inventoryKeyDecision({
+      inventoryOpen: this.isInventoryOpen(),
+      amountOpen: this.amountDialog !== null,
+      typing: this.isInventoryTypingTarget(event.target),
+      repeat: event.repeat,
+      code: event.code,
+      ctrl: event.ctrlKey,
+      meta: event.metaKey,
+      hoveredKey: this.hoveredSlotKey,
+      hoveredDroppable: this.hoveredSlotKey !== null
+        && isDroppableSlot(this.hoveredSlotKey)
+        && this.stackAt(this.hoveredSlotKey) !== null,
+      hoveredMutable: this.hoveredSlotKey !== null && isMutableSwapSlot(this.hoveredSlotKey),
+    });
+    if (decision.type === 'passthrough') return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (decision.type === 'close-amount') {
+      this.closeAmountDialog();
+      return;
+    }
+    if (decision.type === 'consume') return;
+    if (decision.type === 'drop') {
+      const signature = itemStackSignature(this.stackAt(decision.key));
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'drop_slot',
+        key: decision.key,
+        ...(decision.all ? { all: true } : { count: 1 }),
+        ...(signature ? { signature } : {}),
+      });
+      return;
+    }
+    if (decision.type === 'hotbar') {
+      const signature = itemStackSignature(this.stackAt(decision.key));
+      this.submitInventoryAction({
+        type: 'inventory_action',
+        action: 'hotbar_swap',
+        key: decision.key,
+        slot: decision.slot,
+        ...(signature ? { signature } : {}),
+      });
+      return;
+    }
+    const signature = itemStackSignature(this.stackAt(decision.key));
+    this.submitInventoryAction({
+      type: 'inventory_action',
+      action: 'offhand_swap',
+      key: decision.key,
+      ...(signature ? { signature } : {}),
+    });
+  }
+
+  private isInventoryTypingTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    const tag = target.tagName;
+    return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
   }
 
   private furnaceHtml(furnace: FurnaceState): string {
@@ -2775,7 +3381,7 @@ export class GameUI {
     const hover = tooltip
       ? itemHoverAttributeString(tooltip, stack.itemId, (value) => this.escape(value), hint, layout)
       : this.itemHoverAttrs(stack.itemId, definition!.name);
-    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
+    return `<button class="slot mc-slot${selected ? ' selected' : ''}" data-slot="${key}" data-sig="${sig}"${armorAttr}${offhandAttr} data-index="${key.startsWith('hotbar-') ? key.slice(7) : ''}"${hover}><img src="${this.itemIcon(stack.itemId)}" alt="" draggable="false" />${stack.count > 1 ? `<span class="count">${stack.count}</span>` : ''}${durability}</button>`;
   }
 
   private itemHoverAttrs(itemId: string, name = getItemDefinition(itemId).name): string {

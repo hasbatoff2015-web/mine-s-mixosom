@@ -442,7 +442,7 @@ describe('coarse mobile layout rects', () => {
     expect(shots.cloud?.center).toBe('cloud');
   }, 60_000);
 
-  it('puts a tapped creative item on the finger before any pointermove', async () => {
+  it('anchors a creative tap on pointerup and ignores a later backdrop move', async () => {
     server?.close();
     const esbuild = await import('esbuild');
     const bundled = await esbuild.build({
@@ -531,12 +531,18 @@ describe('coarse mobile layout rects', () => {
         const beforeLeft = before ? before.style.left : '';
         const slot = document.querySelector('[data-slot^="creative-"]');
         slot.dispatchEvent(new PointerEvent('pointerdown', {
-          bubbles: true, cancelable: true, clientX: 180, clientY: 220, pointerType: 'touch', button: 0,
+          bubbles: true, cancelable: true, clientX: 180, clientY: 220, pointerType: 'touch', button: 0, pointerId: 4,
+        }));
+        const pressed = document.querySelector('#cursor-stack');
+        const pressedHtml = pressed.innerHTML.length;
+        slot.dispatchEvent(new PointerEvent('pointerup', {
+          bubbles: true, cancelable: true, clientX: 180, clientY: 220, pointerType: 'touch', button: 0, pointerId: 4,
         }));
         const cursor = document.querySelector('#cursor-stack');
         const rect = cursor.getBoundingClientRect();
         return {
           beforeLeft,
+          pressedHtml,
           left: cursor.style.left,
           top: cursor.style.top,
           rectLeft: rect.left,
@@ -547,6 +553,7 @@ describe('coarse mobile layout rects', () => {
     });
     const tap = (tapped.result as { value?: {
       beforeLeft: string;
+      pressedHtml: number;
       left: string;
       top: string;
       rectLeft: number;
@@ -554,6 +561,7 @@ describe('coarse mobile layout rects', () => {
       html: number;
     } }).value;
     if (!tap) throw new Error(`cursor tap returned nothing: ${JSON.stringify(tapped)}`);
+    expect(tap.pressedHtml).toBe(0);
     expect(tap.html).toBeGreaterThan(0);
     expect(tap.left).toBe('198px');
     expect(tap.top).toBe('184px');
@@ -571,7 +579,7 @@ describe('coarse mobile layout rects', () => {
       })()`,
     });
     const move = (moved.result as { value?: { left: string; top: string } }).value;
-    expect(move).toEqual({ left: '310px', top: '140px' });
+    expect(move).toEqual({ left: '198px', top: '184px' });
   }, 60_000);
 });
 

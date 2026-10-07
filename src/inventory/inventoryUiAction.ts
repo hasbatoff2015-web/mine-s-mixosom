@@ -6,16 +6,27 @@ import { creativeCatalogItems } from '../items';
 import type { GameMode } from '../save/types';
 import {
   clickFurnaceSlot,
-  furnaceAccepts,
-  furnaceShiftRoute,
   placeCraftingRecipe,
-  shiftMoveStack,
   takeCraftOutput,
 } from '../ui/containerInteractions';
 import { allCraftingBookEntries } from '../ui/recipeBook';
 import type { ChestState, FurnaceState } from '../world/World';
 import type { ClientInventoryActionMessage, ContainerKind } from '../../shared/protocol';
-import { isChestWindowKind } from './portalChest';
+import {
+  collectMatching,
+  dragDistribute,
+  dropCursorAmount,
+  dropFromSlot,
+  hotbarSwap,
+  isManualDropAction,
+  moveStack,
+  offhandSwap,
+  quickMoveMatching,
+  shiftActivate,
+  splitStack,
+} from './inventoryActions';
+
+export { isManualDropAction };
 
 export interface InventoryWindow {
   kind: ContainerKind;
@@ -54,6 +65,8 @@ export interface InventoryUiResult {
   readonly dropped: ItemStack[];
   readonly crafted?: { readonly itemId: string; readonly count: number; readonly recipeId?: string };
   readonly windowChanged?: boolean;
+  /** `no-slot` is the split failure the amount dialog explains. */
+  readonly reason?: 'no-slot' | 'rejected';
 }
 
 function emptyResult(ok: boolean): InventoryUiResult {
@@ -114,12 +127,8 @@ export function applyInventoryUiAction(
       state.window = { kind: 'inventory' };
       return { ok: true, dropped, windowChanged: true };
     }
-    case 'drop_cursor': {
-      if (!state.cursor) return emptyResult(false);
-      const dropped = [state.cursor];
-      state.cursor = null;
-      return { ok: true, dropped };
-    }
+    case 'drop_cursor':
+      return dropCursorAmount(state, action.count, action.all === true);
     case 'drop_selected': {
       const slot = action.slot ?? 0;
       const stack = state.inventory.getSlot(slot);
@@ -129,6 +138,22 @@ export function applyInventoryUiAction(
       state.inventory.setSlot(slot, leftover <= 0 ? null : { ...stack, count: leftover });
       return { ok: true, dropped: [{ ...stack, count: take }] };
     }
+    case 'drop_slot':
+      return dropFromSlot(state, action.key ?? '', action.count, action.all === true, action.signature);
+    case 'move_stack':
+      return moveStack(state, action.sourceKey ?? '', action.targetKey ?? '', action.signature);
+    case 'split_stack':
+      return splitStack(state, action.key ?? '', action.count ?? 0, action.signature);
+    case 'hotbar_swap':
+      return hotbarSwap(state, action.key ?? '', action.slot ?? -1, action.signature);
+    case 'offhand_swap':
+      return offhandSwap(state, action.key ?? '', action.signature);
+    case 'collect_matching':
+      return collectMatching(state);
+    case 'drag_distribute':
+      return dragDistribute(state, action.button === 'right' ? 'right' : 'left', action.keys ?? []);
+    case 'quick_move_matching':
+      return quickMoveMatching(state, action.key ?? '');
     case 'recipe':
       return applyRecipe(state, action);
     case 'craft_recipe':
@@ -182,17 +207,13 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
   const button = action.button === 'right' ? 'right' : 'left';
   const shift = action.shift === true;
 
+  if (shift && !key.startsWith('creative-') && key !== 'result') {
+    if (shiftActivate(state, key)) return emptyResult(true);
+  }
+
   if (key.startsWith('inventory-')) {
     const index = Number(key.slice('inventory-'.length));
     if (!Number.isInteger(index) || index < 0 || index >= Inventory.SLOT_COUNT) return emptyResult(false);
-    if (shift && isChestWindowKind(state.window.kind) && state.chest) {
-      quickMoveInventoryToContainer(state, index, state.chest);
-      return emptyResult(true);
-    }
-    if (shift && state.window.kind === 'furnace' && state.furnace) {
-      shiftInventoryToFurnace(state, index);
-      return emptyResult(true);
-    }
     state.cursor = state.inventory.clickSlot(index, state.cursor, button);
     return emptyResult(true);
   }
@@ -243,11 +264,6 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
     const index = Number(key.slice('container-'.length));
     if (!Number.isInteger(index) || index < 0 || index >= state.chest.slots.length) return emptyResult(false);
     const stack = state.chest.slots[index] ?? null;
-    if (shift && stack) {
-      const remainder = state.inventory.add(stack);
-      state.chest.slots[index] = remainder;
-      return emptyResult(true);
-    }
     const result = applySlotClick(stack, state.cursor, button);
     state.chest.slots[index] = result.slot;
     state.cursor = result.cursor;
@@ -258,12 +274,6 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
     if (!state.furnace) return emptyResult(false);
     const index = Number(key.slice('furnace-'.length));
     if (index !== 0 && index !== 1 && index !== 2) return emptyResult(false);
-    const stack = state.furnace.slots[index];
-    if (shift && stack) {
-      const remainder = state.inventory.add(stack);
-      state.furnace.slots[index] = remainder;
-      return emptyResult(true);
-    }
     const clicked = clickFurnaceSlot(state.furnace.slots, index as 0 | 1 | 2, state.cursor, button);
     state.furnace.slots = clicked.slots;
     state.cursor = clicked.cursor;
@@ -281,30 +291,3 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
   return emptyResult(false);
 }
 
-function quickMoveInventoryToContainer(state: InventoryUiState, index: number, container: ChestState): void {
-  const moving = state.inventory.getSlot(index);
-  if (!moving) return;
-  const moved = shiftMoveStack(moving, container.slots);
-  container.slots.splice(0, container.slots.length, ...moved.targets);
-  state.inventory.setSlot(index, moved.remainder);
-}
-
-function shiftInventoryToFurnace(state: InventoryUiState, index: number): void {
-  const furnace = state.furnace;
-  if (!furnace) return;
-  const moving = state.inventory.getSlot(index);
-  if (!moving) return;
-  const route = furnaceShiftRoute(moving, 'inventory');
-  if (route === 'inventory') {
-    state.inventory.quickMove(index);
-    return;
-  }
-  const slotIndex = route === 'input' ? 0 : 1;
-  const result = shiftMoveStack(
-    moving,
-    [furnace.slots[slotIndex]],
-    (_slot, stack) => furnaceAccepts(slotIndex as 0 | 1, stack),
-  );
-  furnace.slots[slotIndex] = result.targets[0] ?? null;
-  state.inventory.setSlot(index, result.remainder);
-}

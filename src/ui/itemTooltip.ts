@@ -124,7 +124,7 @@ export function copyItemHoverAttributes(current: HTMLElement, incoming: HTMLElem
 
 export function attachItemTooltip(
   root: HTMLElement,
-  options: { cursorStackPresent?: () => boolean } = {},
+  options: { cursorStackPresent?: () => boolean; suspended?: () => boolean } = {},
 ): ItemTooltipHandle {
   let node = root.querySelector<HTMLElement>('.mc-item-tooltip');
   if (!node) {
@@ -139,7 +139,7 @@ export function attachItemTooltip(
   };
 
   const onPointerMove = (event: PointerEvent): void => {
-    if (event.pointerType !== 'mouse') {
+    if (options.suspended?.() === true || event.pointerType !== 'mouse') {
       hide();
       return;
     }
