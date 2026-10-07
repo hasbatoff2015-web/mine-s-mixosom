@@ -1848,6 +1848,11 @@ textarea,
   margin-inline: auto;
 }
 
+.mc-menu-grid-row-3-full {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  width: 100%;
+}
+
 .mc-menu-tile {
   position: relative;
   box-sizing: border-box;
@@ -2393,6 +2398,80 @@ textarea,
   align-items: center;
   justify-content: space-between;
   gap: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-duel-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  padding: calc(4px * var(--mc-ui-scale, 3)) calc(5px * var(--mc-ui-scale, 3));
+  background: var(--mc-row-face);
+  box-shadow: var(--mc-btn-edge);
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
+.mc-duel-wins { color: #6fbf78; }
+.mc-duel-losses { color: #d67b7b; }
+
+.mc-duel-arena-status,
+.mc-duel-outgoing {
+  margin: 0;
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mc-duel-arena-status.is-free { color: #7d9a78; }
+.mc-duel-arena-status.is-busy { color: #e0a84a; }
+.mc-duel-arena-status.is-missing { color: #b7b7b7; }
+
+.mc-duel-outgoing {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  padding: calc(3px * var(--mc-ui-scale, 3)) calc(4px * var(--mc-ui-scale, 3));
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.mc-duel-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  color: #d7d7d7;
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+  font-weight: 800;
+}
+
+.mc-duel-section-head .mc-ah-btn {
+  min-height: calc(16px * var(--mc-ui-scale, 3));
+  padding: calc(1px * var(--mc-ui-scale, 3)) calc(5px * var(--mc-ui-scale, 3));
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+}
+
+.mc-duel-list {
+  min-height: 0;
+  touch-action: pan-y;
+}
+
+.mc-duel-incoming {
+  max-height: calc(60px * var(--mc-ui-scale, 3));
+}
+
+.mc-duel-nearby {
+  max-height: calc(100px * var(--mc-ui-scale, 3));
+}
+
+.mc-duel-row .mc-player-name,
+.mc-duel-score,
+.mc-duel-distance {
+  font-size: calc(8px * var(--mc-ui-scale, 3));
+}
+
+.mc-duel-row .mc-ah-btn {
+  flex: 0 0 auto;
 }
 
 .mc-player-row,

@@ -185,6 +185,22 @@ export class InputManager {
     this.sensitivity = clamp(value, 0.0005, 0.006);
   }
 
+  /**
+   * One server-owned look sample. Clears a stored touch ray so the next aim
+   * read uses this yaw and pitch. Later mouse and touch deltas still apply.
+   */
+  adoptAuthoritativeLook(yaw: number, pitch: number): void {
+    if (!Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
+    this.yaw = yaw;
+    this.pitch = pitch;
+    this.interactionAim = null;
+  }
+
+  /** Same `rotate` already used by pointer-lock mouse and by touch after its scale. */
+  applyLookDelta(dx: number, dy: number): void {
+    this.rotate(dx, dy);
+  }
+
   isTouchLayout(): boolean {
     return this.touchLayout;
   }

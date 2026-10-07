@@ -13,6 +13,10 @@ export interface HologramHitTarget {
   readonly backgroundEnabled?: boolean;
   readonly backgroundWidth?: number;
   readonly backgroundHeight?: number;
+  /** Missing means interactive, so older snapshots stay clickable. */
+  readonly interactive?: boolean;
+  /** Missing keeps the historical text-plane width. */
+  readonly preserveTextAspect?: boolean;
 }
 
 export interface HologramRayHit {
@@ -73,7 +77,7 @@ export function pickHologramRayHit(
 ): HologramRayHit | undefined {
   let closest: HologramRayHit | undefined;
   for (const hologram of holograms) {
-    if (hologram.enabled === false) continue;
+    if (hologram.enabled === false || hologram.interactive === false) continue;
     const hit = rayAabbDistance(origin, direction, hologramAabb(hologram));
     if (!hit || hit.distance < 0 || hit.distance > maxDistance) continue;
     if (closest && hit.distance >= closest.distance) continue;

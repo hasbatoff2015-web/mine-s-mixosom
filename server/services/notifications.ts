@@ -24,6 +24,7 @@ function parseCounts(raw: unknown): NotificationCounts {
     clans: normalizeNotificationCount(source.clans),
     auction: normalizeNotificationCount(source.auction),
     trade: normalizeNotificationCount(source.trade),
+    duels: normalizeNotificationCount(source.duels),
   };
 }
 
@@ -51,7 +52,13 @@ export class NotificationService {
   persist(): void {
     const players: NotificationFile['players'] = {};
     for (const [playerId, counts] of this.players) {
-      if (counts.friends === 0 && counts.clans === 0 && counts.auction === 0 && counts.trade === 0) continue;
+      if (
+        counts.friends === 0
+        && counts.clans === 0
+        && counts.auction === 0
+        && counts.trade === 0
+        && counts.duels === 0
+      ) continue;
       players[playerId] = { ...counts };
     }
     this.store.save('notifications/unread', { players });

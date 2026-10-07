@@ -1,5 +1,36 @@
 # Roadmap
 
+## 2026-10-07: Player skin side UV orientation
+
+- [x] Flip U only on cuboid side faces for every player skin part, layer, Classic/Slim, world and first-person.
+- [x] Keep Java UV islands, front/back/top/bottom, and the existing whole-cuboid `mirror` used by armor and mobs.
+- [x] Assert the correction on real `BufferGeometry` vertices, not only rectangle metadata.
+- [ ] Not merged. Draft PR **#124**. Wait for an explicit merge command.
+
+## 2026-10-05: Duels 1v1
+
+- [x] Builtin `duels` plugin and server-authoritative `DuelService`.
+- [x] Root menu is 3×3. Ninth tile is «Дуэли». Panel width stays 248.
+- [x] Invites within 20 blocks, 30 s TTL, 10 s reject cooldown, one outgoing invite.
+- [x] One arena, two `/duel setspawn` points, 5 s countdown hologram, 5 minute fight, 15 s loot.
+- [x] Fighting disconnect forfeits. Timeout is a loss for both. Countdown and shutdown cancel write no result.
+- [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
+- [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
+- [x] Countdown hologram is display font, size 2.8, and `interactive: false`. `HOLOGRAM_SIZE_MAX` stays 3.2.
+- [x] No post-match cooldown. After the 15 s loot window, idle is committed before open duel menus refresh.
+- [x] During loot both players can invite each other. Accept stays blocked until the arena is idle, and the same request survives.
+- [x] Fight start sends one `duel_effect` burst. Velocity scale 0.5, life scale 0.75, point size 0.12. Ordinary fireworks stay 0.20. No rocket entity.
+- [x] Accept faces each player toward the other spawn and sends one `player_look` / `duel_start`. Look is not locked afterward.
+- [x] Countdown `preserveTextAspect` keeps size 2.8 and the one-line height, with width = height × 2.
+- [x] `WorldInstance` owns the duel tick and combat hooks. Plugin disable blocks new matches.
+- [x] Loot winner is protected for 15 s. Attacker-less melee, arrow, and projectile damage is cancelled in fighting.
+- [x] Owner PNG `public/ui/menu/icon_duels.png` is in the tree.
+- [x] `AnarchyServer.stop()` shuts the active duel down before socket disconnect. A restart is not a forfeit. A real fighting disconnect still is.
+- [x] Survival preparation runs when the fight starts. Countdown cancel does not heal or cleanse. Countdown participants ignore environment damage.
+- [x] A cancelled countdown or fight sends one `player_look` / `duel_restore` to each still-connected participant.
+- [ ] Browser QA of this shutdown and countdown pass was not repeated.
+- [ ] Not merged. Draft PR **#122**.
+
 ## 2026-10-06: Hostile balance, creeper fuse snapshots, inventory vegetation tint
 
 - [x] Zombie 1.5 damage / 1.5s, skeleton 2 / 2.4s, spider 1 / 1.35s. Creeper fuse and passive/wolf attacks stay as they were.
@@ -12,7 +43,7 @@
 - [x] Nested `friend-chat` screen at the friends menu width. Opening it from Friends keeps the panel footprint.
 - [x] File-per-conversation history, 200-message cap, monotonic `seq`, per-player `lastReadSeq`.
 - [x] Direct messages stay out of Global, Nearby, Clan, ChatLog, and player chat bubbles.
-- [ ] Not merged. Draft PR **#120**. Wait for an explicit merge command.
+- [x] Merged as PR **#120** (`c621d804`).
 
 ## 2026-10-05: Invisibility world particles and air HUD
 

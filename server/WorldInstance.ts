@@ -33,7 +33,7 @@ import {
   formatLatestInputCoalesce,
   formatPoseDump,
 } from '../src/player/moveSimCompare';
-import { SurvivalSystem, getArmorPoints } from '../src/survival';
+import { MAX_AIR_TICKS, MAX_HEALTH, MAX_HUNGER, SurvivalSystem, getArmorPoints } from '../src/survival';
 import {
   listenerHearsWorldSound,
   worldSoundMaxDistance,
@@ -143,7 +143,16 @@ import {
 } from './services/gameMenuActions';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
-import { HologramNetwork, toNetworkHologram } from './services/holograms';
+import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
+import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
+import {
+  DUEL_COUNTDOWN_HOLOGRAM,
+  DUEL_COUNTDOWN_HOLOGRAM_SIZE,
+  DUEL_HOLOGRAM_RANGE,
+  DUEL_TELEPORT_DENIED,
+  type DuelPose,
+} from '../shared/duels';
+import type { NotificationCategory } from '../shared/notifications';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
 import { migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
@@ -600,6 +609,7 @@ export class WorldInstance {
   readonly trade: TradeService;
   readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
+  readonly duels: DuelService;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
   private readonly menuSessions = new Map<string, GameMenuSession>();
@@ -943,6 +953,40 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.duels = new DuelService({
+      worldId: config.worldId,
+      store: {
+        loadStats: () => this.pluginStore.load('duels/stats', { players: {} }),
+        saveStats: (value) => { this.pluginStore.save('duels/stats', value); },
+        loadArena: () => this.pluginStore.load('duels/arena', {}),
+        saveArena: (value) => { this.pluginStore.save('duels/arena', value); },
+      },
+      directory: {
+        get: (id) => {
+          const player = this.players.get(id);
+          return player ? this.toDuelActor(player) : undefined;
+        },
+        list: () => [...this.players.values()]
+          .filter((player) => player.connected)
+          .map((player) => this.toDuelActor(player)),
+      },
+      runtime: this.createDuelRuntime(),
+    });
+    this.gameplay.blocksManualItemDrop = (playerId) => this.duels.blocksManualDrop(playerId);
+    this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
+    this.gameplay.onDeathLoot = (player, ids) => {
+      this.duels.finalizeDeath(player.id, ids);
+    };
+    this.teleports.setExternalDeny((playerId, reason) => (
+      reason === 'duel' ? undefined : this.duels.externalTeleportError(playerId)
+    ));
+    this.rtpSessions.setExternalDeny((playerId) => this.duels.externalTeleportError(playerId));
+    this.events.on('playerDamage', (event) => {
+      if (this.duels.shouldCancelPlayerDamage(event.playerId, event.attackerId, event.cause)) event.cancel();
+    });
+    this.events.on('itemPickup', (event) => {
+      if (!this.duels.allowsPickup(event.playerId, event.entityId)) event.cancel();
+    });
     this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
@@ -1082,6 +1126,7 @@ export class WorldInstance {
         homes: this.homes,
         friends: this.friends,
         trade: this.trade,
+        duels: this.duels,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
         openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
         openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
@@ -1148,6 +1193,16 @@ export class WorldInstance {
     this.persistTimer = setInterval(() => {
       if (this.dirty) void this.save();
     }, this.config.persistIntervalMs);
+  }
+
+  /**
+   * Server process stop is not a player quit. Active countdown and fighting
+   * are cancelled here, while participants are still connected, so the later
+   * disconnect snapshot keeps their inventories and pre-duel poses.
+   * A later plugin disable calls `duels.shutdown()` again; that second call is idle.
+   */
+  prepareForServerShutdown(): void {
+    this.duels.shutdown();
   }
 
   async stop(): Promise<void> {
@@ -1935,6 +1990,7 @@ export class WorldInstance {
         const live = this.players.get(entry.id);
         return live ? this.findOwnedClaim(live, claimId) : undefined;
       },
+      duels: this.duels,
     };
   }
 
@@ -2283,6 +2339,19 @@ export class WorldInstance {
         ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
       };
     }
+    if (session.screen === 'duels') {
+      const view = this.duels.menu(player.id);
+      return {
+        ...base,
+        duelStats: view.stats,
+        duelIncoming: view.incoming,
+        duelNearby: view.nearby,
+        duelArenaBusy: view.arenaBusy,
+        duelArenaConfigured: view.arenaConfigured,
+        duelAvailable: view.available,
+        ...(view.outgoing ? { duelOutgoing: view.outgoing } : {}),
+      };
+    }
     if (session.screen === 'auction-history') {
       return {
         ...base,
@@ -2374,7 +2443,7 @@ export class WorldInstance {
     if (session.screen === 'root' || session.screen === 'friends') this.flushMenu(player);
   }
 
-  private notifyUnread(playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade'): void {
+  private notifyUnread(playerId: string, category: NotificationCategory): void {
     this.notifications.notify(playerId, category);
     const player = this.players.get(playerId);
     if (player?.connected && this.menuSessions.has(playerId)) this.flushMenu(player);
@@ -2412,6 +2481,7 @@ export class WorldInstance {
     this.flushPlayerInventory(player);
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
+    this.duels.onPlayerQuit(player.id);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
     this.broadcast({ type: 'player_left', playerId: player.id }, playerId);
     this.notifyFriendsOfPresence(player, 'left');
@@ -2630,6 +2700,7 @@ export class WorldInstance {
 
   /** Legacy direct gameplay helper; network bow releases use handleSequencedBowRelease. */
   releaseBow(player: ServerPlayer, action: Pick<BowReleaseAction, 'yaw' | 'pitch' | 'actionSeq' | 'commandSeq'>): { ok: true } | { ok: false; reason: string } {
+    if (this.duels.blocksCombatIntent(player.id, 'projectile')) return { ok: false, reason: 'duel' };
     if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
     if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
     player.lastBowReleaseSeq = action.actionSeq;
@@ -2660,6 +2731,9 @@ export class WorldInstance {
       receivedServerTick,
       ...(receivedBowState ? { receivedBowState } : {}),
     };
+    if (this.duels.blocksCombatIntent(player.id, 'projectile')) {
+      return { status: 'resolved', result: this.bowFailure(base, 'duel', 'duel') };
+    }
     if (!this.acceptActionSeq(player, action.actionSeq) || action.actionSeq <= player.lastBowReleaseSeq) {
       return { status: 'resolved', result: this.bowFailure(base, 'duplicate', 'duplicate') };
     }
@@ -2815,6 +2889,7 @@ export class WorldInstance {
   }
 
   attack(player: ServerPlayer): void {
+    if (this.duels.blocksCombatIntent(player.id, 'melee')) return;
     this.gameplay.attack(player, [...this.players.values()]);
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
@@ -2829,6 +2904,9 @@ export class WorldInstance {
     player: ServerPlayer,
     action: AttackAction,
   ): { status: 'pending' } | { status: 'resolved'; result: ActionResult } {
+    if (this.duels.blocksCombatIntent(player.id, 'melee')) {
+      return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'duel' } };
+    }
     if (!this.acceptActionSeq(player, action.actionSeq)) {
       return { status: 'resolved', result: { ok: false, actionSeq: action.actionSeq, kind: 'attack', reason: 'duplicate' } };
     }
@@ -3808,6 +3886,7 @@ export class WorldInstance {
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
     this.worldEvents.tick();
+    this.duels.tick();
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {
@@ -4132,6 +4211,7 @@ export class WorldInstance {
         });
         continue;
       }
+      this.freezeDuelMovement(player);
       const input = player.lastInput;
       let exitedRest = false;
       if (player.restingBed) {
@@ -4198,6 +4278,7 @@ export class WorldInstance {
           inFire: player.controller.inFire,
           sprinting: player.controller.sprinting,
           swimming: player.controller.inWater,
+          preventDamage: this.duels.suppressesIncomingDamage(player.id),
         });
         this.flushHealthIfDeadThenRespawn(player);
       }
@@ -4261,6 +4342,7 @@ export class WorldInstance {
           player.controller.teleport(before);
         }
       }
+      this.snapDuelMovement(player);
       const eye = player.controller.eyePosition();
       recordActionPose(player.actionPoseHistory, {
         commandSeq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : 0,
@@ -4315,6 +4397,10 @@ export class WorldInstance {
         const pendingTicks = this.tickNumber - pending.receivedServerTick;
         if (pendingTicks > MAX_PENDING_BOW_TICKS) {
           this.sendBowActionResult(player, action, this.bowFailure(pending, 'stale', 'pending_timeout'));
+          continue;
+        }
+        if (this.duels.blocksCombatIntent(player.id, 'projectile')) {
+          this.sendBowActionResult(player, action, this.bowFailure(pending, 'duel', 'duel'));
           continue;
         }
         const pose = combatPoseForCommand(player.combatPoseHistory, action.commandSeq);
@@ -4458,6 +4544,291 @@ export class WorldInstance {
     return true;
   }
 
+  refreshGameMenu(playerId: string): void {
+    const player = this.players.get(playerId);
+    if (!player?.connected || !this.menuSessions.has(playerId)) return;
+    this.flushMenu(player);
+  }
+
+  private toDuelActor(player: ServerPlayer): DuelActor {
+    const position = player.controller.position;
+    return {
+      id: player.id,
+      name: player.name,
+      connected: player.connected,
+      gamemode: player.gamemode,
+      alive: !player.survival.dead && player.survival.health > 0,
+      worldId: this.worldId,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+    };
+  }
+
+  private duelPoseOf(player: ServerPlayer): DuelPose {
+    const position = player.controller.position;
+    return {
+      worldId: this.worldId,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+    };
+  }
+
+  private createDuelRuntime(): DuelRuntime {
+    return {
+      preparePlayers: (playerIds) => this.prepareDuelPlayers(playerIds),
+      hardRelocateForDuel: (playerId, pose) => {
+        const player = this.players.get(playerId);
+        if (!player) return false;
+        const moved = this.hardRelocatePlayer(
+          player,
+          pose.x,
+          pose.y,
+          pose.z,
+          { yaw: pose.yaw, pitch: pose.pitch },
+          { bypass: 'duel' },
+        );
+        if (!moved || !player.connected) return moved;
+        this.sendTo(player, {
+          type: 'player_look',
+          reason: 'duel_start',
+          yaw: player.controller.yaw,
+          pitch: player.controller.pitch,
+        });
+        return true;
+      },
+      restorePreDuelPose: (playerId, pose) => {
+        const player = this.players.get(playerId);
+        if (!player) return false;
+        const moved = this.hardRelocatePlayer(
+          player,
+          pose.x,
+          pose.y,
+          pose.z,
+          { yaw: pose.yaw, pitch: pose.pitch },
+          { bypass: 'duel' },
+        );
+        if (!moved || !player.connected) return moved;
+        this.sendTo(player, {
+          type: 'player_look',
+          reason: 'duel_restore',
+          yaw: player.controller.yaw,
+          pitch: player.controller.pitch,
+        });
+        return true;
+      },
+      dropAllResources: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player) return [];
+        return this.gameplay.dropAllPlayerResources(player);
+      },
+      removeDroppedItems: (ids) => {
+        this.gameplay.removeDroppedItems(ids);
+      },
+      respawnAtWorldSpawn: (playerId) => {
+        const player = this.players.get(playerId);
+        return player ? this.respawnDuelPlayerAtSpawn(player) : false;
+      },
+      relocateToWorldSpawn: (playerId) => {
+        const player = this.players.get(playerId);
+        return player ? this.relocateDuelPlayerToSpawn(player) : false;
+      },
+      closeTransientUi: (playerId) => {
+        const player = this.players.get(playerId);
+        if (player) this.closeDuelTransientUi(player);
+      },
+      refreshGameMenu: (playerId) => this.refreshGameMenu(playerId),
+      sendMessage: (playerId, text) => this.duelSystemMessage(playerId, text),
+      notifyDuels: (playerId) => this.notifyUnread(playerId, 'duels'),
+      capturePose: (playerId) => {
+        const player = this.players.get(playerId);
+        return player ? this.duelPoseOf(player) : undefined;
+      },
+      worldSpawnPose: () => ({
+        worldId: this.worldId,
+        x: this.spawn[0],
+        y: this.spawn[1],
+        z: this.spawn[2],
+        yaw: 0,
+        pitch: 0,
+      }),
+      setCountdownHologram: (text, x, y, z) => this.setDuelCountdownHologram(text, x, y, z),
+      clearCountdownHologram: () => {
+        this.holograms.removeTransient(DUEL_COUNTDOWN_HOLOGRAM);
+      },
+      emitFightStartBurst: (x, y, z) => this.emitDuelFightStartBurst(x, y, z),
+    };
+  }
+
+  private prepareDuelPlayers(playerIds: readonly [string, string]): boolean {
+    const ready: ServerPlayer[] = [];
+    for (const playerId of playerIds) {
+      const player = this.players.get(playerId);
+      if (!player || !player.connected || player.survival.dead || player.survival.health <= 0) return false;
+      ready.push(player);
+    }
+    for (const player of ready) this.applyDuelPreparation(player);
+    return true;
+  }
+
+  private applyDuelPreparation(player: ServerPlayer): void {
+    player.survival.health = MAX_HEALTH;
+    player.survival.hunger = MAX_HUNGER;
+    player.survival.saturation = MAX_HUNGER;
+    player.survival.airTicks = MAX_AIR_TICKS;
+    player.survival.syncNetworkFire(false);
+    player.survival.absorption = 0;
+    player.survival.clearEffects();
+    player.survival.hurtResistance.reset();
+    player.combat.swordBlocking = false;
+    player.controller.velocity.set(0, 0, 0);
+    clearMiningLock(player);
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
+    player.lastUse = false;
+    player.pendingAttacks.length = 0;
+    player.pendingBowReleases.length = 0;
+  }
+
+  private respawnDuelPlayerAtSpawn(player: ServerPlayer): boolean {
+    player.survival.respawn(player.controller, this.spawn);
+    player.deathLootDropped = false;
+    player.restingBed = undefined;
+    return this.hardRelocatePlayer(
+      player,
+      this.spawn[0],
+      this.spawn[1],
+      this.spawn[2],
+      undefined,
+      { bypass: 'duel' },
+    );
+  }
+
+  private relocateDuelPlayerToSpawn(player: ServerPlayer): boolean {
+    return this.hardRelocatePlayer(
+      player,
+      this.spawn[0],
+      this.spawn[1],
+      this.spawn[2],
+      undefined,
+      { bypass: 'duel' },
+    );
+  }
+
+  private closeDuelTransientUi(player: ServerPlayer): void {
+    const tradeResult = this.trade.cancel(player.id);
+    this.auction.closeSession(player.id);
+    this.clan.closeSession(player.id);
+    this.buyer.closeSession(player.id, player.inventory);
+    this.menuSessions.delete(player.id);
+    this.menuReturn.delete(player.id);
+    if (player.connected) this.sendTo(player, closedMenuMessage());
+    if (player.window.kind !== 'inventory') player.window = { kind: 'inventory' };
+    this.gameplay.forceReleaseVehicle(player);
+    player.restingBed = undefined;
+    clearMiningLock(player);
+    player.bowUseTicks = 0;
+    player.foodUseTicks = 0;
+    player.useStartCommandSeq = undefined;
+    player.useSelectedSlot = undefined;
+    player.useItemId = undefined;
+    player.foodUseBoundaryCommandConfirmed = undefined;
+    player.bowUseBoundaryCommandConfirmed = undefined;
+    player.lastUse = false;
+    player.pendingAttacks.length = 0;
+    player.pendingBowReleases.length = 0;
+    player.controller.velocity.set(0, 0, 0);
+    this.teleports.cancel(player.id, DUEL_TELEPORT_DENIED);
+    this.rtpSessions.cancel(player.id);
+    if (tradeResult.affected) {
+      for (const id of tradeResult.affected) {
+        const other = this.players.get(id);
+        if (other?.connected && other.id !== player.id) this.flushTrade(other, { message: tradeResult.error });
+      }
+    }
+  }
+
+  private duelSystemMessage(playerId: string, text: string): void {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return;
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text,
+      kind: 'system',
+    });
+  }
+
+  private setDuelCountdownHologram(text: string, x: number, y: number, z: number): void {
+    const record = createHologramRecord({
+      name: DUEL_COUNTDOWN_HOLOGRAM,
+      worldId: this.worldId,
+      x,
+      y,
+      z,
+      lines: [text],
+      range: DUEL_HOLOGRAM_RANGE,
+    });
+    record.font = 'display';
+    record.style = 'normal';
+    record.size = DUEL_COUNTDOWN_HOLOGRAM_SIZE;
+    record.backgroundEnabled = false;
+    record.billboard = true;
+    record.interactive = false;
+    record.preserveTextAspect = true;
+    this.holograms.upsertTransient(record);
+  }
+
+  private emitDuelFightStartBurst(x: number, y: number, z: number): void {
+    const message = { type: 'duel_effect' as const, effect: 'fight_start_burst' as const, x, y, z };
+    const rangeSq = DUEL_HOLOGRAM_RANGE * DUEL_HOLOGRAM_RANGE;
+    const participants = new Set(this.duels.participantIds());
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const dx = player.controller.position.x - x;
+      const dy = player.controller.position.y - y;
+      const dz = player.controller.position.z - z;
+      const near = dx * dx + dy * dy + dz * dz <= rangeSq;
+      if (participants.has(player.id) || near) this.sendTo(player, message);
+    }
+  }
+
+  private freezeDuelMovement(player: ServerPlayer): void {
+    if (!this.duels.movementLock(player.id)) return;
+    player.controller.velocity.set(0, 0, 0);
+    player.lastInput = {
+      ...player.lastInput,
+      forward: 0,
+      right: 0,
+      jump: false,
+      manualJump: false,
+      sneak: false,
+      sprint: false,
+      descend: false,
+      flySprint: false,
+      mining: false,
+      vehicleForward: 0,
+    };
+  }
+
+  private snapDuelMovement(player: ServerPlayer): void {
+    const lock = this.duels.movementLock(player.id);
+    if (!lock) return;
+    player.controller.velocity.set(0, 0, 0);
+    player.controller.teleport([lock.x, lock.y, lock.z]);
+  }
+
   /**
    * Server-owned instantaneous relocation. Walking, knockback, minecart
    * motion, and a cancelled move are not this path.
@@ -4468,7 +4839,9 @@ export class WorldInstance {
     y: number,
     z: number,
     look?: { readonly yaw?: number; readonly pitch?: number },
+    options?: { readonly bypass?: 'duel' },
   ): boolean {
+    if (options?.bypass !== 'duel' && this.duels?.externalTeleportError(player.id)) return false;
     if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z) || !isValidWorldY(Math.floor(y))) {
       return false;
     }

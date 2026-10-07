@@ -116,6 +116,7 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
+    this.world.prepareForServerShutdown();
     const seen = new Set<string>();
     for (const [socket, binding] of this.sockets) {
       if (!seen.has(binding.playerId)) {

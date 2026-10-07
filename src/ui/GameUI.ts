@@ -4368,6 +4368,24 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'trade_accept', requestId: tradeAccept.dataset.menuTradeAccept });
         return;
       }
+      const duelChallenge = target.closest<HTMLElement>('[data-menu-duel-challenge]');
+      if (duelChallenge?.dataset.menuDuelChallenge) {
+        if (duelChallenge instanceof HTMLButtonElement && duelChallenge.disabled) return;
+        actions.send({ type: 'menu_action', action: 'duel_challenge', playerId: duelChallenge.dataset.menuDuelChallenge });
+        return;
+      }
+      const duelAccept = target.closest<HTMLElement>('[data-menu-duel-accept]');
+      if (duelAccept?.dataset.menuDuelAccept) {
+        if (duelAccept instanceof HTMLButtonElement && duelAccept.disabled) return;
+        actions.send({ type: 'menu_action', action: 'duel_accept', requestId: duelAccept.dataset.menuDuelAccept });
+        return;
+      }
+      const duelDecline = target.closest<HTMLElement>('[data-menu-duel-decline]');
+      if (duelDecline?.dataset.menuDuelDecline) {
+        if (duelDecline instanceof HTMLButtonElement && duelDecline.disabled) return;
+        actions.send({ type: 'menu_action', action: 'duel_decline', requestId: duelDecline.dataset.menuDuelDecline });
+        return;
+      }
       const tradeReject = target.closest<HTMLElement>('[data-menu-trade-reject]');
       if (tradeReject?.dataset.menuTradeReject) {
         actions.send({ type: 'menu_action', action: 'trade_reject', requestId: tradeReject.dataset.menuTradeReject });

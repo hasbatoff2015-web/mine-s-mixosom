@@ -1,6 +1,7 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
+import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
@@ -686,7 +687,11 @@ export type MenuActionKind =
   | 'auction_sell'
   | 'auction_history'
   | 'rating_set'
-  | 'rating_page';
+  | 'rating_page'
+  | 'duel_refresh'
+  | 'duel_challenge'
+  | 'duel_accept'
+  | 'duel_decline';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -703,6 +708,7 @@ export type GameMenuScreenKind =
   | 'auction'
   | 'auction-history'
   | 'rating'
+  | 'duels'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -1061,6 +1067,13 @@ export interface NetworkHologram {
   readonly backgroundHeight: number;
   readonly billboard: boolean;
   readonly yaw: number;
+  /** Missing on older payloads means interactive. */
+  readonly interactive?: boolean;
+  /**
+   * Missing or false keeps the historical text-plane aspect.
+   * True sizes the plane to the 512×256 text canvas so glyphs are not stretched.
+   */
+  readonly preserveTextAspect?: boolean;
 }
 
 export interface ServerHologramsMessage {
@@ -1448,6 +1461,29 @@ export interface ServerMenuMessage {
   readonly personalText?: string;
   readonly notifications?: NetworkMenuNotifications;
   readonly auctionHistory?: readonly NetworkAuctionHistoryRow[];
+  readonly duelStats?: DuelMenuStats;
+  readonly duelIncoming?: readonly DuelIncomingRow[];
+  readonly duelOutgoing?: DuelOutgoingRow;
+  readonly duelNearby?: readonly DuelNearbyRow[];
+  readonly duelArenaBusy?: boolean;
+  readonly duelArenaConfigured?: boolean;
+  readonly duelAvailable?: boolean;
+}
+
+export interface ServerDuelEffectMessage {
+  readonly type: 'duel_effect';
+  readonly effect: 'fight_start_burst';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
+export interface ServerPlayerLookMessage {
+  readonly type: 'player_look';
+  readonly reason: 'duel_start' | 'duel_restore';
+  readonly yaw: number;
+  readonly pitch: number;
 }
 
 export interface NetworkMenuNotifications {
@@ -1455,6 +1491,7 @@ export interface NetworkMenuNotifications {
   readonly clans: number;
   readonly auction: number;
   readonly trade: number;
+  readonly duels: number;
 }
 
 export interface NetworkAuctionHistoryRow {
@@ -1548,7 +1585,9 @@ export type ServerMessage =
   | ServerBuyerMessage
   | ServerMenuMessage
   | ServerTradeMessage
-  | ServerDirectMessage;
+  | ServerDirectMessage
+  | ServerDuelEffectMessage
+  | ServerPlayerLookMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1619,6 +1658,8 @@ export const SERVER_MESSAGE_TYPES = [
   'menu',
   'trade',
   'direct_message',
+  'duel_effect',
+  'player_look',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1671,11 +1712,12 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
   'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
+  'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'closed',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {
@@ -1788,6 +1830,8 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     backgroundHeight: appearance.backgroundHeight,
     billboard: appearance.billboard,
     yaw,
+    interactive: raw.interactive !== false,
+    preserveTextAspect: raw.preserveTextAspect === true,
   };
 }
 
@@ -2710,6 +2754,17 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         ...(errorText ? { error: errorText } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
       };
+    }
+    case 'duel_effect': {
+      if (raw.effect !== 'fight_start_burst') return { error: 'duel_effect.effect invalid' };
+      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) return { error: 'duel_effect coordinates invalid' };
+      return { type: 'duel_effect', effect: 'fight_start_burst', x: raw.x, y: raw.y, z: raw.z };
+    }
+    case 'player_look': {
+      const reason = raw.reason === 'duel_start' || raw.reason === 'duel_restore' ? raw.reason : undefined;
+      if (!reason) return { error: 'player_look.reason invalid' };
+      if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'player_look invalid' };
+      return { type: 'player_look', reason, yaw: raw.yaw, pitch: raw.pitch };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

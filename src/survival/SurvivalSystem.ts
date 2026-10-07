@@ -90,6 +90,8 @@ export interface SurvivalTickContext {
   readonly minedBlock?: boolean;
   readonly onDamage?: (result: DamageResult) => void;
   readonly onDeath?: (source: DamageSource) => void;
+  /** Skips fire, drowning, lava, cactus, and starvation hits for this tick. */
+  readonly preventDamage?: boolean;
 }
 
 export interface SurvivalTickResult {
@@ -690,6 +692,7 @@ export class SurvivalSystem {
     context: SurvivalTickContext,
     events: DamageResult[],
   ): void {
+    if (context.preventDamage) return;
     const result = this.damage(amount, source, {
       armor: context.armor,
       fireContact: this.contactFire,

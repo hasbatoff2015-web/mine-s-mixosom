@@ -89,7 +89,10 @@ describe('game menu plugin', () => {
     expect(root?.screen).toBe('root');
     expect(root?.balance).toBe(ECONOMY_INITIAL_BALANCE);
     expect(root?.balanceLabel).toBe('100');
-    expect(GAME_MENU_BUTTONS).toHaveLength(8);
+    expect(GAME_MENU_BUTTONS).toHaveLength(9);
+    expect(GAME_MENU_BUTTONS.map((button) => button.id)).toEqual([
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels',
+    ]);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'homes' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('homes');
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });

@@ -134,14 +134,16 @@ function menuTileHtml(
 export function menuRootHtml(
   state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel' | 'notifications'>,
 ): string {
-  const row1 = GAME_MENU_BUTTONS.slice(0, 4).map((button) => menuTileHtml(button, state?.notifications)).join('');
-  const row2 = GAME_MENU_BUTTONS.slice(4).map((button) => menuTileHtml(button, state?.notifications)).join('');
+  const row = (start: number) => GAME_MENU_BUTTONS.slice(start, start + 3)
+    .map((button) => menuTileHtml(button, state?.notifications))
+    .join('');
   return `<div class="mc-menu-body mc-menu-root" data-menu-screen="root">
     ${menuHeadingHtml('Меню')}
     ${menuBalanceHtml(state)}
     <div class="mc-menu-grid">
-      <div class="mc-menu-grid-row mc-menu-grid-row-4">${row1}</div>
-      <div class="mc-menu-grid-row mc-menu-grid-row-4">${row2}</div>
+      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(0)}</div>
+      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(3)}</div>
+      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(6)}</div>
     </div>
   </div>`;
 }
@@ -483,6 +485,66 @@ export function menuRatingHtml(state: ServerMenuMessage, escape: (value: string)
   </div>`;
 }
 
+export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const wins = state.duelStats?.wins ?? 0;
+  const losses = state.duelStats?.losses ?? 0;
+  const available = state.duelAvailable !== false;
+  const configured = state.duelArenaConfigured !== false;
+  const busy = state.duelArenaBusy === true;
+  const arenaClass = !available || !configured ? 'is-missing' : busy ? 'is-busy' : 'is-free';
+  const arenaText = !available
+    ? 'Дуэли временно недоступны.'
+    : !configured
+      ? 'Арена не настроена.'
+      : busy
+        ? '● Арена занята'
+        : '● Арена свободна';
+  const acceptLocked = !available || !configured;
+  const incomingRows = (state.duelIncoming ?? []).map((row) => `
+    <div class="mc-player-row mc-duel-row">
+      <div class="mc-player-main">
+        <strong class="mc-player-name">${escape(row.name)}</strong>
+        <span class="mc-player-meta mc-duel-score">Счёт: ${row.wins} : ${row.losses}</span>
+      </div>
+      <span class="mc-menu-row-actions">
+        <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-duel-accept="${escape(row.requestId)}"${acceptLocked ? ' disabled' : ''}>Принять</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-duel-decline="${escape(row.requestId)}"${!available ? ' disabled' : ''}>Отклонить</button>
+      </span>
+    </div>`).join('');
+  const incoming = (state.duelIncoming ?? []).length === 0 ? '' : `
+    <div class="mc-duel-section-head"><span>Входящие вызовы</span></div>
+    <div class="mc-menu-list mc-duel-list mc-duel-incoming">${incomingRows}</div>`;
+  const outgoing = state.duelOutgoing ? `
+    <div class="mc-duel-outgoing">
+      <span>Вызов отправлен: ${escape(state.duelOutgoing.name)}</span>
+      <span>осталось ${state.duelOutgoing.secondsLeft} сек.</span>
+    </div>` : '';
+  const nearbyRows = (state.duelNearby ?? []).map((row) => `
+    <div class="mc-player-row mc-duel-row">
+      <div class="mc-player-main">
+        <strong class="mc-player-name">${escape(row.name)}</strong>
+        <span class="mc-player-meta"><span class="mc-duel-score">Счёт: ${row.wins} : ${row.losses}</span> · <span class="mc-duel-distance">${row.distance} блоков</span></span>
+      </div>
+      <button type="button" class="mc-ah-btn" data-menu-duel-challenge="${escape(row.playerId)}"${row.canChallenge ? '' : ' disabled'}>Вызвать</button>
+    </div>`).join('');
+  return `<div class="mc-menu-body" data-menu-screen="duels">
+    ${menuHeadingHtml('Дуэли')}
+    <div class="mc-duel-summary">
+      <span class="mc-duel-wins">Победы: ${wins}</span>
+      <span class="mc-duel-losses">Поражения: ${losses}</span>
+    </div>
+    <div class="mc-duel-arena-status ${arenaClass}">${escape(arenaText)}</div>
+    ${incoming}
+    ${outgoing}
+    <div class="mc-duel-section-head">
+      <span>Игроки рядом</span>
+      <button type="button" class="mc-ah-btn" data-menu-action="duel_refresh">Обновить</button>
+    </div>
+    <div class="mc-menu-list mc-duel-list mc-duel-nearby">${nearbyRows || '<p class="mc-menu-empty">Никого рядом.</p>'}</div>
+    ${menuMessage(state.message, escape)}
+  </div>`;
+}
+
 export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   if (state.screen === 'homes' || state.screen === 'home-delete-confirm') return menuHomesHtml(state, escape);
   if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') return menuFriendsHtml(state, escape);
@@ -495,6 +557,7 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   if (state.screen === 'auction') return menuAuctionHtml();
   if (state.screen === 'auction-history') return menuAuctionHistoryHtml(state, escape);
   if (state.screen === 'rating') return menuRatingHtml(state, escape);
+  if (state.screen === 'duels') return menuDuelsHtml(state, escape);
   return menuRootHtml(state);
 }
 
