@@ -63,6 +63,8 @@ function harness() {
   let service!: DuelService;
   let stats: unknown = { players: {} };
   let arena: unknown = {};
+  let allowPrepare = true;
+  const prepared: string[][] = [];
   const store: DuelStore = {
     loadStats: () => stats,
     saveStats: (value) => { stats = value; },
@@ -70,7 +72,10 @@ function harness() {
     saveArena: (value) => { arena = value; },
   };
   const runtime: DuelRuntime = {
-    preparePlayer: () => true,
+    preparePlayers: (playerIds) => {
+      prepared.push([...playerIds]);
+      return allowPrepare;
+    },
     hardRelocateForDuel: () => true,
     restorePreDuelPose: (playerId) => { restores.push(playerId); return true; },
     dropAllResources: (playerId) => {
@@ -125,6 +130,8 @@ function harness() {
     setNow: (value: number) => { now = value; },
     advance: (ms: number) => { now += ms; },
     now: () => now,
+    prepared,
+    setAllowPrepare: (value: boolean) => { allowPrepare = value; },
     reload() {
       return new DuelService({
         worldId: 'anarchy',
@@ -336,10 +343,15 @@ describe('DuelService matches', () => {
     expect(env.service.blocksManualDrop('a')).toBe(true);
     expect(env.service.shouldCancelPlayerDamage('a', 'b')).toBe(true);
     expect(env.service.shouldCancelPlayerDamage('a')).toBe(true);
+    expect(env.service.suppressesIncomingDamage('a')).toBe(true);
+    expect(env.service.suppressesIncomingDamage('b')).toBe(true);
+    expect(env.service.suppressesIncomingDamage('c')).toBe(false);
     expect(env.service.externalTeleportError('a')).toBe(DUEL_TELEPORT_DENIED);
     env.advance(DUEL_COUNTDOWN_MS);
     env.service.tick();
     expect(env.service.movementLock('a')).toBeUndefined();
+    expect(env.service.suppressesIncomingDamage('a')).toBe(false);
+    expect(env.service.suppressesIncomingDamage('b')).toBe(false);
     expect(env.service.blocksCombatIntent('a', 'melee')).toBe(false);
     expect(env.service.blocksManualDrop('a')).toBe(true);
     expect(env.service.shouldCancelPlayerDamage('b', 'a')).toBe(false);
@@ -441,6 +453,23 @@ describe('DuelService matches', () => {
     env.service.tick();
     expect(env.service.phaseKind()).toBe('idle');
     expect(env.removed.at(-1)).toEqual(env.drops);
+  });
+
+  it('cancels the countdown instead of starting when fight preparation is refused', () => {
+    const env = harness();
+    begin(env);
+    expect(env.prepared).toEqual([]);
+    env.setAllowPrepare(false);
+    env.advance(DUEL_COUNTDOWN_MS);
+    env.service.tick();
+    expect(env.service.phaseKind()).toBe('idle');
+    expect(env.prepared).toEqual([['a', 'b']]);
+    expect(env.bursts).toEqual([]);
+    expect(env.messages.some((entry) => entry.text === DUEL_STARTED)).toBe(false);
+    expect(env.service.statsOf('a')).toMatchObject({ wins: 0, losses: 0 });
+    expect(env.service.statsOf('b')).toMatchObject({ wins: 0, losses: 0 });
+    expect(env.restores.sort()).toEqual(['a', 'b']);
+    expect(env.drops).toEqual([]);
   });
 
   it('cancels countdown and fighting on shutdown without touching stats or loot results', () => {

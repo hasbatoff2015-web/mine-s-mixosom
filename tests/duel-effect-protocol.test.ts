@@ -54,6 +54,17 @@ describe('duel_effect protocol', () => {
     });
     expect(parseServerMessage({
       type: 'player_look',
+      reason: 'duel_restore',
+      yaw: 1.25,
+      pitch: -0.4,
+    })).toEqual({
+      type: 'player_look',
+      reason: 'duel_restore',
+      yaw: 1.25,
+      pitch: -0.4,
+    });
+    expect(parseServerMessage({
+      type: 'player_look',
       reason: 'tick',
       yaw: 0,
       pitch: 0,

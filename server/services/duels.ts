@@ -62,7 +62,11 @@ export interface DuelStore {
 
 /** Trusted world operations. Not part of the public plugin API. */
 export interface DuelRuntime {
-  preparePlayer(playerId: string): boolean;
+  /**
+   * Normalize both fighters together. Returns false without mutating either
+   * player when one of them is no longer connected and alive.
+   */
+  preparePlayers(playerIds: readonly [string, string]): boolean;
   hardRelocateForDuel(playerId: string, pose: DuelPose): boolean;
   restorePreDuelPose(playerId: string, pose: DuelPose): boolean;
   dropAllResources(playerId: string): readonly string[];
@@ -445,9 +449,6 @@ export class DuelService {
     this.clearInvitesInvolving(from.id, to.id);
     this.deps.runtime.closeTransientUi(from.id);
     this.deps.runtime.closeTransientUi(to.id);
-    if (!this.deps.runtime.preparePlayer(from.id) || !this.deps.runtime.preparePlayer(to.id)) {
-      return { ok: false, message: 'Не удалось подготовить игроков.' };
-    }
     const look1 = duelLookToward(this.arena.spawn1, this.arena.spawn2, this.arena.spawn1);
     const look2 = duelLookToward(this.arena.spawn2, this.arena.spawn1, this.arena.spawn2);
     const movedA = this.deps.runtime.hardRelocateForDuel(from.id, {
@@ -603,7 +604,9 @@ export class DuelService {
   }
 
   suppressesIncomingDamage(playerId: string): boolean {
-    return this.phase.kind === 'loot' && this.phase.winnerId === playerId;
+    const phase = this.phase;
+    if (phase.kind === 'countdown' && phase.players.includes(playerId)) return true;
+    return phase.kind === 'loot' && phase.winnerId === playerId;
   }
 
   shouldCancelPlayerDamage(victimId: string, attackerId?: string, cause?: string): boolean {
@@ -749,6 +752,11 @@ export class DuelService {
   }
 
   private enterFighting(phase: CountdownPhase): void {
+    if (this.phase.kind !== 'countdown' || this.phase.matchId !== phase.matchId) return;
+    if (!this.deps.runtime.preparePlayers(phase.players)) {
+      this.cancelMatch(phase.matchId, phase.players, phase.poses);
+      return;
+    }
     const fightStartedAt = phase.startedAt + DUEL_COUNTDOWN_MS;
     const now = this.now();
     this.phase = {

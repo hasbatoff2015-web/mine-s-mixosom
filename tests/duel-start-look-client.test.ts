@@ -20,16 +20,19 @@ const idle = {
 };
 
 describe('duel start look on the client', () => {
-  it('applies the packet to input, the local player, and the next command, then still turns', () => {
+  it.each(['duel_start', 'duel_restore'] as const)(
+    'applies %s to input, the local player, and the next command, then still turns',
+    (reason) => {
     expect(gameSource).toContain("case 'player_look'");
     expect(gameSource).toContain('applyDuelStartLook');
     expect(gameSource).toContain('clearCachedAim');
+    expect(gameSource).toContain(`message.reason === '${reason}'`);
 
     const parsed = parseServerMessage({
       type: 'player_look',
-      reason: 'duel_start',
-      yaw: -1.15,
-      pitch: 0.22,
+      reason,
+      yaw: reason === 'duel_restore' ? 0.65 : -1.15,
+      pitch: reason === 'duel_restore' ? -0.3 : 0.22,
     });
     if (!('type' in parsed) || parsed.type !== 'player_look') throw new Error('look packet rejected');
 

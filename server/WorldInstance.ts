@@ -1195,6 +1195,16 @@ export class WorldInstance {
     }, this.config.persistIntervalMs);
   }
 
+  /**
+   * Server process stop is not a player quit. Active countdown and fighting
+   * are cancelled here, while participants are still connected, so the later
+   * disconnect snapshot keeps their inventories and pre-duel poses.
+   * A later plugin disable calls `duels.shutdown()` again; that second call is idle.
+   */
+  prepareForServerShutdown(): void {
+    this.duels.shutdown();
+  }
+
   async stop(): Promise<void> {
     if (this.tickTimer) clearTimeout(this.tickTimer);
     if (this.persistTimer) clearInterval(this.persistTimer);
@@ -4571,10 +4581,7 @@ export class WorldInstance {
 
   private createDuelRuntime(): DuelRuntime {
     return {
-      preparePlayer: (playerId) => {
-        const player = this.players.get(playerId);
-        return player ? this.prepareDuelPlayer(player) : false;
-      },
+      preparePlayers: (playerIds) => this.prepareDuelPlayers(playerIds),
       hardRelocateForDuel: (playerId, pose) => {
         const player = this.players.get(playerId);
         if (!player) return false;
@@ -4598,7 +4605,22 @@ export class WorldInstance {
       restorePreDuelPose: (playerId, pose) => {
         const player = this.players.get(playerId);
         if (!player) return false;
-        return this.hardRelocatePlayer(player, pose.x, pose.y, pose.z, { yaw: pose.yaw, pitch: pose.pitch }, { bypass: 'duel' });
+        const moved = this.hardRelocatePlayer(
+          player,
+          pose.x,
+          pose.y,
+          pose.z,
+          { yaw: pose.yaw, pitch: pose.pitch },
+          { bypass: 'duel' },
+        );
+        if (!moved || !player.connected) return moved;
+        this.sendTo(player, {
+          type: 'player_look',
+          reason: 'duel_restore',
+          yaw: player.controller.yaw,
+          pitch: player.controller.pitch,
+        });
+        return true;
       },
       dropAllResources: (playerId) => {
         const player = this.players.get(playerId);
@@ -4643,8 +4665,18 @@ export class WorldInstance {
     };
   }
 
-  private prepareDuelPlayer(player: ServerPlayer): boolean {
-    if (!player.connected || player.survival.dead) return false;
+  private prepareDuelPlayers(playerIds: readonly [string, string]): boolean {
+    const ready: ServerPlayer[] = [];
+    for (const playerId of playerIds) {
+      const player = this.players.get(playerId);
+      if (!player || !player.connected || player.survival.dead || player.survival.health <= 0) return false;
+      ready.push(player);
+    }
+    for (const player of ready) this.applyDuelPreparation(player);
+    return true;
+  }
+
+  private applyDuelPreparation(player: ServerPlayer): void {
     player.survival.health = MAX_HEALTH;
     player.survival.hunger = MAX_HUNGER;
     player.survival.saturation = MAX_HUNGER;
@@ -4666,7 +4698,6 @@ export class WorldInstance {
     player.lastUse = false;
     player.pendingAttacks.length = 0;
     player.pendingBowReleases.length = 0;
-    return true;
   }
 
   private respawnDuelPlayerAtSpawn(player: ServerPlayer): boolean {

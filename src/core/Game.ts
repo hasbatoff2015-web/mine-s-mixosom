@@ -1453,7 +1453,7 @@ export class Game {
         }
         return;
       case 'player_look':
-        if (message.reason === 'duel_start') {
+        if (message.reason === 'duel_start' || message.reason === 'duel_restore') {
           applyDuelStartLook({
             input: this.input,
             player: this.session?.player,

@@ -1481,7 +1481,7 @@ export interface ServerDuelEffectMessage {
 /** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
 export interface ServerPlayerLookMessage {
   readonly type: 'player_look';
-  readonly reason: 'duel_start';
+  readonly reason: 'duel_start' | 'duel_restore';
   readonly yaw: number;
   readonly pitch: number;
 }
@@ -2761,9 +2761,10 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       return { type: 'duel_effect', effect: 'fight_start_burst', x: raw.x, y: raw.y, z: raw.z };
     }
     case 'player_look': {
-      if (raw.reason !== 'duel_start') return { error: 'player_look.reason invalid' };
+      const reason = raw.reason === 'duel_start' || raw.reason === 'duel_restore' ? raw.reason : undefined;
+      if (!reason) return { error: 'player_look.reason invalid' };
       if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'player_look invalid' };
-      return { type: 'player_look', reason: 'duel_start', yaw: raw.yaw, pitch: raw.pitch };
+      return { type: 'player_look', reason, yaw: raw.yaw, pitch: raw.pitch };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

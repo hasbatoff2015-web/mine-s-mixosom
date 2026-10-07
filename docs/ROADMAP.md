@@ -17,7 +17,11 @@
 - [x] Countdown `preserveTextAspect` keeps size 2.8 and the one-line height, with width = height × 2.
 - [x] `WorldInstance` owns the duel tick and combat hooks. Plugin disable blocks new matches.
 - [x] Loot winner is protected for 15 s. Attacker-less melee, arrow, and projectile damage is cancelled in fighting.
-- [ ] Owner PNG `public/ui/menu/icon_duels.png` is not in the tree. Two-client browser QA is not done.
+- [x] Owner PNG `public/ui/menu/icon_duels.png` is in the tree.
+- [x] `AnarchyServer.stop()` shuts the active duel down before socket disconnect. A restart is not a forfeit. A real fighting disconnect still is.
+- [x] Survival preparation runs when the fight starts. Countdown cancel does not heal or cleanse. Countdown participants ignore environment damage.
+- [x] A cancelled countdown or fight sends one `player_look` / `duel_restore` to each still-connected participant.
+- [ ] Browser QA of this shutdown and countdown pass was not repeated.
 - [ ] Not merged. Draft PR **#122**.
 
 ## 2026-10-05: Private friend chat

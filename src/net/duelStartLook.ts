@@ -1,4 +1,4 @@
-/** One-shot duel teleport look. Ordinary snapshots do not call this. */
+/** One-shot duel look for fight entry or a cancelled-match restore. Ordinary snapshots do not call this. */
 export function applyDuelStartLook(state: {
   input: { adoptAuthoritativeLook(yaw: number, pitch: number): void };
   player?: { yaw: number; pitch: number };
