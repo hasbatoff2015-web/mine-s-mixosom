@@ -88,4 +88,4 @@ Headless Chrome. Физического телефона нет.
 - Ветка: `cursor/inventory-controls-drag-mobile-split-1661`.
 - HEAD до изменений: `de2843bcfe8ee3c8ebe9901b0ebeed2fb4b331a7`. Коммит реализации: `f3dfba4895d53b6993db2f6b6633b58c2fdc9130`. Merge-base с `origin/main` — тот же `de2843b`. Ветка не позади main.
 - Открытые чужие PR, которые трогают контейнеры, но не влиты: #121 (печь и яблоки), #123 (урон мобов). Отдельного PR на эти же inventory controls не было.
-- Rebase и force push не делались. В main не коммитилось. Production не выкладывался.
+- Draft PR **#125**. Rebase и force push не делались. В main не коммитилось. Production не выкладывался.
