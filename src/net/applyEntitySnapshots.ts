@@ -124,6 +124,10 @@ export function applyEntitySnapshots(
         if (mob.velocity) mob.velocity.set(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0);
         if (snap.yaw !== undefined) mob.facingYaw = snap.yaw;
         if (snap.health !== undefined) mob.health = snap.health;
+        if (snap.mobKind === 'creeper') {
+          const fuse = snap.fuse;
+          mob.fuseSeconds = typeof fuse === 'number' && Number.isFinite(fuse) ? Math.max(0, fuse) : 0;
+        }
         const hurt = snap.hurt === true;
         if (hurt && !mob.networkHurt) session.mobs.applyAuthoritativeHurt(mob.id);
         mob.networkHurt = hurt;
