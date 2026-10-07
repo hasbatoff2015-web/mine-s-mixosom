@@ -1,5 +1,12 @@
 # Состояние проекта
 
+## Последний проход: hit-test под pointer capture, double-click и shift-matching — 2026-10-07
+
+- Drag внутри инвентаря больше не выбрасывает предмет. `setPointerCapture` по-прежнему на `.mc-backdrop`, но цель жеста на `pointermove` и `pointerup` берётся из `document.elementFromPoint`, а не из `event.target`.
+- Пустое место панели, крестик и прочие контролы отменяют drag. Выброс с прямого drag остаётся только на настоящем backdrop снаружи панели. Coarse pointer по-прежнему не выбрасывает в пустой backdrop.
+- Онлайн double-click шлёт `click`, затем `collect_matching`, даже если локальный курсор ещё пуст. Shift+double-click сканирует только исходную сторону и не возвращает стек обратно.
+- Подробности: `docs/reports/2026-10-07_inventory-pointer-hit-double-click.md`. Draft PR **#125**. Не смержен.
+
 ## Последний проход: управление инвентарём, drag и мобильное разделение — 2026-10-07
 
 - Desktop и coarse pointer оба фиксируют слот на `pointerup`. `pointerdown` инвентарь больше не меняет. Прямой drag реального стека — одно действие `move_stack`. Пустой backdrop на coarse pointer ничего не выбрасывает и не переносит якорь курсора.

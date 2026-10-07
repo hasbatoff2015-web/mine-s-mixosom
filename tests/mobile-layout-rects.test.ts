@@ -530,19 +530,24 @@ describe('coarse mobile layout rects', () => {
         const before = document.querySelector('#cursor-stack');
         const beforeLeft = before ? before.style.left : '';
         const slot = document.querySelector('[data-slot^="creative-"]');
+        const box = slot.getBoundingClientRect();
+        const x = Math.round(box.left + box.width / 2);
+        const y = Math.round(box.top + box.height / 2);
         slot.dispatchEvent(new PointerEvent('pointerdown', {
-          bubbles: true, cancelable: true, clientX: 180, clientY: 220, pointerType: 'touch', button: 0, pointerId: 4,
+          bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: 'touch', button: 0, pointerId: 4,
         }));
         const pressed = document.querySelector('#cursor-stack');
         const pressedHtml = pressed.innerHTML.length;
         slot.dispatchEvent(new PointerEvent('pointerup', {
-          bubbles: true, cancelable: true, clientX: 180, clientY: 220, pointerType: 'touch', button: 0, pointerId: 4,
+          bubbles: true, cancelable: true, clientX: x, clientY: y, pointerType: 'touch', button: 0, pointerId: 4,
         }));
         const cursor = document.querySelector('#cursor-stack');
         const rect = cursor.getBoundingClientRect();
         return {
           beforeLeft,
           pressedHtml,
+          x,
+          y,
           left: cursor.style.left,
           top: cursor.style.top,
           rectLeft: rect.left,
@@ -554,6 +559,8 @@ describe('coarse mobile layout rects', () => {
     const tap = (tapped.result as { value?: {
       beforeLeft: string;
       pressedHtml: number;
+      x: number;
+      y: number;
       left: string;
       top: string;
       rectLeft: number;
@@ -563,11 +570,12 @@ describe('coarse mobile layout rects', () => {
     if (!tap) throw new Error(`cursor tap returned nothing: ${JSON.stringify(tapped)}`);
     expect(tap.pressedHtml).toBe(0);
     expect(tap.html).toBeGreaterThan(0);
-    expect(tap.left).toBe('198px');
-    expect(tap.top).toBe('184px');
-    expect(tap.rectLeft).toBeGreaterThan(150);
-    expect(tap.rectLeft).toBeLessThan(280);
-    expect(tap.rectTop).toBeLessThan(220);
+    expect(tap.x).toBeGreaterThan(0);
+    expect(tap.y).toBeGreaterThan(0);
+    expect(tap.left).toBe(`${tap.x + 18}px`);
+    expect(tap.top).toBe(`${tap.y - 36}px`);
+    expect(tap.rectLeft).toBeGreaterThan(tap.x);
+    expect(tap.rectLeft).toBeLessThan(tap.x + 80);
     const moved = await launched.cdp.send('Runtime.evaluate', {
       returnByValue: true,
       expression: `(() => {
@@ -579,7 +587,7 @@ describe('coarse mobile layout rects', () => {
       })()`,
     });
     const move = (moved.result as { value?: { left: string; top: string } }).value;
-    expect(move).toEqual({ left: '198px', top: '184px' });
+    expect(move).toEqual({ left: tap.left, top: tap.top });
   }, 60_000);
 });
 

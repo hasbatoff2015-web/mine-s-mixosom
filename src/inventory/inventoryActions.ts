@@ -8,7 +8,7 @@ import { isChestWindowKind } from './portalChest';
 import { Inventory } from './inventory';
 import type { InventorySlotRef } from './types';
 import type { InventoryUiResult, InventoryUiState } from './inventoryUiAction';
-import { parseSlotKey, slotCapability, type ParsedSlotKey, type SlotCapability } from './slotKey';
+import { parseSlotKey, slotCapability, type SlotCapability } from './slotKey';
 import {
   canStacksMerge,
   cloneStack,
@@ -101,20 +101,36 @@ function bindSlot(state: InventoryUiState, key: string): BoundSlot | null {
   return null;
 }
 
-function slotsOnSide(state: InventoryUiState, parsed: ParsedSlotKey): readonly string[] {
+const EQUIPMENT_SOURCE_KEYS = ['armor-head', 'armor-chest', 'armor-legs', 'armor-feet', 'offhand'] as const;
+
+function playerIndexKeys(start: number, end: number): string[] {
+  const keys: string[] = [];
+  for (let index = start; index < end; index += 1) keys.push(`inventory-${index}`);
+  return keys;
+}
+
+/**
+ * Slots that may be sources for one bulk quick-move.
+ * The set is the side the gesture started on. The destination side is absent,
+ * so a stack moved by this action cannot be moved back in the same pass.
+ */
+export function quickMoveMatchingSourceKeys(state: InventoryUiState, key: string): readonly string[] {
+  const parsed = parseSlotKey(key);
+  if (parsed.kind === 'invalid' || parsed.kind === 'result' || parsed.kind === 'creative') return [];
   if (parsed.kind === 'player' && typeof parsed.playerRef === 'number') {
-    return Array.from({ length: Inventory.SLOT_COUNT }, (_unused, index) => `inventory-${index}`);
+    const transfersOut = (isChestWindowKind(state.window.kind) && state.chest !== undefined)
+      || (state.window.kind === 'furnace' && state.furnace !== undefined);
+    if (transfersOut) return playerIndexKeys(0, Inventory.SLOT_COUNT);
+    const index = parsed.playerRef;
+    if (index < Inventory.HOTBAR_SIZE) return playerIndexKeys(0, Inventory.HOTBAR_SIZE);
+    return playerIndexKeys(Inventory.HOTBAR_SIZE, Inventory.SLOT_COUNT);
   }
-  if (parsed.kind === 'player') {
-    return ['armor-head', 'armor-chest', 'armor-legs', 'armor-feet', 'offhand'];
-  }
+  if (parsed.kind === 'player') return EQUIPMENT_SOURCE_KEYS;
   if (parsed.kind === 'container' && state.chest) {
     return state.chest.slots.map((_slot, index) => `container-${index}`);
   }
-  if (parsed.kind === 'furnace') return ['furnace-0', 'furnace-1', 'furnace-2'];
-  if (parsed.kind === 'craft') {
-    return state.craftSlots.map((_slot, index) => `craft-${index}`);
-  }
+  if (parsed.kind === 'furnace' && state.furnace) return ['furnace-0', 'furnace-1', 'furnace-2'];
+  if (parsed.kind === 'craft') return state.craftSlots.map((_slot, index) => `craft-${index}`);
   return [];
 }
 
@@ -456,16 +472,22 @@ export function quickMoveMatching(state: InventoryUiState, key: string): Invento
   }
   const sample = origin.get();
   if (!sample) return rejected();
-  const keys = slotsOnSide(state, parsed);
+  const keys = quickMoveMatchingSourceKeys(state, key);
   const ordered = [
     ...keys.filter((candidate) => candidate === key),
     ...keys.filter((candidate) => candidate !== key),
   ];
+  const matches: Array<{ key: string; signature: string }> = [];
   for (const candidate of ordered) {
     const slot = bindSlot(state, candidate);
     const current = slot?.get();
     if (!current || !canStacksMerge(current, sample)) continue;
-    shiftActivate(state, candidate);
+    matches.push({ key: candidate, signature: itemStackSignature(current) });
+  }
+  for (const candidate of matches) {
+    const slot = bindSlot(state, candidate.key);
+    if (itemStackSignature(slot?.get() ?? null) !== candidate.signature) continue;
+    shiftActivate(state, candidate.key);
   }
   return accepted();
 }

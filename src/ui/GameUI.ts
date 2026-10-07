@@ -8,7 +8,7 @@ import {
 } from '../inventory';
 import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
-import { itemStackSignature, splitDestinationIndex } from '../inventory/inventoryActions';
+import { itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
 import { initialStackAmount, splitAmountAllowed } from '../inventory/stackAmount';
@@ -58,6 +58,7 @@ import {
   type PointerZone,
   type SourceClass,
 } from './inventoryPointerGesture';
+import { resolveInventoryPointerZone } from './inventoryPointerHit';
 import { mobileDropHitContains } from './mobileDropTarget';
 import {
   allCraftingBookEntries,
@@ -385,6 +386,8 @@ export class GameUI {
     shift: boolean;
     at: number;
     identity: string;
+    /** True when this click should pick a real stack into an empty cursor. */
+    firstClickExpectedPickup: boolean;
   } | null = null;
   private ignoreLostCapture = false;
   private craftSlots: Array<ItemStack | null> = [];
@@ -2283,9 +2286,9 @@ export class GameUI {
           <div data-player-hotbar class="mc-creative-hotbar">${hotbar}</div>
         </div>
         ${this.inventorySideRailHtml()}
-        <div class="mc-item-tooltip"></div>
+        <div class="mc-item-tooltip" style="pointer-events:none"></div>
       </div>
-      <div id="cursor-stack">${cursor}</div>`;
+      <div id="cursor-stack" style="pointer-events:none">${cursor}</div>`;
     this.bindContainerChrome(context);
     this.finishInventoryChrome();
   }
@@ -2331,9 +2334,9 @@ export class GameUI {
           <div data-player-inventory>${player}</div>
         </div>
         ${this.inventorySideRailHtml()}
-        <div class="mc-item-tooltip"></div>
+        <div class="mc-item-tooltip" style="pointer-events:none"></div>
       </div>
-      <div id="cursor-stack">${cursor}</div>`;
+      <div id="cursor-stack" style="pointer-events:none">${cursor}</div>`;
     this.bindContainerChrome(context);
     this.bindRecipeBookControls(context);
     this.finishInventoryChrome();
@@ -2759,25 +2762,23 @@ export class GameUI {
     );
   }
 
-  private pointerZone(event: PointerEvent): { zone: PointerZone; slotKey: string | null } {
-    if (this.amountDialog) return { zone: 'dialog', slotKey: null };
-    const target = event.target instanceof Element ? event.target : null;
-    if (this.pointInMobileDrop(event.clientX, event.clientY) || target?.closest('[data-mobile-drop]')) {
-      return { zone: 'drop', slotKey: null };
-    }
-    const slotKey = target?.closest('[data-slot]')?.getAttribute('data-slot') ?? null;
-    if (slotKey && slotKey !== 'cursor') return { zone: 'slot', slotKey };
-    if (target?.closest('button, input, textarea, a, [data-recipe-id], [data-creative-tab], [data-craft-item]')) {
-      return { zone: 'blocked', slotKey: null };
-    }
-    if (target?.closest('.mc-panel, .mc-recipe-book, .mc-item-tooltip, .mc-stack-amount-dialog')) {
-      return { zone: 'panel', slotKey: null };
-    }
-    return { zone: 'backdrop', slotKey: null };
+  private pointerZone(event: PointerEvent, coordinateHitTest: boolean): { zone: PointerZone; slotKey: string | null } {
+    return resolveInventoryPointerZone({
+      x: event.clientX,
+      y: event.clientY,
+      fallbackTarget: event.target,
+      coordinateHitTest,
+      amountOpen: this.amountDialog !== null,
+      mobileDropContains: (x, y) => this.pointInMobileDrop(x, y),
+      elementFromPoint: (x, y) => document.elementFromPoint(x, y),
+      elementsFromPoint: (x, y) => (
+        typeof document.elementsFromPoint === 'function' ? document.elementsFromPoint(x, y) : []
+      ),
+    });
   }
 
-  private pointerSample(event: PointerEvent): PointerSample {
-    const { zone, slotKey } = this.pointerZone(event);
+  private pointerSample(event: PointerEvent, coordinateHitTest: boolean): PointerSample {
+    const { zone, slotKey } = this.pointerZone(event, coordinateHitTest);
     return {
       pointerId: event.pointerId,
       pointerClass: this.coarsePointer ? 'coarse' : 'fine',
@@ -2844,7 +2845,7 @@ export class GameUI {
       this.handleRecipeClick(recipe.dataset.recipeId, event.button === 2, event.shiftKey);
       return;
     }
-    const sample = this.pointerSample(event);
+    const sample = this.pointerSample(event, false);
     if (sample.zone === 'slot' || sample.zone === 'drop') event.preventDefault();
     const sourceKey = sample.slotKey;
     const sourceClass = sourceKey ? this.sourceClassFor(sourceKey) : 'none';
@@ -2872,7 +2873,7 @@ export class GameUI {
 
   private onInventoryPointerMove(event: PointerEvent): void {
     if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
-    const sample = this.pointerSample(event);
+    const sample = this.pointerSample(event, true);
     const before = this.pointerGesture.phase;
     const step = stepInventoryGesture(this.pointerGesture, { type: 'move', sample });
     this.pointerGesture = step.gesture;
@@ -2891,7 +2892,7 @@ export class GameUI {
 
   private onInventoryPointerUp(event: PointerEvent): void {
     if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
-    const sample = this.pointerSample(event);
+    const sample = this.pointerSample(event, true);
     const step = stepInventoryGesture(this.pointerGesture, { type: 'up', sample });
     this.clearLongPressTimer();
     this.ignoreLostCapture = true;
@@ -3018,25 +3019,58 @@ export class GameUI {
     }
   }
 
+  /**
+   * A left click on a real occupied slot with an empty cursor picks that stack up.
+   * Virtual results and creative grants are not pickups: the server mints them.
+   */
+  private expectsStackPickup(key: string, button: 'left' | 'right', shift: boolean): boolean {
+    if (shift || button !== 'left' || this.cursorStack !== null) return false;
+    const capability = slotCapability(parseSlotKey(key));
+    if (capability === 'virtual' || capability === 'creative' || capability === 'invalid') return false;
+    return this.stackAt(key) !== null;
+  }
+
+  private collectsFromPriorPickup(
+    previous: { readonly key: string; readonly identity: string; readonly firstClickExpectedPickup: boolean },
+    key: string,
+  ): boolean {
+    if (!previous.firstClickExpectedPickup || previous.key !== key || previous.identity === '') return false;
+    const live = this.stackIdentity(this.stackAt(key));
+    if (live === previous.identity) return true;
+    return live === '' && this.stackIdentity(this.cursorStack) === previous.identity;
+  }
+
+  /**
+   * Double-click is client intent. Online play does not apply the first click
+   * locally, so the cursor can still be empty when the second click arrives.
+   * `AnarchyClient.send` writes one WebSocket frame per call. The server applies
+   * `inventory_action` messages in that order: the pickup click, then `collect_matching`.
+   */
   private resolveSlotClick(key: string, button: 'left' | 'right', shift: boolean): void {
     const now = performance.now();
     const identity = this.stackIdentity(this.stackAt(key));
     const previous = this.lastSlotClick;
-    const doubled = previous !== null
+    const sameLeft = previous !== null
       && previous.key === key
       && previous.button === 'left'
       && button === 'left'
-      && previous.shift === shift
       && now - previous.at <= INVENTORY_DOUBLE_CLICK_MS;
-    this.lastSlotClick = { key, button, shift, at: now, identity };
-    if (doubled && shift) {
+    this.lastSlotClick = {
+      key,
+      button,
+      shift,
+      at: now,
+      identity,
+      firstClickExpectedPickup: this.expectsStackPickup(key, button, shift),
+    };
+    if (sameLeft && shift && previous.shift) {
       const match = this.matchingQuickMoveKey(key, previous.identity);
       if (match) {
         this.submitInventoryAction({ type: 'inventory_action', action: 'quick_move_matching', key: match });
       }
       return;
     }
-    if (doubled && this.cursorStack) {
+    if (sameLeft && !shift && !previous.shift && this.collectsFromPriorPickup(previous, key)) {
       this.submitInventoryAction({ type: 'inventory_action', action: 'collect_matching' });
       return;
     }
@@ -3051,18 +3085,16 @@ export class GameUI {
 
   private sameSideKeys(key: string): readonly string[] {
     const context = this.inventoryContext;
-    const parsed = parseSlotKey(key);
     if (!context) return [];
-    if (parsed.kind === 'player' && typeof parsed.playerRef === 'number') {
-      return Array.from({ length: Inventory.SLOT_COUNT }, (_unused, index) => `inventory-${index}`);
-    }
-    if (parsed.kind === 'player') return ['armor-head', 'armor-chest', 'armor-legs', 'armor-feet', 'offhand'];
-    if (parsed.kind === 'container' && context.chest) {
-      return context.chest.slots.map((_slot, index) => `container-${index}`);
-    }
-    if (parsed.kind === 'furnace') return ['furnace-0', 'furnace-1', 'furnace-2'];
-    if (parsed.kind === 'craft') return this.craftSlots.map((_slot, index) => `craft-${index}`);
-    return [];
+    return quickMoveMatchingSourceKeys({
+      inventory: context.inventory,
+      cursor: this.cursorStack,
+      craftSlots: this.craftSlots,
+      window: { kind: context.kind },
+      gamemode: context.mode,
+      chest: context.chest,
+      furnace: context.furnace,
+    }, key);
   }
 
   private matchingQuickMoveKey(clicked: string, identity: string): string | null {

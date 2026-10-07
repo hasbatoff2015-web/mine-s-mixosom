@@ -1,7 +1,7 @@
 /**
  * @vitest-environment happy-dom
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Inventory, createItemStack } from '../src/inventory';
 import { GameUI } from '../src/ui/GameUI';
 import type { ItemStack } from '../src/inventory';
@@ -19,7 +19,10 @@ function coarsePointer(): void {
   }));
 }
 
-function pointer(type: string, target: Element, init: PointerEventInit): void {
+let physicalTarget: Element | null = null;
+
+function pointer(type: string, target: Element, init: PointerEventInit, physical: Element | null = target): void {
+  physicalTarget = physical;
   target.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', button: 0, ...init }));
 }
 
@@ -41,6 +44,11 @@ function openSurvival(root: HTMLElement, inventory: Inventory, onDrop: (stack: I
 }
 
 describe('mobile inventory cursor', () => {
+  beforeEach(() => {
+    physicalTarget = null;
+    vi.spyOn(document, 'elementFromPoint').mockImplementation(() => physicalTarget);
+  });
+
   afterEach(() => {
     for (const ui of sessions) ui.closeInventory(false);
     sessions.length = 0;

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-07: Inventory pointer hit-test, online double-click, shift matching
+
+- [x] Captured move/up uses `elementFromPoint`. A drag onto another slot moves, merges, or swaps.
+- [x] Empty panel and controls cancel. A real outside backdrop still drops the source stack.
+- [x] Online double-click sends `collect_matching` before the inventory snapshot returns.
+- [x] Shift+double-click keeps a fixed source side, so main and hotbar do not ping-pong.
+- [ ] Not merged. Draft PR **#125**. Wait for an explicit merge command.
+
 ## 2026-10-07: Inventory controls, drag, and mobile split
 
 - [x] Desktop click, shift quick-move, hovered Q / Ctrl+Q, 1–9, and F use one shared inventory action path.

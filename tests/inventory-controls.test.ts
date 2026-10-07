@@ -351,6 +351,141 @@ describe('drag, collect, and matching quick move', () => {
   });
 });
 
+function countInRange(inventory: Inventory, itemId: string, start: number, end: number): number {
+  let total = 0;
+  for (let index = start; index < end; index += 1) {
+    const stack = inventory.getSlot(index);
+    if (stack?.itemId === itemId) total += stack.count;
+  }
+  return total;
+}
+
+describe('quick move matching source groups', () => {
+  it('moves every matching main stack into the hotbar and leaves hotbar stacks there', () => {
+    const state = inventoryState();
+    state.inventory.setSlot(0, createItemStack('dirt', 5));
+    state.inventory.setSlot(9, createItemStack('dirt', 10));
+    state.inventory.setSlot(10, createItemStack('dirt', 4));
+    act(state, { action: 'quick_move_matching', key: 'inventory-9' });
+    expect(state.inventory.getSlot(9)).toBeNull();
+    expect(state.inventory.getSlot(10)).toBeNull();
+    expect(countInRange(state.inventory, 'dirt', 9, 36)).toBe(0);
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(19);
+    expect(state.cursor).toBeNull();
+  });
+
+  it('moves every matching hotbar stack into main and does not bring it back', () => {
+    const state = inventoryState();
+    state.inventory.setSlot(0, createItemStack('dirt', 10));
+    state.inventory.setSlot(1, createItemStack('dirt', 4));
+    state.inventory.setSlot(9, createItemStack('dirt', 6));
+    act(state, { action: 'quick_move_matching', key: 'inventory-0' });
+    expect(state.inventory.getSlot(0)).toBeNull();
+    expect(state.inventory.getSlot(1)).toBeNull();
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(0);
+    expect(countInRange(state.inventory, 'dirt', 9, 36)).toBe(20);
+    expect(state.cursor).toBeNull();
+  });
+
+  it('keeps a crafting-table player quick move on the hotbar or main side', () => {
+    const state = inventoryState({ window: { kind: 'crafting-table' } });
+    state.inventory.setSlot(9, createItemStack('dirt', 8));
+    state.inventory.setSlot(0, createItemStack('stone', 2));
+    act(state, { action: 'quick_move_matching', key: 'inventory-9' });
+    expect(state.inventory.getSlot(9)).toBeNull();
+    expect(state.inventory.getSlot(0)?.itemId).toBe('stone');
+    expect(countInRange(state.inventory, 'dirt', 0, 9)).toBe(8);
+  });
+
+  it('moves matching chest stacks into the player inventory', () => {
+    const stored = chest();
+    stored.slots[0] = createItemStack('dirt', 10);
+    stored.slots[1] = createItemStack('dirt', 4);
+    stored.slots[2] = createItemStack('stone', 6);
+    stored.slots[4] = createItemStack('dirt', 2, { metadata: { kind: 'other' } });
+    const state = inventoryState({ window: { kind: 'chest' }, chest: stored });
+    state.cursor = createItemStack('apple', 1);
+    act(state, { action: 'quick_move_matching', key: 'container-0' });
+    expect(state.cursor?.itemId).toBe('apple');
+    expect(stored.slots[0]).toBeNull();
+    expect(stored.slots[1]).toBeNull();
+    expect(stored.slots[2]?.itemId).toBe('stone');
+    expect(stored.slots[4]?.count).toBe(2);
+    expect(state.inventory.count('dirt')).toBe(14);
+  });
+
+  it('moves matching portal-chest stacks into the player inventory', () => {
+    const stored = chest();
+    stored.slots[3] = createItemStack('cobblestone', 5);
+    stored.slots[8] = createItemStack('cobblestone', 2);
+    const state = inventoryState({ window: { kind: 'portal-chest' }, chest: stored });
+    act(state, { action: 'quick_move_matching', key: 'container-8' });
+    expect(stored.slots[3]).toBeNull();
+    expect(stored.slots[8]).toBeNull();
+    expect(state.inventory.count('cobblestone')).toBe(7);
+  });
+
+  it('routes every matching player ore into the furnace and does not bounce stone', () => {
+    const smelter = furnace();
+    const state = inventoryState({ window: { kind: 'furnace' }, furnace: smelter });
+    state.inventory.setSlot(0, createItemStack('iron_ore', 3));
+    state.inventory.setSlot(9, createItemStack('iron_ore', 2));
+    state.inventory.setSlot(1, createItemStack('coal', 4));
+    act(state, { action: 'quick_move_matching', key: 'inventory-0' });
+    expect(smelter.slots[0]?.count).toBe(5);
+    expect(smelter.slots[0]?.itemId).toBe('iron_ore');
+    expect(state.inventory.getSlot(1)?.count).toBe(4);
+    expect(state.inventory.count('iron_ore')).toBe(0);
+
+    state.inventory.setSlot(0, createItemStack('stone', 2));
+    state.inventory.setSlot(9, createItemStack('stone', 4));
+    act(state, { action: 'quick_move_matching', key: 'inventory-9' });
+    expect(state.inventory.getSlot(9)).toBeNull();
+    expect(countInRange(state.inventory, 'stone', 9, 36)).toBe(0);
+    expect(countInRange(state.inventory, 'stone', 0, 9)).toBe(6);
+    expect(smelter.slots[1]).toBeNull();
+  });
+
+  it('quick-moves furnace outputs to the player and does not take them back', () => {
+    const smelter = furnace();
+    smelter.slots[2] = createItemStack('iron_ingot', 4);
+    const state = inventoryState({ window: { kind: 'furnace' }, furnace: smelter });
+    act(state, { action: 'quick_move_matching', key: 'furnace-2' });
+    expect(smelter.slots[2]).toBeNull();
+    expect(state.inventory.count('iron_ingot')).toBe(4);
+  });
+
+  it('moves craft inputs to the player inventory', () => {
+    const state = inventoryState();
+    state.craftSlots[0] = createItemStack('oak_log', 3);
+    state.craftSlots[1] = createItemStack('oak_log', 2);
+    state.craftSlots[2] = createItemStack('stone', 1);
+    act(state, { action: 'quick_move_matching', key: 'craft-0' });
+    expect(state.craftSlots[0]).toBeNull();
+    expect(state.craftSlots[1]).toBeNull();
+    expect(state.craftSlots[2]?.itemId).toBe('stone');
+    expect(state.inventory.count('oak_log')).toBe(5);
+  });
+
+  it('does not send an equipped stack back onto the armor slot it just left', () => {
+    const state = inventoryState();
+    state.inventory.setSlot({ section: 'armor', slot: 'head' }, createItemStack('diamond_helmet', 1, { durability: 80 }));
+    state.inventory.setSlot({ section: 'offhand' }, createItemStack('apple', 10));
+    state.inventory.setSlot(0, createItemStack('apple', 4));
+    act(state, { action: 'quick_move_matching', key: 'armor-head' });
+    expect(state.inventory.getSlot({ section: 'armor', slot: 'head' })).toBeNull();
+    expect(state.inventory.count('diamond_helmet')).toBe(1);
+
+    const apples = inventoryState();
+    apples.inventory.setSlot({ section: 'offhand' }, createItemStack('apple', 10));
+    apples.inventory.setSlot(0, createItemStack('apple', 4));
+    act(apples, { action: 'quick_move_matching', key: 'offhand' });
+    expect(apples.inventory.getSlot({ section: 'offhand' })).toBeNull();
+    expect(apples.inventory.getSlot(0)?.count).toBe(14);
+    expect(apples.inventory.getSlot(9)).toBeNull();
+  });
+});
+
 describe('inventory action protocol', () => {
   it('rejects malformed keys, counts, and oversized lists, and ignores forged item fields', () => {
     expect(isManualDropAction({ action: 'drop_slot' })).toBe(true);
