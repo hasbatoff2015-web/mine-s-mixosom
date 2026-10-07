@@ -179,8 +179,7 @@ describe('hologram text canvas resolution', () => {
   it('does not change world-space text size when the canvas is supersampled', () => {
     expect(hologramSpriteWidth(1)).toBe(2.6);
     expect(hologramSpriteHeight(1, 1)).toBeCloseTo(0.77);
-    expect(rendererSource).toContain('hologramSpriteWidth(hologram.size)');
-    expect(rendererSource).toContain('hologramSpriteHeight(textLines, hologram.size)');
+    expect(rendererSource).toContain('hologramTextPlaneSize(');
     expect(rendererSource).toContain('hologram.backgroundWidth, hologram.backgroundHeight');
   });
 });

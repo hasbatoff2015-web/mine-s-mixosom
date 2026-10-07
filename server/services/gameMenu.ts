@@ -136,6 +136,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'auction') return 'Аукцион';
   if (screen === 'auction-history') return 'История сделок';
   if (screen === 'rating') return 'Рейтинг';
+  if (screen === 'duels') return 'Дуэли';
   return 'Меню';
 }
 

@@ -14,6 +14,7 @@ import type { Claim, ClaimStore } from './claims';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
 import { isRankingKind } from '../../shared/ranking';
+import type { DuelService } from './duels';
 
 export interface MenuPlayer {
   readonly id: string;
@@ -49,6 +50,7 @@ export interface MenuActionHost {
   loadClaims(): ClaimStore;
   saveClaims(store: ClaimStore): void;
   findOwnedClaim(player: MenuPlayer, claimId: string): Claim | undefined;
+  duels: DuelService;
 }
 
 export function applyGameMenuAction(
@@ -86,6 +88,23 @@ export function applyGameMenuAction(
   if (action === 'rating_page') {
     session.screen = 'rating';
     session.ratingPage = message.page ?? session.ratingPage;
+    return { kind: 'flush' };
+  }
+  if (
+    action === 'duel_refresh'
+    || action === 'duel_challenge'
+    || action === 'duel_accept'
+    || action === 'duel_decline'
+  ) {
+    session.screen = 'duels';
+    const result = action === 'duel_refresh'
+      ? { ok: true as const, message: undefined }
+      : action === 'duel_challenge'
+        ? host.duels.challenge(player.id, message.playerId ?? '')
+        : action === 'duel_accept'
+          ? host.duels.accept(player.id, message.requestId ?? '')
+          : host.duels.decline(player.id, message.requestId ?? '');
+    session.message = result.message;
     return { kind: 'flush' };
   }
   if (action === 'back') {

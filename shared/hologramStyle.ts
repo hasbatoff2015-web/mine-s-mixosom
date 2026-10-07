@@ -15,7 +15,7 @@ export const HOLOGRAM_KINDS = ['normal', 'timer'] as const;
 export type HologramKind = (typeof HOLOGRAM_KINDS)[number];
 
 export const HOLOGRAM_SIZE_MIN = 0.5;
-export const HOLOGRAM_SIZE_MAX = 2.5;
+export const HOLOGRAM_SIZE_MAX = 3.2;
 export const HOLOGRAM_SIZE_STEP = 0.1;
 export const HOLOGRAM_SIZE_DEFAULT = 1;
 export const HOLOGRAM_FONT_DEFAULT: HologramFont = 'sans';
@@ -34,8 +34,8 @@ export const HOLOGRAM_SPRITE_BASE_HEIGHT = 0.35;
 export const HOLOGRAM_SPRITE_DEPTH = 1.2;
 
 /**
- * Logical text-canvas size. World-space plane scale is independent of this.
- * Physical pixels = logical × hologramTextCanvasScale(devicePixelRatio).
+ * Logical text-canvas size. Physical pixels = logical × hologramTextCanvasScale(devicePixelRatio).
+ * Ordinary planes ignore this aspect. `preserveTextAspect` planes use width / height.
  */
 export const HOLOGRAM_TEXT_LOGICAL_WIDTH = 512;
 export const HOLOGRAM_TEXT_LOGICAL_HEIGHT = 256;
@@ -216,6 +216,22 @@ export function hologramSpriteWidth(size = HOLOGRAM_SIZE_DEFAULT): number {
   return HOLOGRAM_SPRITE_WIDTH * size;
 }
 
+/**
+ * Text mesh scale. `preserveTextAspect` keeps the historical height and sets
+ * width from the 512×256 canvas. Otherwise the historical width is unchanged.
+ */
+export function hologramTextPlaneSize(
+  lineCount: number,
+  size = HOLOGRAM_SIZE_DEFAULT,
+  preserveTextAspect = false,
+): { readonly width: number; readonly height: number } {
+  const height = hologramSpriteHeight(lineCount, size);
+  const width = preserveTextAspect
+    ? height * (HOLOGRAM_TEXT_LOGICAL_WIDTH / HOLOGRAM_TEXT_LOGICAL_HEIGHT)
+    : hologramSpriteWidth(size);
+  return { width, height };
+}
+
 /** Physical/logical pixel ratio for the text canvas. World-space size is unchanged. */
 export function hologramTextCanvasScale(devicePixelRatio = 1): number {
   const dpr = Number.isFinite(devicePixelRatio) && devicePixelRatio > 0 ? devicePixelRatio : 1;
@@ -345,12 +361,14 @@ export function hologramWorldSize(hologram: {
   readonly backgroundEnabled?: boolean;
   readonly backgroundWidth?: number;
   readonly backgroundHeight?: number;
+  readonly preserveTextAspect?: boolean;
 }): { width: number; height: number; depth: number } {
   const size = hologram.size ?? HOLOGRAM_SIZE_DEFAULT;
   const kind = hologram.kind ?? HOLOGRAM_KIND_DEFAULT;
   const lineCount = hologramDisplayLineCount(kind, hologram.lines);
-  const textW = hologramSpriteWidth(size);
-  const textH = hologramSpriteHeight(lineCount, size);
+  const textPlane = hologramTextPlaneSize(lineCount, size, hologram.preserveTextAspect === true);
+  const textW = textPlane.width;
+  const textH = textPlane.height;
   const bgOn = hologram.backgroundEnabled !== false;
   const bgW = bgOn ? (hologram.backgroundWidth ?? defaultHologramBackgroundWidth(size)) : 0;
   const bgH = bgOn ? (hologram.backgroundHeight ?? defaultHologramBackgroundHeight(lineCount, size)) : 0;

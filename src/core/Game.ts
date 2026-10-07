@@ -392,6 +392,8 @@ import { bedExitPosition, bedRestCameraPosition, bedRestPosition, clearBedBlocks
 import { fillBucketWithMilk } from '../items/bucketInteraction';
 import { FireworkManager, fireworkFlight } from '../entities/FireworkManager';
 import { FireworkVisuals } from '../rendering/FireworkVisuals';
+import { DUEL_BURST_LIFE_SCALE, DUEL_BURST_PARTICLE_SIZE, DUEL_BURST_VELOCITY_SCALE } from '../../shared/duels';
+import { applyDuelStartLook } from '../net/duelStartLook';
 import { TotemParticles } from '../rendering/TotemParticles';
 import { applyNetworkBlockChanges, URGENT_MUTATION_MESH_BUDGET_MS, URGENT_MUTATION_MESH_LIMIT } from '../world/networkBlockUpdates';
 import { shouldClearLocalFoodUseFromSnapshot } from '../net/onlineConsumableUse';
@@ -1440,6 +1442,24 @@ export class Game {
         return;
       case 'holograms':
         this.holograms?.sync(message.holograms);
+        return;
+      case 'duel_effect':
+        if (message.effect === 'fight_start_burst') {
+          this.session?.fireworkVisuals.spawnBurst(message.x, message.y, message.z, {
+            velocityScale: DUEL_BURST_VELOCITY_SCALE,
+            lifeScale: DUEL_BURST_LIFE_SCALE,
+            size: DUEL_BURST_PARTICLE_SIZE,
+          });
+        }
+        return;
+      case 'player_look':
+        if (message.reason === 'duel_start' || message.reason === 'duel_restore') {
+          applyDuelStartLook({
+            input: this.input,
+            player: this.session?.player,
+            clearCachedAim: () => { this.lastLocalAim = undefined; },
+          }, message.yaw, message.pitch);
+        }
         return;
       case 'buyers':
         if (this.session) this.syncBuyers(this.session, message.buyers);

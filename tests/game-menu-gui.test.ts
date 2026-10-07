@@ -8,7 +8,7 @@ import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
 import { HOME_MAX_DEFAULT } from '../shared/homes';
 import { formatMegacoinAmount } from '../shared/megacoins';
 import { friendChatMessageHtml, menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
-import { MC_MENU_MAX_SCALE, MC_MENU_WIDTH, menuLogicalHeight, menuUiScale } from '../src/ui/containerTheme';
+import { MC_MENU_MAX_SCALE, MC_MENU_ROOT_HEIGHT, MC_MENU_WIDTH, menuLogicalHeight, menuUiScale } from '../src/ui/containerTheme';
 import type { ServerMenuMessage } from '../shared/protocol';
 
 const gameUi = readFileSync(new URL('../src/ui/GameUI.ts', import.meta.url), 'utf8');
@@ -64,10 +64,10 @@ describe('main menu HUD and chrome', () => {
 
   it('lists the required menu buttons and omits Top', () => {
     expect(GAME_MENU_BUTTONS.map((button) => button.id)).toEqual([
-      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating',
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels',
     ]);
     expect(GAME_MENU_BUTTONS.map((button) => button.label)).toEqual([
-      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион', 'Рейтинг',
+      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион', 'Рейтинг', 'Дуэли',
     ]);
     const html = menuRootHtml({ balance: 5645, balanceLabel: formatMegacoinAmount(5645) });
     expect(html).toContain('Спавн');
@@ -78,12 +78,18 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('Обмен');
     expect(html).toContain('Аукцион');
     expect(html).toContain('Рейтинг');
+    expect(html).toContain('Дуэли');
     expect(html).not.toContain('Топ');
-    expect(html).toContain('mc-menu-grid-row-4');
-    expect(html).not.toContain('mc-menu-grid-row-3');
+    expect(html.match(/mc-menu-grid-row-3-full/g)).toHaveLength(3);
+    expect(html).not.toContain('mc-menu-grid-row-4');
     expect(html).toContain('icon_spawn.png');
     expect(html).toContain('icon_auction.png');
     expect(html).toContain('icon_rating.png');
+    expect(html).toContain('icon_duels.png');
+    const openOrder = [...html.matchAll(/data-menu-open="([^"]+)"/g)].map((match) => match[1]);
+    expect(openOrder).toEqual([
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels',
+    ]);
     expect(html).toContain('Баланс: 5 645 монет');
     expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
     expect(gameUi).toContain('isGameMenuScreenKind');
@@ -124,7 +130,25 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('mc-menu-stage');
     expect(gameUi).toContain('overlayStageStyle(');
     expect(MC_MENU_WIDTH).toBe(248);
-    expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, 176)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
+    expect(MC_MENU_ROOT_HEIGHT).toBe(238);
+    expect(menuLogicalHeight('root')).toBe(238);
+    expect(menuLogicalHeight('duels')).toBe(292);
+    expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, MC_MENU_ROOT_HEIGHT)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
+    for (const [width, height] of [[1920, 1080], [1366, 768], [844, 390]] as const) {
+      for (const logicalHeight of [MC_MENU_ROOT_HEIGHT, menuLogicalHeight('duels')]) {
+        const scale = menuUiScale(width, height, MC_MENU_WIDTH, logicalHeight);
+        expect(scale).toBeGreaterThanOrEqual(1);
+        expect(scale).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
+        expect(scale * MC_MENU_WIDTH).toBeLessThanOrEqual(width - 24 + 1e-6);
+        expect(scale * logicalHeight).toBeLessThanOrEqual(height - 24 + 1e-6);
+      }
+    }
+    expect(css).toContain('.mc-menu-grid-row-3-full');
+    expect(cssRule('.mc-menu-grid-row-3-full')).toContain('grid-template-columns: repeat(3, minmax(0, 1fr));');
+    expect(cssRule('.mc-menu-grid-row-3-full')).toContain('width: 100%;');
+    expect(cssRule('.mc-menu-grid-row-3')).toContain('width: calc(75% - var(--mc-menu-gap) / 4);');
+    expect(css).not.toContain('--duel-scale');
+    expect(gameUi).toContain('menuUiScale(');
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('Баланс: 100 монет');
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin');
     expect(menuBalanceHtml({ balance: 100, balanceLabel: '100' })).toContain('mc-menu-coin-wrap');
@@ -272,14 +296,14 @@ describe('main menu HUD and chrome', () => {
     const hidden = menuRootHtml({ balance: 0, balanceLabel: '0' });
     expect(hidden).not.toContain('mc-menu-badge');
     const shown = menuRootHtml({
-      notifications: { friends: 3, clans: 1, auction: 2, trade: 1 },
+      notifications: { friends: 3, clans: 1, auction: 2, trade: 1, duels: 0 },
     });
     expect(shown).toContain('data-menu-open="friends"');
     expect(shown.match(/mc-menu-badge/g)?.length).toBe(4);
     expect(shown).toContain('>3</span>');
     expect(shown).toContain('>1</span>');
     expect(shown).toContain('>2</span>');
-    const huge = menuRootHtml({ notifications: { friends: 100, clans: 0, auction: 0, trade: 0 } });
+    const huge = menuRootHtml({ notifications: { friends: 100, clans: 0, auction: 0, trade: 0, duels: 0 } });
     expect(huge).toContain('99+');
     expect(huge.match(/mc-menu-badge/g)?.length).toBe(1);
     expect(cssRule('.mc-menu-tile')).toContain('position: relative;');
@@ -454,5 +478,98 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('event.isComposing');
     expect(gameUi).toContain('planDirectMessageScroll');
     expect(gameSource).toContain("case 'direct_message'");
+  });
+
+  it('renders the duel screen inside the same 248px menu chrome', () => {
+    const escape = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const html = menuBodyHtml(menu({
+      screen: 'duels',
+      title: 'Дуэли',
+      duelStats: { wins: 12, losses: 7 },
+      duelArenaConfigured: true,
+      duelArenaBusy: false,
+      duelIncoming: [{ requestId: 'req-1', playerId: 'b', name: '<Bob>', wins: 3, losses: 1 }],
+      duelOutgoing: { playerId: 'c', name: 'Cara', secondsLeft: 24 },
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 0, losses: 0, distance: 8, canChallenge: true }],
+      message: 'Арена свободна.',
+    }), escape);
+    expect(html).toContain('Дуэли');
+    expect(html).toContain('Победы: 12');
+    expect(html).toContain('Поражения: 7');
+    expect(html).toContain('● Арена свободна');
+    expect(html).toContain('is-free');
+    expect(html).toContain('Входящие вызовы');
+    expect(html).toContain('&lt;Bob&gt;');
+    expect(html).not.toContain('<Bob>');
+    expect(html).toContain('Счёт: 3 : 1');
+    expect(html).toContain('data-menu-duel-accept="req-1"');
+    expect(html).toContain('Принять');
+    expect(html).toContain('data-menu-duel-decline="req-1"');
+    expect(html).toContain('Отклонить');
+    expect(html).toContain('Вызов отправлен: Cara');
+    expect(html).toContain('осталось 24 сек.');
+    expect(html).toContain('Игроки рядом');
+    expect(html).toContain('data-menu-action="duel_refresh"');
+    expect(html).toContain('Обновить');
+    expect(html).toContain('Счёт: 0 : 0');
+    expect(html).toContain('8 блоков');
+    expect(html).toContain('data-menu-duel-challenge="d"');
+    expect(html).toContain('Вызвать');
+    expect(html).toContain('Арена свободна.');
+    expect(html).not.toContain('Подождите');
+    expect(html).toContain('mc-player-row');
+    expect(html).toContain('mc-btn-positive');
+    expect(html).toContain('mc-btn-danger');
+    const busy = menuBodyHtml(menu({
+      screen: 'duels',
+      duelStats: { wins: 0, losses: 0 },
+      duelArenaConfigured: true,
+      duelArenaBusy: true,
+      duelIncoming: [{ requestId: 'req-2', playerId: 'b', name: 'Bob', wins: 0, losses: 0 }],
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 1, losses: 2, distance: 6, canChallenge: true }],
+    }), escape);
+    expect(busy).toContain('● Арена занята');
+    expect(busy).toContain('is-busy');
+    expect(busy).toContain('data-menu-duel-accept="req-2"');
+    expect(busy).not.toContain('data-menu-duel-accept="req-2" disabled');
+    expect(busy).toContain('data-menu-duel-challenge="d"');
+    expect(busy).not.toContain('data-menu-duel-challenge="d" disabled');
+    expect(busy).toContain('Dan');
+    const missing = menuBodyHtml(menu({
+      screen: 'duels',
+      duelArenaConfigured: false,
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 0, losses: 0, distance: 4, canChallenge: false }],
+    }), escape);
+    expect(missing).toContain('Арена не настроена.');
+    expect(missing).toContain('data-menu-duel-challenge="d" disabled');
+    const unavailable = menuBodyHtml(menu({
+      screen: 'duels',
+      duelAvailable: false,
+      duelArenaConfigured: true,
+      duelArenaBusy: false,
+      duelIncoming: [{ requestId: 'req-3', playerId: 'b', name: 'Bob', wins: 1, losses: 0 }],
+      duelNearby: [{ playerId: 'd', name: 'Dan', wins: 0, losses: 0, distance: 4, canChallenge: false }],
+    }), escape);
+    expect(unavailable).toContain('Дуэли временно недоступны.');
+    expect(unavailable).toContain('is-missing');
+    expect(unavailable).not.toContain('● Арена свободна');
+    expect(unavailable).toContain('data-menu-duel-accept="req-3" disabled');
+    expect(unavailable).toContain('data-menu-duel-decline="req-3" disabled');
+    expect(unavailable).toContain('data-menu-duel-challenge="d" disabled');
+    expect(cssRule('.mc-duel-summary')).toContain('justify-content: space-between;');
+    expect(cssRule('.mc-duel-summary')).toContain('var(--mc-ui-scale, 3)');
+    expect(cssRule('.mc-duel-incoming')).toContain('max-height: calc(60px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-duel-nearby')).toContain('max-height: calc(100px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-duel-list')).toContain('touch-action: pan-y;');
+    expect(css).toContain('.mc-duel-wins { color: #6fbf78; }');
+    expect(css).toContain('.mc-duel-losses { color: #d67b7b; }');
+    expect(gameUi).toContain('data-menu-duel-challenge');
+    expect(gameUi).toContain("action: 'duel_challenge'");
+    expect(gameUi).toContain("action: 'duel_accept'");
+    expect(gameUi).toContain("action: 'duel_decline'");
   });
 });
