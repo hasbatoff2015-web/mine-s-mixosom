@@ -59,7 +59,7 @@ import {
   type RewoundMobPose,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
-import { applyInventoryUiAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
+import { applyInventoryUiAction, isManualDropAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { ItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { WhMarks } from '../src/combat/WhMarks';
@@ -235,7 +235,7 @@ export class ServerGameplay {
   onPersistentStateChanged?: () => void;
   /** After survival death loot is spawned once. Duels bind these exact entity ids. */
   onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
-  /** Reject Q / cursor drops before the inventory mutates. */
+  /** Reject every manual world drop before the inventory mutates. */
   blocksManualItemDrop?: (playerId: string) => boolean;
   /** Loot-window winner is immune to blast damage. */
   suppressIncomingDamage?: (playerId: string) => boolean;
@@ -753,10 +753,7 @@ export class ServerGameplay {
   }
 
   applyInventory(player: GameplayPlayer, action: ClientInventoryActionMessage) {
-    if (
-      (action.action === 'drop_selected' || action.action === 'drop_cursor')
-      && this.blocksManualItemDrop?.(player.id)
-    ) {
+    if (isManualDropAction(action) && this.blocksManualItemDrop?.(player.id)) {
       return { ok: false, dropped: [] };
     }
     const chest = player.window.kind === 'portal-chest'

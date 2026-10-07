@@ -41,6 +41,14 @@ export type InventoryActionKind =
   | 'click'
   | 'drop_selected'
   | 'drop_cursor'
+  | 'drop_slot'
+  | 'move_stack'
+  | 'split_stack'
+  | 'hotbar_swap'
+  | 'offhand_swap'
+  | 'collect_matching'
+  | 'drag_distribute'
+  | 'quick_move_matching'
   | 'select'
   | 'open'
   | 'close'
@@ -389,10 +397,22 @@ export interface ClientInventoryActionMessage {
   readonly type: 'inventory_action';
   readonly action: InventoryActionKind;
   readonly key?: string;
+  readonly sourceKey?: string;
+  readonly targetKey?: string;
+  readonly keys?: readonly string[];
   readonly button?: 'left' | 'right';
   readonly shift?: boolean;
   readonly slot?: number;
   readonly count?: number;
+  /** Drop the whole authoritative stack. Client item ids are not accepted. */
+  readonly all?: boolean;
+  /**
+   * Stack identity the player saw when the gesture started.
+   * Move, drop, and split compare it with the live stack and reject a mismatch.
+   * `quick_move_matching` uses it as a merge-identity hint with no count.
+   * The server only selects live stacks with that identity. It never creates an item from it.
+   */
+  readonly signature?: string;
   readonly kind?: ContainerKind;
   readonly x?: number;
   readonly y?: number;
@@ -1663,8 +1683,14 @@ export const SERVER_MESSAGE_TYPES = [
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
-  'click', 'drop_selected', 'drop_cursor', 'select', 'open', 'close', 'recipe', 'craft_recipe',
+  'click', 'drop_selected', 'drop_cursor', 'drop_slot', 'move_stack', 'split_stack',
+  'hotbar_swap', 'offhand_swap', 'collect_matching', 'drag_distribute', 'quick_move_matching',
+  'select', 'open', 'close', 'recipe', 'craft_recipe',
 ];
+
+/** Enough for player storage, equipment, a chest, a furnace, and a craft grid. */
+const MAX_INVENTORY_KEYS = 80;
+const MAX_INVENTORY_SIGNATURE = 480;
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
   'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
@@ -1794,6 +1820,31 @@ function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Reject over-long keys instead of slicing them into a different slot. */
+function boundedKey(value: unknown, error: string, max = 64): string | undefined | { readonly error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length < 1 || value.length > max) return { error };
+  return value;
+}
+
+function parseInventoryKeyList(value: unknown): readonly string[] | undefined | { readonly error: string } {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_INVENTORY_KEYS) {
+    return { error: 'inventory_action.keys invalid' };
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.length < 1 || entry.length > 64) {
+      return { error: 'inventory_action.keys invalid' };
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    keys.push(entry);
+  }
+  return keys;
 }
 
 /** Correlation token. Missing is valid. Over-long or non-string is not, because slicing would break the match. */
@@ -2105,6 +2156,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         return { error: 'inventory_action.button invalid' };
       }
       if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'inventory_action.shift invalid' };
+      if (raw.all !== undefined && !bool(raw.all)) return { error: 'inventory_action.all invalid' };
       if (raw.kind !== undefined && !(CONTAINER_KINDS as readonly string[]).includes(raw.kind as string)) {
         return { error: 'inventory_action.kind invalid' };
       }
@@ -2122,16 +2174,43 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         || (raw.z !== undefined && z === undefined)) {
         return { error: 'inventory_action coordinates invalid' };
       }
-      const key = optionalString(raw.key, 64);
+      const key = boundedKey(raw.key, 'inventory_action.key invalid');
+      if (key && typeof key === 'object') return key;
+      const sourceKey = boundedKey(raw.sourceKey, 'inventory_action.sourceKey invalid');
+      if (sourceKey && typeof sourceKey === 'object') return sourceKey;
+      const targetKey = boundedKey(raw.targetKey, 'inventory_action.targetKey invalid');
+      if (targetKey && typeof targetKey === 'object') return targetKey;
+      const signature = boundedKey(raw.signature, 'inventory_action.signature invalid', MAX_INVENTORY_SIGNATURE);
+      if (signature && typeof signature === 'object') return signature;
+      const keys = parseInventoryKeyList(raw.keys);
+      if (keys && 'error' in keys) return keys;
       const recipeId = optionalString(raw.recipeId, 64);
+      const action = raw.action as InventoryActionKind;
+      if (action === 'move_stack' && (typeof sourceKey !== 'string' || typeof targetKey !== 'string')) {
+        return { error: 'inventory_action.move_stack invalid' };
+      }
+      if ((action === 'drop_slot' || action === 'split_stack' || action === 'offhand_swap' || action === 'quick_move_matching')
+        && typeof key !== 'string') {
+        return { error: 'inventory_action.key invalid' };
+      }
+      if (action === 'split_stack' && count === undefined) return { error: 'inventory_action.count invalid' };
+      if (action === 'hotbar_swap' && (typeof key !== 'string' || slot === undefined || slot < 0 || slot > 8)) {
+        return { error: 'inventory_action.hotbar_swap invalid' };
+      }
+      if (action === 'drag_distribute' && !keys) return { error: 'inventory_action.keys invalid' };
       return {
         type: 'inventory_action',
-        action: raw.action as InventoryActionKind,
-        ...(key ? { key } : {}),
+        action,
+        ...(typeof key === 'string' ? { key } : {}),
+        ...(typeof sourceKey === 'string' ? { sourceKey } : {}),
+        ...(typeof targetKey === 'string' ? { targetKey } : {}),
+        ...(keys ? { keys } : {}),
         ...(raw.button ? { button: raw.button } : {}),
         ...(raw.shift === true ? { shift: true } : {}),
         ...(slot !== undefined ? { slot } : {}),
         ...(count !== undefined ? { count } : {}),
+        ...(raw.all === true ? { all: true } : {}),
+        ...(typeof signature === 'string' ? { signature } : {}),
         ...(raw.kind ? { kind: raw.kind as ContainerKind } : {}),
         ...(x !== undefined ? { x } : {}),
         ...(y !== undefined ? { y } : {}),

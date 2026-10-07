@@ -686,6 +686,51 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(world.gameplay.drops.serialize().length).toBe(before + 1);
   });
 
+  it('blocks every new manual drop during a duel and still allows a stack move', async () => {
+    const { world, clock } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const cara = join(world, 'Cara');
+    arena(world);
+    fight(world, clock, ada.player, bob.player);
+    ada.player.inventory.clear();
+    cara.player.inventory.clear();
+    ada.player.inventory.setSlot(0, stack('dirt', 8));
+    ada.player.inventory.setSlot(2, stack('apple', 5));
+    ada.player.inventory.setSlot(3, stack('stone', 2));
+    ada.player.cursor = stack('cobblestone', 3);
+    ada.player.selectedSlot = 0;
+    const before = world.gameplay.drops.serialize().length;
+    const blocked: ClientInventoryActionMessage[] = [
+      { type: 'inventory_action', action: 'drop_selected', slot: 0, count: 1 },
+      { type: 'inventory_action', action: 'drop_cursor' },
+      { type: 'inventory_action', action: 'drop_cursor', count: 1 },
+      { type: 'inventory_action', action: 'drop_slot', key: 'inventory-2', count: 1 },
+      { type: 'inventory_action', action: 'drop_slot', key: 'inventory-2', all: true },
+      { type: 'inventory_action', action: 'drop_slot', key: 'inventory-0', count: 4 },
+    ];
+    for (const action of blocked) {
+      expect(world.gameplay.applyInventory(ada.player, action).ok).toBe(false);
+    }
+    expect(ada.player.inventory.getSlot(0)?.count).toBe(8);
+    expect(ada.player.inventory.getSlot(2)?.count).toBe(5);
+    expect(ada.player.cursor?.count).toBe(3);
+    expect(world.gameplay.drops.serialize().length).toBe(before);
+    expect(world.gameplay.applyInventory(ada.player, {
+      type: 'inventory_action', action: 'move_stack', sourceKey: 'inventory-3', targetKey: 'inventory-4',
+    }).ok).toBe(true);
+    expect(ada.player.inventory.getSlot(3)).toBeNull();
+    expect(ada.player.inventory.getSlot(4)?.count).toBe(2);
+    expect(world.gameplay.drops.serialize().length).toBe(before);
+
+    cara.player.inventory.setSlot(1, stack('dirt', 6));
+    expect(world.gameplay.applyInventory(cara.player, {
+      type: 'inventory_action', action: 'drop_slot', key: 'inventory-1', count: 2,
+    }).ok).toBe(true);
+    expect(cara.player.inventory.getSlot(1)?.count).toBe(4);
+    expect(world.gameplay.drops.serialize().length).toBe(before + 1);
+  });
+
   it('serves the duel menu, notifications, and arena commands from the server', async () => {
     const { world, clock } = await boot();
     const op = join(world, 'Op');

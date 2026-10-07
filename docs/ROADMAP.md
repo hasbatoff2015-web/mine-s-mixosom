@@ -1,5 +1,30 @@
 # Roadmap
 
+## 2026-10-07: Online shift bulk transfer and mobile drop zone
+
+- [x] Shift+double-click sends a merge-identity hint so the server can finish the bulk after the origin slot is empty.
+- [x] The hint only filters live stacks. Count and forged item fields do not create items.
+- [x] The coarse drop zone is a centered receiver to the right of the panel. Fine pointers still hide it.
+- [ ] Not merged. Draft PR **#125**. Wait for an explicit merge command.
+
+## 2026-10-07: Inventory pointer hit-test, online double-click, shift matching
+
+- [x] Captured move/up uses `elementFromPoint`. A drag onto another slot moves, merges, or swaps.
+- [x] Empty panel and controls cancel. A real outside backdrop still drops the source stack.
+- [x] Online double-click sends `collect_matching` before the inventory snapshot returns.
+- [x] Shift+double-click keeps a fixed source side, so main and hotbar do not ping-pong.
+- [ ] Not merged. Draft PR **#125**. Wait for an explicit merge command.
+
+## 2026-10-07: Inventory controls, drag, and mobile split
+
+- [x] Desktop click, shift quick-move, hovered Q / Ctrl+Q, 1–9, and F use one shared inventory action path.
+- [x] Direct slot drag is `move_stack`. Left drag splits a carried stack evenly. Right drag places one per unique slot.
+- [x] Fine pointer can drop a carried or dragged stack on the empty backdrop. Coarse pointer cannot.
+- [x] Coarse drop target sits under the close control. Its hit box does not extend left.
+- [x] Long-press amount dialog splits into an empty inventory slot or drops the selected count.
+- [x] Duel drop lock covers `drop_selected`, `drop_cursor`, and `drop_slot` through `isManualDropAction`.
+- [ ] Not merged. Draft PR. Wait for an explicit merge command.
+
 ## 2026-10-07: Player skin side UV orientation
 
 - [x] Flip U only on cuboid side faces for every player skin part, layer, Classic/Slim, world and first-person.
@@ -15,7 +40,7 @@
 - [x] One arena, two `/duel setspawn` points, 5 s countdown hologram, 5 minute fight, 15 s loot.
 - [x] Fighting disconnect forfeits. Timeout is a loss for both. Countdown and shutdown cancel write no result.
 - [x] Duel death skips Megacoin transfer and economy kill count. Stats persist by player id.
-- [x] Tracked loot is exact drop entity ids. Manual Q-drop is blocked before the stack leaves the inventory.
+- [x] Tracked loot is exact drop entity ids. Manual drop actions are blocked before the stack leaves the inventory. `isManualDropAction` covers `drop_selected`, `drop_cursor`, and `drop_slot`.
 - [x] Countdown hologram is display font, size 2.8, and `interactive: false`. `HOLOGRAM_SIZE_MAX` stays 3.2.
 - [x] No post-match cooldown. After the 15 s loot window, idle is committed before open duel menus refresh.
 - [x] During loot both players can invite each other. Accept stays blocked until the arena is idle, and the same request survives.
