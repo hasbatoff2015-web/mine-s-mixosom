@@ -21,6 +21,7 @@ import {
   duelCountdownGlyph,
   duelExpiredMessage,
   duelHologramPosition,
+  duelLookToward,
   duelRejectedMessage,
   duelStartBurstPosition,
   isDuelCombatCause,
@@ -447,8 +448,18 @@ export class DuelService {
     if (!this.deps.runtime.preparePlayer(from.id) || !this.deps.runtime.preparePlayer(to.id)) {
       return { ok: false, message: 'Не удалось подготовить игроков.' };
     }
-    const movedA = this.deps.runtime.hardRelocateForDuel(from.id, this.arena.spawn1);
-    const movedB = this.deps.runtime.hardRelocateForDuel(to.id, this.arena.spawn2);
+    const look1 = duelLookToward(this.arena.spawn1, this.arena.spawn2, this.arena.spawn1);
+    const look2 = duelLookToward(this.arena.spawn2, this.arena.spawn1, this.arena.spawn2);
+    const movedA = this.deps.runtime.hardRelocateForDuel(from.id, {
+      ...this.arena.spawn1,
+      yaw: look1.yaw,
+      pitch: look1.pitch,
+    });
+    const movedB = this.deps.runtime.hardRelocateForDuel(to.id, {
+      ...this.arena.spawn2,
+      yaw: look2.yaw,
+      pitch: look2.pitch,
+    });
     if (!movedA || !movedB) {
       if (movedA) this.deps.runtime.restorePreDuelPose(from.id, poseA);
       if (movedB) this.deps.runtime.restorePreDuelPose(to.id, poseB);

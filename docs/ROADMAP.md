@@ -12,7 +12,9 @@
 - [x] Countdown hologram is display font, size 2.8, and `interactive: false`. `HOLOGRAM_SIZE_MAX` stays 3.2.
 - [x] No post-match cooldown. After the 15 s loot window, idle is committed before open duel menus refresh.
 - [x] During loot both players can invite each other. Accept stays blocked until the arena is idle, and the same request survives.
-- [x] Fight start sends one `duel_effect` burst. Velocity scale 0.5, life scale 0.75. No rocket entity.
+- [x] Fight start sends one `duel_effect` burst. Velocity scale 0.5, life scale 0.75, point size 0.12. Ordinary fireworks stay 0.20. No rocket entity.
+- [x] Accept faces each player toward the other spawn and sends one `player_look` / `duel_start`. Look is not locked afterward.
+- [x] Countdown `preserveTextAspect` keeps size 2.8 and the one-line height, with width = height × 2.
 - [x] `WorldInstance` owns the duel tick and combat hooks. Plugin disable blocks new matches.
 - [x] Loot winner is protected for 15 s. Attacker-less melee, arrow, and projectile damage is cancelled in fighting.
 - [ ] Owner PNG `public/ui/menu/icon_duels.png` is not in the tree. Two-client browser QA is not done.

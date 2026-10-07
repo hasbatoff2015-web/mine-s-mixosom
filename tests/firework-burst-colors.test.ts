@@ -1,6 +1,13 @@
 import * as THREE from 'three';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { FIREWORK_BURST_COLORS, FireworkVisuals, chooseFireworkBurstColor } from '../src/rendering/FireworkVisuals';
+import { DUEL_BURST_LIFE_SCALE, DUEL_BURST_PARTICLE_SIZE, DUEL_BURST_VELOCITY_SCALE } from '../shared/duels';
+import {
+  FIREWORK_BURST_COLORS,
+  FIREWORK_COMPACT_PARTICLE_SIZE,
+  FIREWORK_ORDINARY_PARTICLE_SIZE,
+  FireworkVisuals,
+  chooseFireworkBurstColor,
+} from '../src/rendering/FireworkVisuals';
 import { TextureAtlas } from '../src/rendering/TextureAtlas';
 
 afterEach(() => vi.restoreAllMocks());
@@ -70,15 +77,28 @@ describe('firework burst presentation', () => {
     const ordinary = new FireworkVisuals();
     const duel = new FireworkVisuals();
     ordinary.spawnBurst(0, 10, 0);
-    duel.spawnBurst(0, 10, 0, { velocityScale: 0.5, lifeScale: 0.75 });
+    duel.spawnBurst(0, 10, 0, {
+      velocityScale: DUEL_BURST_VELOCITY_SCALE,
+      lifeScale: DUEL_BURST_LIFE_SCALE,
+      size: DUEL_BURST_PARTICLE_SIZE,
+    });
     expect(spriteCount(ordinary)).toBe(0);
     expect(spriteCount(duel)).toBe(0);
-    expect(ordinary.group.children.filter((child) => child instanceof THREE.Points)).toHaveLength(1);
-    expect(duel.group.children.filter((child) => child instanceof THREE.Points)).toHaveLength(1);
+    expect(pointSizes(ordinary)).toEqual([FIREWORK_ORDINARY_PARTICLE_SIZE, FIREWORK_COMPACT_PARTICLE_SIZE]);
+    expect(pointSizes(duel)).toEqual([FIREWORK_ORDINARY_PARTICLE_SIZE, FIREWORK_COMPACT_PARTICLE_SIZE]);
+    expect(FIREWORK_ORDINARY_PARTICLE_SIZE).toBe(0.2);
+    expect(DUEL_BURST_PARTICLE_SIZE).toBe(0.12);
+    expect(FIREWORK_COMPACT_PARTICLE_SIZE).toBe(DUEL_BURST_PARTICLE_SIZE);
     ordinary.update(0.05);
     duel.update(0.05);
-    const ordinarySamples = samples(ordinary);
-    const duelSamples = samples(duel);
+    expect(drawCount(ordinary, FIREWORK_ORDINARY_PARTICLE_SIZE)).toBe(88);
+    expect(drawCount(ordinary, FIREWORK_COMPACT_PARTICLE_SIZE)).toBe(0);
+    expect(drawCount(duel, FIREWORK_COMPACT_PARTICLE_SIZE)).toBe(88);
+    expect(drawCount(duel, FIREWORK_ORDINARY_PARTICLE_SIZE)).toBe(0);
+    expect((pointsOf(duel, FIREWORK_COMPACT_PARTICLE_SIZE).material as THREE.PointsMaterial).size).toBe(0.12);
+    expect((pointsOf(ordinary, FIREWORK_ORDINARY_PARTICLE_SIZE).material as THREE.PointsMaterial).size).toBe(0.2);
+    const ordinarySamples = samples(ordinary, FIREWORK_ORDINARY_PARTICLE_SIZE);
+    const duelSamples = samples(duel, FIREWORK_COMPACT_PARTICLE_SIZE);
     expect(ordinarySamples).toHaveLength(88);
     expect(duelSamples).toHaveLength(88);
     for (let index = 0; index < 88; index += 1) {
@@ -94,19 +114,24 @@ describe('firework burst presentation', () => {
     const agingOrdinary = new FireworkVisuals();
     const agingDuel = new FireworkVisuals();
     agingOrdinary.spawnBurst(0, 0, 0);
-    agingDuel.spawnBurst(0, 0, 0, { velocityScale: 0.5, lifeScale: 0.75 });
+    agingDuel.spawnBurst(0, 0, 0, {
+      velocityScale: DUEL_BURST_VELOCITY_SCALE,
+      lifeScale: DUEL_BURST_LIFE_SCALE,
+      size: DUEL_BURST_PARTICLE_SIZE,
+    });
     for (let step = 0; step < 9; step += 1) {
       agingOrdinary.update(0.1);
       agingDuel.update(0.1);
     }
-    expect(drawCount(agingOrdinary)).toBe(88);
-    expect(drawCount(agingDuel)).toBe(58);
+    expect(drawCount(agingOrdinary, FIREWORK_ORDINARY_PARTICLE_SIZE)).toBe(88);
+    expect(drawCount(agingDuel, FIREWORK_COMPACT_PARTICLE_SIZE)).toBe(58);
+    expect(spriteCount(agingDuel)).toBe(0);
     for (let step = 0; step < 3; step += 1) {
       agingOrdinary.update(0.1);
       agingDuel.update(0.1);
     }
-    expect(drawCount(agingDuel)).toBe(0);
-    expect(drawCount(agingOrdinary)).toBe(58);
+    expect(drawCount(agingDuel, FIREWORK_COMPACT_PARTICLE_SIZE)).toBe(0);
+    expect(drawCount(agingOrdinary, FIREWORK_ORDINARY_PARTICLE_SIZE)).toBe(58);
     agingOrdinary.dispose();
     agingDuel.dispose();
   });
@@ -116,13 +141,28 @@ function spriteCount(visuals: FireworkVisuals): number {
   return visuals.group.children.filter((child) => child instanceof THREE.Sprite).length;
 }
 
-function drawCount(visuals: FireworkVisuals): number {
-  const points = visuals.group.children.find((child): child is THREE.Points => child instanceof THREE.Points)!;
-  return points.geometry.drawRange.count;
+function pointSizes(visuals: FireworkVisuals): number[] {
+  return visuals.group.children
+    .filter((child): child is THREE.Points => child instanceof THREE.Points)
+    .map((points) => (points.material as THREE.PointsMaterial).size);
 }
 
-function samples(visuals: FireworkVisuals): Array<{ x: number; y: number; z: number }> {
-  const points = visuals.group.children.find((child): child is THREE.Points => child instanceof THREE.Points)!;
+function pointsOf(visuals: FireworkVisuals, size?: number): THREE.Points {
+  const points = visuals.group.children.filter((child): child is THREE.Points => child instanceof THREE.Points);
+  if (size === undefined) {
+    return points.find((entry) => entry.geometry.drawRange.count > 0) ?? points[0]!;
+  }
+  const match = points.find((entry) => Math.abs((entry.material as THREE.PointsMaterial).size - size) < 1e-6);
+  if (!match) throw new Error(`missing point layer ${size}`);
+  return match;
+}
+
+function drawCount(visuals: FireworkVisuals, size?: number): number {
+  return pointsOf(visuals, size).geometry.drawRange.count;
+}
+
+function samples(visuals: FireworkVisuals, size?: number): Array<{ x: number; y: number; z: number }> {
+  const points = pointsOf(visuals, size);
   const position = points.geometry.getAttribute('position');
   const count = points.geometry.drawRange.count;
   const result: Array<{ x: number; y: number; z: number }> = [];

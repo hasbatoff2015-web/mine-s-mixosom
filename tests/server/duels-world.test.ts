@@ -18,8 +18,10 @@ import {
   DUEL_MATCH_DURATION_MS,
   DUEL_TELEPORT_DENIED,
   DUEL_UNAVAILABLE,
+  duelLookToward,
   duelStartBurstPosition,
 } from '../../shared/duels';
+import { viewDirectionFromLook } from '../../src/player/localAim';
 import { parseServerMessage, type ClientInventoryActionMessage, type ClientInputMessage, type ServerMenuMessage } from '../../shared/protocol';
 
 async function tempDir(): Promise<string> {
@@ -751,6 +753,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
       backgroundEnabled: false,
       billboard: true,
       interactive: false,
+      preserveTextAspect: true,
       lines: ['3'],
     });
     expect(world.holograms.listRecords().some((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM)).toBe(false);
@@ -763,6 +766,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
           font: 'display',
           size: 2.8,
           interactive: false,
+          preserveTextAspect: true,
         }),
       ]),
     });
@@ -1044,4 +1048,83 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(ada.player.controller.position.x).toBeCloseTo(spawn2.x, 3);
     expect(ada.player.controller.position.z).toBeCloseTo(spawn2.z, 3);
   });
+
+  it('turns both duelists toward each other and sends one look packet each', async () => {
+    const { world } = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const spawn1 = { worldId: world.worldId, x: 20.5, y: 100, z: 20.5, yaw: 0.35, pitch: 0.2 };
+    const spawn2 = { worldId: world.worldId, x: 24.5, y: 102, z: 20.5, yaw: -1.1, pitch: -0.4 };
+    expect(world.duels.setSpawn(1, spawn1).ok).toBe(true);
+    expect(world.duels.setSpawn(2, spawn2).ok).toBe(true);
+    world.world.setBlock(20, 99, 20, BlockId.Stone);
+    world.world.setBlock(24, 101, 20, BlockId.Stone);
+    stand(bob.player, 8.5, 80, 8.5);
+    stand(ada.player, 10.5, 80, 8.5);
+    bob.player.controller.yaw = 1.4;
+    bob.player.controller.pitch = -0.6;
+    ada.player.controller.yaw = -0.2;
+    ada.player.controller.pitch = 0.55;
+    expect(world.duels.challenge(bob.player.id, ada.player.id).ok).toBe(true);
+    const requestId = world.duels.menu(ada.player.id).incoming[0]?.requestId;
+    if (!requestId) throw new Error('missing invite');
+    bob.sink.payloads.length = 0;
+    ada.sink.payloads.length = 0;
+    expect(world.duels.accept(ada.player.id, requestId).ok).toBe(true);
+
+    const look1 = duelLookToward(spawn1, spawn2, spawn1);
+    const look2 = duelLookToward(spawn2, spawn1, spawn2);
+    expect(bob.player.controller.position.x).toBeCloseTo(spawn1.x, 4);
+    expect(ada.player.controller.position.x).toBeCloseTo(spawn2.x, 4);
+    expect(bob.player.controller.yaw).toBeCloseTo(look1.yaw, 6);
+    expect(bob.player.controller.pitch).toBeCloseTo(look1.pitch, 6);
+    expect(ada.player.controller.yaw).toBeCloseTo(look2.yaw, 6);
+    expect(ada.player.controller.pitch).toBeCloseTo(look2.pitch, 6);
+    expect(bob.player.controller.yaw).not.toBeCloseTo(1.4, 2);
+    expect(bob.player.controller.yaw).not.toBeCloseTo(spawn1.yaw, 2);
+    expect(ada.player.controller.yaw).not.toBeCloseTo(-0.2, 2);
+    expect(ada.player.controller.yaw).not.toBeCloseTo(spawn2.yaw, 2);
+    expect(facingDot(bob.player.controller.yaw, bob.player.controller.pitch, spawn1, spawn2)).toBeCloseTo(1, 5);
+    expect(facingDot(ada.player.controller.yaw, ada.player.controller.pitch, spawn2, spawn1)).toBeCloseTo(1, 5);
+
+    const bobLooks = lookPackets(bob.sink);
+    const adaLooks = lookPackets(ada.sink);
+    expect(bobLooks).toHaveLength(1);
+    expect(adaLooks).toHaveLength(1);
+    expect(bobLooks[0]).toEqual({
+      reason: 'duel_start',
+      yaw: bob.player.controller.yaw,
+      pitch: bob.player.controller.pitch,
+    });
+    expect(adaLooks[0]).toEqual({
+      reason: 'duel_start',
+      yaw: ada.player.controller.yaw,
+      pitch: ada.player.controller.pitch,
+    });
+    expect(bobLooks.some((packet) => packet.yaw === ada.player.controller.yaw)).toBe(false);
+  });
 });
+
+function lookPackets(sink: MemorySink): Array<{ reason?: string; yaw: number; pitch: number }> {
+  const packets: Array<{ reason?: string; yaw: number; pitch: number }> = [];
+  for (const payload of sink.payloads) {
+    const record = payload as { type?: string; reason?: string; yaw?: number; pitch?: number };
+    if (record.type !== 'player_look') continue;
+    packets.push({ reason: record.reason, yaw: record.yaw ?? Number.NaN, pitch: record.pitch ?? Number.NaN });
+  }
+  return packets;
+}
+
+function facingDot(
+  yaw: number,
+  pitch: number,
+  from: { x: number; y: number; z: number },
+  to: { x: number; y: number; z: number },
+): number {
+  const direction = viewDirectionFromLook(yaw, pitch);
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  const len = Math.hypot(dx, dy, dz);
+  return (direction.x * dx + direction.y * dy + direction.z * dz) / len;
+}

@@ -59,11 +59,12 @@ describe('hologram RMB interaction', () => {
       y: 70,
       z: 8,
       lines: ['3'],
-      size: 3.2,
+      size: 2.8,
       enabled: true,
       backgroundEnabled: false,
       billboard: true,
       interactive: false,
+      preserveTextAspect: true,
     };
     const ordinary = {
       name: 'spawn',

@@ -1,10 +1,15 @@
 import * as THREE from 'three';
 import type { EntitySnapshot } from '../../shared/protocol';
+import { DUEL_BURST_PARTICLE_SIZE } from '../../shared/duels';
 import type { EntityInterpolationBuffer } from '../net/entitySnapshotInterpolation';
 import { TextureAtlas } from './TextureAtlas';
 
 const PARTICLE_CAP = 512;
+/** One fight-start burst is 88 points. The compact layer only holds that rare burst. */
+const COMPACT_PARTICLE_CAP = 128;
 const ROCKET_CAP = 32;
+export const FIREWORK_ORDINARY_PARTICLE_SIZE = 0.2;
+export const FIREWORK_COMPACT_PARTICLE_SIZE = DUEL_BURST_PARTICLE_SIZE;
 export const FIREWORK_BURST_COLORS = [0xf62935, 0x2167fa, 0x9a32ed, 0x1ac653, 0xf5c400, 0x00bfdf] as const;
 
 export function chooseFireworkBurstColor(random = Math.random): number {
@@ -19,6 +24,22 @@ interface Particle {
   r: number; g: number; b: number;
 }
 
+interface ParticleLayer {
+  readonly cap: number;
+  readonly particles: Particle[];
+  readonly positions: Float32Array;
+  readonly colors: Float32Array;
+  readonly geometry: THREE.BufferGeometry;
+  readonly material: THREE.PointsMaterial;
+}
+
+export interface FireworkBurstOptions {
+  readonly velocityScale?: number;
+  readonly lifeScale?: number;
+  /** Selects a fixed point layer. Omitted uses the ordinary 0.2 layer. */
+  readonly size?: number;
+}
+
 /** Bounded, decorative firework presentation shared by local and network rockets. */
 export class FireworkVisuals {
   readonly group = new THREE.Group();
@@ -28,25 +49,15 @@ export class FireworkVisuals {
   private readonly trailTimers = new Map<string, number>();
   private readonly rocketPositions = new Map<string, { previous: THREE.Vector3; current: THREE.Vector3 }>();
   private readonly burstIds = new Set<string>();
-  private readonly particles: Particle[] = [];
-  private readonly positions = new Float32Array(PARTICLE_CAP * 3);
-  private readonly colors = new Float32Array(PARTICLE_CAP * 3);
-  private readonly geometry = new THREE.BufferGeometry();
-  private readonly particleMaterial = new THREE.PointsMaterial({
-    vertexColors: true, size: 0.2, transparent: true, opacity: 0.94,
-    depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true,
-  });
+  private readonly ordinary: ParticleLayer;
+  private readonly compact: ParticleLayer;
 
   constructor() {
     this.group.name = 'firework-visuals';
     this.texture.colorSpace = THREE.SRGBColorSpace;
     this.texture.magFilter = THREE.NearestFilter;
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(this.positions, 3));
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(this.colors, 3));
-    this.geometry.setDrawRange(0, 0);
-    const points = new THREE.Points(this.geometry, this.particleMaterial);
-    points.frustumCulled = false;
-    this.group.add(points);
+    this.ordinary = this.createLayer(FIREWORK_ORDINARY_PARTICLE_SIZE, PARTICLE_CAP);
+    this.compact = this.createLayer(FIREWORK_COMPACT_PARTICLE_SIZE, COMPACT_PARTICLE_CAP);
   }
 
   sync(snapshots: readonly Pick<EntitySnapshot, 'id' | 'x' | 'y' | 'z' | 'state'>[]): void {
@@ -88,47 +99,24 @@ export class FireworkVisuals {
       }
       const timer = (this.trailTimers.get(id) ?? 0) + seconds;
       if (timer >= 0.06) {
-        this.addParticle(sprite.position.x, sprite.position.y - 0.16, sprite.position.z,
+        this.addParticle(this.ordinary, sprite.position.x, sprite.position.y - 0.16, sprite.position.z,
           (Math.random() - 0.5) * 0.35, -0.15, (Math.random() - 0.5) * 0.35, 0.28, 0xffd56b);
       }
       this.trailTimers.set(id, timer % 0.06);
     }
-    for (let index = this.particles.length - 1; index >= 0; index -= 1) {
-      const p = this.particles[index]!;
-      p.life -= seconds;
-      if (p.life <= 0) { this.particles.splice(index, 1); continue; }
-      p.x += p.vx * seconds;
-      p.y += p.vy * seconds;
-      p.z += p.vz * seconds;
-      p.vy -= 0.5 * seconds;
-    }
-    for (let index = 0; index < this.particles.length; index += 1) {
-      const p = this.particles[index]!;
-      this.positions[index * 3] = p.x;
-      this.positions[index * 3 + 1] = p.y;
-      this.positions[index * 3 + 2] = p.z;
-      const fade = Math.min(1, p.life / Math.min(0.3, p.maxLife));
-      this.colors[index * 3] = p.r * fade;
-      this.colors[index * 3 + 1] = p.g * fade;
-      this.colors[index * 3 + 2] = p.b * fade;
-    }
-    this.geometry.setDrawRange(0, this.particles.length);
-    (this.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
-    (this.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
+    this.stepLayer(this.ordinary, seconds);
+    this.stepLayer(this.compact, seconds);
   }
 
   /**
    * Particle burst only. Defaults match a finished firework rocket.
    * velocityScale and lifeScale multiply the ordinary speed and lifetime.
+   * size selects a point layer. It does not resize the ordinary material.
    */
-  spawnBurst(
-    x: number,
-    y: number,
-    z: number,
-    options: { readonly velocityScale?: number; readonly lifeScale?: number } = {},
-  ): void {
+  spawnBurst(x: number, y: number, z: number, options: FireworkBurstOptions = {}): void {
     const velocityScale = options.velocityScale ?? 1;
     const lifeScale = options.lifeScale ?? 1;
+    const layer = this.layerForSize(options.size);
     const accent = chooseFireworkBurstColor();
     for (let i = 0; i < 88; i += 1) {
       const angle = i * Math.PI * (3 - Math.sqrt(5));
@@ -136,7 +124,7 @@ export class FireworkVisuals {
       const horizontal = Math.sqrt(1 - elevation * elevation);
       const speed = (2.6 + (i % 4) * 0.18) * velocityScale;
       const life = (1.1 + (i % 3) * 0.13) * lifeScale;
-      this.addParticle(x, y, z, Math.cos(angle) * horizontal * speed,
+      this.addParticle(layer, x, y, z, Math.cos(angle) * horizontal * speed,
         elevation * speed, Math.sin(angle) * horizontal * speed, life,
         i % 5 === 0 ? accent : 0xffffff);
     }
@@ -146,11 +134,70 @@ export class FireworkVisuals {
     this.spawnBurst(x, y, z);
   }
 
-  private addParticle(x: number, y: number, z: number, vx: number, vy: number, vz: number, life: number, color: number): void {
-    if (this.particles.length >= PARTICLE_CAP) this.particles.shift();
+  private createLayer(size: number, cap: number): ParticleLayer {
+    const positions = new Float32Array(cap * 3);
+    const colors = new Float32Array(cap * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setDrawRange(0, 0);
+    const material = new THREE.PointsMaterial({
+      vertexColors: true, size, transparent: true, opacity: 0.94,
+      depthWrite: false, blending: THREE.NormalBlending, sizeAttenuation: true,
+    });
+    const points = new THREE.Points(geometry, material);
+    points.frustumCulled = false;
+    this.group.add(points);
+    return { cap, particles: [], positions, colors, geometry, material };
+  }
+
+  private layerForSize(size: number | undefined): ParticleLayer {
+    if (size !== undefined && Math.abs(size - this.compact.material.size) < 1e-4) return this.compact;
+    return this.ordinary;
+  }
+
+  private addParticle(
+    layer: ParticleLayer,
+    x: number, y: number, z: number,
+    vx: number, vy: number, vz: number,
+    life: number,
+    color: number,
+  ): void {
+    if (layer.particles.length >= layer.cap) layer.particles.shift();
     const tint = new THREE.Color(color);
-    this.particles.push({ x, y, z, vx, vy, vz, life, maxLife: life,
-      r: tint.r, g: tint.g, b: tint.b });
+    layer.particles.push({
+      x, y, z, vx, vy, vz, life, maxLife: life,
+      r: tint.r, g: tint.g, b: tint.b,
+    });
+  }
+
+  private stepLayer(layer: ParticleLayer, seconds: number): void {
+    const particles = layer.particles;
+    for (let index = particles.length - 1; index >= 0; index -= 1) {
+      const particle = particles[index]!;
+      particle.life -= seconds;
+      if (particle.life <= 0) {
+        particles.splice(index, 1);
+        continue;
+      }
+      particle.x += particle.vx * seconds;
+      particle.y += particle.vy * seconds;
+      particle.z += particle.vz * seconds;
+      particle.vy -= 0.5 * seconds;
+    }
+    for (let index = 0; index < particles.length; index += 1) {
+      const particle = particles[index]!;
+      layer.positions[index * 3] = particle.x;
+      layer.positions[index * 3 + 1] = particle.y;
+      layer.positions[index * 3 + 2] = particle.z;
+      const fade = Math.min(1, particle.life / Math.min(0.3, particle.maxLife));
+      layer.colors[index * 3] = particle.r * fade;
+      layer.colors[index * 3 + 1] = particle.g * fade;
+      layer.colors[index * 3 + 2] = particle.b * fade;
+    }
+    layer.geometry.setDrawRange(0, particles.length);
+    (layer.geometry.getAttribute('position') as THREE.BufferAttribute).needsUpdate = true;
+    (layer.geometry.getAttribute('color') as THREE.BufferAttribute).needsUpdate = true;
   }
 
   private removeRocket(id: string): void {
@@ -163,8 +210,10 @@ export class FireworkVisuals {
   dispose(): void {
     for (const id of this.rocketSprites.keys()) this.removeRocket(id);
     this.group.removeFromParent();
-    this.geometry.dispose();
-    this.particleMaterial.dispose();
+    this.ordinary.geometry.dispose();
+    this.ordinary.material.dispose();
+    this.compact.geometry.dispose();
+    this.compact.material.dispose();
     this.rocketMaterial.dispose();
     this.texture.dispose();
   }

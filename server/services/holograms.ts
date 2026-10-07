@@ -35,6 +35,8 @@ export interface HologramRecord {
   billboard: boolean;
   yaw: number;
   interactive: boolean;
+  /** False keeps the historical text plane. True matches the text-canvas aspect. */
+  preserveTextAspect: boolean;
 }
 
 export interface HologramEditorContext {
@@ -94,6 +96,7 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     billboard: appearance.billboard,
     yaw,
     interactive: raw.interactive !== false,
+    preserveTextAspect: raw.preserveTextAspect === true,
   };
 }
 
@@ -133,6 +136,7 @@ export function createHologramRecord(input: {
     billboard: true,
     yaw: 0,
     interactive: true,
+    preserveTextAspect: false,
   };
 }
 
@@ -158,6 +162,7 @@ export function toNetworkHologram(hologram: HologramRecord): NetworkHologram {
     billboard: appearance.billboard,
     yaw: hologram.yaw,
     interactive: hologram.interactive !== false,
+    preserveTextAspect: hologram.preserveTextAspect === true,
   };
 }
 

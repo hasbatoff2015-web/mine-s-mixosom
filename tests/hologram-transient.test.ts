@@ -30,6 +30,7 @@ describe('transient holograms', () => {
     countdown.backgroundEnabled = false;
     countdown.billboard = true;
     countdown.interactive = false;
+    countdown.preserveTextAspect = true;
     expect(network.upsertTransient(countdown)?.name).toBe(DUEL_COUNTDOWN_HOLOGRAM);
 
     const listed = network.list();
@@ -42,6 +43,7 @@ describe('transient holograms', () => {
       backgroundEnabled: false,
       billboard: true,
       interactive: false,
+      preserveTextAspect: true,
     });
     expect(network.listRecords().some((entry) => entry.name === DUEL_COUNTDOWN_HOLOGRAM)).toBe(false);
     expect(network.listRecords().map((entry) => entry.name)).toEqual(['welcome']);

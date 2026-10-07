@@ -1069,6 +1069,11 @@ export interface NetworkHologram {
   readonly yaw: number;
   /** Missing on older payloads means interactive. */
   readonly interactive?: boolean;
+  /**
+   * Missing or false keeps the historical text-plane aspect.
+   * True sizes the plane to the 512×256 text canvas so glyphs are not stretched.
+   */
+  readonly preserveTextAspect?: boolean;
 }
 
 export interface ServerHologramsMessage {
@@ -1473,6 +1478,14 @@ export interface ServerDuelEffectMessage {
   readonly z: number;
 }
 
+/** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
+export interface ServerPlayerLookMessage {
+  readonly type: 'player_look';
+  readonly reason: 'duel_start';
+  readonly yaw: number;
+  readonly pitch: number;
+}
+
 export interface NetworkMenuNotifications {
   readonly friends: number;
   readonly clans: number;
@@ -1573,7 +1586,8 @@ export type ServerMessage =
   | ServerMenuMessage
   | ServerTradeMessage
   | ServerDirectMessage
-  | ServerDuelEffectMessage;
+  | ServerDuelEffectMessage
+  | ServerPlayerLookMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1645,6 +1659,7 @@ export const SERVER_MESSAGE_TYPES = [
   'trade',
   'direct_message',
   'duel_effect',
+  'player_look',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -1816,6 +1831,7 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     billboard: appearance.billboard,
     yaw,
     interactive: raw.interactive !== false,
+    preserveTextAspect: raw.preserveTextAspect === true,
   };
 }
 
@@ -2743,6 +2759,11 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (raw.effect !== 'fight_start_burst') return { error: 'duel_effect.effect invalid' };
       if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) return { error: 'duel_effect coordinates invalid' };
       return { type: 'duel_effect', effect: 'fight_start_burst', x: raw.x, y: raw.y, z: raw.z };
+    }
+    case 'player_look': {
+      if (raw.reason !== 'duel_start') return { error: 'player_look.reason invalid' };
+      if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'player_look invalid' };
+      return { type: 'player_look', reason: 'duel_start', yaw: raw.yaw, pitch: raw.pitch };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

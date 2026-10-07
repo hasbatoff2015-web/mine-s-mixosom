@@ -14,6 +14,8 @@ export const DUEL_HOLOGRAM_Y_OFFSET = 2.2;
 export const DUEL_START_BURST_Y_OFFSET = 0.75;
 export const DUEL_BURST_VELOCITY_SCALE = 0.5;
 export const DUEL_BURST_LIFE_SCALE = 0.75;
+/** Point size for the fight-start burst. Ordinary firework points stay 0.2. */
+export const DUEL_BURST_PARTICLE_SIZE = 0.12;
 export const DUEL_COMBAT_CAUSES = ['melee', 'arrow', 'projectile'] as const;
 
 export const DUEL_TELEPORT_DENIED = 'Телепортация недоступна во время дуэли.';
@@ -131,6 +133,33 @@ export function duelHologramPosition(
     x: (spawn1.x + spawn2.x) / 2,
     y: Math.max(spawn1.y, spawn2.y) + DUEL_HOLOGRAM_Y_OFFSET,
     z: (spawn1.z + spawn2.z) / 2,
+  };
+}
+
+/**
+ * Yaw/pitch that looks from `from` toward `to`.
+ * Same basis as `viewDirectionFromLook`: x = -sin(yaw) cos(pitch), y = sin(pitch), z = -cos(yaw) cos(pitch).
+ * Identical or non-finite positions keep `fallback` so the result is never NaN.
+ */
+export function duelLookToward(
+  from: { readonly x: number; readonly y: number; readonly z: number },
+  to: { readonly x: number; readonly y: number; readonly z: number },
+  fallback: { readonly yaw: number; readonly pitch: number },
+): { yaw: number; pitch: number } {
+  const safe = {
+    yaw: Number.isFinite(fallback.yaw) ? fallback.yaw : 0,
+    pitch: Number.isFinite(fallback.pitch) ? fallback.pitch : 0,
+  };
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dz = to.z - from.z;
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || !Number.isFinite(dz)) return safe;
+  const len = Math.hypot(dx, dy, dz);
+  if (!(len > 1e-8)) return safe;
+  const ny = Math.min(1, Math.max(-1, dy / len));
+  return {
+    pitch: Math.asin(ny),
+    yaw: Math.atan2(-dx / len, -dz / len),
   };
 }
 

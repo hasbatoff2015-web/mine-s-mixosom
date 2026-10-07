@@ -8,9 +8,8 @@ import {
   HOLOGRAM_TEXT_LOGICAL_WIDTH,
   hologramCanvasFont,
   hologramDisplayLines,
-  hologramSpriteHeight,
-  hologramSpriteWidth,
   hologramTextCanvasSize,
+  hologramTextPlaneSize,
   type HologramFont,
   type HologramTextStyle,
 } from '../../shared/hologramStyle';
@@ -190,11 +189,12 @@ export class HologramRenderer {
       visual.paintedKey = key;
     }
     const textLines = Math.max(1, lines.length);
-    visual.text.scale.set(
-      hologramSpriteWidth(hologram.size),
-      hologramSpriteHeight(textLines, hologram.size),
-      1,
+    const textPlane = hologramTextPlaneSize(
+      textLines,
+      hologram.size,
+      hologram.preserveTextAspect === true,
     );
+    visual.text.scale.set(textPlane.width, textPlane.height, 1);
     visual.background.visible = hologram.backgroundEnabled;
     visual.background.scale.set(hologram.backgroundWidth, hologram.backgroundHeight, 1);
   }

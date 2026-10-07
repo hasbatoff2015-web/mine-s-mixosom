@@ -39,4 +39,36 @@ describe('duel_effect protocol', () => {
     })).toEqual({ error: 'duel_effect.effect invalid' });
     expect(parseServerMessage({ type: 'duel_boom' })).toEqual({ error: 'unknown message type duel_boom' });
   });
+
+  it('parses one duel_start look and rejects non-finite angles', () => {
+    expect(parseServerMessage({
+      type: 'player_look',
+      reason: 'duel_start',
+      yaw: -Math.PI / 2,
+      pitch: 0.2,
+    })).toEqual({
+      type: 'player_look',
+      reason: 'duel_start',
+      yaw: -Math.PI / 2,
+      pitch: 0.2,
+    });
+    expect(parseServerMessage({
+      type: 'player_look',
+      reason: 'tick',
+      yaw: 0,
+      pitch: 0,
+    })).toEqual({ error: 'player_look.reason invalid' });
+    expect(parseServerMessage({
+      type: 'player_look',
+      reason: 'duel_start',
+      yaw: Number.NaN,
+      pitch: 0,
+    })).toEqual({ error: 'player_look invalid' });
+    expect(parseServerMessage({
+      type: 'player_look',
+      reason: 'duel_start',
+      yaw: 0,
+      pitch: Number.POSITIVE_INFINITY,
+    })).toEqual({ error: 'player_look invalid' });
+  });
 });

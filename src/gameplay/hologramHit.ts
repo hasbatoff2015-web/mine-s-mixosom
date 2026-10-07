@@ -15,6 +15,8 @@ export interface HologramHitTarget {
   readonly backgroundHeight?: number;
   /** Missing means interactive, so older snapshots stay clickable. */
   readonly interactive?: boolean;
+  /** Missing keeps the historical text-plane width. */
+  readonly preserveTextAspect?: boolean;
 }
 
 export interface HologramRayHit {

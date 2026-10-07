@@ -8,13 +8,17 @@ import {
   HOLOGRAM_STYLE_DEFAULT,
   clampHologramSize,
   hologramCanvasFont,
+  hologramSpriteHeight,
+  hologramSpriteWidth,
   hologramStyleFlags,
   hologramTextFromLines,
+  hologramTextPlaneSize,
   linesFromHologramText,
   parseHologramAppearanceLenient,
   parseHologramAppearanceStrict,
 } from '../shared/hologramStyle';
 import { parseClientMessage, parseNetworkHologram, parseServerMessage } from '../shared/protocol';
+import { DUEL_COUNTDOWN_HOLOGRAM_SIZE } from '../shared/duels';
 import { normalizeHologramRecord, toNetworkHologram } from '../server/services/holograms';
 
 describe('hologram style serialization', () => {
@@ -192,8 +196,53 @@ describe('hologram style serialization', () => {
     });
     expect(parsed).toMatchObject({
       type: 'holograms',
-      holograms: [{ name: 'duel-countdown', interactive: false, size: 3.2, font: 'display' }],
+      holograms: [{ name: 'duel-countdown', interactive: false, size: 3.2, font: 'display', preserveTextAspect: false }],
     });
+    expect(legacy?.preserveTextAspect).toBe(false);
+    expect(stored?.preserveTextAspect).toBe(false);
+  });
+
+  it('keeps historical plane width unless preserveTextAspect is true', () => {
+    const size = DUEL_COUNTDOWN_HOLOGRAM_SIZE;
+    const historical = hologramTextPlaneSize(1, size, false);
+    expect(historical.width).toBe(hologramSpriteWidth(size));
+    expect(historical.height).toBeCloseTo(hologramSpriteHeight(1, size), 8);
+    expect(historical.width).toBeCloseTo(7.28, 8);
+    expect(historical.height).toBeCloseTo(2.156, 8);
+    const natural = hologramTextPlaneSize(1, size, true);
+    expect(natural.height).toBe(historical.height);
+    expect(natural.width).toBeCloseTo(natural.height * 2, 8);
+    expect(natural.width).toBeCloseTo(4.312, 8);
+    const missing = parseNetworkHologram({
+      name: 'spawn', x: 0, y: 1, z: 2, lines: ['Hi'], range: 16,
+    });
+    expect(missing?.preserveTextAspect).toBe(false);
+    const explicit = parseNetworkHologram({
+      name: 'duel-countdown',
+      x: 1, y: 2, z: 3, lines: ['3'], range: 48,
+      font: 'display', size, style: 'normal',
+      backgroundEnabled: false, billboard: true, interactive: false,
+      preserveTextAspect: true,
+    });
+    expect(explicit).toMatchObject({
+      preserveTextAspect: true,
+      font: 'display',
+      size: 2.8,
+      interactive: false,
+    });
+    expect(parseNetworkHologram({
+      name: 'spawn', x: 0, y: 1, z: 2, lines: ['Hi'], range: 16, preserveTextAspect: false,
+    })?.preserveTextAspect).toBe(false);
+    const storedTrue = normalizeHologramRecord({
+      name: 'legacy', worldId: 'anarchy', x: 0, y: 1, z: 2, lines: ['Old'], range: 32, preserveTextAspect: true,
+    });
+    expect(storedTrue?.preserveTextAspect).toBe(true);
+    expect(toNetworkHologram(storedTrue!).preserveTextAspect).toBe(true);
+    const storedMissing = normalizeHologramRecord({
+      name: 'legacy', worldId: 'anarchy', x: 0, y: 1, z: 2, lines: ['Old'], range: 32,
+    });
+    expect(storedMissing?.preserveTextAspect).toBe(false);
+    expect(toNetworkHologram(storedMissing!).preserveTextAspect).toBe(false);
   });
 
   it('keeps multiline text through \\n and rejects unknown editor fonts', () => {

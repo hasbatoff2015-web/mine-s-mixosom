@@ -4578,7 +4578,22 @@ export class WorldInstance {
       hardRelocateForDuel: (playerId, pose) => {
         const player = this.players.get(playerId);
         if (!player) return false;
-        return this.hardRelocatePlayer(player, pose.x, pose.y, pose.z, { yaw: pose.yaw, pitch: pose.pitch }, { bypass: 'duel' });
+        const moved = this.hardRelocatePlayer(
+          player,
+          pose.x,
+          pose.y,
+          pose.z,
+          { yaw: pose.yaw, pitch: pose.pitch },
+          { bypass: 'duel' },
+        );
+        if (!moved || !player.connected) return moved;
+        this.sendTo(player, {
+          type: 'player_look',
+          reason: 'duel_start',
+          yaw: player.controller.yaw,
+          pitch: player.controller.pitch,
+        });
+        return true;
       },
       restorePreDuelPose: (playerId, pose) => {
         const player = this.players.get(playerId);
@@ -4740,6 +4755,7 @@ export class WorldInstance {
     record.backgroundEnabled = false;
     record.billboard = true;
     record.interactive = false;
+    record.preserveTextAspect = true;
     this.holograms.upsertTransient(record);
   }
 
