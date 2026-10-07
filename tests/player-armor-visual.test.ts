@@ -21,7 +21,9 @@ import {
   playerArmorPartDefinition,
   resolveArmorVisual,
 } from '../src/rendering/player/PlayerArmorVisual';
+import { createTexturedCuboidGeometry } from '../src/rendering/TexturedCuboid';
 import { PLAYER_MODEL_PIXEL, PlayerSkinGeometryCache } from '../src/rendering/player/PlayerSkinGeometry';
+import { sideEdgeU } from './cuboidUvSample';
 import {
   PlayerVisual,
   SKIN_BASE_RENDER_ORDER,
@@ -129,6 +131,35 @@ describe('vanilla armor geometry and resources', () => {
     expect(playerArmorPartDefinition('body', 'outer').inflate).toBeCloseTo(PLAYER_ARMOR_OUTER_INFLATE);
     expect(PLAYER_ARMOR_INNER_INFLATE).toBeCloseTo(0.5 * PLAYER_MODEL_PIXEL);
     expect(PLAYER_ARMOR_OUTER_INFLATE).toBeCloseTo(PLAYER_MODEL_PIXEL);
+  });
+
+  it('keeps legacy left-limb mirror and does not take the player-skin side UV flip', () => {
+    const geometries = new PlayerArmorGeometryCache();
+    for (const part of ['head', 'body', 'rightArm', 'leftArm', 'rightLeg', 'leftLeg'] as const) {
+      for (const shell of ['inner', 'outer'] as const) {
+        const definition = playerArmorPartDefinition(part, shell);
+        expect(definition.faceUvFlipU, part).toBeUndefined();
+        expect(definition.mirror, part).toBe(part === 'leftArm' || part === 'leftLeg');
+        const generated = geometries.get(part, shell);
+        const reference = createTexturedCuboidGeometry(definition);
+        expect(generated.getAttribute('uv').array).toEqual(reference.getAttribute('uv').array);
+        expect(generated.getAttribute('position').array).toEqual(reference.getAttribute('position').array);
+        reference.dispose();
+      }
+    }
+    const rightArm = geometries.get('rightArm', 'inner');
+    const leftArm = geometries.get('leftArm', 'inner');
+    for (const yEdge of ['top', 'bottom'] as const) {
+      expect(sideEdgeU(rightArm, -1, 'front', yEdge)).toBeCloseTo(40 / 64);
+      expect(sideEdgeU(rightArm, -1, 'back', yEdge)).toBeCloseTo(44 / 64);
+      expect(sideEdgeU(rightArm, 1, 'front', yEdge)).toBeCloseTo(52 / 64);
+      expect(sideEdgeU(rightArm, 1, 'back', yEdge)).toBeCloseTo(48 / 64);
+      expect(sideEdgeU(leftArm, -1, 'front', yEdge)).toBeCloseTo(44 / 64);
+      expect(sideEdgeU(leftArm, -1, 'back', yEdge)).toBeCloseTo(40 / 64);
+      expect(sideEdgeU(leftArm, 1, 'front', yEdge)).toBeCloseTo(48 / 64);
+      expect(sideEdgeU(leftArm, 1, 'back', yEdge)).toBeCloseTo(52 / 64);
+    }
+    geometries.dispose();
   });
 
   it('ships every supplied atlas without an iron fallback', () => {
