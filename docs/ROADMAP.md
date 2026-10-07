@@ -49,6 +49,12 @@
 - [ ] Browser QA of this shutdown and countdown pass was not repeated.
 - [ ] Not merged. Draft PR **#122**.
 
+## 2026-10-06: Hostile balance, creeper fuse snapshots, inventory vegetation tint
+
+- [x] Zombie 1.5 damage / 1.5s, skeleton 2 / 2.4s, spider 1 / 1.35s. Creeper fuse and passive/wolf attacks stay as they were.
+- [x] Authoritative creeper `fuseSeconds` travels on `EntitySnapshot.fuse` into the existing client swell.
+- [x] Inventory cube icons tint leaf faces and the grass-block top with the plains biome tint. Other faces and ordinary blocks stay untinted, on a separate material cache entry.
+
 ## 2026-10-05: Private friend chat
 
 - [x] Green `Чат` button on every friend row, immediately left of `Удалить`.

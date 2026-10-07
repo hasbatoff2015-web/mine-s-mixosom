@@ -69,6 +69,13 @@
 - Голограмма отсчёта `duel-countdown` транзиентная: клиент её видит, `persist()` её не сохраняет.
 - Подробности: `docs/reports/2026-10-05_duels-plugin-arena-1v1.md`.
 
+## Последний проход: урон мобов, fuse крипера, tint инвентаря — 2026-10-06
+
+- Урон zombie / skeleton / spider уменьшен вдвое: 1.5 / 2 / 1. Интервал атаки ×1.5: 1.5 / 2.4 / 1.35 секунды. Creeper по-прежнему 0 урона и fuse 1.5 с. Волк и пассивные мобы не менялись. Оба режима читают `MobDefinition`.
+- Multiplayer creeper swell — тот же `ThreeEntityHost.syncMob`. Сервер пишет `MobEntity.fuseSeconds` в уже существующее `EntitySnapshot.fuse`. Клиент кладёт его обратно в `mob.fuseSeconds`. Отдельной анимации нет.
+- Иконки oak/birch/spruce leaves и верх grass block берут plains `biomeGrassTint(0)` через общий `vegetationTextureTint`. Бок и низ дёрна остаются белыми. Обычные блоки делят прежний material cache; vegetation tint — отдельный ключ с `vertexColors`.
+- Подробности: `docs/reports/2026-10-06_hostile-balance-creeper-fuse-inventory-tint.md`.
+
 ## Последний проход: личные сообщения друзей — 2026-10-05
 
 - В строке друга есть зелёная кнопка `Чат` сразу слева от `Удалить`. `Телепорт`, если он разрешён, остаётся слева от `Чат`.
