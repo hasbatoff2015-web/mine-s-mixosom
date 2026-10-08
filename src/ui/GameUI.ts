@@ -6,7 +6,7 @@ import {
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
+import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionClaimableClass, auctionClaimHint, auctionIconStack, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionClaimableClass, auctionIconStack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -3551,7 +3551,7 @@ export class GameUI {
       if (!listing) return this.slotHtml(null, `ah-${index}`);
       const stack = this.auctionStack(listing.item);
       const extra = auctionClaimableClass(listing.status);
-      const hint = auctionClaimHint(listing.status);
+      const hint = auctionSlotHint(listing.status, stack ? tryGetItemDefinition(stack.itemId)?.description : undefined);
       const wrapClass = extra ? ` class="${extra}"` : '';
       return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint, 'auction')}</div>`;
     }).join('');

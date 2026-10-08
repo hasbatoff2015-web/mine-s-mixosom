@@ -183,6 +183,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'fire':
     case 'wire':
     case 'sign':
+    case 'painting':
       return 'generated';
     case 'button':
     case 'pressure_plate':

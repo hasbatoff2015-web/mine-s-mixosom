@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-08: Collectible paintings
+
+- [x] Twenty hidden Creative resource items and one generic wall block. Survival has no recipe, mob drop, loot, or worldgen source.
+- [x] Hand placement on a vertical solid face. The held stack is the only variant. Creative does not consume. Survival drops that exact item once.
+- [x] `PaintingRenderer` draws one oak frame outside the 32px atlas. Save and network keep only the twenty known ids.
+- [x] Auction lists them as ordinary stacks. The yellow description reuses the existing hint. Claim text still wins.
+- [ ] No automatic world distribution, now or as a hook for a later pass. Admins hang copies themselves.
+- [ ] Not merged. Wait for an explicit merge command.
+
 ## 2026-10-07: Online shift bulk transfer and mobile drop zone
 
 - [x] Shift+double-click sends a merge-identity hint so the server can finish the bulk after the origin slot is empty.

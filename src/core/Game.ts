@@ -150,7 +150,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { ItemId, collectiblePaintingDropItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -5425,6 +5425,13 @@ export class Game {
     this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
+      const paintingItemId = collectiblePaintingDropItemId(hit.block, blockState);
+      if (paintingItemId) {
+        this.spawnDroppedStack(
+          createItemStack(paintingItemId, 1),
+          new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+        );
+      } else {
       const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
       if (farmingDrops !== undefined && harvestable) {
         for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
@@ -5443,6 +5450,7 @@ export class Game {
             );
           }
         }
+      }
       }
       if (toolStack && losesDurabilityWhenBreakingBlocks(item)) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
@@ -5727,6 +5735,14 @@ export class Game {
     for (const event of events) {
       // Environmental drops also exist in Creative; lava destroys without loot.
       if (event.reason === 'lava') continue;
+      const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
+      if (paintingItemId) {
+        this.spawnDroppedStack(
+          createItemStack(paintingItemId, 1),
+          new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5),
+        );
+        continue;
+      }
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.simRandom);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(

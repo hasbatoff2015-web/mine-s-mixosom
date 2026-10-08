@@ -7,6 +7,7 @@ import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from '.
 import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SURFACE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
 import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
+import { sanitizeBlockRenderState } from './painting';
 import { sanitizeSignLines, type SignLines } from './sign';
 import { bedOtherCell, isMatchingBedHalf } from './bed';
 import { getItemDefinition } from '../items';
@@ -222,6 +223,8 @@ export class VoxelWorld {
   readonly furnaces = new Map<string, FurnaceState>();
   readonly signs = new Map<string, SignLines>();
   signVersion = 0;
+  /** Bumped only when a painting cell or its state changes. Fluids do not touch it. */
+  paintingVersion = 0;
   readonly blockStates = new Map<string, BlockRenderState>();
   /** Planted-sapling timestamps. Restored with block states; not a second save file. */
   readonly saplingPlantedAt = new Map<string, number>();
@@ -343,7 +346,8 @@ export class VoxelWorld {
     }
     if (state.blockStates) {
       for (const [key, value] of Object.entries(state.blockStates)) {
-        this.blockStates.set(key, value as BlockRenderState);
+        if (!value || typeof value !== 'object') continue;
+        this.blockStates.set(key, sanitizeBlockRenderState(value as BlockRenderState));
       }
     }
     this.saplingPlantedAt.clear();
@@ -356,6 +360,7 @@ export class VoxelWorld {
       if (lines) this.signs.set(key, lines);
     }
     this.signVersion += 1;
+    this.paintingVersion += 1;
   }
 
   setSignText(x: number, y: number, z: number, lines: SignLines): boolean {
@@ -559,15 +564,29 @@ export class VoxelWorld {
     return this.blockStates.get(blockKey(x, y, z));
   }
 
+  private notePaintingVersion(
+    block: BlockId,
+    previous: BlockRenderState | undefined,
+    next: BlockRenderState | undefined,
+  ): void {
+    if (block === BlockId.CollectiblePainting
+      || previous?.paintingItemId !== undefined
+      || next?.paintingItemId !== undefined) {
+      this.paintingVersion += 1;
+    }
+  }
+
   setBlockState(x: number, y: number, z: number, state: BlockRenderState): boolean {
-    if (this.fluidStateUnchanged(this.getBlockState(x, y, z), state)) {
+    const clean = sanitizeBlockRenderState(state);
+    const previous = this.getBlockState(x, y, z);
+    if (this.fluidStateUnchanged(previous, clean)) {
       this.noteFluidNoop();
       return false;
     }
     const key = blockKey(x, y, z);
-    this.blockStates.set(key, state);
-    syncSaplingClock(this.saplingPlantedAt, key, state);
-    if (state.fluidLevel === undefined) this.queueSupportAround(x, y, z);
+    this.blockStates.set(key, clean);
+    syncSaplingClock(this.saplingPlantedAt, key, clean);
+    if (clean.fluidLevel === undefined) this.queueSupportAround(x, y, z);
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
     const localX = positiveMod(x, CHUNK_SIZE);
@@ -578,9 +597,11 @@ export class VoxelWorld {
     for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
     }
+    const block = this.getBlock(x, y, z, false);
+    this.notePaintingVersion(block, previous, clean);
     this.onCommittedBlockState?.({
       x, y, z,
-      block: this.getBlock(x, y, z, false),
+      block,
     });
     return true;
   }
@@ -593,13 +614,16 @@ export class VoxelWorld {
    */
   replaceBlockState(x: number, y: number, z: number, state: BlockRenderState | undefined): void {
     const key = blockKey(x, y, z);
-    if (state === undefined) {
+    const previous = this.blockStates.get(key);
+    const clean = state === undefined ? undefined : sanitizeBlockRenderState(state);
+    if (clean === undefined) {
       if (!this.blockStates.delete(key)) return;
       syncSaplingClock(this.saplingPlantedAt, key, undefined);
     } else {
-      this.blockStates.set(key, state);
-      syncSaplingClock(this.saplingPlantedAt, key, state);
+      this.blockStates.set(key, clean);
+      syncSaplingClock(this.saplingPlantedAt, key, clean);
     }
+    this.notePaintingVersion(this.getBlock(x, y, z, false), previous, clean);
     this.markBlockDirty(x, z);
   }
 
@@ -907,6 +931,9 @@ export class VoxelWorld {
     syncSaplingClock(this.saplingPlantedAt, clearedKey, undefined);
     if (previous === BlockId.OakSign && block !== BlockId.OakSign
       && this.signs.delete(blockKey(x, y, z))) this.signVersion += 1;
+    if (previous === BlockId.CollectiblePainting || block === BlockId.CollectiblePainting) {
+      this.paintingVersion += 1;
+    }
     if (!skipSupport) this.queueSupportAround(x, y, z);
     if ((block === BlockId.Water || block === BlockId.Lava)
       && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid

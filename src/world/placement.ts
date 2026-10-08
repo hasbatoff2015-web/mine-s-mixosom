@@ -18,6 +18,7 @@ const SUPPORT_RULES: Partial<Record<BlockRenderShape, { attachment: 'floor' | 'w
   pressure_plate: { attachment: 'floor', facing: 'north' },
   rail: { attachment: 'floor', facing: 'north' },
   sign: { attachment: 'floor', facing: 'north', oriented: true },
+  painting: { attachment: 'wall', facing: 'south', oriented: true },
 };
 
 const GRASS_PLANT_SUBSTRATES: ReadonlySet<BlockId> = new Set([BlockId.GrassBlock, BlockId.Dirt]);

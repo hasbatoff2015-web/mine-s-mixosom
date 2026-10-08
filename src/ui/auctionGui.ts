@@ -32,3 +32,11 @@ export function auctionClaimableClass(status: string | undefined): string {
 export function auctionClaimHint(status: string | undefined): string | undefined {
   return isAuctionClaimableStatus(status) ? AUCTION_CLAIM_HINT : undefined;
 }
+
+/** Claim copy wins. Otherwise the existing yellow hint can carry the item description. */
+export function auctionSlotHint(status: string | undefined, description: string | undefined): string | undefined {
+  const claim = auctionClaimHint(status);
+  if (claim) return claim;
+  const text = description?.trim();
+  return text ? text : undefined;
+}
