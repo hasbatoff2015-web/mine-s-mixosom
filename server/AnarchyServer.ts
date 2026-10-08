@@ -287,6 +287,7 @@ export class AnarchyServer {
       players: others,
       modifications: this.world.networkModifications(),
       blockStates: this.world.blockStates(),
+      furnacesLit: this.world.networkFurnaceLit(),
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,

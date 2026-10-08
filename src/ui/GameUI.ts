@@ -1,4 +1,4 @@
-import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
+import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, furnaceBurnRatio, furnaceCookRatio, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
 import {
   Inventory,
   createItemStack,
@@ -3382,8 +3382,8 @@ export class GameUI {
   }
 
   private furnaceHtml(furnace: FurnaceState): string {
-    const burn = furnace.burnTotal > 0 ? furnace.burnTime / furnace.burnTotal : 0;
-    const cook = furnace.cookTime / 200;
+    const burn = furnaceBurnRatio(furnace);
+    const cook = furnaceCookRatio(furnace);
     const cookWidth = `${Math.max(0, Math.min(1, cook)) * 100}%`;
     return `<div class="mc-label">${CONTAINER_STRINGS.furnace}</div>
       <div class="mc-furnace">

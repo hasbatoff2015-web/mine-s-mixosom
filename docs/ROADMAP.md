@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-10-08: Furnace world-space lit sync
+
+- [x] `furnace_lit` goes to every connected player when burn state crosses zero. No slots.
+- [x] `welcome.furnacesLit` and `chunk_data.furnacesLit` carry only burning furnaces. Chunk reload replaces that column's lit bit.
+- [x] The client does not tick fuel. `ChunkMesher` still reads `isFurnaceBurning`.
+- [x] Checked in the DEV browser: a furnace shows lit without an open GUI.
+
+## 2026-10-05: Apples, crafting and furnace
+
+- [x] Every fifth leaf broken by a player drops one apple. The counter is per player and resets after the fifth.
+- [x] Golden apple is 8 gold ingots around an apple. Fire arrows are 8 arrows plus a lava bucket, returning the bucket.
+- [x] Cobblestone smelts to stone. A lava bucket burns for 16000 ticks and leaves an empty bucket in the fuel slot.
+- [x] An open furnace keeps ticking. Online viewers receive `furnace_sync`. The arrow uses the smelting recipe time.
+
 ## 2026-10-07: Online shift bulk transfer and mobile drop zone
 
 - [x] Shift+double-click sends a merge-identity hint so the server can finish the bulk after the origin slot is empty.

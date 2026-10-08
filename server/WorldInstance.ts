@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, blockKey, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
@@ -348,6 +348,8 @@ export class ServerPlayer implements GameplayPlayer {
   totemActivated = false;
   pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
+  /** Last furnace_sync payload sent while this player's furnace GUI is open. */
+  furnaceSyncSignature?: string;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
@@ -667,10 +669,15 @@ export class WorldInstance {
   private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
   private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
+  /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
+  private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
 
   constructor(readonly config: ServerConfig) {
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
+    this.world.onFurnaceLitChanged = (change) => {
+      this.pendingFurnaceLit.push(change);
+    };
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
     }, () => this.spawn, (x, y, z) => {
@@ -3804,6 +3811,11 @@ export class WorldInstance {
     return this.world.serializeBlockStates();
   }
 
+  /** Burning furnaces for welcome, or for one column when chunk coordinates are set. */
+  networkFurnaceLit(chunkX?: number, chunkZ?: number) {
+    return this.world.networkFurnaceLit(chunkX, chunkZ);
+  }
+
   tick(): void {
     this.lastPhysicsTicksThisLoop = 1;
     this.clearAppliedSteps();
@@ -3944,6 +3956,7 @@ export class WorldInstance {
   private flushTickNetwork(): void {
     const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
+    this.flushFurnaceLit();
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     for (const player of this.connectedPlayers()) player.commandQueue.clearNotifiedSkips();
     if (snapshots.length > 0) {
@@ -4013,6 +4026,7 @@ export class WorldInstance {
       this.flushPlayerInventory(player, false);
       this.flushHealth(player);
     }
+    this.flushOpenFurnaceViews();
     const entityEvents = this.gameplay.consumeEntityEvents();
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
@@ -4484,6 +4498,23 @@ export class WorldInstance {
     }
   }
 
+  /** One `furnace_lit` per lit edge, to every connected player. No slots. */
+  private flushFurnaceLit(): void {
+    if (this.pendingFurnaceLit.length === 0) return;
+    const pending = this.pendingFurnaceLit.splice(0);
+    const players = this.connectedPlayers();
+    for (const change of pending) {
+      const message = {
+        type: 'furnace_lit' as const,
+        x: change.x,
+        y: change.y,
+        z: change.z,
+        burning: change.burning,
+      };
+      for (const player of players) this.sendTo(player, message);
+    }
+  }
+
   private flushBlockChanges(): void {
     const changes = this.gameplay.consumeBlockChanges();
     if (changes.length === 0) return;
@@ -4519,8 +4550,47 @@ export class WorldInstance {
         y: player.window.y,
         z: player.window.z,
         slots: chest?.slots ?? furnace?.slots,
+        ...(furnace ? {
+          burnTime: furnace.burnTime,
+          burnTotal: furnace.burnTotal,
+          cookTime: furnace.cookTime,
+        } : {}),
       },
     });
+  }
+
+  /**
+   * Players with a furnace GUI open need the server tick's burn/cook/slots.
+   * This is not a full inventory flush and does not touch chest viewers.
+   */
+  private flushOpenFurnaceViews(): void {
+    for (const player of this.connectedPlayers()) {
+      const window = player.window;
+      if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+        player.furnaceSyncSignature = undefined;
+        continue;
+      }
+      const furnace = this.world.furnaces.get(blockKey(window.x, window.y, window.z));
+      const slots = furnace?.slots ?? [null, null, null];
+      const burnTime = furnace?.burnTime ?? 0;
+      const burnTotal = furnace?.burnTotal ?? 0;
+      const cookTime = furnace?.cookTime ?? 0;
+      const signature = `${burnTime}|${burnTotal}|${cookTime}|${slots.map((stack) => (
+        stack ? `${stack.itemId}:${stack.count}` : ''
+      )).join(',')}`;
+      if (player.furnaceSyncSignature === signature) continue;
+      player.furnaceSyncSignature = signature;
+      this.sendTo(player, {
+        type: 'furnace_sync',
+        x: window.x,
+        y: window.y,
+        z: window.z,
+        slots,
+        burnTime,
+        burnTotal,
+        cookTime,
+      });
+    }
   }
 
   /** Other clients with the same chest/furnace open must see the mutation immediately. */
@@ -5061,7 +5131,14 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.networkChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
+          this.sendTo(player, {
+            type: 'chunk_data',
+            cx: x,
+            cz: z,
+            modifications: mods,
+            signs: this.world.signsForChunk(x, z),
+            furnacesLit: this.world.networkFurnaceLit(x, z),
+          });
           this.lastChunkSends += 1;
         }
       }

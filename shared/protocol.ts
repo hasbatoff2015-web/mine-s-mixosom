@@ -827,6 +827,11 @@ export interface ServerWelcomeMessage {
   readonly serverNow?: number;
   /** Live ClanService membership at join. Not a chat-owned copy. */
   readonly inClan?: boolean;
+  /**
+   * Furnaces burning at join. Position and lit bit only — no slots.
+   * Missing on older servers. An empty array means nothing is burning.
+   */
+  readonly furnacesLit?: readonly FurnaceLitState[];
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -922,6 +927,17 @@ export interface ServerActionResultMessage {
   readonly entityUse?: EntityUseActionDiagnostics;
 }
 
+/**
+ * World-space furnace lit bit. Not a container snapshot: no slots, cook time,
+ * or fuel countdown. Snapshot lists contain only `burning: true`.
+ */
+export interface FurnaceLitState {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly burning: boolean;
+}
+
 export interface ServerChunkMessage {
   readonly type: 'chunk_data';
   readonly cx: number;
@@ -929,6 +945,20 @@ export interface ServerChunkMessage {
   /** Modification delta for this chunk only (existing save representation). */
   readonly modifications: Record<string, number>;
   readonly signs?: Record<string, readonly string[]>;
+  /**
+   * Authoritative burning furnaces in this column. Missing on older servers.
+   * An empty array means none of them are burning.
+   */
+  readonly furnacesLit?: readonly FurnaceLitState[];
+}
+
+/** Lit edge for every connected player. Not sent on ticks that do not cross zero. */
+export interface ServerFurnaceLitMessage {
+  readonly type: 'furnace_lit';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly burning: boolean;
 }
 
 export interface ServerSignDataMessage {
@@ -996,7 +1026,23 @@ export interface ServerInventoryMessage {
     readonly y?: number;
     readonly z?: number;
     readonly slots?: unknown;
+    /** Present when the open window is a furnace. Server tick is the source. */
+    readonly burnTime?: number;
+    readonly burnTotal?: number;
+    readonly cookTime?: number;
   };
+}
+
+/** Live furnace slots and progress for players who already have that GUI open. */
+export interface ServerFurnaceSyncMessage {
+  readonly type: 'furnace_sync';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly slots: readonly unknown[];
+  readonly burnTime: number;
+  readonly burnTotal: number;
+  readonly cookTime: number;
 }
 
 export interface ServerHealthMessage {
@@ -1579,6 +1625,7 @@ export type ServerMessage =
   | ServerBlockResultMessage
   | ServerActionResultMessage
   | ServerChunkMessage
+  | ServerFurnaceLitMessage
   | ServerSignDataMessage
   | ServerSignEditorMessage
   | ServerUnloadChunkMessage
@@ -1587,6 +1634,7 @@ export type ServerMessage =
   | ServerPongMessage
   | ServerStatusMessage
   | ServerInventoryMessage
+  | ServerFurnaceSyncMessage
   | ServerHealthMessage
   | ServerEffectsMessage
   | ServerWhMarksMessage
@@ -1651,6 +1699,7 @@ export const SERVER_MESSAGE_TYPES = [
   'block_result',
   'action_result',
   'chunk_data',
+  'furnace_lit',
   'sign_data',
   'sign_editor',
   'unload_chunk',
@@ -1659,6 +1708,7 @@ export const SERVER_MESSAGE_TYPES = [
   'pong',
   'status',
   'inventory',
+  'furnace_sync',
   'health',
   'effects',
   'entity_snapshot',
@@ -1782,6 +1832,25 @@ function finite(value: unknown): value is number {
 
 function bool(value: unknown): value is boolean {
   return typeof value === 'boolean';
+}
+
+function parseFurnaceLitCell(value: unknown): FurnaceLitState | undefined {
+  if (!isRecord(value) || !bool(value.burning)) return undefined;
+  if (!finite(value.x) || !finite(value.y) || !finite(value.z)) return undefined;
+  if (!Number.isInteger(value.x) || !Number.isInteger(value.y) || !Number.isInteger(value.z)) return undefined;
+  if (value.y < 0 || value.y > 255) return undefined;
+  return { x: value.x, y: value.y, z: value.z, burning: value.burning };
+}
+
+/** Snapshot lists keep burning furnaces only. A non-array becomes an empty set. */
+function parseFurnaceLitSnapshot(value: unknown): FurnaceLitState[] {
+  if (!Array.isArray(value)) return [];
+  const cells: FurnaceLitState[] = [];
+  for (const entry of value) {
+    const cell = parseFurnaceLitCell(entry);
+    if (cell?.burning) cells.push(cell);
+  }
+  return cells;
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -2711,6 +2780,33 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (!Array.isArray(raw.effects)) return { error: 'effects invalid' };
       return raw as unknown as ServerEffectsMessage;
     }
+    case 'furnace_sync': {
+      const x = raw.x;
+      const y = raw.y;
+      const z = raw.z;
+      const burnTime = raw.burnTime;
+      const burnTotal = raw.burnTotal;
+      const cookTime = raw.cookTime;
+      if (typeof x !== 'number' || typeof y !== 'number' || typeof z !== 'number'
+        || !Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) {
+        return { error: 'furnace_sync invalid' };
+      }
+      if (!finite(burnTime) || !finite(burnTotal) || !finite(cookTime)) {
+        return { error: 'furnace_sync invalid' };
+      }
+      if (!Array.isArray(raw.slots) || raw.slots.length > 3) return { error: 'furnace_sync invalid' };
+      const ticks = (value: number): number => Math.max(0, Math.min(1_000_000, value));
+      return {
+        type: 'furnace_sync',
+        x,
+        y,
+        z,
+        slots: raw.slots.slice(0, 3),
+        burnTime: ticks(burnTime),
+        burnTotal: ticks(burnTotal),
+        cookTime: ticks(cookTime),
+      };
+    }
     case 'command_result': {
       if (!bool(raw.ok) || typeof raw.name !== 'string' || !Array.isArray(raw.lines)) {
         return { error: 'command_result invalid' };
@@ -2856,6 +2952,18 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'trade invalid' };
       }
       return raw as unknown as ServerTradeMessage;
+    }
+    case 'furnace_lit': {
+      const cell = parseFurnaceLitCell(raw);
+      if (!cell) return { error: 'furnace_lit invalid' };
+      return { type: 'furnace_lit', x: cell.x, y: cell.y, z: cell.z, burning: cell.burning };
+    }
+    case 'welcome':
+    case 'chunk_data': {
+      if (!Object.prototype.hasOwnProperty.call(raw, 'furnacesLit')) {
+        return raw as unknown as ServerMessage;
+      }
+      return { ...raw, furnacesLit: parseFurnaceLitSnapshot(raw.furnacesLit) } as unknown as ServerMessage;
     }
     default:
       return raw as unknown as ServerMessage;

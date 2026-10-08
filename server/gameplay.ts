@@ -28,11 +28,13 @@ import {
 } from '../src/core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
+  applesForBrokenLeaves,
   clearDoorBlocks,
   daylightFactor,
   DEATH_DROP_SCATTER_MULTIPLIER,
   dropScatterVelocity,
   dropScatterOrigin,
+  isLeafBlock,
   performUseHeld,
   placeBlockAt,
   rollBrokenBlockDrops,
@@ -160,6 +162,11 @@ export interface GameplayPlayer {
   combatPoseHistory?: CombatPoseSample[];
   /** True after death loot has been emitted for the current death. */
   deathLootDropped?: boolean;
+  /**
+   * Leaves broken toward the next apple, in 0..4.
+   * Per player, authoritative, not a client prediction counter.
+   */
+  leafBreaksTowardApple?: number;
   pendingSignEdit?: { x: number; y: number; z: number };
 }
 
@@ -826,6 +833,7 @@ export class ServerGameplay {
           }
         }
       }
+      this.dropLeafApple(player, block, x, y, z);
     }
     if (player.gamemode === 'survival') {
       const tool = player.inventory.getSlot(player.selectedSlot);
@@ -1631,6 +1639,23 @@ export class ServerGameplay {
     return dx * dx + dy * dy + dz * dz <= PLAYER_NET_REACH * PLAYER_NET_REACH;
   }
 
+  /**
+   * One apple on every 5th leaf this player breaks. The same counter is used
+   * for a single break and for a counted batch, so a batch cannot mint one
+   * apple per leaf or skip the cycle.
+   */
+  private dropLeafApple(player: GameplayPlayer, block: number, x: number, y: number, z: number): void {
+    if (!isLeafBlock(block)) return;
+    const award = applesForBrokenLeaves(player.leafBreaksTowardApple ?? 0, 1);
+    player.leafBreaksTowardApple = award.next;
+    if (award.apples <= 0) return;
+    this.spawnDroppedStack(
+      createItemStack(ItemId.Apple, award.apples),
+      new Vec3(x + 0.5, y + 0.3, z + 0.5),
+      player.id,
+    );
+  }
+
   private removeDoor(x: number, y: number, z: number): void {
     clearDoorBlocks(this.world, x, y, z);
   }
@@ -1645,8 +1670,10 @@ export class ServerGameplay {
       // Personal storage is player-owned; breaking the block never drops or wipes it.
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
+      const wasBurning = (furnace?.burnTime ?? 0) > 0;
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.furnaces.delete(key);
+      if (wasBurning) this.world.syncFurnaceBurnBit(x, y, z, true);
     }
   }
 
