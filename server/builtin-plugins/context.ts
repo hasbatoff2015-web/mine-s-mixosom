@@ -12,6 +12,7 @@ import type { PlayerSelectionService } from '../services/selection';
 import type { RtpService, RtpSessionManager } from '../services/rtp';
 import type { TeleportHistoryService, TeleportService } from '../services/teleport';
 import type { TradeService } from '../services/trade';
+import type { DuelService } from '../services/duels';
 import type { PluginManager } from '../PluginManager';
 import type { VoxelWorld } from '../../src/world/World';
 import type { HologramNetwork } from '../services/holograms';
@@ -39,6 +40,7 @@ export interface BuiltinPluginContext {
   readonly homes: HomeService;
   readonly friends: FriendsService;
   readonly trade: TradeService;
+  readonly duels: DuelService;
   readonly openAuction: (playerId: string, view: AuctionView) => void;
   readonly openClan: (playerId: string, view: ClanView, extra?: string) => ClanResult | void;
   readonly openGameMenu: (playerId: string, screen?: string) => void;

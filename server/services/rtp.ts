@@ -185,14 +185,21 @@ export interface RtpEnqueueOptions {
 
 export class RtpSessionManager {
   private readonly requests = new Map<string, RtpRequest>();
+  private externalDeny?: (playerId: string) => string | undefined;
 
   constructor(private readonly rtp: RtpService) {}
+
+  setExternalDeny(deny: (playerId: string) => string | undefined): void {
+    this.externalDeny = deny;
+  }
 
   has(playerId: string): boolean {
     return this.requests.has(playerId);
   }
 
   enqueue(playerId: string, options: RtpSearchOptions, extra: RtpEnqueueOptions = {}): { ok: boolean; error?: string } {
+    const denied = this.externalDeny?.(playerId);
+    if (denied) return { ok: false, error: denied };
     if (this.requests.has(playerId)) return { ok: false, error: 'Already searching for a safe location.' };
     this.requests.set(playerId, {
       playerId,

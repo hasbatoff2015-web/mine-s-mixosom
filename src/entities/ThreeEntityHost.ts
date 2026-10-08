@@ -48,6 +48,15 @@ export const SKELETON_RANGED_ARM_POSE = Object.freeze({
   draw: Object.freeze({ x: 1.10, y: 0.55, z: 0.15 }),
 });
 
+/** Existing singleplayer creeper swell. Fuse seconds come from simulation or a snapshot. */
+export function creeperFuseVisualScale(fuseSeconds: number): readonly [number, number, number] {
+  const fuseProgress = THREE.MathUtils.clamp(fuseSeconds / 1.5, 0, 1);
+  const pulse = fuseProgress > 0
+    ? Math.sin(fuseSeconds * (10 + fuseProgress * 18)) * 0.025 * fuseProgress
+    : 0;
+  return [1 + pulse, 1 + fuseProgress * 0.08, 1 + pulse];
+}
+
 export class ThreeEntityHost implements EntityHost {
   readonly hasVisuals = true;
   private itemVisuals?: ItemVisualFactory;
@@ -318,11 +327,8 @@ export class ThreeEntityHost implements EntityHost {
       visual.rotation.z = humanoidDeathRotationZ(progress);
       visual.scale.setScalar(humanoidDeathScale(progress));
     } else if (state.kind === 'creeper') {
-      const fuseProgress = THREE.MathUtils.clamp(state.fuseSeconds / 1.5, 0, 1);
-      const pulse = fuseProgress > 0
-        ? Math.sin(state.fuseSeconds * (10 + fuseProgress * 18)) * 0.025 * fuseProgress
-        : 0;
-      visual.scale.set(1 + pulse, 1 + fuseProgress * 0.08, 1 + pulse);
+      const [scaleX, scaleY, scaleZ] = creeperFuseVisualScale(state.fuseSeconds);
+      visual.scale.set(scaleX, scaleY, scaleZ);
       visual.rotation.z = 0;
     } else {
       visual.scale.setScalar(1);

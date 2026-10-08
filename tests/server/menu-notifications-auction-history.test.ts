@@ -27,7 +27,7 @@ import {
   auctionHistoryTitle,
   formatHoursAgo,
 } from '../../shared/auctionHistory';
-import { formatNotificationBadge } from '../../shared/notifications';
+import { formatNotificationBadge, notificationCategoryForButton, notificationCategoryForScreen } from '../../shared/notifications';
 import { displayNameFor } from '../../src/i18n/displayNames';
 import { FRIENDS_DUPLICATE_REQUEST_ERROR } from '../../shared/friends';
 import { TRADE_DUPLICATE_REQUEST_ERROR } from '../../shared/trade';
@@ -248,15 +248,24 @@ describe('NotificationService', () => {
     const store = new JsonFileStore(dir);
     store.save('notifications/unread', { players: { old: { friends: 2 } } });
     const notifications = new NotificationService(store);
-    expect(notifications.counts('old')).toEqual({ friends: 2, clans: 0, auction: 0, trade: 0 });
-    expect(notifications.counts('missing')).toEqual({ friends: 0, clans: 0, auction: 0, trade: 0 });
+    expect(notifications.counts('old')).toEqual({ friends: 2, clans: 0, auction: 0, trade: 0, duels: 0 });
+    expect(notifications.counts('missing')).toEqual({ friends: 0, clans: 0, auction: 0, trade: 0, duels: 0 });
     notifications.notify('bob', 'clans');
     notifications.notify('bob', 'clans');
     notifications.clear('bob', 'clans');
     notifications.notify('bob', 'clans');
+    notifications.notify('bob', 'duels');
     const reloaded = new NotificationService(store);
     expect(reloaded.counts('bob').clans).toBe(1);
+    expect(reloaded.counts('bob').duels).toBe(1);
     expect(reloaded.counts('old').friends).toBe(2);
+    expect(reloaded.counts('old').duels).toBe(0);
+    expect(notificationCategoryForButton('duels')).toBe('duels');
+    expect(notificationCategoryForScreen('duels')).toBe('duels');
+    notifications.clear('bob', 'duels');
+    expect(notifications.counts('bob').duels).toBe(0);
+    notifications.notify('bob', 'duels');
+    expect(notifications.counts('bob').duels).toBe(1);
   });
 });
 

@@ -116,6 +116,7 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
+    this.world.prepareForServerShutdown();
     const seen = new Set<string>();
     for (const [socket, binding] of this.sockets) {
       if (!seen.has(binding.playerId)) {
@@ -532,6 +533,9 @@ export class AnarchyServer {
         return;
       case 'menu_action':
         this.world.handleMenuAction(player, message);
+        return;
+      case 'direct_message_action':
+        this.world.handleDirectMessage(player, message, { connectionId });
         return;
       case 'buyer_interact':
         this.world.interactBuyer(player, message.buyerId);

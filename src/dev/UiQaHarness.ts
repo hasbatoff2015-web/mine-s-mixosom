@@ -1,7 +1,8 @@
 import { createItemStack, Inventory } from '../inventory';
 import type { WorldSummary } from '../save/types';
 import { GameUI } from '../ui/GameUI';
-import type { ClientClanActionMessage, ClientMenuActionMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import type { ClientClanActionMessage, ClientDirectMessageActionMessage, ClientMenuActionMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
+import { normalizeDirectMessageText } from '../../shared/directMessages';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import { TRADE_SLOT_COUNT } from '../../shared/trade';
 
@@ -15,6 +16,7 @@ export type UiQaScene =
   | 'menu-root'
   | 'menu-homes'
   | 'menu-friends'
+  | 'menu-friend-chat'
   | 'menu-trade'
   | 'menu-rating'
   | 'clan-ranking'
@@ -87,6 +89,7 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
     });
   };
 
+  let menuScreen: ServerMenuMessage['screen'] = 'root';
   const menuActions = {
     send: (action: ClientMenuActionMessage) => {
       if (action.action === 'open' && action.screen === 'rating') {
@@ -95,6 +98,21 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
       }
       if (action.action === 'rating_set' && action.ratingKind) {
         openMenu({ ...ratingState(), ratingKind: action.ratingKind as ServerMenuMessage['ratingKind'] });
+        return;
+      }
+      if (action.action === 'friends_chat' && action.playerId) {
+        openMenu(friendChatState(action.playerId));
+        ui.applyDirectMessage({
+          type: 'direct_message',
+          event: 'history',
+          friendId: action.playerId,
+          hasMore: false,
+          messages: friendChatFixture(action.playerId),
+        });
+        return;
+      }
+      if (action.action === 'back' && menuScreen === 'friend-chat') {
+        openMenu(friendsState());
         return;
       }
       if (action.action === 'back' || action.action === 'open') {
@@ -107,12 +125,97 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
         });
       }
     },
+    sendDirect: (action: ClientDirectMessageActionMessage) => {
+      if (action.action !== 'send') return;
+      const ackDelay = Number(new URLSearchParams(location.search).get('qaDmAckDelay') ?? '0');
+      const deliver = (): void => {
+        const normalized = normalizeDirectMessageText(action.text ?? '');
+        if (!normalized.ok) {
+          ui.applyDirectMessage({
+            type: 'direct_message',
+            event: 'error',
+            friendId: action.friendId,
+            error: normalized.error,
+            ...(action.clientRequestId ? { clientRequestId: action.clientRequestId } : {}),
+          });
+          return;
+        }
+        ui.applyDirectMessage({
+          type: 'direct_message',
+          event: 'append',
+          friendId: action.friendId,
+          ...(action.clientRequestId ? { clientRequestId: action.clientRequestId } : {}),
+          messages: [{
+            messageId: `qa-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            seq: Date.now(),
+            senderId: 'self',
+            recipientId: action.friendId,
+            text: normalized.text,
+            createdAt: Date.now(),
+          }],
+        });
+      };
+      if (Number.isFinite(ackDelay) && ackDelay > 0) window.setTimeout(deliver, ackDelay);
+      else deliver();
+    },
+    selfId: 'self',
     close: () => ui.closeGameMenu(),
   };
   const openMenu = (state: ServerMenuMessage): void => {
+    menuScreen = state.screen;
     showHud(20, 20);
     ui.openGameMenu(state, menuActions);
   };
+
+  function friendsState(): ServerMenuMessage {
+    return {
+      type: 'menu',
+      screen: 'friends',
+      title: 'Друзья',
+      allowFriendTeleport: true,
+      friendCount: 4,
+      friendMax: 50,
+      friends: [
+        { playerId: '1', name: 'ThirteenChars', online: true, canTeleport: true, unreadCount: 3 },
+        { playerId: '2', name: 'Bo', online: true, canTeleport: false, unreadCount: 0 },
+        { playerId: '3', name: 'BestFriend', online: false, canTeleport: false, unreadCount: 100 },
+        { playerId: '4', name: 'AnotherPlayer', online: false, canTeleport: true, unreadCount: 1 },
+      ],
+    };
+  }
+
+  function friendChatState(friendId: string): ServerMenuMessage {
+    const row = friendsState().friends?.find((entry) => entry.playerId === friendId);
+    return {
+      type: 'menu',
+      screen: 'friend-chat',
+      title: 'Чат',
+      activeFriendId: friendId,
+      activeFriendName: row?.name ?? friendId,
+      activeFriendOnline: row?.online === true,
+    };
+  }
+
+  function friendChatFixture(friendId: string) {
+    const hostile = '<img src=x onerror=alert(1)>';
+    const lines = [
+      { senderId: friendId, text: 'Привет' },
+      { senderId: 'self', text: 'На месте' },
+      { senderId: friendId, text: hostile },
+      { senderId: 'self', text: 'я'.repeat(80) },
+    ];
+    for (let index = 0; index < 10; index += 1) {
+      lines.push({ senderId: index % 2 === 0 ? friendId : 'self', text: `строка ${index + 1}` });
+    }
+    return lines.map((line, index) => ({
+      messageId: `qa-${index + 1}`,
+      seq: index + 1,
+      senderId: line.senderId,
+      recipientId: line.senderId === 'self' ? friendId : 'self',
+      text: line.text,
+      createdAt: Date.UTC(2026, 9, 5, 12, index),
+    }));
+  }
 
   function ratingState(): ServerMenuMessage {
     return {
@@ -173,19 +276,15 @@ export function startUiQaHarness(canvas: HTMLCanvasElement, uiRoot: HTMLElement,
       ],
     });
   } else if (scene === 'menu-friends') {
-    openMenu({
-      type: 'menu',
-      screen: 'friends',
-      title: 'Друзья',
-      allowFriendTeleport: true,
-      friendCount: 4,
-      friendMax: 50,
-      friends: [
-        { playerId: '1', name: 'ViBeMiXoS1K', online: true, canTeleport: true },
-        { playerId: '2', name: 'PlayerOne', online: true, canTeleport: true },
-        { playerId: '3', name: 'BestFriend', online: false, canTeleport: false },
-        { playerId: '4', name: 'AnotherPlayer', online: false, canTeleport: false },
-      ],
+    openMenu(friendsState());
+  } else if (scene === 'menu-friend-chat') {
+    openMenu(friendChatState('1'));
+    ui.applyDirectMessage({
+      type: 'direct_message',
+      event: 'history',
+      friendId: '1',
+      hasMore: false,
+      messages: friendChatFixture('1'),
     });
   } else if (scene === 'menu-trade') {
     openMenu({

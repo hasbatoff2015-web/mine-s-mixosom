@@ -11,6 +11,11 @@ export interface TexturedCuboidDefinition {
   /** World-space dimensions. Defaults to `size / 16`. */
   readonly physicalSize?: CuboidSize;
   readonly mirror?: boolean;
+  /**
+   * Extra horizontal flip for individual faces. XOR with `mirror`, so a
+   * definition that omits this map keeps the historical whole-cuboid U order.
+   */
+  readonly faceUvFlipU?: Partial<Readonly<Record<CuboidFace, boolean>>>;
   /** Optional authored face islands for sheets whose visible pixels do not fill the legacy cross. */
   readonly faceUvRects?: Partial<Readonly<Record<CuboidFace, LogicalUvRect>>>;
   /** Expands each side in world units, used by fur/eyes overlay layers. */
@@ -116,7 +121,8 @@ export function createTexturedCuboidGeometry(definition: TexturedCuboidDefinitio
 
   for (const face of FACES) {
     const base = positions.length / 3;
-    const faceUvs = rectUvs(rects[face.face], definition.logicalTextureSize, definition.mirror === true);
+    const flipU = (definition.mirror === true) !== (definition.faceUvFlipU?.[face.face] === true);
+    const faceUvs = rectUvs(rects[face.face], definition.logicalTextureSize, flipU);
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
       positions.push(

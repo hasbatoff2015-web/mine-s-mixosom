@@ -1,5 +1,7 @@
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
+import { DIRECT_MESSAGE_PAGE } from './directMessages';
+import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
@@ -39,6 +41,14 @@ export type InventoryActionKind =
   | 'click'
   | 'drop_selected'
   | 'drop_cursor'
+  | 'drop_slot'
+  | 'move_stack'
+  | 'split_stack'
+  | 'hotbar_swap'
+  | 'offhand_swap'
+  | 'collect_matching'
+  | 'drag_distribute'
+  | 'quick_move_matching'
   | 'select'
   | 'open'
   | 'close'
@@ -387,10 +397,22 @@ export interface ClientInventoryActionMessage {
   readonly type: 'inventory_action';
   readonly action: InventoryActionKind;
   readonly key?: string;
+  readonly sourceKey?: string;
+  readonly targetKey?: string;
+  readonly keys?: readonly string[];
   readonly button?: 'left' | 'right';
   readonly shift?: boolean;
   readonly slot?: number;
   readonly count?: number;
+  /** Drop the whole authoritative stack. Client item ids are not accepted. */
+  readonly all?: boolean;
+  /**
+   * Stack identity the player saw when the gesture started.
+   * Move, drop, and split compare it with the live stack and reject a mismatch.
+   * `quick_move_matching` uses it as a merge-identity hint with no count.
+   * The server only selects live stacks with that identity. It never creates an item from it.
+   */
+  readonly signature?: string;
   readonly kind?: ContainerKind;
   readonly x?: number;
   readonly y?: number;
@@ -659,6 +681,7 @@ export type MenuActionKind =
   | 'friends_delete'
   | 'friends_confirm_delete'
   | 'friends_cancel_delete'
+  | 'friends_chat'
   | 'set_friend_name'
   | 'clans_mine'
   | 'clans_list'
@@ -684,7 +707,11 @@ export type MenuActionKind =
   | 'auction_sell'
   | 'auction_history'
   | 'rating_set'
-  | 'rating_page';
+  | 'rating_page'
+  | 'duel_refresh'
+  | 'duel_challenge'
+  | 'duel_accept'
+  | 'duel_decline';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -692,6 +719,7 @@ export type GameMenuScreenKind =
   | 'home-delete-confirm'
   | 'friends'
   | 'friend-delete-confirm'
+  | 'friend-chat'
   | 'clans'
   | 'claims'
   | 'claim-settings'
@@ -700,6 +728,7 @@ export type GameMenuScreenKind =
   | 'auction'
   | 'auction-history'
   | 'rating'
+  | 'duels'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -732,6 +761,18 @@ export interface ClientTradeActionMessage {
   readonly money?: string | number;
 }
 
+export type DirectMessageActionKind = 'send' | 'history';
+
+export interface ClientDirectMessageActionMessage {
+  readonly type: 'direct_message_action';
+  readonly action: DirectMessageActionKind;
+  readonly friendId: string;
+  readonly text?: string;
+  readonly beforeSeq?: number;
+  /** Opaque send correlation. Not a message id, sender, or timestamp. */
+  readonly clientRequestId?: string;
+}
+
 export type ClientMessage =
   | ClientJoinMessage
   | ClientAppearanceMessage
@@ -759,7 +800,8 @@ export type ClientMessage =
   | ClientBuyerInteractMessage
   | ClientBuyerActionMessage
   | ClientMenuActionMessage
-  | ClientTradeActionMessage;
+  | ClientTradeActionMessage
+  | ClientDirectMessageActionMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1091,6 +1133,13 @@ export interface NetworkHologram {
   readonly backgroundHeight: number;
   readonly billboard: boolean;
   readonly yaw: number;
+  /** Missing on older payloads means interactive. */
+  readonly interactive?: boolean;
+  /**
+   * Missing or false keeps the historical text-plane aspect.
+   * True sizes the plane to the 512×256 text canvas so glyphs are not stretched.
+   */
+  readonly preserveTextAspect?: boolean;
 }
 
 export interface ServerHologramsMessage {
@@ -1395,6 +1444,17 @@ export interface NetworkMenuFriend {
   readonly online: boolean;
   readonly canTeleport: boolean;
   readonly requestId?: string;
+  /** Server-authoritative DM unread. Omitted means zero. */
+  readonly unreadCount?: number;
+}
+
+export interface NetworkDirectMessage {
+  readonly messageId: string;
+  readonly seq: number;
+  readonly senderId: string;
+  readonly recipientId: string;
+  readonly text: string;
+  readonly createdAt: number;
 }
 
 export interface NetworkMenuClaim {
@@ -1443,6 +1503,9 @@ export interface ServerMenuMessage {
   readonly friendMax?: number;
   readonly pendingFriendId?: string;
   readonly pendingFriendName?: string;
+  readonly activeFriendId?: string;
+  readonly activeFriendName?: string;
+  readonly activeFriendOnline?: boolean;
   readonly claims?: readonly NetworkMenuClaim[];
   readonly claimCount?: number;
   readonly claimMax?: number;
@@ -1464,6 +1527,29 @@ export interface ServerMenuMessage {
   readonly personalText?: string;
   readonly notifications?: NetworkMenuNotifications;
   readonly auctionHistory?: readonly NetworkAuctionHistoryRow[];
+  readonly duelStats?: DuelMenuStats;
+  readonly duelIncoming?: readonly DuelIncomingRow[];
+  readonly duelOutgoing?: DuelOutgoingRow;
+  readonly duelNearby?: readonly DuelNearbyRow[];
+  readonly duelArenaBusy?: boolean;
+  readonly duelArenaConfigured?: boolean;
+  readonly duelAvailable?: boolean;
+}
+
+export interface ServerDuelEffectMessage {
+  readonly type: 'duel_effect';
+  readonly effect: 'fight_start_burst';
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
+export interface ServerPlayerLookMessage {
+  readonly type: 'player_look';
+  readonly reason: 'duel_start' | 'duel_restore';
+  readonly yaw: number;
+  readonly pitch: number;
 }
 
 export interface NetworkMenuNotifications {
@@ -1471,6 +1557,7 @@ export interface NetworkMenuNotifications {
   readonly clans: number;
   readonly auction: number;
   readonly trade: number;
+  readonly duels: number;
 }
 
 export interface NetworkAuctionHistoryRow {
@@ -1489,6 +1576,19 @@ export interface NetworkRankingRow {
   readonly valueLabel: string;
   readonly metric: 'money' | 'kills';
   readonly highlight: boolean;
+}
+
+export type DirectMessageEvent = 'history' | 'append' | 'error';
+
+export interface ServerDirectMessage {
+  readonly type: 'direct_message';
+  readonly event: DirectMessageEvent;
+  readonly friendId: string;
+  readonly messages?: readonly NetworkDirectMessage[];
+  readonly hasMore?: boolean;
+  readonly error?: string;
+  /** Echoed to the sender of this request. Absent on history and on the recipient copy. */
+  readonly clientRequestId?: string;
 }
 
 export interface ServerTradeMessage {
@@ -1552,7 +1652,10 @@ export type ServerMessage =
   | ServerBuyersMessage
   | ServerBuyerMessage
   | ServerMenuMessage
-  | ServerTradeMessage;
+  | ServerTradeMessage
+  | ServerDirectMessage
+  | ServerDuelEffectMessage
+  | ServerPlayerLookMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1582,6 +1685,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'clan_action',
   'menu_action',
   'trade_action',
+  'direct_message_action',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1623,11 +1727,20 @@ export const SERVER_MESSAGE_TYPES = [
   'buyer',
   'menu',
   'trade',
+  'direct_message',
+  'duel_effect',
+  'player_look',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
-  'click', 'drop_selected', 'drop_cursor', 'select', 'open', 'close', 'recipe', 'craft_recipe',
+  'click', 'drop_selected', 'drop_cursor', 'drop_slot', 'move_stack', 'split_stack',
+  'hotbar_swap', 'offhand_swap', 'collect_matching', 'drag_distribute', 'quick_move_matching',
+  'select', 'open', 'close', 'recipe', 'craft_recipe',
 ];
+
+/** Enough for player storage, equipment, a chest, a furnace, and a craft grid. */
+const MAX_INVENTORY_KEYS = 80;
+const MAX_INVENTORY_SIGNATURE = 480;
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
   'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
@@ -1668,18 +1781,19 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'open', 'close', 'back', 'spawn',
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
-  'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'set_friend_name',
+  'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'friends_chat', 'set_friend_name',
   'clans_mine', 'clans_list', 'clans_create', 'clans_invitations',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
   'trade_request', 'trade_accept', 'trade_reject', 'trade_refresh', 'set_trade_name',
   'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
+  'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
-  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'closed',
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {
@@ -1753,10 +1867,62 @@ function optionalInteger(value: unknown): number | undefined {
   return value;
 }
 
+function parseNetworkDirectMessage(raw: unknown): NetworkDirectMessage | undefined {
+  if (!isRecord(raw)) return undefined;
+  if (typeof raw.messageId !== 'string' || raw.messageId.length === 0 || raw.messageId.length > 80) return undefined;
+  if (!Number.isInteger(raw.seq) || !finite(raw.seq) || raw.seq < 1) return undefined;
+  if (typeof raw.senderId !== 'string' || raw.senderId.length === 0 || raw.senderId.length > 64) return undefined;
+  if (typeof raw.recipientId !== 'string' || raw.recipientId.length === 0 || raw.recipientId.length > 64) return undefined;
+  if (typeof raw.text !== 'string' || raw.text.length === 0 || raw.text.length > MAX_CHAT_LENGTH) return undefined;
+  if (!finite(raw.createdAt) || raw.createdAt < 0) return undefined;
+  return {
+    messageId: raw.messageId,
+    seq: raw.seq,
+    senderId: raw.senderId,
+    recipientId: raw.recipientId,
+    text: raw.text,
+    createdAt: raw.createdAt,
+  };
+}
+
 function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/** Reject over-long keys instead of slicing them into a different slot. */
+function boundedKey(value: unknown, error: string, max = 64): string | undefined | { readonly error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || value.length < 1 || value.length > max) return { error };
+  return value;
+}
+
+function parseInventoryKeyList(value: unknown): readonly string[] | undefined | { readonly error: string } {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_INVENTORY_KEYS) {
+    return { error: 'inventory_action.keys invalid' };
+  }
+  const keys: string[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== 'string' || entry.length < 1 || entry.length > 64) {
+      return { error: 'inventory_action.keys invalid' };
+    }
+    if (seen.has(entry)) continue;
+    seen.add(entry);
+    keys.push(entry);
+  }
+  return keys;
+}
+
+/** Correlation token. Missing is valid. Over-long or non-string is not, because slicing would break the match. */
+function parseClientRequestId(value: unknown, error: string): string | undefined | { error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return { error };
+  if (value.length === 0) return undefined;
+  if (value.length > 64) return { error };
+  return value;
 }
 
 export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
@@ -1784,6 +1950,8 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     backgroundHeight: appearance.backgroundHeight,
     billboard: appearance.billboard,
     yaw,
+    interactive: raw.interactive !== false,
+    preserveTextAspect: raw.preserveTextAspect === true,
   };
 }
 
@@ -2057,6 +2225,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         return { error: 'inventory_action.button invalid' };
       }
       if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'inventory_action.shift invalid' };
+      if (raw.all !== undefined && !bool(raw.all)) return { error: 'inventory_action.all invalid' };
       if (raw.kind !== undefined && !(CONTAINER_KINDS as readonly string[]).includes(raw.kind as string)) {
         return { error: 'inventory_action.kind invalid' };
       }
@@ -2074,16 +2243,43 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         || (raw.z !== undefined && z === undefined)) {
         return { error: 'inventory_action coordinates invalid' };
       }
-      const key = optionalString(raw.key, 64);
+      const key = boundedKey(raw.key, 'inventory_action.key invalid');
+      if (key && typeof key === 'object') return key;
+      const sourceKey = boundedKey(raw.sourceKey, 'inventory_action.sourceKey invalid');
+      if (sourceKey && typeof sourceKey === 'object') return sourceKey;
+      const targetKey = boundedKey(raw.targetKey, 'inventory_action.targetKey invalid');
+      if (targetKey && typeof targetKey === 'object') return targetKey;
+      const signature = boundedKey(raw.signature, 'inventory_action.signature invalid', MAX_INVENTORY_SIGNATURE);
+      if (signature && typeof signature === 'object') return signature;
+      const keys = parseInventoryKeyList(raw.keys);
+      if (keys && 'error' in keys) return keys;
       const recipeId = optionalString(raw.recipeId, 64);
+      const action = raw.action as InventoryActionKind;
+      if (action === 'move_stack' && (typeof sourceKey !== 'string' || typeof targetKey !== 'string')) {
+        return { error: 'inventory_action.move_stack invalid' };
+      }
+      if ((action === 'drop_slot' || action === 'split_stack' || action === 'offhand_swap' || action === 'quick_move_matching')
+        && typeof key !== 'string') {
+        return { error: 'inventory_action.key invalid' };
+      }
+      if (action === 'split_stack' && count === undefined) return { error: 'inventory_action.count invalid' };
+      if (action === 'hotbar_swap' && (typeof key !== 'string' || slot === undefined || slot < 0 || slot > 8)) {
+        return { error: 'inventory_action.hotbar_swap invalid' };
+      }
+      if (action === 'drag_distribute' && !keys) return { error: 'inventory_action.keys invalid' };
       return {
         type: 'inventory_action',
-        action: raw.action as InventoryActionKind,
-        ...(key ? { key } : {}),
+        action,
+        ...(typeof key === 'string' ? { key } : {}),
+        ...(typeof sourceKey === 'string' ? { sourceKey } : {}),
+        ...(typeof targetKey === 'string' ? { targetKey } : {}),
+        ...(keys ? { keys } : {}),
         ...(raw.button ? { button: raw.button } : {}),
         ...(raw.shift === true ? { shift: true } : {}),
         ...(slot !== undefined ? { slot } : {}),
         ...(count !== undefined ? { count } : {}),
+        ...(raw.all === true ? { all: true } : {}),
+        ...(typeof signature === 'string' ? { signature } : {}),
         ...(raw.kind ? { kind: raw.kind as ContainerKind } : {}),
         ...(x !== undefined ? { x } : {}),
         ...(y !== undefined ? { y } : {}),
@@ -2358,6 +2554,36 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(price !== undefined ? { price } : {}),
         ...(name !== undefined ? { name } : {}),
         ...(hologramText !== undefined ? { hologramText } : {}),
+      };
+    }
+    case 'direct_message_action': {
+      if (raw.action !== 'send' && raw.action !== 'history') {
+        return { error: 'direct_message_action.action invalid' };
+      }
+      const friendId = optionalString(raw.friendId, 64);
+      if (!friendId) return { error: 'direct_message_action.friendId invalid' };
+      if (raw.action === 'send') {
+        if (typeof raw.text !== 'string') return { error: 'direct_message_action.text invalid' };
+        if (raw.text.length > 512) return { error: 'direct_message_action.text too long' };
+        const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message_action.clientRequestId invalid');
+        if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+        return {
+          type: 'direct_message_action',
+          action: 'send',
+          friendId,
+          text: raw.text,
+          ...(clientRequestId ? { clientRequestId } : {}),
+        };
+      }
+      if (raw.beforeSeq !== undefined && (!Number.isInteger(raw.beforeSeq) || !finite(raw.beforeSeq) || raw.beforeSeq < 0)) {
+        return { error: 'direct_message_action.beforeSeq invalid' };
+      }
+      const beforeSeq = typeof raw.beforeSeq === 'number' ? raw.beforeSeq : undefined;
+      return {
+        type: 'direct_message_action',
+        action: 'history',
+        friendId,
+        ...(beforeSeq !== undefined ? { beforeSeq } : {}),
       };
     }
     case 'menu_action': {
@@ -2666,6 +2892,54 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'buyer invalid' };
       }
       return raw as unknown as ServerBuyerMessage;
+    }
+    case 'direct_message': {
+      if (raw.event !== 'history' && raw.event !== 'append' && raw.event !== 'error') {
+        return { error: 'direct_message.event invalid' };
+      }
+      const friendId = optionalString(raw.friendId, 64);
+      if (!friendId) return { error: 'direct_message.friendId invalid' };
+      let messages: NetworkDirectMessage[] | undefined;
+      if (raw.messages !== undefined) {
+        if (!Array.isArray(raw.messages) || raw.messages.length > DIRECT_MESSAGE_PAGE) {
+          return { error: 'direct_message.messages invalid' };
+        }
+        messages = [];
+        for (const entry of raw.messages) {
+          const parsed = parseNetworkDirectMessage(entry);
+          if (!parsed) return { error: 'direct_message.messages invalid' };
+          messages.push(parsed);
+        }
+      }
+      if (raw.hasMore !== undefined && typeof raw.hasMore !== 'boolean') {
+        return { error: 'direct_message.hasMore invalid' };
+      }
+      if (raw.error !== undefined && typeof raw.error !== 'string') {
+        return { error: 'direct_message.error invalid' };
+      }
+      const errorText = typeof raw.error === 'string' ? raw.error.slice(0, 200) : undefined;
+      const clientRequestId = parseClientRequestId(raw.clientRequestId, 'direct_message.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+      return {
+        type: 'direct_message',
+        event: raw.event,
+        friendId,
+        ...(messages ? { messages } : {}),
+        ...(typeof raw.hasMore === 'boolean' ? { hasMore: raw.hasMore } : {}),
+        ...(errorText ? { error: errorText } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
+      };
+    }
+    case 'duel_effect': {
+      if (raw.effect !== 'fight_start_burst') return { error: 'duel_effect.effect invalid' };
+      if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z)) return { error: 'duel_effect coordinates invalid' };
+      return { type: 'duel_effect', effect: 'fight_start_burst', x: raw.x, y: raw.y, z: raw.z };
+    }
+    case 'player_look': {
+      const reason = raw.reason === 'duel_start' || raw.reason === 'duel_restore' ? raw.reason : undefined;
+      if (!reason) return { error: 'player_look.reason invalid' };
+      if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'player_look invalid' };
+      return { type: 'player_look', reason, yaw: raw.yaw, pitch: raw.pitch };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

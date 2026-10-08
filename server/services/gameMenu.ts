@@ -33,6 +33,7 @@ export interface GameMenuSession {
   friendNameText: string;
   pendingFriendId?: string;
   pendingFriendName?: string;
+  activeFriendId?: string;
   claimId?: string;
   claimNameText: string;
   claimMemberText: string;
@@ -58,7 +59,7 @@ export function createMenuSession(): GameMenuSession {
 
 export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   if (screen === 'home-delete-confirm') return 'homes';
-  if (screen === 'friend-delete-confirm') return 'friends';
+  if (screen === 'friend-delete-confirm' || screen === 'friend-chat') return 'friends';
   if (screen === 'auction-history') return 'auction';
   if (screen === 'claim-settings' || screen === 'claim-delete-confirm') {
     return screen === 'claim-delete-confirm' ? 'claim-settings' : 'claims';
@@ -127,6 +128,7 @@ export function buildTradeMessage(
 
 export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'homes' || screen === 'home-delete-confirm') return 'Дома';
+  if (screen === 'friend-chat') return 'Чат';
   if (screen === 'friends' || screen === 'friend-delete-confirm') return 'Друзья';
   if (screen === 'clans') return 'Кланы';
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';
@@ -134,6 +136,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'auction') return 'Аукцион';
   if (screen === 'auction-history') return 'История сделок';
   if (screen === 'rating') return 'Рейтинг';
+  if (screen === 'duels') return 'Дуэли';
   return 'Меню';
 }
 
