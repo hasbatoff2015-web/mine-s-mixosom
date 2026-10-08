@@ -1,5 +1,28 @@
 # Roadmap
 
+## 2026-10-08: Collectible painting display names
+
+- [x] Russian names are `Коллекционная картина #1` through `#20`. English names are `Collectible Painting #1` through `#20`.
+- [x] Every painting uses the description `коллекционный предмет` through the existing yellow hint.
+- [x] Item ids, textures, placement, drops, and auction identity stay the same. No uniqueness ledger.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
+## 2026-10-08: Collectible paintings at 64×64, explosion drop
+
+- [x] Nearest-neighbor resize of all twenty PNGs to 64×64. No new runtime dependency.
+- [x] `DestroyedBlock.previousState` is snapshotted in `resolveExplosion` before the batch clear.
+- [x] Direct blast, support-only, and support-plus-painting each emit one exact item. A denied cell emits none.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
+## 2026-10-08: Collectible paintings
+
+- [x] Twenty hidden Creative resource items and one generic wall block. Survival has no recipe, mob drop, loot, or worldgen source.
+- [x] Hand placement on a vertical solid face. The held stack is the only variant. Creative does not consume. Survival drops that exact item once.
+- [x] `PaintingRenderer` draws one oak frame outside the 32px atlas. Save and network keep only the twenty known ids.
+- [x] Auction lists them as ordinary stacks. The yellow description reuses the existing hint. Claim text still wins.
+- [ ] No automatic world distribution, now or as a hook for a later pass. Admins hang copies themselves.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
 ## 2026-10-08: Furnace world-space lit sync
 
 - [x] `furnace_lit` goes to every connected player when burn state crosses zero. No slots.

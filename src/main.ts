@@ -41,6 +41,7 @@ if (import.meta.env.DEV) {
   const qaFarming = search.get('qaFarming') === '1' || search.get('qaFarming') === 'true';
   const qaBed = search.get('qaBed') === '1';
   const qaSign = search.get('qaSign') === '1';
+  const qaPainting = search.get('qaPainting') === '1';
   const qaAudio = search.get('qaAudio') === '1';
   const requestedView = search.get('view');
   const petState = search.get('petState');
@@ -96,6 +97,11 @@ if (import.meta.env.DEV) {
     runningDevHarness = true;
     void import('./dev/SignQaHarness').then(async ({ startSignQaHarness }) => {
       disposeApplication = await startSignQaHarness(canvas, uiRoot);
+    });
+  } else if (qaPainting) {
+    runningDevHarness = true;
+    void import('./dev/PaintingQaHarness').then(async ({ startPaintingQaHarness }) => {
+      disposeApplication = await startPaintingQaHarness(canvas, uiRoot);
     });
   } else if (qaAudio) {
     runningDevHarness = true;

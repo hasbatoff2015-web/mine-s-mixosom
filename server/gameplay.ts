@@ -62,7 +62,7 @@ import {
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, isManualDropAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { ItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
+import { ItemId, collectiblePaintingDropItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { WhMarks } from '../src/combat/WhMarks';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
@@ -819,17 +819,22 @@ export class ServerGameplay {
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
     if (player.gamemode === 'survival' && harvestable) {
-      const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
-      if (farmingDrops !== undefined) {
-        for (const drop of farmingDrops) if (drop.count > 0) {
-          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-        }
-      } else if (definition.drop) {
-        const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
-        for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
-          const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
-          if (count > 0) {
-            this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+      const paintingItemId = collectiblePaintingDropItemId(block, blockState);
+      if (paintingItemId) {
+        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+      } else {
+        const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
+        if (farmingDrops !== undefined) {
+          for (const drop of farmingDrops) if (drop.count > 0) {
+            this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+          }
+        } else if (definition.drop) {
+          const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
+          for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
+            const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
+            if (count > 0) {
+              this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+            }
           }
         }
       }
@@ -1682,6 +1687,11 @@ export class ServerGameplay {
     if (events.length) this.redstone.notifyBlocksChanged(events);
     for (const event of events) {
       if (event.reason === 'lava') continue;
+      const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
+      if (paintingItemId) {
+        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        continue;
+      }
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) {
@@ -1783,6 +1793,12 @@ export class ServerGameplay {
         z: entry.z,
         blockId: entry.previous,
       });
+      const paintingItemId = collectiblePaintingDropItemId(entry.previous, entry.previousState);
+      if (!paintingItemId) continue;
+      this.spawnDroppedStack(
+        createItemStack(paintingItemId, 1),
+        new Vec3(entry.x + 0.5, entry.y + 0.3, entry.z + 0.5),
+      );
     }
   }
 

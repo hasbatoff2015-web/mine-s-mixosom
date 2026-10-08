@@ -2,6 +2,11 @@ import { BLOCKS, BlockId, type BlockDefinition } from '../blocks';
 import { requiredDisplayName, itemDescriptionFor } from '../i18n';
 import { blockItemIconTexture } from '../blocks/placement';
 import {
+  COLLECTIBLE_PAINTING_IDS,
+  collectiblePaintingTag,
+  collectiblePaintingTexture,
+} from './collectiblePaintings';
+import {
   ItemId,
   type ArmorItemDefinition,
   type ArmorSlot,
@@ -325,11 +330,30 @@ const equipment: readonly ItemDefinition[] = [
   ...armor,
 ];
 
+const collectiblePaintings: readonly ResourceItemDefinition[] = COLLECTIBLE_PAINTING_IDS.map((id) => {
+  const description = itemDescriptionFor(id);
+  const texture = collectiblePaintingTexture(id);
+  if (!texture) throw new Error(`Missing collectible painting texture for ${id}`);
+  return Object.freeze({
+    id,
+    name: requiredDisplayName(id),
+    kind: 'resource' as const,
+    maxStack: 1,
+    texture,
+    tags: Object.freeze(['collectible', 'painting', 'collectible_painting', collectiblePaintingTag(id)]),
+    placesBlockId: BlockId.CollectiblePainting,
+    hiddenFromGameplay: true,
+    creativeCatalog: true,
+    ...(description === undefined ? {} : { description }),
+  });
+});
+
 export const ITEMS: readonly ItemDefinition[] = Object.freeze([
   ...blockItems,
   ...resources,
   ...foods,
   ...equipment,
+  ...collectiblePaintings,
 ]);
 
 const itemRegistry = new Map<string, ItemDefinition>();

@@ -1,3 +1,4 @@
+import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
@@ -290,6 +291,7 @@ export interface NetworkBlockState {
   readonly age?: number;
   readonly bedPart?: 'foot' | 'head';
   readonly signRotation?: number;
+  readonly paintingItemId?: string;
 }
 
 export interface BlockChange {
@@ -1981,6 +1983,7 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
     age?: number;
     bedPart?: 'foot' | 'head';
     signRotation?: number;
+    paintingItemId?: string;
   } = {};
   if (typeof raw.powered === 'boolean') state.powered = raw.powered;
   if (Number.isInteger(raw.power) && finite(raw.power)) {
@@ -2012,6 +2015,8 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
   if (Number.isInteger(raw.signRotation) && finite(raw.signRotation)) {
     state.signRotation = clampNumber(Math.floor(raw.signRotation), 0, 15);
   }
+  const paintingItemId = typeof raw.paintingItemId === 'string' ? raw.paintingItemId : undefined;
+  if (isCollectiblePaintingItemId(paintingItemId)) state.paintingItemId = paintingItemId;
   return Object.keys(state).length > 0 ? state : undefined;
 }
 

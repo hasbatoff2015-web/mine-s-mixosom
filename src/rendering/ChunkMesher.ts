@@ -532,6 +532,7 @@ export class ChunkMesher {
       case 'farmland': return this.addFarmland(buffers, definition, state, world, x, y, z);
       case 'bed': return this.addBed(buffers, definition, state, world, x, y, z);
       case 'sign': return this.addSign(buffers, definition, state, world, x, y, z);
+      case 'painting': return 0;
       case 'chest': return 0;
       case 'cube': return 0;
     }
