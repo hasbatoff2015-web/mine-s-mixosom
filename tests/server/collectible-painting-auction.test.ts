@@ -40,14 +40,18 @@ describe('collectible paintings on the auction house', () => {
     expect(created.listing?.item.count).toBe(1);
     expect(created.listing?.price).toBe(AUCTION_MIN_PRICE);
     expect(seller.getSlot(0)).toBeNull();
-    expect(listingMatchesSearch(created.listing!, 'солнечная')).toBe(true);
-    expect(listingMatchesSearch(created.listing!, 'sunny bee')).toBe(true);
+    expect(auction.toNetworkListing(created.listing!).itemName).toBe('Коллекционная картина #7');
+    expect(listingMatchesSearch(created.listing!, 'коллекционная картина #7')).toBe(true);
+    expect(listingMatchesSearch(created.listing!, 'collectible painting #7')).toBe(true);
+    expect(listingMatchesSearch(created.listing!, 'солнечная')).toBe(false);
     expect(listingMatchesSearch(created.listing!, 'муся')).toBe(false);
 
     const buyer = new Inventory();
     const bought = auction.buyListing('buyer', 'Bob', buyer, created.listing!.listingId);
     expect(bought.ok).toBe(true);
     expect(buyer.getSlot(0)).toEqual(createItemStack(ItemId.Painting07SunnyBee));
+    expect(auction.historyRows('seller')[0]?.title).toContain('Коллекционная картина #7');
+    expect(auction.historyRows('buyer')[0]?.title).toContain('Коллекционная картина #7');
 
     seller.setSlot(1, createItemStack(ItemId.Painting20TigerMusya));
     const listed = auction.createListing('seller', 'Ada', seller, 1, 1, 50);

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-08: Collectible painting display names
+
+- [x] Russian names are `Коллекционная картина #1` through `#20`. English names are `Collectible Painting #1` through `#20`.
+- [x] Every painting uses the description `коллекционный предмет` through the existing yellow hint.
+- [x] Item ids, textures, placement, drops, and auction identity stay the same. No uniqueness ledger.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
 ## 2026-10-08: Collectible paintings at 64×64, explosion drop
 
 - [x] Nearest-neighbor resize of all twenty PNGs to 64×64. No new runtime dependency.

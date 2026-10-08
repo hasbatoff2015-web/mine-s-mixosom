@@ -58,51 +58,61 @@ import { PlayerController } from '../src/player';
 import { SurvivalSystem } from '../src/survival';
 import type { HorizontalFacing } from '../src/blocks';
 
-const NAMES: Record<string, string> = {
-  painting_01_villager_hmm: 'Хмм...',
-  painting_02_night_guardian: 'Ночной страж',
-  painting_03_sunset_cat: 'Закатный кот',
-  painting_04_grass_cat: 'Кот на траве',
-  painting_05_dark_steve: 'Мрачный Стив',
-  painting_06_golden_cat: 'Золотоглазый',
-  painting_07_sunny_bee: 'Солнечная пчела',
-  painting_08_smirk: 'Прищур',
-  painting_09_rainbow_ghast: 'Радужный гаст',
-  painting_10_giant_zombie: 'Гигант',
-  painting_11_crowd_scream: 'Крик',
-  painting_12_underwater_patrick: 'Под водой',
-  painting_13_gucci_character: 'Стиль',
-  painting_14_minecraft_portrait: 'Блоковый портрет',
-  painting_15_confident_beard: 'Уверенность',
-  painting_16_grass_steve: 'Стив',
-  painting_17_troll_smile: 'Улыбка',
-  painting_18_lynx_rabbit: 'Рысь-кролик',
-  painting_19_burning_mask: 'Горящая маска',
-  painting_20_tiger_musya: 'Муся',
-};
+const SHARED_DESCRIPTION = 'коллекционный предмет';
 
-const DESCRIPTIONS: Record<string, string> = {
-  painting_01_villager_hmm: 'Даже житель не уверен, что это хорошая идея.',
-  painting_02_night_guardian: 'Когда улицы пустеют, он всё ещё на посту.',
-  painting_03_sunset_cat: 'Идеальный вечер существует. Кот уже его нашёл.',
-  painting_04_grass_cat: 'Маленький блоковый хищник вышел на прогулку.',
-  painting_05_dark_steve: 'Он смотрит из темноты чуть дольше, чем хотелось бы.',
-  painting_06_golden_cat: 'Слишком сильный, чтобы просто лежать на диване.',
-  painting_07_sunny_bee: 'Несёт лето туда, где ещё не прогрузилось солнце.',
-  painting_08_smirk: 'Этот взгляд уже знает, что ты собираешься сделать.',
-  painting_09_rainbow_ghast: 'Даже Нижнему миру иногда нужен праздник.',
-  painting_10_giant_zombie: 'Обычный зомби, если смотреть на него снизу вверх.',
-  painting_11_crowd_scream: 'Тот самый момент, когда увидел цену на аукционе.',
-  painting_12_underwater_patrick: 'Он всё ещё улыбается. Причины неизвестны.',
-  painting_13_gucci_character: 'Когда обычный скин уже не соответствует статусу.',
-  painting_14_minecraft_portrait: 'Простой герой из мира, где всё состоит из кубов.',
-  painting_15_confident_beard: 'Он не сомневается. Даже когда стоило бы.',
-  painting_16_grass_steve: 'Тихий момент между добычей ресурсов и очередной проблемой.',
-  painting_17_troll_smile: 'Улыбка, которой лучше не доверять.',
-  painting_18_lynx_rabbit: 'Редкий зверь, которого никто не просил объяснять.',
-  painting_19_burning_mask: 'Сгорает всё, кроме выражения лица.',
-  painting_20_tiger_musya: 'Муся знает, кто здесь настоящий босс.',
-};
+const RETIRED_RU_NAMES = [
+  'Хмм...',
+  'Ночной страж',
+  'Закатный кот',
+  'Кот на траве',
+  'Мрачный Стив',
+  'Золотоглазый',
+  'Солнечная пчела',
+  'Прищур',
+  'Радужный гаст',
+  'Гигант',
+  'Крик',
+  'Под водой',
+  'Стиль',
+  'Блоковый портрет',
+  'Уверенность',
+  'Стив',
+  'Улыбка',
+  'Рысь-кролик',
+  'Горящая маска',
+  'Муся',
+];
+
+const RETIRED_EN_NAMES = [
+  'Hmm...',
+  'Night Guardian',
+  'Sunset Cat',
+  'Grass Cat',
+  'Dark Steve',
+  'Golden Eyes',
+  'Sunny Bee',
+  'Squint',
+  'Rainbow Ghast',
+  'Giant',
+  'The Scream',
+  'Underwater',
+  'Style',
+  'Block Portrait',
+  'Confidence',
+  'Steve',
+  'Smile',
+  'Lynx Rabbit',
+  'Burning Mask',
+  'Musya',
+];
+
+function ruPaintingName(index: number): string {
+  return `Коллекционная картина #${index}`;
+}
+
+function enPaintingName(index: number): string {
+  return `Collectible Painting #${index}`;
+}
 
 function emptyWorld(seed: string): VoxelWorld {
   const world = new VoxelWorld(seed);
@@ -220,10 +230,12 @@ describe('collectible painting items', () => {
         'collectible_painting',
         `painting:${id.slice(9, 11)}`,
       ]);
-      expect(item.name).toBe(NAMES[id]);
-      expect(item.description).toBe(DESCRIPTIONS[id]);
-      expect(itemDescriptionFor(id)).toBe(DESCRIPTIONS[id]);
-      expect(displayNameFor(id, 'en')).not.toBe(id);
+      const number = COLLECTIBLE_PAINTING_IDS.indexOf(id) + 1;
+      expect(item.name).toBe(ruPaintingName(number));
+      expect(item.description).toBe(SHARED_DESCRIPTION);
+      expect(itemDescriptionFor(id)).toBe(SHARED_DESCRIPTION);
+      expect(displayNameFor(id, 'ru')).toBe(ruPaintingName(number));
+      expect(displayNameFor(id, 'en')).toBe(enPaintingName(number));
       expect(isItemObtainable(id)).toBe(false);
       expect(catalog.some((entry) => entry.id === id)).toBe(true);
       expect(ItemId[Object.keys(ItemId).find((key) => ItemId[key as keyof typeof ItemId] === id)! as keyof typeof ItemId]).toBe(id);
@@ -244,20 +256,49 @@ describe('collectible painting items', () => {
     expect(generator.includes('painting_')).toBe(false);
   });
 
+  it('names every painting by number and shares one description', () => {
+    expect(COLLECTIBLE_PAINTING_IDS).toHaveLength(20);
+    COLLECTIBLE_PAINTING_IDS.forEach((id, offset) => {
+      const number = offset + 1;
+      expect(displayNameFor(id, 'ru')).toBe(ruPaintingName(number));
+      expect(displayNameFor(id, 'en')).toBe(enPaintingName(number));
+      expect(itemDescriptionFor(id)).toBe(SHARED_DESCRIPTION);
+      expect(getItemDefinition(id).name).toBe(ruPaintingName(number));
+      expect(getItemDefinition(id).description).toBe(SHARED_DESCRIPTION);
+    });
+    expect(displayNameFor(ItemId.Painting01VillagerHmm, 'ru')).toBe('Коллекционная картина #1');
+    expect(displayNameFor(ItemId.Painting20TigerMusya, 'ru')).toBe('Коллекционная картина #20');
+    expect(displayNameFor(ItemId.Painting20TigerMusya, 'en')).toBe('Collectible Painting #20');
+    const catalogIds = creativeCatalogItems().map((entry) => entry.id).filter(isCollectiblePaintingItemId);
+    expect(catalogIds).toEqual([...COLLECTIBLE_PAINTING_IDS]);
+  });
+
+  it('does not keep the retired artistic names as painting display names', () => {
+    for (const id of COLLECTIBLE_PAINTING_IDS) {
+      expect(RETIRED_RU_NAMES).not.toContain(displayNameFor(id, 'ru'));
+      expect(RETIRED_EN_NAMES).not.toContain(displayNameFor(id, 'en'));
+      expect(RETIRED_RU_NAMES).not.toContain(getItemDefinition(id).name);
+    }
+    expect(displayNameFor(ItemId.Painting01VillagerHmm, 'ru')).not.toBe('Хмм...');
+    expect(displayNameFor(ItemId.Painting02NightGuardian, 'ru')).not.toBe('Ночной страж');
+    expect(displayNameFor(ItemId.Painting03SunsetCat, 'ru')).not.toBe('Закатный кот');
+    expect(displayNameFor(ItemId.Painting20TigerMusya, 'ru')).not.toBe('Муся');
+  });
+
   it('sends the yellow description through the existing hint attribute', () => {
     const css = readFileSync(new URL('../src/style.css', import.meta.url), 'utf8');
     expect(css).toMatch(/\.mc-item-tooltip-hint\s*\{[^}]*color:\s*#ffff55/);
     const attrs = itemHoverAttributeString(
-      NAMES.painting_01_villager_hmm!,
+      ruPaintingName(1),
       ItemId.Painting01VillagerHmm,
       (value) => value,
-      DESCRIPTIONS.painting_01_villager_hmm,
+      SHARED_DESCRIPTION,
     );
-    expect(attrs).toContain('data-item-tooltip="Хмм..."');
-    expect(attrs).toContain(`data-item-tooltip-hint="${DESCRIPTIONS.painting_01_villager_hmm}"`);
-    expect(auctionSlotHint(undefined, DESCRIPTIONS.painting_20_tiger_musya)).toBe(DESCRIPTIONS.painting_20_tiger_musya);
-    expect(auctionSlotHint('CANCELLED', DESCRIPTIONS.painting_20_tiger_musya)).toBe(AUCTION_CLAIM_HINT);
-    expect(auctionSlotHint('EXPIRED', DESCRIPTIONS.painting_01_villager_hmm)).toBe(AUCTION_CLAIM_HINT);
+    expect(attrs).toContain('data-item-tooltip="Коллекционная картина #1"');
+    expect(attrs).toContain('data-item-tooltip-hint="коллекционный предмет"');
+    expect(auctionSlotHint(undefined, SHARED_DESCRIPTION)).toBe(SHARED_DESCRIPTION);
+    expect(auctionSlotHint('CANCELLED', SHARED_DESCRIPTION)).toBe(AUCTION_CLAIM_HINT);
+    expect(auctionSlotHint('EXPIRED', SHARED_DESCRIPTION)).toBe(AUCTION_CLAIM_HINT);
   });
 });
 
