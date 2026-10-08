@@ -93,3 +93,4 @@ Production build: **34.52 MiB**, 450 файлов. Двадцать PNG — **24
 - До картин feature HEAD: `ae4e8c1346249bb381ab779bd50a2934dc6e47ab` (текстуры ещё как `.png.png`).
 - `origin/main` на старте: `995a31cba319abd787c646de86c4611da024f41c`. Ветка была впереди на 1, merge-base совпадал с main.
 - Коммит задачи: `0ae9ec9fd83d7f2b7bdd419e65c080c37d12579c`. Force-push не используется.
+- Draft PR **#126**. Не смержен.

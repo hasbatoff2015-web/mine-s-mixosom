@@ -7,7 +7,7 @@
 - [x] `PaintingRenderer` draws one oak frame outside the 32px atlas. Save and network keep only the twenty known ids.
 - [x] Auction lists them as ordinary stacks. The yellow description reuses the existing hint. Claim text still wins.
 - [ ] No automatic world distribution, now or as a hook for a later pass. Admins hang copies themselves.
-- [ ] Not merged. Wait for an explicit merge command.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
 
 ## 2026-10-07: Online shift bulk transfer and mobile drop zone
 

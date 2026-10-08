@@ -4,7 +4,7 @@
 
 - Двадцать предметов `painting_01`…`painting_20` и один мир-блок `BlockId.CollectiblePainting = 170`. Картина вешается только руками: Creative или существующий `/give`, затем ПКМ по вертикальной грани. Авторасстановки, worldgen, точки спавна и учёта «единственной копии» нет. Creative-копия и картина на стене — один и тот же предмет.
 - После установки это обычный persistent block state: restart, другие игроки, снятие, точный дроп, подбор, Auction. В Survival новый экземпляр не крафтится, не падает с мобов и не генерируется. `WORLD_SCHEMA_VERSION` остаётся 1.
-- Подробности: `docs/reports/2026-10-08_collectible-paintings.md`. Коммит `0ae9ec9`. Draft PR не смержен.
+- Подробности: `docs/reports/2026-10-08_collectible-paintings.md`. Коммит `0ae9ec9`. Draft PR **#126**. Не смержен.
 
 ## Последний проход: online Shift+double-click и зона выброса — 2026-10-07
 
