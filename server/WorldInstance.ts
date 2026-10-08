@@ -655,10 +655,15 @@ export class WorldInstance {
   private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
   private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
+  /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
+  private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
 
   constructor(readonly config: ServerConfig) {
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
+    this.world.onFurnaceLitChanged = (change) => {
+      this.pendingFurnaceLit.push(change);
+    };
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
     }, () => this.spawn, (x, y, z) => {
@@ -3596,6 +3601,11 @@ export class WorldInstance {
     return this.world.serializeBlockStates();
   }
 
+  /** Burning furnaces for welcome, or for one column when chunk coordinates are set. */
+  networkFurnaceLit(chunkX?: number, chunkZ?: number) {
+    return this.world.networkFurnaceLit(chunkX, chunkZ);
+  }
+
   tick(): void {
     this.lastPhysicsTicksThisLoop = 1;
     this.clearAppliedSteps();
@@ -3735,6 +3745,7 @@ export class WorldInstance {
   private flushTickNetwork(): void {
     const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
+    this.flushFurnaceLit();
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     for (const player of this.connectedPlayers()) player.commandQueue.clearNotifiedSkips();
     if (snapshots.length > 0) {
@@ -4269,6 +4280,23 @@ export class WorldInstance {
     }
   }
 
+  /** One `furnace_lit` per lit edge, to every connected player. No slots. */
+  private flushFurnaceLit(): void {
+    if (this.pendingFurnaceLit.length === 0) return;
+    const pending = this.pendingFurnaceLit.splice(0);
+    const players = this.connectedPlayers();
+    for (const change of pending) {
+      const message = {
+        type: 'furnace_lit' as const,
+        x: change.x,
+        y: change.y,
+        z: change.z,
+        burning: change.burning,
+      };
+      for (const player of players) this.sendTo(player, message);
+    }
+  }
+
   private flushBlockChanges(): void {
     const changes = this.gameplay.consumeBlockChanges();
     if (changes.length === 0) return;
@@ -4598,7 +4626,14 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.networkChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
+          this.sendTo(player, {
+            type: 'chunk_data',
+            cx: x,
+            cz: z,
+            modifications: mods,
+            signs: this.world.signsForChunk(x, z),
+            furnacesLit: this.world.networkFurnaceLit(x, z),
+          });
           this.lastChunkSends += 1;
         }
       }

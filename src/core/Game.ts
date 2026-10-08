@@ -250,7 +250,7 @@ import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
-import { VoxelWorld, type VoxelHit } from '../world/World';
+import { VoxelWorld, furnaceRecordsFromLit, type VoxelHit } from '../world/World';
 import {
   ANARCHY_WORLD_ID,
   createAnarchySummary,
@@ -1043,7 +1043,7 @@ export class Game {
       timeOfDay: welcome.timeOfDay,
       modifications: welcome.modifications,
       chests: {},
-      furnaces: {},
+      furnaces: furnaceRecordsFromLit(welcome.furnacesLit),
       blockStates: welcome.blockStates,
     });
     const restoreMs = performance.now() - restoreStart;
@@ -1335,14 +1335,17 @@ export class Game {
         // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
         // `message.modifications` is the same effective network overlay for
         // this column (persistent + active event); the client does not replay
-        // it here because restore() already installed the map. Signs are the
-        // payload unique to this packet.
+        // it here because restore() already installed the map. Signs and the
+        // burning-furnace set are the payloads unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);
           if (Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z) && lines.length === 4) {
             session.world.setSignText(x!, y!, z!, lines as [string, string, string, string]);
           }
+        }
+        if (message.furnacesLit) {
+          session.world.replaceChunkFurnaceLit(message.cx, message.cz, message.furnacesLit);
         }
         motionProbe.noteChunkUpdate();
         if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
@@ -1442,6 +1445,9 @@ export class Game {
       case 'furnace_sync':
         applyFurnaceSync(session.world, message, parseNetworkItemStack);
         if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
+        return;
+      case 'furnace_lit':
+        session.world.applyFurnaceLit(message.x, message.y, message.z, message.burning);
         return;
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');

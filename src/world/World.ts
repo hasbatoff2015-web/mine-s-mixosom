@@ -185,6 +185,36 @@ export interface FurnaceState {
   cookInputId?: string;
 }
 
+/** World-space lit bit. `burning: true` only. No slots and no fuel countdown. */
+export interface FurnaceLitMarker {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly burning: true;
+}
+
+/**
+ * Welcome restore records. `burnTime > 0` is the existing `isFurnaceBurning`
+ * proxy. The online client does not decrement it.
+ */
+export function furnaceRecordsFromLit(
+  cells: readonly { x: number; y: number; z: number; burning?: boolean }[] | undefined,
+): Record<string, FurnaceState> {
+  const records: Record<string, FurnaceState> = {};
+  if (!cells) return records;
+  for (const cell of cells) {
+    if (cell.burning !== true) continue;
+    if (!Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue;
+    records[blockKey(cell.x, cell.y, cell.z)] = {
+      slots: [null, null, null],
+      burnTime: 1,
+      burnTotal: 1,
+      cookTime: 0,
+    };
+  }
+  return records;
+}
+
 interface ScheduledBlockTick {
   x: number;
   y: number;
@@ -288,6 +318,11 @@ export class VoxelWorld {
     z: number;
     block: BlockId;
   }) => void;
+  /**
+   * Fired only when a furnace crosses `burnTime > 0`. The server broadcasts
+   * `furnace_lit`. Singleplayer leaves this unset. The client does not tick fuel.
+   */
+  onFurnaceLitChanged?: (change: { x: number; y: number; z: number; burning: boolean }) => void;
   private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   private readonly pendingEmitterKeys = new Set<string>();
@@ -1632,6 +1667,135 @@ export class VoxelWorld {
     return (this.furnaces.get(blockKey(x, y, z))?.burnTime ?? 0) > 0;
   }
 
+  /**
+   * Burning furnaces only. Does not generate chunks and does not copy slots.
+   * Omit the chunk coordinates to list the whole world (welcome).
+   */
+  networkFurnaceLit(chunkX?: number, chunkZ?: number): FurnaceLitMarker[] {
+    const cells: FurnaceLitMarker[] = [];
+    const limited = chunkX !== undefined && chunkZ !== undefined;
+    for (const [key, furnace] of this.furnaces) {
+      if (furnace.burnTime <= 0) continue;
+      const { x, y, z } = parseBlockKey(key);
+      if (limited && (floorDiv(x, CHUNK_SIZE) !== chunkX || floorDiv(z, CHUNK_SIZE) !== chunkZ)) continue;
+      if (!this.furnaceBlockPresent(x, y, z)) continue;
+      cells.push({ x, y, z, burning: true });
+    }
+    return cells;
+  }
+
+  /**
+   * Authoritative lit bit for a client that does not simulate the furnace.
+   * A positive `burnTime` is only a proxy. Slots and an already-positive timer stay.
+   * Returns false when the lit bit is unchanged, so steady burning does not remesh.
+   */
+  applyFurnaceLit(x: number, y: number, z: number, burning: boolean): boolean {
+    if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return false;
+    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    const key = blockKey(x, y, z);
+    const existing = this.furnaces.get(key);
+    const wasBurning = (existing?.burnTime ?? 0) > 0;
+    if (wasBurning === burning) return false;
+    if (burning) {
+      const furnace: FurnaceState = existing ?? {
+        slots: [null, null, null],
+        burnTime: 0,
+        burnTotal: 0,
+        cookTime: 0,
+      };
+      furnace.burnTime = 1;
+      furnace.burnTotal = Math.max(1, furnace.burnTotal);
+      this.furnaces.set(key, furnace);
+    } else if (existing) {
+      existing.burnTime = 0;
+      existing.burnTotal = 0;
+      if (existing.cookTime === 0 && !existing.cookInputId && existing.slots.every((slot) => !slot)) {
+        this.furnaces.delete(key);
+      }
+    }
+    this.syncFurnaceLitVisual(x, y, z, wasBurning);
+    return true;
+  }
+
+  /**
+   * Replace lit bits in one column with the server set. Furnaces absent from
+   * the set lose `burnTime`. Other chunks stay. Unchanged bits do not remesh.
+   */
+  replaceChunkFurnaceLit(
+    chunkX: number,
+    chunkZ: number,
+    burning: readonly { x: number; y: number; z: number }[],
+  ): number {
+    const wanted = new Set<string>();
+    for (const cell of burning) {
+      if (!Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue;
+      if (cell.y < 0 || cell.y >= WORLD_HEIGHT) continue;
+      if (floorDiv(cell.x, CHUNK_SIZE) !== chunkX || floorDiv(cell.z, CHUNK_SIZE) !== chunkZ) continue;
+      wanted.add(blockKey(cell.x, cell.y, cell.z));
+    }
+    const changed: Array<{ x: number; y: number; z: number; wasBurning: boolean }> = [];
+    const remove: string[] = [];
+    for (const [key, furnace] of this.furnaces) {
+      const pos = parseBlockKey(key);
+      if (floorDiv(pos.x, CHUNK_SIZE) !== chunkX || floorDiv(pos.z, CHUNK_SIZE) !== chunkZ) continue;
+      const shouldBurn = wanted.has(key);
+      const wasBurning = furnace.burnTime > 0;
+      if (shouldBurn) {
+        wanted.delete(key);
+        if (wasBurning) continue;
+        furnace.burnTime = 1;
+        furnace.burnTotal = Math.max(1, furnace.burnTotal);
+        changed.push({ ...pos, wasBurning: false });
+      } else if (wasBurning) {
+        furnace.burnTime = 0;
+        furnace.burnTotal = 0;
+        if (furnace.cookTime === 0 && !furnace.cookInputId && furnace.slots.every((slot) => !slot)) remove.push(key);
+        changed.push({ ...pos, wasBurning: true });
+      }
+    }
+    for (const key of remove) this.furnaces.delete(key);
+    for (const key of wanted) {
+      const pos = parseBlockKey(key);
+      this.furnaces.set(key, {
+        slots: [null, null, null],
+        burnTime: 1,
+        burnTotal: 1,
+        cookTime: 0,
+      });
+      changed.push({ ...pos, wasBurning: false });
+    }
+    for (const change of changed) this.syncFurnaceLitVisual(change.x, change.y, change.z, change.wasBurning);
+    return changed.length;
+  }
+
+  /**
+   * After an external `burnTime` write (open-GUI `furnace_sync`, snapshot restore,
+   * breaking a burning furnace). Remesh only when the lit bit changed.
+   * Does not broadcast; the server callback is `onFurnaceLitChanged`.
+   */
+  syncFurnaceBurnBit(x: number, y: number, z: number, wasBurning: boolean): void {
+    const isBurning = (this.furnaces.get(blockKey(x, y, z))?.burnTime ?? 0) > 0;
+    if (wasBurning === isBurning) return;
+    this.syncFurnaceLitVisual(x, y, z, wasBurning);
+    this.onFurnaceLitChanged?.({ x, y, z, burning: isBurning });
+  }
+
+  private furnaceBlockPresent(x: number, y: number, z: number): boolean {
+    const chunkX = floorDiv(x, CHUNK_SIZE);
+    const chunkZ = floorDiv(z, CHUNK_SIZE);
+    const localX = positiveMod(x, CHUNK_SIZE);
+    const localZ = positiveMod(z, CHUNK_SIZE);
+    const chunk = this.chunks.get(chunkKey(chunkX, chunkZ));
+    if (chunk) return chunk.get(localX, y, localZ) === BlockId.Furnace;
+    const delta = this.modifications.get(chunkKey(chunkX, chunkZ));
+    return delta?.get(Chunk.index(localX, y, localZ)) === BlockId.Furnace;
+  }
+
+  private syncFurnaceLitVisual(x: number, y: number, z: number, wasBurning: boolean): void {
+    if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z, wasBurning);
+    else this.markBlockDirty(x, z);
+  }
+
   /** Emission including lit-furnace torch strength. Does not allocate furnace state. */
   blockEmissionAt(x: number, y: number, z: number): number {
     const block = this.getBlock(x, y, z, false);
@@ -1763,7 +1927,7 @@ export class VoxelWorld {
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);
-      if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z, wasBurning);
+      this.syncFurnaceBurnBit(x, y, z, wasBurning);
     }
   }
 

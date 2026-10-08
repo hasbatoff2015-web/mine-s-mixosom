@@ -67,9 +67,11 @@ export function applyAuthoritativeContainerSlots(
     return true;
   }
   const furnace = world.getFurnace(window.x, window.y, window.z);
+  const wasBurning = furnace.burnTime > 0;
   const parsed = slots.map((entry) => parseStack(entry));
   furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
   applyFurnaceTimers(furnace, window);
+  world.syncFurnaceBurnBit(window.x, window.y, window.z, wasBurning);
   return true;
 }
 
@@ -98,9 +100,11 @@ export function applyFurnaceSync(
   if (!Number.isInteger(message.x) || !Number.isInteger(message.y) || !Number.isInteger(message.z)) return false;
   if (!Array.isArray(message.slots)) return false;
   const furnace = world.getFurnace(message.x, message.y, message.z);
+  const wasBurning = furnace.burnTime > 0;
   const parsed = message.slots.map((entry) => parseStack(entry));
   furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
   applyFurnaceTimers(furnace, message);
+  world.syncFurnaceBurnBit(message.x, message.y, message.z, wasBurning);
   return true;
 }
 

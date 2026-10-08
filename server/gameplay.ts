@@ -1642,8 +1642,10 @@ export class ServerGameplay {
       // Personal storage is player-owned; breaking the block never drops or wipes it.
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
+      const wasBurning = (furnace?.burnTime ?? 0) > 0;
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.furnaces.delete(key);
+      if (wasBurning) this.world.syncFurnaceBurnBit(x, y, z, true);
     }
   }
 
