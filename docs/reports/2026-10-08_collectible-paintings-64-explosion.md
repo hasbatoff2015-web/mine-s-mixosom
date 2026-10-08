@@ -8,7 +8,9 @@
 - feature HEAD до работы: `2bf8f05597ac169bfd980fdae4159526cff6feff`
 - merge-base до работы совпадал с `origin/main`. Ahead/behind: 4 / 0.
 - PR #126 был OPEN, DRAFT, MERGEABLE.
-- Повторный `git fetch` перед коммитом — в конце этого отчёта, после того как SHA коммита известен.
+- Повторный `git fetch` после реализации: `origin/main` всё ещё `995a31cba319abd787c646de86c4611da024f41c`. Обычный merge не нужен.
+- Коммит реализации: `a6f5bc37dee199b2c994614933837857a309db2a`.
+- Этот абзац записан следующим коммитом на той же ветке. PR #126 остаётся OPEN DRAFT.
 
 ## ASSET FIX
 
