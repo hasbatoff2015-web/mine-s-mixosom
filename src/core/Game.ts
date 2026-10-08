@@ -250,7 +250,7 @@ import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
-import { VoxelWorld, type VoxelHit } from '../world/World';
+import { VoxelWorld, furnaceRecordsFromLit, type VoxelHit } from '../world/World';
 import {
   ANARCHY_WORLD_ID,
   createAnarchySummary,
@@ -309,6 +309,7 @@ import { angularError, type BlockTargetIntent } from '../../shared/playerActions
 import { IDLE_PLAYER_PRESENTATION, presentationHurtSeq } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
+  applyFurnaceSync,
   parseNetworkItemStack,
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
@@ -374,11 +375,13 @@ import {
   shouldHandleOnlineClientEvent,
 } from './onlineSession';
 import {
+  applesForBrokenLeaves,
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
   dropScatterOrigin,
   formatGameplayKernelTrace,
+  isLeafBlock,
   performUseHeld,
   movementDuringItemUse,
   resolveHologramUseTarget,
@@ -454,6 +457,8 @@ export interface GameSession {
   bowUseTicks: number;
   playTicks: number;
   lastAutosaveTick: number;
+  /** Leaves broken toward the next apple. Authoritative singleplayer counter. */
+  leafBreaksTowardApple: number;
   serverWorld?: SerializedServerWorld;
   online?: OnlineAnarchySession;
 }
@@ -1040,7 +1045,7 @@ export class Game {
       timeOfDay: welcome.timeOfDay,
       modifications: welcome.modifications,
       chests: {},
-      furnaces: {},
+      furnaces: furnaceRecordsFromLit(welcome.furnacesLit),
       blockStates: welcome.blockStates,
     });
     const restoreMs = performance.now() - restoreStart;
@@ -1332,14 +1337,17 @@ export class Game {
         // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
         // `message.modifications` is the same effective network overlay for
         // this column (persistent + active event); the client does not replay
-        // it here because restore() already installed the map. Signs are the
-        // payload unique to this packet.
+        // it here because restore() already installed the map. Signs and the
+        // burning-furnace set are the payloads unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);
           if (Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z) && lines.length === 4) {
             session.world.setSignText(x!, y!, z!, lines as [string, string, string, string]);
           }
+        }
+        if (message.furnacesLit) {
+          session.world.replaceChunkFurnaceLit(message.cx, message.cz, message.furnacesLit);
         }
         motionProbe.noteChunkUpdate();
         if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
@@ -1435,6 +1443,13 @@ export class Game {
           this.openOnlineContainer(session, message.window.kind, message.window);
         }
         this.refreshHud();
+        return;
+      case 'furnace_sync':
+        applyFurnaceSync(session.world, message, parseNetworkItemStack);
+        if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
+        return;
+      case 'furnace_lit':
+        session.world.applyFurnaceLit(message.x, message.y, message.z, message.burning);
         return;
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
@@ -3413,6 +3428,7 @@ export class Game {
       bowUseTicks: 0,
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
+      leafBreaksTowardApple: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
       online: options?.online,
     };
@@ -5432,25 +5448,26 @@ export class Game {
           new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
         );
       } else {
-      const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
-      if (farmingDrops !== undefined && harvestable) {
-        for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
-          createItemStack(drop.item, drop.count),
-          new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
-        );
-      } else {
-        const drop = definition.drop;
-        if (drop && harvestable) {
-          const doubleSlab = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double';
-          for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
-            const count = doubleSlab && rolled.item === drop.item ? rolled.count * 2 : rolled.count;
-            if (count > 0) this.spawnDroppedStack(
-              createItemStack(rolled.item, count),
-              new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
-            );
+        const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
+        if (farmingDrops !== undefined && harvestable) {
+          for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
+            createItemStack(drop.item, drop.count),
+            new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+          );
+        } else {
+          const drop = definition.drop;
+          if (drop && harvestable) {
+            const doubleSlab = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double';
+            for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
+              const count = doubleSlab && rolled.item === drop.item ? rolled.count * 2 : rolled.count;
+              if (count > 0) this.spawnDroppedStack(
+                createItemStack(rolled.item, count),
+                new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+              );
+            }
           }
+          if (harvestable) this.dropLeafApple(session, hit);
         }
-      }
       }
       if (toolStack && losesDurabilityWhenBreakingBlocks(item)) {
         session.inventory.setSlot(session.selectedSlot, damageItem(toolStack, 1));
@@ -5458,6 +5475,17 @@ export class Game {
       session.survival.addExhaustion(0.005);
     }
     this.releaseBlockEntityContents(hit);
+  }
+
+  private dropLeafApple(session: GameSession, hit: VoxelHit): void {
+    if (!isLeafBlock(hit.block)) return;
+    const award = applesForBrokenLeaves(session.leafBreaksTowardApple, 1);
+    session.leafBreaksTowardApple = award.next;
+    if (award.apples <= 0) return;
+    this.spawnDroppedStack(
+      createItemStack(ItemId.Apple, award.apples),
+      new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+    );
   }
 
   private breakMinecart(cart: MinecartEntity): void {

@@ -1,5 +1,10 @@
 export { daylightFactor } from './daylight';
 export {
+  LEAF_APPLE_INTERVAL,
+  applesForBrokenLeaves,
+  isLeafBlock,
+} from './leafApples';
+export {
   SYSTEM_RANDOM,
   asRandomFn,
   DEATH_DROP_SCATTER_MULTIPLIER,
