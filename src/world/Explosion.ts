@@ -1,4 +1,4 @@
-import { BlockId, getBlockDefinition } from '../blocks';
+import { BlockId, getBlockDefinition, type BlockRenderState } from '../blocks';
 import { isBlockClaimAnchorId, isTntBlock } from '../blocks/tnt';
 import { WORLD_HEIGHT } from '../core/constants';
 import { systemRandomFn, type RandomFn } from '../gameplay/random';
@@ -31,6 +31,11 @@ export interface DestroyedBlock {
   readonly y: number;
   readonly z: number;
   readonly previous: BlockId;
+  /**
+   * Copy of the cell state taken while resolving the blast, before any
+   * mutation. Callers must not read the world again for this identity.
+   */
+  readonly previousState?: BlockRenderState;
 }
 
 export interface ExplosionResolution {
@@ -166,7 +171,14 @@ export function resolveExplosion(
           remainingCapacity -= 1;
           chainedTnt.push({ x, y, z, fuseSeconds: 0.5 + random(), blockId: block });
         }
-        destroyed.push({ x, y, z, previous: block });
+        const state = world.getBlockState(x, y, z);
+        destroyed.push({
+          x,
+          y,
+          z,
+          previous: block,
+          ...(state ? { previousState: { ...state } } : {}),
+        });
       }
     }
   }

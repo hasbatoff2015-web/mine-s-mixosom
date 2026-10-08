@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-08: Collectible paintings at 64×64, explosion drop
+
+- [x] Nearest-neighbor resize of all twenty PNGs to 64×64. No new runtime dependency.
+- [x] `DestroyedBlock.previousState` is snapshotted in `resolveExplosion` before the batch clear.
+- [x] Direct blast, support-only, and support-plus-painting each emit one exact item. A denied cell emits none.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
 ## 2026-10-08: Collectible paintings
 
 - [x] Twenty hidden Creative resource items and one generic wall block. Survival has no recipe, mob drop, loot, or worldgen source.

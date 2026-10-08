@@ -5851,6 +5851,13 @@ export class Game {
           normal: new Vec3(),
           point: new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
+        const paintingItemId = collectiblePaintingDropItemId(block.previous, block.previousState);
+        if (paintingItemId) {
+          this.spawnDroppedStack(
+            createItemStack(paintingItemId, 1),
+            new THREE.Vector3(block.x + 0.5, block.y + 0.3, block.z + 0.5),
+          );
+        }
       },
       onChainedTnt: (tnt) => {
         session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {

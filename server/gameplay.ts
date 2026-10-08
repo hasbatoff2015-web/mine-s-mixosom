@@ -1766,6 +1766,12 @@ export class ServerGameplay {
         z: entry.z,
         blockId: entry.previous,
       });
+      const paintingItemId = collectiblePaintingDropItemId(entry.previous, entry.previousState);
+      if (!paintingItemId) continue;
+      this.spawnDroppedStack(
+        createItemStack(paintingItemId, 1),
+        new Vec3(entry.x + 0.5, entry.y + 0.3, entry.z + 0.5),
+      );
     }
   }
 

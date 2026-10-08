@@ -25,10 +25,11 @@ describe('collectible painting assets', () => {
     expect(new Set(files)).toEqual(new Set(COLLECTIBLE_PAINTING_IDS.map((id) => `${id}.png`)));
     for (const id of COLLECTIBLE_PAINTING_IDS) {
       const info = pngInfo(join(DIRECTORY, `${id}.png`));
-      expect(info.width).toBe(info.height);
-      expect(info.width).toBe(1254);
+      expect(info.width).toBe(64);
+      expect(info.height).toBe(64);
       expect(info.bitDepth).toBe(8);
       expect(info.colorType).toBe(2);
+      expect(readFileSync(join(DIRECTORY, `${id}.png`)).byteLength).toBeLessThan(256 * 1024);
       expect(getItemDefinition(id).texture).toBe(collectiblePaintingTexture(id));
     }
   });
