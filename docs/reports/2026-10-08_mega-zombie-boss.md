@@ -14,7 +14,7 @@ The boss is mob kind `mega_zombie`. AI, HP, revenge, death, and loot are decided
 - Commands `/boss setspawn|setpos1|setpos2|info|spawn` for operators and `mega_zombie.admin` / `server.admin`.
 - 30 minute cycle, warning 5 minutes before spawn, 30 minute lifetime, at most one boss.
 - 3D AABB targeting, revenge for 4.5 s, arena clamp.
-- HP 3000 and melee damage 15 from the real combat formulas.
+- HP 1500 and melee damage 5. God sword uses the existing lethal hit. Sunlight does not burn this boss. HP bar is within 30 blocks of the configured spawn. `/boss kill` uses the death lifecycle. Loot is tossed upward beside the corpse.
 - Fixed loot copy, ±4 block item burst, three firework rockets.
 - Mutant Zombie model and 128×128 texture. Death pose 1.25 s. HUD bar.
 

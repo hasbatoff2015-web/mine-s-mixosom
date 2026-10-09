@@ -4,14 +4,18 @@ import { BlockId } from '../src/blocks';
 import { HeadlessEntityHost, MobManager } from '../src/entities';
 import {
   MEGA_ZOMBIE_ATTACK_DAMAGE,
-  MEGA_ZOMBIE_HITS_TO_KILL,
+  MEGA_ZOMBIE_BAR_RADIUS,
+  MEGA_ZOMBIE_LOOT_UP_MIN,
   MEGA_ZOMBIE_MAX_HEALTH,
   MEGA_ZOMBIE_REVENGE_SECONDS,
   TITANIUM_SWORD_NORMAL_HIT,
+  arenaCanHoldBoss,
   arenaFromCorners,
   clampBossToArena,
-  megaZombieLootOffset,
+  megaZombieHealthBarVisible,
+  megaZombieLootMotion,
   pointInArena,
+  resolveMegaZombieSpawn,
   selectMegaZombieTarget,
   type ArenaAabb,
   type BossFocus,
@@ -21,6 +25,8 @@ import { applyMegaZombiePose } from '../src/entities/megaZombiePose';
 import { MOB_DEFINITIONS } from '../src/entities/mobDefinitions';
 import { Vec3 } from '../src/math/vec3';
 import { MAX_HEALTH, reduceDamageByArmor } from '../src/survival/SurvivalSystem';
+import { CHUNK_SIZE, WORLD_HEIGHT } from '../src/core/constants';
+import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
 import { EVENT_CHEST_LOOT_TABLE } from '../server/services/eventLoot';
 
@@ -112,22 +118,20 @@ describe('mega zombie targeting and revenge', () => {
 });
 
 describe('mega zombie combat numbers', () => {
-  it('sets boss health from three hundred ordinary titanium sword hits', () => {
+  it('sets boss health to 1500 and attack damage to 5', () => {
     expect(TITANIUM_SWORD_NORMAL_HIT).toBe(10);
-    expect(MEGA_ZOMBIE_MAX_HEALTH).toBe(TITANIUM_SWORD_NORMAL_HIT * MEGA_ZOMBIE_HITS_TO_KILL);
-    expect(MOB_DEFINITIONS.mega_zombie.maxHealth).toBe(3000);
+    expect(MEGA_ZOMBIE_MAX_HEALTH).toBe(1500);
+    expect(MOB_DEFINITIONS.mega_zombie.maxHealth).toBe(1500);
     expect(MOB_DEFINITIONS.mega_zombie.attackDamage).toBe(MEGA_ZOMBIE_ATTACK_DAMAGE);
+    expect(MEGA_ZOMBIE_ATTACK_DAMAGE).toBe(5);
     expect(MOB_DEFINITIONS.mega_zombie.loot).toEqual([]);
   });
 
-  it('does not one-shot full titanium and kills an unarmored player in two hits', () => {
+  it('keeps a full titanium player alive through one hit', () => {
     const mitigated = reduceDamageByArmor(MEGA_ZOMBIE_ATTACK_DAMAGE, { points: 20, toughness: 0 });
-    expect(mitigated).toBeCloseTo(3);
+    expect(mitigated).toBeCloseTo(1);
     expect(mitigated).toBeLessThan(MAX_HEALTH);
-    expect(mitigated * 6).toBeLessThan(MAX_HEALTH);
-    expect(mitigated * 7).toBeGreaterThanOrEqual(MAX_HEALTH);
-    expect(MEGA_ZOMBIE_ATTACK_DAMAGE * 2).toBeGreaterThan(MAX_HEALTH);
-    expect(reduceDamageByArmor(MEGA_ZOMBIE_ATTACK_DAMAGE, { points: 7, toughness: 0 }) * 2).toBeGreaterThan(MAX_HEALTH);
+    expect(MEGA_ZOMBIE_ATTACK_DAMAGE).toBeLessThan(MAX_HEALTH);
   });
 });
 
@@ -227,13 +231,15 @@ describe('mega zombie simulation', () => {
     mobs.dispose();
   });
 
-  it('dies after 300 accepted titanium hits and keeps the player through later fire damage', () => {
+  it('dies after 150 accepted titanium hits and keeps the player through later fire damage', () => {
     const mobs = manager('boss-hp');
     const boss = mobs.spawn('mega_zombie', new Vec3(8, 72, 8), { force: true, bossArena: ARENA })!;
     mobs.update(0.05, {
       players: [{ id: 'ada', position: new Vec3(10, 72, 8), alive: true, targetable: true, name: 'Ada' }],
     });
-    for (let hit = 0; hit < 299; hit += 1) {
+    const hitsToKill = MEGA_ZOMBIE_MAX_HEALTH / TITANIUM_SWORD_NORMAL_HIT;
+    expect(hitsToKill).toBe(150);
+    for (let hit = 0; hit < hitsToKill - 1; hit += 1) {
       boss.hurtResistance.reset();
       expect(mobs.damage(boss, TITANIUM_SWORD_NORMAL_HIT, { source: 'player', attackerId: 'ada' })).toBe(true);
       expect(boss.alive).toBe(true);
@@ -260,7 +266,7 @@ describe('mega zombie simulation', () => {
       kind: 'mega_zombie',
       position: [8, 72, 8],
       velocity: [0, 0, 0],
-      health: 3000,
+      health: 1500,
       state: 'idle',
       ageSeconds: 3,
       fuseSeconds: 0,
@@ -303,15 +309,17 @@ describe('mega zombie loot', () => {
     );
   });
 
-  it('spreads each stack inside about four blocks', () => {
-    for (let index = 0; index < 40; index += 1) {
-      const offset = megaZombieLootOffset(() => index / 39);
-      expect(Math.abs(offset.x)).toBeLessThanOrEqual(4);
-      expect(Math.abs(offset.z)).toBeLessThanOrEqual(4);
+  it('tosses loot upward and sideways from beside the corpse', () => {
+    const samples = [0, 0.2, 0.8, 0.95].map((value) => megaZombieLootMotion(() => value));
+    for (const motion of samples) {
+      expect(Math.abs(motion.x)).toBeLessThanOrEqual(0.45);
+      expect(Math.abs(motion.z)).toBeLessThanOrEqual(0.45);
+      expect(motion.vy).toBeGreaterThanOrEqual(MEGA_ZOMBIE_LOOT_UP_MIN);
+      expect(Math.abs(motion.vx)).toBeGreaterThan(0);
+      expect(Math.abs(motion.vz)).toBeGreaterThan(0);
     }
-    const edge = megaZombieLootOffset(() => 0);
-    expect(edge.x).toBeCloseTo(-4);
-    expect(edge.z).toBeCloseTo(-4);
+    const directions = new Set(samples.map((motion) => Math.sign(motion.vx)));
+    expect(directions.size).toBeGreaterThan(1);
   });
 });
 
@@ -343,5 +351,152 @@ describe('mega zombie pose', () => {
     expect(late.shake).toBe(0);
     expect(late.fall).toBeCloseTo(1, 1);
     expect(late.tint).toBe(1);
+  });
+});
+
+describe('mega zombie health bar range', () => {
+  const spawn = { x: 10, y: 70, z: 10 };
+
+  it('uses 3D distance from the configured spawn, independently per player', () => {
+    expect(megaZombieHealthBarVisible({ x: 10, y: 70, z: 10 }, spawn)).toBe(true);
+    expect(megaZombieHealthBarVisible({ x: 10, y: 70, z: 40 }, spawn)).toBe(true);
+    expect(megaZombieHealthBarVisible({ x: 10, y: 70, z: 40.1 }, spawn)).toBe(false);
+    expect(megaZombieHealthBarVisible({ x: 10, y: 100.1, z: 10 }, spawn)).toBe(false);
+    const near = megaZombieHealthBarVisible({ x: 12, y: 71, z: 11 }, spawn, MEGA_ZOMBIE_BAR_RADIUS);
+    const far = megaZombieHealthBarVisible({ x: 80, y: 70, z: 10 }, spawn, MEGA_ZOMBIE_BAR_RADIUS);
+    expect(near).toBe(true);
+    expect(far).toBe(false);
+    expect(megaZombieHealthBarVisible({ x: 10, y: 70, z: 10 }, null)).toBe(false);
+  });
+});
+
+describe('mega zombie spawn placement', () => {
+  function pad(world: VoxelWorld): void {
+    for (let x = 0; x <= 20; x += 1) {
+      for (let z = 0; z <= 20; z += 1) {
+        world.setBlock(x, 70, z, BlockId.Stone);
+        for (let y = 71; y <= 80; y += 1) world.setBlock(x, y, z, BlockId.Air);
+      }
+    }
+  }
+
+  const arena: ArenaAabb = { minX: 2, minY: 71, minZ: 2, maxX: 18, maxY: 80, maxZ: 18 };
+
+  it('stands on the surface, snaps down from one block up, and climbs out of a solid', () => {
+    const world = new VoxelWorld('boss-surface');
+    pad(world);
+    expect(arenaCanHoldBoss(arena)).toBe(true);
+    const onSurface = resolveMegaZombieSpawn(world, { x: 8.2, y: 71, z: 8.2 }, arena);
+    expect(onSurface.ok).toBe(true);
+    expect(onSurface.y).toBe(71);
+    const above = resolveMegaZombieSpawn(world, { x: 8.2, y: 72, z: 8.2 }, arena);
+    expect(above).toMatchObject({ ok: true, y: 71 });
+    world.setBlock(8, 70, 8, BlockId.GrassBlock);
+    const inside = resolveMegaZombieSpawn(world, { x: 8.2, y: 70.4, z: 8.2 }, arena);
+    expect(inside.ok).toBe(true);
+    expect(inside.y).toBe(71);
+  });
+
+  it('steps aside from a blocked column and refuses a hopeless point', () => {
+    const world = new VoxelWorld('boss-blocked');
+    pad(world);
+    for (let y = 71; y <= 76; y += 1) world.setBlock(8, y, 8, BlockId.OakLog);
+    const shifted = resolveMegaZombieSpawn(world, { x: 8.2, y: 71, z: 8.2 }, arena);
+    expect(shifted.ok).toBe(true);
+    expect(Math.hypot(shifted.x - 8.2, shifted.z - 8.2)).toBeGreaterThan(0.4);
+    expect(Math.hypot(shifted.x - 8.2, shifted.z - 8.2)).toBeLessThanOrEqual(4.1);
+    const solid = new VoxelWorld('boss-solid');
+    for (let x = 4; x <= 12; x += 1) {
+      for (let z = 4; z <= 12; z += 1) {
+        for (let y = 40; y <= 55; y += 1) solid.setBlock(x, y, z, BlockId.Stone);
+      }
+    }
+    const refused = resolveMegaZombieSpawn(solid, { x: 8.2, y: 46, z: 8.2 }, {
+      minX: 0, minY: 40, minZ: 0, maxX: 20, maxY: 56, maxZ: 20,
+    });
+    expect(refused.ok).toBe(false);
+    expect(arenaCanHoldBoss({ minX: 0, minY: 70, minZ: 0, maxX: 20, maxY: 72, maxZ: 20 })).toBe(false);
+  });
+
+  it('detects a nearby player and attacks after a supported spawn', () => {
+    const world = new VoxelWorld('boss-aggro');
+    pad(world);
+    const resolved = resolveMegaZombieSpawn(world, { x: 8, y: 72, z: 8 }, arena);
+    expect(resolved.ok).toBe(true);
+    const mobs = new MobManager(new HeadlessEntityHost(), world, { automaticSpawning: false });
+    const boss = mobs.spawn('mega_zombie', { x: resolved.x, y: resolved.y, z: resolved.z }, {
+      force: true,
+      bossArena: arena,
+      bossSpawn: { x: 8, y: 72, z: 8 },
+    })!;
+    expect(boss.health).toBe(1500);
+    mobs.update(0.05, {
+      players: [{ id: 'ada', position: new Vec3(resolved.x, resolved.y, resolved.z + 2.2), alive: true, targetable: true }],
+    });
+    expect(boss.state === 'attack' || boss.state === 'chase').toBe(true);
+    const hits = mobs.consumePlayerDamage();
+    expect(hits.some((hit) => hit.mobKind === 'mega_zombie' && hit.amount === 5)).toBe(true);
+    mobs.dispose();
+  });
+
+  it('does not burn in sunlight while a zombie still does', () => {
+    const world = new VoxelWorld('boss-sun');
+    for (let x = 6; x <= 14; x += 1) {
+      for (let z = 6; z <= 10; z += 1) {
+        world.setBlock(x, 70, z, BlockId.Stone);
+        for (let y = 71; y <= 78; y += 1) world.setBlock(x, y, z, BlockId.Air);
+      }
+    }
+    for (const [x, z] of [[8, 8], [12, 8]] as const) {
+      const chunk = world.getChunk(Math.floor(x / CHUNK_SIZE), Math.floor(z / CHUNK_SIZE))!;
+      chunk.skyReady = true;
+      const lx = ((x % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      const lz = ((z % CHUNK_SIZE) + CHUNK_SIZE) % CHUNK_SIZE;
+      for (let y = 71; y < WORLD_HEIGHT; y += 1) {
+        chunk.set(lx, y, lz, BlockId.Air);
+        chunk.skyLight[Chunk.index(lx, y, lz)] = 15;
+      }
+    }
+    const mobs = new MobManager(new HeadlessEntityHost(), world, { automaticSpawning: false });
+    const boss = mobs.spawn('mega_zombie', { x: 8, y: 71, z: 8 }, { force: true, bossArena: arena })!;
+    const zombie = mobs.spawn('zombie', { x: 12, y: 71, z: 8 }, { force: true })!;
+    const bossHealth = boss.health;
+    mobs.update(0.05, { daylight: 1 });
+    expect(boss.sunlightBurning).toBe(false);
+    expect(boss.isOnFire).toBe(false);
+    expect(zombie.sunlightBurning).toBe(true);
+    for (let tick = 0; tick < 25; tick += 1) {
+      zombie.position.set(12, 71, 8);
+      zombie.velocity.set(0, 0, 0);
+      boss.position.set(8, 71, 8);
+      mobs.update(0.05, { daylight: 1 });
+    }
+    expect(boss.health).toBe(bossHealth);
+    expect(boss.sunlightBurning).toBe(false);
+    expect(zombie.health).toBeLessThan(20);
+    mobs.damage(boss, 1, { source: 'fire', igniteTicks: 40 });
+    expect(boss.fireTicks).toBeGreaterThan(0);
+    mobs.dispose();
+  });
+
+  it('dies from one lethal god-sword hit and ignores a second blow', () => {
+    const mobs = manager('boss-god');
+    const boss = mobs.spawn('mega_zombie', new Vec3(8, 72, 8), { force: true, bossArena: ARENA })!;
+    let deaths = 0;
+    const tracked = new MobManager(new HeadlessEntityHost(), flatWorld('boss-god-2'), {
+      automaticSpawning: false,
+      onDeath: () => { deaths += 1; },
+    });
+    const trackedBoss = tracked.spawn('mega_zombie', new Vec3(8, 72, 8), { force: true, bossArena: ARENA })!;
+    expect(tracked.damage(trackedBoss, 1, { source: 'player', attackerId: 'ada', lethal: true })).toBe(true);
+    expect(trackedBoss.health).toBe(0);
+    expect(trackedBoss.state).toBe('die');
+    expect(deaths).toBe(1);
+    expect(tracked.damage(trackedBoss, 1, { source: 'player', attackerId: 'ada', lethal: true })).toBe(false);
+    expect(boss.alive).toBe(true);
+    mobs.damage(boss, 5, { source: 'player', attackerId: 'ada' });
+    expect(boss.health).toBe(1495);
+    mobs.dispose();
+    tracked.dispose();
   });
 });

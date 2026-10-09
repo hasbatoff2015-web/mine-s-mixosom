@@ -2,6 +2,8 @@ import { WORLD_HEIGHT } from '../../src/core/constants';
 import {
   MEGA_ZOMBIE_CYCLE_SECONDS,
   MEGA_ZOMBIE_LIFETIME_SECONDS,
+  MEGA_ZOMBIE_KILL_COMMAND_TEXT,
+  MEGA_ZOMBIE_NO_BOSS_TEXT,
   MEGA_ZOMBIE_SPAWN_TEXT,
   MEGA_ZOMBIE_TIMEOUT_TEXT,
   MEGA_ZOMBIE_WARNING_LEAD_SECONDS,
@@ -42,7 +44,9 @@ export interface MegaZombieHost {
   save(state: MegaZombiePersisted): void;
   findBoss(): MegaZombieBossView | undefined;
   /** Returns false when a boss already exists or the spawn was rejected. */
-  spawnBoss(position: ArenaPoint, arena: ArenaAabb): boolean;
+  spawnBoss(position: ArenaPoint, arena: ArenaAabb): { ok: boolean; message?: string };
+  rememberSpawn?(position: ArenaPoint): void;
+  killBoss(attacker?: { id: string; name: string }): boolean;
   despawnBoss(): void;
   dropLoot(x: number, y: number, z: number): void;
   launchFireworks(x: number, y: number, z: number): void;
@@ -134,6 +138,7 @@ export class MegaZombieService {
     if (!isFinitePoint(point)) return { ok: false, message: 'Некорректная позиция.' };
     if (!this.insideWorld(point)) return { ok: false, message: 'Позиция вне мира.' };
     this.state.spawn = { x: point.x, y: point.y, z: point.z };
+    this.host.rememberSpawn?.(this.state.spawn);
     this.persist();
     return { ok: true, message: `Точка появления: ${point.x.toFixed(2)} ${point.y.toFixed(2)} ${point.z.toFixed(2)}` };
   }
@@ -163,6 +168,14 @@ export class MegaZombieService {
       formatArenaAabb(arena),
       bossLine,
     ];
+  }
+
+  /** Admin kill. Uses the mob death path; a second call does not drop loot again. */
+  killActive(attacker?: { id: string; name: string }): { ok: true; message: string } | { ok: false; message: string } {
+    const boss = this.host.findBoss();
+    if (!boss || !boss.alive || boss.dying) return { ok: false, message: MEGA_ZOMBIE_NO_BOSS_TEXT };
+    if (!this.host.killBoss(attacker)) return { ok: false, message: MEGA_ZOMBIE_NO_BOSS_TEXT };
+    return { ok: true, message: MEGA_ZOMBIE_KILL_COMMAND_TEXT };
   }
 
   /** Test or admin spawn. Does not reset the 30 minute cycle. */
@@ -241,8 +254,8 @@ export class MegaZombieService {
     }
     if (this.host.findBoss()) return { ok: false, message: 'Мега-зомби уже на арене.' };
     const spawned = this.host.spawnBoss(spawn, arena);
-    if (!spawned) {
-      const message = 'Не удалось создать Мега-зомби.';
+    if (!spawned.ok) {
+      const message = spawned.message ?? 'Не удалось создать Мега-зомби.';
       this.host.log(message);
       return { ok: false, message };
     }

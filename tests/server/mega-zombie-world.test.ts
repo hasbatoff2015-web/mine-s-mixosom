@@ -6,6 +6,9 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { MEGA_ZOMBIE_SPAWN_TEXT } from '../../src/entities/megaZombie';
+import { createItemStack } from '../../src/inventory';
+import { ItemId } from '../../src/items';
+import { BlockId } from '../../src/blocks';
 
 const dirs: string[] = [];
 const worlds: WorldInstance[] = [];
@@ -74,7 +77,7 @@ describe('mega zombie world integration', () => {
     world.handleChat(player, '/boss spawn');
     const bosses = world.gameplay.mobs.entities.filter((mob) => mob.kind === 'mega_zombie');
     expect(bosses).toHaveLength(1);
-    expect(bosses[0]?.health).toBe(3000);
+    expect(bosses[0]?.health).toBe(1500);
     world.handleChat(player, '/boss spawn');
     expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'mega_zombie')).toHaveLength(1);
     world.tick();
@@ -87,6 +90,28 @@ describe('mega zombie world integration', () => {
     if ('error' in guest) throw new Error(guest.error);
     world.handleChat(guest.player, '/boss spawn');
     expect(denied.payloads.some((payload) => payload.ok === false)).toBe(true);
+    world.handleChat(guest.player, '/boss kill');
+    expect(denied.payloads.some((payload) => payload.ok === false && payload.lines?.some((line) => line.includes('прав')))).toBe(true);
+
+    const boss = world.gameplay.mobs.entities.find((mob) => mob.kind === 'mega_zombie')!;
+    const column = Math.floor(boss.position.x);
+    const row = Math.floor(boss.position.z);
+    for (let z = row; z <= row + 4; z += 1) {
+      for (let y = Math.floor(boss.position.y); y <= Math.floor(boss.position.y) + 4; y += 1) {
+        world.world.setBlock(column, y, z, BlockId.Air);
+      }
+    }
+    player.gamemode = 'survival';
+    player.inventory.setSlot(0, createItemStack(ItemId.GodSword, 1));
+    player.selectedSlot = 0;
+    player.controller.position.set(boss.position.x, boss.position.y, boss.position.z + 2.4);
+    player.controller.yaw = 0;
+    player.controller.pitch = 0;
+    expect(world.gameplay.attack(player, [...world.players.values()]).result).toBe('hit');
+    expect(boss.health).toBe(0);
+    expect(boss.state).toBe('die');
+    world.handleChat(player, '/boss kill');
+    expect(sink.payloads.some((payload) => payload.ok === false)).toBe(true);
 
     await world.stop();
     worlds.splice(0, worlds.length);

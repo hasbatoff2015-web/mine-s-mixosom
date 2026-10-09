@@ -32,6 +32,7 @@ import {
   pointInArena,
   selectMegaZombieTarget,
   type ArenaAabb,
+  type ArenaPoint,
   type BossFocus,
   type MegaZombieRuntime,
 } from './megaZombie';
@@ -153,6 +154,8 @@ export interface MobSpawnOptions {
   readonly tameProgressPlayerId?: string;
   /** Arena for a mega zombie. Ignored by every other kind. */
   readonly bossArena?: ArenaAabb;
+  /** Configured `/boss setspawn` point. HP-bar range uses this. */
+  readonly bossSpawn?: ArenaPoint;
 }
 
 export interface MobDamageOptions {
@@ -164,6 +167,8 @@ export interface MobDamageOptions {
   readonly knockback?: number;
   readonly igniteTicks?: number;
   readonly attackerId?: string;
+  /** Authoritative god-sword hit. Ignores i-frames and starts the normal death. */
+  readonly lethal?: boolean;
 }
 
 export interface MobPlayerDamageEvent {
@@ -768,7 +773,7 @@ export class MobManager {
       mob.velocity.z = 0;
     }
     if (kind === 'mega_zombie') {
-      mob.boss = createMegaZombieRuntime(spawnOptions.bossArena ?? null);
+      mob.boss = createMegaZombieRuntime(spawnOptions.bossArena ?? null, spawnOptions.bossSpawn ?? null);
       if (mob.boss.arena) {
         clampBossToArena(mob.position, mob.velocity, mob.boss.arena, mob.definition.width, mob.definition.height);
       }
@@ -952,6 +957,12 @@ export class MobManager {
     if (!mob || !this.mobsById.has(mob.id) || !mob.alive || !Number.isFinite(amount) || amount <= 0) {
       return false;
     }
+    if (damageOptions.lethal === true) {
+      this.noteBossAttacker(mob, damageOptions);
+      mob.health = 0;
+      this.beginDeath(mob);
+      return true;
+    }
     const hurt = mob.hurtResistance.receive(amount);
     if (!hurt.accepted) return false;
     mob.health = Math.max(0, mob.health - hurt.rawDamage);
@@ -1000,21 +1011,7 @@ export class MobManager {
     if (damageOptions.igniteTicks) {
       mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
     }
-    if (mob.kind === 'mega_zombie' && mob.boss) {
-      const focus = damageOptions.attackerId ? this.playerById.get(damageOptions.attackerId) : undefined;
-      const inside = Boolean(
-        focus
-        && mob.boss.arena
-        && pointInArena(mob.boss.arena, focus.position.x, focus.position.y, focus.position.z),
-      );
-      noteMegaZombieHit(
-        mob.boss,
-        damageOptions.source,
-        damageOptions.attackerId,
-        inside,
-        focus?.name,
-      );
-    }
+    this.noteBossAttacker(mob, damageOptions);
     if (mob.health <= 0) {
       if (hurt.fullHurt && damageOptions.source !== 'fire') {
         mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
@@ -1869,7 +1866,8 @@ export class MobManager {
       const skyX = Math.floor(mob.position.x);
       const skyY = Math.floor(mob.position.y + mob.definition.height * 0.9);
       const skyZ = Math.floor(mob.position.z);
-      mob.sunlightBurning = isHostileMob(mob.kind)
+      mob.sunlightBurning = mob.kind !== 'mega_zombie'
+        && isHostileMob(mob.kind)
         && isSunHighEnough(daylight)
         && hasDirectSkyLight(this.world, skyX, skyY, skyZ);
     }
@@ -2433,6 +2431,23 @@ export class MobManager {
     context.onExplosion?.(event);
     this.options.onExplosion?.(event);
     this.removeMob(mob, 'explosion');
+  }
+
+  private noteBossAttacker(mob: MobEntity, damageOptions: MobDamageOptions): void {
+    if (mob.kind !== 'mega_zombie' || !mob.boss) return;
+    const focus = damageOptions.attackerId ? this.playerById.get(damageOptions.attackerId) : undefined;
+    const inside = Boolean(
+      focus
+      && mob.boss.arena
+      && pointInArena(mob.boss.arena, focus.position.x, focus.position.y, focus.position.z),
+    );
+    noteMegaZombieHit(
+      mob.boss,
+      damageOptions.source,
+      damageOptions.attackerId,
+      inside,
+      focus?.name,
+    );
   }
 
   private beginDeath(mob: MobEntity): void {

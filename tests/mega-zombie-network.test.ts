@@ -99,8 +99,10 @@ describe('mega zombie replication', () => {
     const items = [...gameplay.drops.entities];
     expect(items).toHaveLength(2);
     for (const item of items) {
-      expect(Math.abs(item.position.x - 10)).toBeLessThanOrEqual(4.01);
-      expect(Math.abs(item.position.z - 10)).toBeLessThanOrEqual(4.01);
+      expect(Math.abs(item.position.x - 10)).toBeLessThanOrEqual(0.5);
+      expect(Math.abs(item.position.z - 10)).toBeLessThanOrEqual(0.5);
+      expect(item.velocity.y).toBeGreaterThanOrEqual(7.5);
+      expect(Math.abs(item.velocity.x)).toBeGreaterThan(0);
     }
     gameplay.launchBossFireworks(new Vec3(10, 70, 10));
     expect(gameplay.fireworks.entities).toHaveLength(3);

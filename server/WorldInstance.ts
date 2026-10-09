@@ -146,7 +146,7 @@ import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
 import { MegaZombieService, bossLootStacks } from './services/megaZombie';
-import { clampBossToArena, MEGA_ZOMBIE_ENTITY_ID_PREFIX } from '../src/entities/megaZombie';
+import { MEGA_ZOMBIE_ENTITY_ID_PREFIX, resolveMegaZombieSpawn } from '../src/entities/megaZombie';
 import {
   DUEL_COUNTDOWN_HOLOGRAM,
   DUEL_COUNTDOWN_HOLOGRAM_SIZE,
@@ -1026,17 +1026,42 @@ export class WorldInstance {
         };
       },
       spawnBoss: (position, arena) => {
-        if (this.gameplay.mobs.entities.some((entry) => entry.kind === 'mega_zombie')) return false;
-        const mob = this.gameplay.mobs.spawn('mega_zombie', position, {
+        if (this.gameplay.mobs.entities.some((entry) => entry.kind === 'mega_zombie')) {
+          return { ok: false, message: 'Мега-зомби уже на арене.' };
+        }
+        const resolved = resolveMegaZombieSpawn(this.world, position, arena);
+        if (!resolved.ok) return { ok: false, message: resolved.message ?? 'Не удалось создать Мега-зомби.' };
+        const mob = this.gameplay.mobs.spawn('mega_zombie', { x: resolved.x, y: resolved.y, z: resolved.z }, {
           force: true,
           id: `${MEGA_ZOMBIE_ENTITY_ID_PREFIX}${megaZombieSerial}`,
           bossArena: arena,
+          bossSpawn: position,
         });
         megaZombieSerial += 1;
-        if (!mob?.boss) return false;
+        if (!mob?.boss) return { ok: false, message: 'Не удалось создать Мега-зомби.' };
         mob.boss.arena = arena;
-        clampBossToArena(mob.position, mob.velocity, arena, mob.definition.width, mob.definition.height);
-        return true;
+        mob.boss.configuredSpawn = { x: position.x, y: position.y, z: position.z };
+        return { ok: true };
+      },
+      rememberSpawn: (position) => {
+        for (const mob of this.gameplay.mobs.entities) {
+          if (mob.kind === 'mega_zombie' && mob.boss) {
+            mob.boss.configuredSpawn = { x: position.x, y: position.y, z: position.z };
+          }
+        }
+      },
+      killBoss: (attacker) => {
+        const mob = this.gameplay.mobs.entities.find((entry) => entry.kind === 'mega_zombie' && entry.alive);
+        if (!mob) return false;
+        if (attacker && mob.boss) {
+          mob.boss.lastPlayerAttackerId = attacker.id;
+          mob.boss.lastPlayerAttackerName = attacker.name;
+        }
+        return this.gameplay.mobs.damage(mob, Math.max(1, mob.health), {
+          source: attacker ? 'player' : 'environment',
+          lethal: true,
+          ...(attacker ? { attackerId: attacker.id } : {}),
+        });
       },
       despawnBoss: () => {
         for (const mob of [...this.gameplay.mobs.entities]) {

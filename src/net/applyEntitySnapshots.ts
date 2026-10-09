@@ -15,6 +15,7 @@ import { isKnownItemId } from '../items';
 import type { RedstoneSystem } from '../redstone';
 import type { EntitySnapshot, NetworkEntityEvent } from '../../shared/protocol';
 import { EntityInterpolationBuffer } from './entitySnapshotInterpolation';
+import { createMegaZombieRuntime } from '../entities/megaZombie';
 
 export interface EntitySnapshotTarget {
   drops: DroppedItemManager;
@@ -140,6 +141,10 @@ export function applyEntitySnapshots(
         } else if (mob.kind === 'mega_zombie' && isMegaZombieMotionState(snap.state) && mob.state !== snap.state) {
           mob.state = snap.state;
           mob.stateSeconds = 0;
+        }
+        if (mob.kind === 'mega_zombie' && snap.anchorX !== undefined && snap.anchorY !== undefined && snap.anchorZ !== undefined) {
+          mob.boss ??= createMegaZombieRuntime();
+          mob.boss.configuredSpawn = { x: snap.anchorX, y: snap.anchorY, z: snap.anchorZ };
         }
         if (snap.onFire) mob.fireTicks = Math.max(mob.fireTicks, 20);
         else {

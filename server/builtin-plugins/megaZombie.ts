@@ -21,7 +21,7 @@ export function createMegaZombiePlugin(ctx: BuiltinPluginContext): Plugin {
       );
       api.registerCommand({
         name: 'boss',
-        usage: '/boss <setspawn|setpos1|setpos2|info|spawn>',
+        usage: '/boss <setspawn|setpos1|setpos2|info|spawn|kill>',
         description: 'Настроить и вызвать Мега-зомби',
         execute: (args, sender) => {
           if (!allowed(sender.playerId, sender.name, sender.operator === true)) {
@@ -31,6 +31,13 @@ export function createMegaZombiePlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'info') return ok(boss.infoLines());
           if (sub === 'spawn') {
             const result = boss.manualSpawn();
+            return result.ok ? ok(result.message) : fail(result.message);
+          }
+          if (sub === 'kill') {
+            const attacker = sender.playerId && sender.playerId !== 'console'
+              ? { id: sender.playerId, name: sender.name }
+              : undefined;
+            const result = boss.killActive(attacker);
             return result.ok ? ok(result.message) : fail(result.message);
           }
           if (sub === 'setspawn' || sub === 'setpos1' || sub === 'setpos2') {
@@ -43,7 +50,7 @@ export function createMegaZombiePlugin(ctx: BuiltinPluginContext): Plugin {
               : boss.setPos(sub === 'setpos1' ? 'pos1' : 'pos2', point);
             return result.ok ? ok(result.message) : fail(result.message);
           }
-          return fail('Использование: /boss setspawn | setpos1 | setpos2 | info | spawn');
+          return fail('Использование: /boss setspawn | setpos1 | setpos2 | info | spawn | kill');
         },
       });
     },

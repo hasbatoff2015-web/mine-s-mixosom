@@ -1,4 +1,4 @@
-import { megaZombieLootOffset } from '../src/entities/megaZombie';
+import { megaZombieLootMotion } from '../src/entities/megaZombie';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
@@ -729,6 +729,11 @@ export class ServerGameplay {
         ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
         ...(mob.angry ? { angry: true } : {}),
         ...(mob.kind === 'creeper' ? { fuse: mob.fuseSeconds } : {}),
+        ...(mob.kind === 'mega_zombie' && mob.boss?.configuredSpawn ? {
+          anchorX: mob.boss.configuredSpawn.x,
+          anchorY: mob.boss.configuredSpawn.y,
+          anchorZ: mob.boss.configuredSpawn.z,
+        } : {}),
       });
     }
     const bossIndex = mobs.findIndex((snapshot) => snapshot.mobKind === 'mega_zombie');
@@ -757,17 +762,13 @@ export class ServerGameplay {
   scatterBossLoot(stacks: readonly ItemStack[], origin: Vec3Like): string[] {
     const ids: string[] = [];
     for (const stack of stacks) {
-      const offset = megaZombieLootOffset(this.random);
-      const position = new Vec3(
-        origin.x + offset.x,
-        origin.y + 0.35 + this.random() * 0.35,
-        origin.z + offset.z,
-      );
+      const motion = megaZombieLootMotion(this.random);
+      const position = new Vec3(origin.x + motion.x, origin.y + motion.y, origin.z + motion.z);
       const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z);
       this.events.emit('itemDrop', event);
       if (event.cancelled) continue;
       ids.push(this.drops.spawn(stack, position, {
-        velocity: new Vec3(...dropScatterVelocity(this.random)),
+        velocity: new Vec3(motion.vx, motion.vy, motion.vz),
         merge: false,
         pickupDelaySeconds: 0.8,
       }).id);
@@ -1931,12 +1932,14 @@ export class ServerGameplay {
     const attackerPosition = pose
       ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
       : attacker.controller.position;
-    const accepted = this.mobs.damage(mob, result.damage, {
+    const godSwordHit = stack?.itemId === ItemId.GodSword;
+    const accepted = this.mobs.damage(mob, godSwordHit ? Math.max(result.damage, 1) : result.damage, {
       source: 'player',
       attackerPosition,
       attackerYaw: result.attackerYaw,
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerId: attacker.id,
+      ...(godSwordHit ? { lethal: true } : {}),
     });
     if (accepted) {
       this.events.emit('entityDamaged', { entityId: mob.id, amount: result.damage, cause: 'melee' });

@@ -46,19 +46,30 @@ function harness(initial?: Partial<MegaZombiePersisted>) {
     save: (state) => { saved.push(state); },
     findBoss: () => boss,
     spawnBoss: () => {
-      if (boss) return false;
+      if (boss) return { ok: false, message: 'exists' };
       spawns += 1;
       boss = {
         id: `mega-${spawns}`,
         alive: true,
         dying: false,
         ageSeconds: 0,
-        health: 3000,
-        maxHealth: 3000,
+        health: 1500,
+        maxHealth: 1500,
         x: 4,
         y: 72,
         z: 4,
         lastAttackerName: null,
+      };
+      return { ok: true };
+    },
+    killBoss: (attacker) => {
+      if (!boss || !boss.alive || boss.dying) return false;
+      boss = {
+        ...boss,
+        alive: false,
+        dying: true,
+        health: 0,
+        lastAttackerName: attacker?.name ?? null,
       };
       return true;
     },
@@ -96,7 +107,8 @@ describe('mega zombie service', () => {
         return undefined;
       },
       findBoss: () => undefined,
-      spawnBoss: () => false,
+      spawnBoss: () => ({ ok: false }),
+      killBoss: () => false,
       despawnBoss: () => {},
       dropLoot: () => {},
       launchFireworks: () => {},
@@ -154,6 +166,20 @@ describe('mega zombie service', () => {
     world.service.onBossRemoved('death', { x: 1, y: 2, z: 3 });
     expect(world.broadcasts).toHaveLength(1);
     expect(world.loot).toHaveLength(2);
+  });
+
+  it('kills the active boss once and does not drop loot twice', () => {
+    const world = harness();
+    world.service.enable();
+    world.service.tick(MEGA_ZOMBIE_CYCLE_SECONDS);
+    expect(world.service.killActive({ id: 'op', name: 'Op' }).ok).toBe(true);
+    world.service.onBossKilled('Op');
+    world.service.onBossRemoved('death', { x: 4, y: 72, z: 4 });
+    expect(world.loot).toHaveLength(1);
+    expect(world.service.killActive({ id: 'op', name: 'Op' }).ok).toBe(false);
+    world.service.onBossRemoved('death', { x: 4, y: 72, z: 4 });
+    expect(world.loot).toHaveLength(1);
+    expect(world.service.killActive().ok).toBe(false);
   });
 
   it('does not run a second schedule while disabled', () => {

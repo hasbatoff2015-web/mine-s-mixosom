@@ -250,6 +250,10 @@ export interface EntitySnapshot {
   readonly ownerId?: string;
   readonly sitting?: boolean;
   readonly angry?: boolean;
+  /** Configured Mega Zombie spawn. HP-bar range is measured from here. */
+  readonly anchorX?: number;
+  readonly anchorY?: number;
+  readonly anchorZ?: number;
 }
 
 export type NetworkEntityEventKind = 'hurt' | 'death' | 'projectile_spawn' | 'projectile_hit';
