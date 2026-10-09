@@ -1,5 +1,13 @@
 # Архитектура
 
+## Mega Zombie — 2026-10-08
+
+`mega_zombie` is a `MobKind` in `MobManager`, not a second entity system. Stats live in `MOB_DEFINITIONS`. AI, arena clamp, revenge, and the last player attacker live on `MobEntity.boss` and run inside the existing 20 TPS `update`. Fire damage still goes through `MobManager.damage` with `source: 'fire'` and does not change that attacker. Client code only poses the rig, scales the fire overlay, and draws the HUD bar from replicated `health` / `maxHealth` / `onFire` / `state`.
+
+`MegaZombieService` is constructed once on `WorldInstance` and ticked once per simulation step, after attacks. The builtin plugin `mega-zombie` only enables the service and registers `/boss`. Config is `plugin-data/mega-zombie/config.json`. The active boss is omitted from `MobManager.serialize`, so a restart cannot restore a ghost. Snapshots always include the one boss, ahead of the entity cap.
+
+The rig is `MUTANT_ZOMBIE_MODEL`: hierarchical `LegacyModel` parts ported from Mutant Beasts (`MutantZombieModel.java`), texture `public/textures/entity/mutant_zombie.png` (128×128). Source is AGPL-3.0, Chumbanotz. The whole model uses scale 1.3, the original renderer callback. Loot is `MEGA_ZOMBIE_LOOT` in `src/entities/megaZombieLoot.ts`, a frozen copy of the event chest rows. It does not call the chest roller. Drops use `DroppedItemManager` with a ±4 block horizontal offset. Death fireworks are three existing firework rockets.
+
 ## Collectible paintings — 2026-10-08
 
 Twenty item ids and one world block. `BlockId.CollectiblePainting = 170` has `hasItem: false`, so the generic block is not a twenty-first Creative entry. Each design is a `resource` with `maxStack: 1`, `hiddenFromGameplay: true`, `creativeCatalog: true`, and `placesBlockId` pointing at that block. Tags are `collectible`, `painting`, `collectible_painting`, and `painting:01`…`painting:20`. Display names are `Коллекционная картина #1` through `#20` and `Collectible Painting #1` through `#20`. Every design shares the description `коллекционный предмет`. `itemDescriptionFor` feeds `BaseItemDefinition.description`, and the tooltip hint stays `.mc-item-tooltip-hint` (`#ffff55`). English names exist so auction search can match them. The item ids stay the technical keys such as `painting_20_tiger_musya`. There is no instance id, original flag, or uniqueness ledger. `/give` still resolves through the item registry. Nothing in this path crafts, smelts, rolls mob loot, or asks the generator to place a painting.

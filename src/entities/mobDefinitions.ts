@@ -1,4 +1,14 @@
 import { ItemId } from '../items';
+import {
+  MEGA_ZOMBIE_ATTACK_COOLDOWN_SECONDS,
+  MEGA_ZOMBIE_ATTACK_DAMAGE,
+  MEGA_ZOMBIE_ATTACK_RANGE,
+  MEGA_ZOMBIE_EYE_HEIGHT,
+  MEGA_ZOMBIE_HEIGHT,
+  MEGA_ZOMBIE_MAX_HEALTH,
+  MEGA_ZOMBIE_SPEED,
+  MEGA_ZOMBIE_WIDTH,
+} from './megaZombie';
 import { CAT_MAX_HEALTH, WOLF_ATTACK_DAMAGE, WOLF_MAX_HEALTH } from './petConstants';
 
 export type MobKind =
@@ -11,7 +21,8 @@ export type MobKind =
   | 'zombie'
   | 'skeleton'
   | 'creeper'
-  | 'spider';
+  | 'spider'
+  | 'mega_zombie';
 
 export type MobDisposition = 'passive' | 'hostile';
 export type MobState = 'idle' | 'wander' | 'chase' | 'attack' | 'hurt' | 'die';
@@ -113,6 +124,15 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
     eyeHeight: 0.65, speed: 3.2, detectionRange: 16, attackRange: 1.55,
     attackDamage: 1, attackCooldownSeconds: 1.35,
     loot: Object.freeze([{ itemId: ItemId.String, min: 0, max: 2 }]),
+  }),
+  mega_zombie: Object.freeze({
+    kind: 'mega_zombie', disposition: 'hostile', maxHealth: MEGA_ZOMBIE_MAX_HEALTH,
+    width: MEGA_ZOMBIE_WIDTH, height: MEGA_ZOMBIE_HEIGHT,
+    eyeHeight: MEGA_ZOMBIE_EYE_HEIGHT, speed: MEGA_ZOMBIE_SPEED, detectionRange: 0,
+    attackRange: MEGA_ZOMBIE_ATTACK_RANGE,
+    attackDamage: MEGA_ZOMBIE_ATTACK_DAMAGE,
+    attackCooldownSeconds: MEGA_ZOMBIE_ATTACK_COOLDOWN_SECONDS,
+    loot: Object.freeze([]),
   }),
 });
 

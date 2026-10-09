@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { MobKind } from '../entities/mobDefinitions';
+import { getMobDefinition } from '../entities/mobDefinitions';
 import { ThreeEntityHost } from '../entities/ThreeEntityHost';
 import { isCatVariant, type CatVariant } from '../entities/petTypes';
 import { petBodyTexturePath } from '../entities/petAppearance';
@@ -56,7 +57,8 @@ export function startMobQaHarness(
   scene.background = new THREE.Color(0x91b7ca);
   const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 50);
   camera.position.set(...CAMERA_POSITIONS[view]);
-  camera.lookAt(0, 0.85, 0);
+  camera.lookAt(0, kind === 'mega_zombie' ? 2.1 : 0.85, 0);
+  if (kind === 'mega_zombie') camera.position.multiplyScalar(1.8);
   scene.add(new THREE.HemisphereLight(0xdcefff, 0x4d4a42, 1.5));
   const key = new THREE.DirectionalLight(0xfff0d2, 2.2);
   key.position.set(-3, 6, -4);
@@ -90,7 +92,12 @@ export function startMobQaHarness(
   const startedAt = performance.now();
   const render = (now = performance.now()): void => {
     const elapsed = (now - startedAt) / 1000;
-    const walking = !sitting && (kind === 'chicken' || kind === 'wolf' || kind === 'cat');
+    const params = new URLSearchParams(location.search);
+    const requestedState = params.get('mobState');
+    const walking = !sitting && (kind === 'chicken' || kind === 'wolf' || kind === 'cat' || (kind === 'mega_zombie' && requestedState !== 'die' && requestedState !== 'attack'));
+    const state = requestedState === 'attack' || requestedState === 'die' || requestedState === 'hurt' || requestedState === 'idle'
+      ? requestedState
+      : kind === 'skeleton' ? 'attack' : 'idle';
     host.syncMob({
       kind,
       model,
@@ -102,13 +109,13 @@ export function startMobQaHarness(
       walkPhase: sitting ? 0 : hasFrozenWalk ? frozenWalkPhase : elapsed * 5,
       visualAge: elapsed,
       locomotionSpeed: walking ? 2.2 : 0,
-      state: kind === 'skeleton' ? 'attack' : 'idle',
+      state,
       stateSeconds: elapsed,
-      deathSeconds: 0,
+      deathSeconds: state === 'die' ? Math.min(1.25, elapsed) : 0,
       fuseSeconds: 0,
-      onFire: false,
-      width: kind === 'wolf' || kind === 'cat' ? 0.6 : 0.6,
-      height: kind === 'cat' ? 0.7 : kind === 'wolf' ? 0.85 : 1.8,
+      onFire: params.get('qaFire') === '1',
+      width: getMobDefinition(kind).width,
+      height: getMobDefinition(kind).height,
       hurtFlashSeconds: 0,
       sitting,
       ownerId,

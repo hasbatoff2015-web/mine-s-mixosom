@@ -25,6 +25,10 @@ export interface EntitySnapshotTarget {
   redstone: RedstoneSystem;
 }
 
+function isMegaZombieMotionState(value: string | undefined): value is 'idle' | 'wander' | 'chase' | 'attack' | 'hurt' {
+  return value === 'idle' || value === 'wander' || value === 'chase' || value === 'attack' || value === 'hurt';
+}
+
 function isMobKind(value: string | undefined): value is MobKind {
   return typeof value === 'string' && value in MOB_DEFINITIONS;
 }
@@ -133,6 +137,9 @@ export function applyEntitySnapshots(
         mob.networkHurt = hurt;
         if (snap.state === 'die' || (snap.health !== undefined && snap.health <= 0)) {
           session.mobs.applyAuthoritativeDeath(mob.id);
+        } else if (mob.kind === 'mega_zombie' && isMegaZombieMotionState(snap.state) && mob.state !== snap.state) {
+          mob.state = snap.state;
+          mob.stateSeconds = 0;
         }
         if (snap.onFire) mob.fireTicks = Math.max(mob.fireTicks, 20);
         else {

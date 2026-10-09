@@ -35,6 +35,7 @@ const simExclude = new Set([
   'src/entities/mobModels.ts',
   'src/entities/voxelVisuals.ts',
   'src/entities/LegacyModel.ts',
+  'src/entities/megaZombieModel.ts',
   'src/save/IdbWorldStore.ts',
   'src/save/SaveService.ts',
   'src/core/Game.ts',

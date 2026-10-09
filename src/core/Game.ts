@@ -6717,6 +6717,7 @@ export class Game {
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
+      boss: this.megaZombieHud(session),
       playInfo: formatPlayInfo(
         session.online ? session.online.remotes.size + 1 : 1,
         session.player.position.x,
@@ -6833,6 +6834,17 @@ export class Game {
     this.streamingTrace.reset(performance.now());
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();
+  }
+
+  private megaZombieHud(session: GameSession): { health: number; maxHealth: number } | null {
+    let boss: { health: number; maxHealth: number } | undefined;
+    for (const mob of session.mobs.entities) {
+      if (mob.kind !== 'mega_zombie') continue;
+      if (mob.state !== 'die' && !mob.alive) continue;
+      boss = { health: mob.health, maxHealth: mob.definition.maxHealth };
+      break;
+    }
+    return boss ?? null;
   }
 
   private chunkDebugLine(session: GameSession): string {

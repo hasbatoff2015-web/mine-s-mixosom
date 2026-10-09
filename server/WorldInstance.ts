@@ -145,6 +145,8 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
+import { MegaZombieService, bossLootStacks } from './services/megaZombie';
+import { clampBossToArena, MEGA_ZOMBIE_ENTITY_ID_PREFIX } from '../src/entities/megaZombie';
 import {
   DUEL_COUNTDOWN_HOLOGRAM,
   DUEL_COUNTDOWN_HOLOGRAM_SIZE,
@@ -612,6 +614,7 @@ export class WorldInstance {
   readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
   readonly duels: DuelService;
+  readonly megaZombie: MegaZombieService;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
   private readonly menuSessions = new Map<string, GameMenuSession>();
@@ -994,6 +997,77 @@ export class WorldInstance {
     this.events.on('itemPickup', (event) => {
       if (!this.duels.allowsPickup(event.playerId, event.entityId)) event.cancel();
     });
+    let megaZombieSerial = 1;
+    this.megaZombie = new MegaZombieService({
+      broadcast: (text) => this.broadcastChat('system', 'server', text),
+      log: (message) => serverLog(`mega-zombie ${message}`),
+      load: () => this.pluginStore.load('mega-zombie/config', {
+        spawn: null,
+        pos1: null,
+        pos2: null,
+        cycleSeconds: 0,
+        warned: false,
+      }),
+      save: (state) => { this.pluginStore.save('mega-zombie/config', state); },
+      findBoss: () => {
+        const mob = this.gameplay.mobs.entities.find((entry) => entry.kind === 'mega_zombie');
+        if (!mob) return undefined;
+        return {
+          id: mob.id,
+          alive: mob.alive,
+          dying: mob.state === 'die',
+          ageSeconds: mob.ageSeconds,
+          health: mob.health,
+          maxHealth: mob.definition.maxHealth,
+          x: mob.position.x,
+          y: mob.position.y,
+          z: mob.position.z,
+          lastAttackerName: mob.boss?.lastPlayerAttackerName ?? null,
+        };
+      },
+      spawnBoss: (position, arena) => {
+        if (this.gameplay.mobs.entities.some((entry) => entry.kind === 'mega_zombie')) return false;
+        const mob = this.gameplay.mobs.spawn('mega_zombie', position, {
+          force: true,
+          id: `${MEGA_ZOMBIE_ENTITY_ID_PREFIX}${megaZombieSerial}`,
+          bossArena: arena,
+        });
+        megaZombieSerial += 1;
+        if (!mob?.boss) return false;
+        mob.boss.arena = arena;
+        clampBossToArena(mob.position, mob.velocity, arena, mob.definition.width, mob.definition.height);
+        return true;
+      },
+      despawnBoss: () => {
+        for (const mob of [...this.gameplay.mobs.entities]) {
+          if (mob.kind === 'mega_zombie') this.gameplay.mobs.remove(mob.id);
+        }
+      },
+      dropLoot: (x, y, z) => {
+        this.gameplay.scatterBossLoot(bossLootStacks(this.gameplay.random), { x, y, z });
+      },
+      launchFireworks: (x, y, z) => {
+        this.gameplay.launchBossFireworks({ x, y, z });
+      },
+      random: () => this.gameplay.random(),
+    });
+    this.gameplay.mobDeathListener = (mob) => {
+      if (mob.kind !== 'mega_zombie') return;
+      const name = mob.boss?.lastPlayerAttackerName
+        ?? (mob.boss?.lastPlayerAttackerId
+          ? this.findPlayerIdentity(mob.boss.lastPlayerAttackerId)?.name
+          : undefined)
+        ?? null;
+      this.megaZombie.onBossKilled(name);
+    };
+    this.gameplay.mobRemovedListener = (mob, reason) => {
+      if (mob.kind !== 'mega_zombie') return;
+      this.megaZombie.onBossRemoved(reason === 'death' ? 'death' : 'other', {
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+      });
+    };
     this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
@@ -1134,6 +1208,7 @@ export class WorldInstance {
         friends: this.friends,
         trade: this.trade,
         duels: this.duels,
+        megaZombie: this.megaZombie,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
         openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
         openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
@@ -3899,6 +3974,7 @@ export class WorldInstance {
     this.autoMine.tick();
     this.worldEvents.tick();
     this.duels.tick();
+    this.megaZombie.tick(dt);
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {

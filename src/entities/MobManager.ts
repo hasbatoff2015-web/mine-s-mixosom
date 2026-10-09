@@ -24,6 +24,17 @@ import {
   type MobKind,
   type MobState,
 } from './mobDefinitions';
+import {
+  clampBossToArena,
+  createMegaZombieRuntime,
+  MEGA_ZOMBIE_DEATH_SECONDS,
+  noteMegaZombieHit,
+  pointInArena,
+  selectMegaZombieTarget,
+  type ArenaAabb,
+  type BossFocus,
+  type MegaZombieRuntime,
+} from './megaZombie';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
 import {
@@ -140,6 +151,8 @@ export interface MobSpawnOptions {
   readonly angry?: boolean;
   readonly tameProgress?: number;
   readonly tameProgressPlayerId?: string;
+  /** Arena for a mega zombie. Ignored by every other kind. */
+  readonly bossArena?: ArenaAabb;
 }
 
 export interface MobDamageOptions {
@@ -194,6 +207,7 @@ export interface MobPlayerFocus {
   /** False keeps the player in spawn/despawn interest but disables hostile targeting. */
   readonly targetable?: boolean;
   readonly heldItemId?: string;
+  readonly name?: string;
 }
 
 export interface MobUpdateContext {
@@ -397,6 +411,8 @@ export class MobEntity {
   catVariant?: CatVariant;
   angry = false;
   angrySeconds = 0;
+  /** Server-only mega zombie combat memory. Not serialized. */
+  boss?: MegaZombieRuntime;
   combatTargetId?: string;
   combatTargetKind?: PetCombatTargetKind;
   combatPriority?: PetCombatPriority;
@@ -471,6 +487,9 @@ export class MobManager {
   private spawnTimer = 0;
   private disposed = false;
   private playerById = new Map<string, MobPlayerFocus>();
+  private readonly bossFocusScratch: BossFocus[] = [];
+  private readonly bossEye = new Vec3();
+  private readonly bossTargetEye = new Vec3();
   teleportCandidateChecks = 0;
   teleportSearches = 0;
   lastSeparationPairChecks = 0;
@@ -569,7 +588,9 @@ export class MobManager {
 
   shouldKeepRemoteDeath(id: string): boolean {
     const mob = this.mobsById.get(id);
-    return Boolean(mob && mob.state === 'die' && mob.deathSeconds < MOB_DEATH_ANIMATION_SECONDS);
+    if (!mob || mob.state !== 'die') return false;
+    const limit = mob.kind === 'mega_zombie' ? MEGA_ZOMBIE_DEATH_SECONDS : MOB_DEATH_ANIMATION_SECONDS;
+    return mob.deathSeconds < limit;
   }
 
   setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number, tick?: number): void {
@@ -598,6 +619,8 @@ export class MobManager {
       }
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
+      } else if (mob.kind === 'mega_zombie') {
+        mob.stateSeconds += delta;
       }
     }
   }
@@ -744,6 +767,12 @@ export class MobManager {
       mob.velocity.x = 0;
       mob.velocity.z = 0;
     }
+    if (kind === 'mega_zombie') {
+      mob.boss = createMegaZombieRuntime(spawnOptions.bossArena ?? null);
+      if (mob.boss.arena) {
+        clampBossToArena(mob.position, mob.velocity, mob.boss.arena, mob.definition.width, mob.definition.height);
+      }
+    }
     this.mobsById.set(id, mob);
     this.syncVisual(mob, 0, 1);
     this.applyMobLight(mob);
@@ -795,7 +824,8 @@ export class MobManager {
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
         this.snapMobRender(mob);
-        if (mob.deathSeconds >= MOB_DEATH_ANIMATION_SECONDS) this.finishDeath(mob);
+        const deathLimit = mob.kind === 'mega_zombie' ? MEGA_ZOMBIE_DEATH_SECONDS : MOB_DEATH_ANIMATION_SECONDS;
+        if (mob.deathSeconds >= deathLimit) this.finishDeath(mob);
         continue;
       }
 
@@ -817,6 +847,9 @@ export class MobManager {
         continue;
       }
       this.simulateMobPhysics(mob, delta);
+      if (mob.kind === 'mega_zombie' && mob.boss?.arena) {
+        clampBossToArena(mob.position, mob.velocity, mob.boss.arena, mob.definition.width, mob.definition.height);
+      }
       const speed = mob.sitting ? 0 : mob.locomotionSpeed;
       if (speed > 0.05) {
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
@@ -966,6 +999,21 @@ export class MobManager {
     }
     if (damageOptions.igniteTicks) {
       mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
+    }
+    if (mob.kind === 'mega_zombie' && mob.boss) {
+      const focus = damageOptions.attackerId ? this.playerById.get(damageOptions.attackerId) : undefined;
+      const inside = Boolean(
+        focus
+        && mob.boss.arena
+        && pointInArena(mob.boss.arena, focus.position.x, focus.position.y, focus.position.z),
+      );
+      noteMegaZombieHit(
+        mob.boss,
+        damageOptions.source,
+        damageOptions.attackerId,
+        inside,
+        focus?.name,
+      );
     }
     if (mob.health <= 0) {
       if (hurt.fullHurt && damageOptions.source !== 'fire') {
@@ -1191,7 +1239,7 @@ export class MobManager {
   }
 
   serialize(): SerializedMob[] {
-    return [...this.mobsById.values()].map((mob) => ({
+    return [...this.mobsById.values()].filter((mob) => mob.kind !== 'mega_zombie').map((mob) => ({
       id: mob.id,
       kind: mob.kind,
       position: [mob.position.x, mob.position.y, mob.position.z],
@@ -1230,6 +1278,7 @@ export class MobManager {
   }
 
   private restoreOne(entry: SerializedMob, force: boolean): boolean {
+    if (entry.kind === 'mega_zombie') return false;
     if (!(entry.kind in MOB_DEFINITIONS)) return false;
     if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) return false;
     if (!Number.isFinite(entry.health) || entry.health <= 0) return false;
@@ -1303,6 +1352,10 @@ export class MobManager {
     context: MobUpdateContext,
     daylight: number,
   ): void {
+    if (mob.kind === 'mega_zombie') {
+      this.updateMegaZombie(mob, delta, context);
+      return;
+    }
     if (isPetKind(mob.kind)) {
       this.updatePetAi(mob, delta, target, context);
       return;
@@ -1352,6 +1405,78 @@ export class MobManager {
 
     // Spiders become mostly neutral in full daylight unless already close enough to fight.
     if (mob.kind === 'spider' && daylight > 0.8 && distance > 5) this.updateWander(mob, delta, 0.65);
+  }
+
+  private updateMegaZombie(mob: MobEntity, delta: number, context: MobUpdateContext): void {
+    const runtime = mob.boss;
+    if (!runtime) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      this.changeState(mob, 'idle');
+      return;
+    }
+    if (runtime.revengeSeconds > 0) {
+      runtime.revengeSeconds = Math.max(0, runtime.revengeSeconds - delta);
+      if (runtime.revengeSeconds === 0) runtime.revengePlayerId = null;
+    }
+    let count = 0;
+    for (const focus of this.playerById.values()) {
+      let slot = this.bossFocusScratch[count];
+      if (!slot) {
+        slot = { id: '', x: 0, y: 0, z: 0, eyeY: 0, alive: true, targetable: true };
+        this.bossFocusScratch[count] = slot;
+      }
+      slot.id = focus.id;
+      slot.x = focus.position.x;
+      slot.y = focus.position.y;
+      slot.z = focus.position.z;
+      slot.eyeY = focus.eyePosition?.y ?? focus.position.y + 1.62;
+      slot.alive = focus.alive !== false;
+      slot.targetable = focus.targetable !== false;
+      count += 1;
+    }
+    this.bossFocusScratch.length = count;
+    const chosen = selectMegaZombieTarget(
+      mob.position.x,
+      mob.position.y,
+      mob.position.z,
+      runtime.arena,
+      this.bossFocusScratch,
+      runtime.revengePlayerId,
+      runtime.revengeSeconds > 0,
+    );
+    if (runtime.revengePlayerId && chosen?.id !== runtime.revengePlayerId) {
+      runtime.revengePlayerId = null;
+      runtime.revengeSeconds = 0;
+    }
+    if (!chosen) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+      this.changeState(mob, 'idle');
+      return;
+    }
+    mob.wanderDirection.set(chosen.x - mob.position.x, 0, chosen.z - mob.position.z);
+    this.bossEye.set(mob.position.x, mob.position.y + mob.definition.eyeHeight, mob.position.z);
+    this.bossTargetEye.set(chosen.x, chosen.eyeY, chosen.z);
+    const distance = this.bossEye.distanceTo(this.bossTargetEye);
+    const lineOfSight = hasVoxelLineOfSight(this.world, this.bossEye, this.bossTargetEye);
+    if (distance <= mob.definition.attackRange && lineOfSight) {
+      if (mob.wanderDirection.lengthSq() > 1e-8) {
+        mob.facingYaw = Math.atan2(mob.wanderDirection.x, mob.wanderDirection.z) + Math.PI;
+      }
+      this.changeState(mob, 'attack');
+      mob.velocity.x *= 0.25;
+      mob.velocity.z *= 0.25;
+      if (mob.attackCooldownSeconds <= 0) {
+        const focus = this.playerById.get(chosen.id);
+        if (focus) this.emitPlayerDamage(mob, focus, mob.definition.attackDamage, 'melee', context);
+        mob.attackCooldownSeconds = mob.definition.attackCooldownSeconds;
+      }
+      return;
+    }
+    this.changeState(mob, 'chase');
+    this.steerToward(mob, mob.wanderDirection, mob.definition.speed);
   }
 
   private updatePassiveAi(mob: MobEntity, delta: number): void {
@@ -1772,7 +1897,7 @@ export class MobManager {
       this.removeMob(mob, 'despawn');
       return;
     }
-    if (mob.ownerId) return;
+    if (mob.kind === 'mega_zombie' || mob.ownerId) return;
     if (!playerPosition) return;
     const distanceSquared = mob.position.distanceToSquared(playerPosition);
     if (distanceSquared > 72 * 72) mob.farSeconds += delta;
@@ -1849,7 +1974,8 @@ export class MobManager {
     const px = x ?? mob.position.x;
     const py = y ?? mob.position.y;
     const pz = z ?? mob.position.z;
-    const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
+    const deathTint = Number(mob.visual.userData.megaDeathTint ?? 0);
+    const flash = Math.max(mobHurtFlashIntensity(mob.hurtFlashSeconds), Number.isFinite(deathTint) ? deathTint : 0);
     if (flash > 0) {
       this.host.applyMobHurtLight(
         mob.visual,

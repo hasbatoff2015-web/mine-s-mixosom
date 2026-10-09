@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-10-08: Mega Zombie boss
+
+- [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.
+- [x] 3D AABB, one scheduler, revenge, fixed loot copy, Mutant Zombie model.
+- [ ] Not merged. No commit until an explicit request.
+
 ## 2026-10-08: Collectible painting display names
 
 - [x] Russian names are `Коллекционная картина #1` through `#20`. English names are `Collectible Painting #1` through `#20`.

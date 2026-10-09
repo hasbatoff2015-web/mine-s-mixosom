@@ -28,6 +28,8 @@ import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
 import { petAppearanceKey, petBodyTexturePath, WOLF_COLLAR_COLOR } from './petAppearance';
 import { applyCatVisualPose, applyWolfVisualPose } from './petPoses';
+import { MEGA_ZOMBIE_FOOT_LIFT, MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
+import { applyMegaZombiePose } from './megaZombiePose';
 import { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
 
 export interface ThreeEntityHostOptions {
@@ -258,6 +260,7 @@ export class ThreeEntityHost implements EntityHost {
 
   syncMob(state: MobVisualState): EntityVisual | undefined {
     const visual = asObject3D(state.visual);
+    if (state.kind === 'mega_zombie') return this.syncMegaZombie(state, visual);
     const model = state.model;
     const legs = model.legs.map(asObject3D);
     const arms = model.arms.map(asObject3D);
@@ -341,9 +344,11 @@ export class ThreeEntityHost implements EntityHost {
 
   disposeVisual(visual: EntityVisual, options?: { readonly materials?: boolean }): void {
     const object = asObject3D(visual);
-    if (object instanceof THREE.Mesh && object.name === 'fire-overlay') {
-      object.geometry.dispose();
-    }
+    object.traverse((child) => {
+      if (child instanceof THREE.Mesh && (child.name === 'fire-overlay' || child.name === 'fire-overlay-plane')) {
+        child.geometry.dispose();
+      }
+    });
     if (options?.materials) disposeOwnedEntityMaterials(object);
     object.removeFromParent();
   }
@@ -362,10 +367,28 @@ export class ThreeEntityHost implements EntityHost {
     this.tntMaterials.length = 0;
   }
 
+  private syncMegaZombie(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
+    const pose = applyMegaZombiePose(state.model.parts, state);
+    const fallRadians = pose.fall * (80 * Math.PI / 180);
+    visual.rotation.x = 0;
+    visual.rotation.y = state.yaw;
+    visual.rotation.z = -fallRadians;
+    visual.scale.setScalar(MEGA_ZOMBIE_MODEL_SCALE);
+    const hurtJolt = state.state === 'hurt' ? Math.sin(state.stateSeconds * 45) * 0.06 : 0;
+    visual.position.set(state.x + hurtJolt + pose.shake, state.y + MEGA_ZOMBIE_FOOT_LIFT, state.z);
+    visual.userData.megaDeathTint = pose.tint;
+    return this.syncFireOverlay(state, visual);
+  }
+
   private syncFireOverlay(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
     if (state.onFire) {
       if (!state.fireOverlay) {
-        const overlay = SharedFireTexture.instance().createScaledOverlay(state.width, state.height);
+        const overlay = state.kind === 'mega_zombie'
+          ? SharedFireTexture.instance().createMegaZombieFireOverlay(
+            state.width / MEGA_ZOMBIE_MODEL_SCALE,
+            state.height / MEGA_ZOMBIE_MODEL_SCALE,
+          )
+          : SharedFireTexture.instance().createScaledOverlay(state.width, state.height);
         visual.add(overlay);
         state.fireOverlay = overlay;
       }

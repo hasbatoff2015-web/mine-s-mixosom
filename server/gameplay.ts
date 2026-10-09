@@ -1,3 +1,4 @@
+import { megaZombieLootOffset } from '../src/entities/megaZombie';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
@@ -58,6 +59,7 @@ import {
   isPetKind,
   raycastMobTarget,
   type MobEntity,
+  type MobRemovalReason,
   type RewoundMobPose,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
@@ -129,6 +131,7 @@ export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 export interface GameplayPlayer {
   restingBed?: BedRestState;
   readonly id: string;
+  readonly name?: string;
   connected: boolean;
   readonly controller: PlayerController;
   readonly inventory: Inventory;
@@ -225,6 +228,8 @@ export class ServerGameplay {
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
   readonly fireworks: FireworkManager;
+  mobDeathListener?: (mob: MobEntity) => void;
+  mobRemovedListener?: (mob: MobEntity, reason: MobRemovalReason) => void;
   readonly whMarks = new WhMarks();
   readonly redstone: RedstoneSystem;
   readonly farming: FarmingSystem;
@@ -288,7 +293,13 @@ export class ServerGameplay {
       random: this.random,
       ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
-      onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
+      onDeath: (mob) => {
+        this.pushEntityEvent(mob.id, 'death');
+        this.mobDeathListener?.(mob);
+      },
+      onRemove: (mob, reason) => {
+        this.mobRemovedListener?.(mob, reason);
+      },
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
       onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
@@ -468,6 +479,7 @@ export class ServerGameplay {
             alive: !player.survival.dead,
             targetable: player.gamemode === 'survival' && !player.survival.invisible,
             heldItemId: player.inventory.getSlot(player.selectedSlot)?.itemId,
+            ...(player.name ? { name: player.name } : {}),
           })),
           daylight: daylightFactor(this.world.timeOfDay),
         });
@@ -705,7 +717,7 @@ export class ServerGameplay {
     }
     const mobs: EntitySnapshot[] = [];
     for (const mob of this.mobs.entities) {
-      if (!inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
+      if (mob.kind !== 'mega_zombie' && !inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
       mobs.push({
         id: mob.id, kind: 'mob',
         x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw,
@@ -719,6 +731,11 @@ export class ServerGameplay {
         ...(mob.kind === 'creeper' ? { fuse: mob.fuseSeconds } : {}),
       });
     }
+    const bossIndex = mobs.findIndex((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (bossIndex > 0) {
+      const [boss] = mobs.splice(bossIndex, 1);
+      if (boss) mobs.unshift(boss);
+    }
     const items: EntitySnapshot[] = [];
     for (const item of this.drops.entities) {
       if (!inRange(item.position.x, item.position.y, item.position.z)) continue;
@@ -729,7 +746,40 @@ export class ServerGameplay {
         itemId: item.stack.itemId, count: item.stack.count,
       });
     }
-    return packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const packed = packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const boss = mobs.find((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (boss && !packed.some((snapshot) => snapshot.id === boss.id)) {
+      return [boss, ...packed.slice(0, ENTITY_SNAPSHOT_CAP - 1)];
+    }
+    return packed;
+  }
+
+  scatterBossLoot(stacks: readonly ItemStack[], origin: Vec3Like): string[] {
+    const ids: string[] = [];
+    for (const stack of stacks) {
+      const offset = megaZombieLootOffset(this.random);
+      const position = new Vec3(
+        origin.x + offset.x,
+        origin.y + 0.35 + this.random() * 0.35,
+        origin.z + offset.z,
+      );
+      const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z);
+      this.events.emit('itemDrop', event);
+      if (event.cancelled) continue;
+      ids.push(this.drops.spawn(stack, position, {
+        velocity: new Vec3(...dropScatterVelocity(this.random)),
+        merge: false,
+        pickupDelaySeconds: 0.8,
+      }).id);
+    }
+    return ids;
+  }
+
+  launchBossFireworks(origin: Vec3Like): void {
+    const spreads: readonly (readonly [number, number])[] = [[0, 0], [-1.25, 0.55], [1.05, -0.7]];
+    for (const [ox, oz] of spreads) {
+      this.fireworks.spawn(new Vec3(origin.x + ox, origin.y + 1.5, origin.z + oz), 1);
+    }
   }
 
   persistEntities(): Pick<

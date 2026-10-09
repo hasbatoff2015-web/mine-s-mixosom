@@ -21,6 +21,7 @@ import { createTpaPlugin } from './tpa';
 import { createFriendsPlugin } from './friends';
 import { createTradePlugin } from './trade';
 import { createDuelsPlugin } from './duels';
+import { createMegaZombiePlugin } from './megaZombie';
 
 /** Auction House is the player market. Buyers are static NPC vendors that buy one item each for Megacoins. */
 export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
@@ -36,6 +37,7 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createFriendsPlugin(ctx),
     createTradePlugin(ctx),
     createDuelsPlugin(ctx),
+    createMegaZombiePlugin(ctx),
     createMenuPlugin(ctx),
     createBackPlugin(),
     createRtpPlugin(ctx),

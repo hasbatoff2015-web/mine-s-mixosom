@@ -94,6 +94,30 @@ export class SharedFireTexture {
     return mesh;
   }
 
+  /**
+   * Several crossed fire sheets over a large body. Dimensions are local to the
+   * model root, before the mega zombie scale, so the flames cover the torso
+   * and arms instead of sitting as one square at the feet.
+   */
+  createMegaZombieFireOverlay(width: number, height: number): THREE.Group {
+    const group = new THREE.Group();
+    group.name = 'fire-overlay';
+    const sheets = [
+      { x: 0, y: height * 0.30, z: 0, w: width * 0.72, h: height * 0.36 },
+      { x: 0, y: height * 0.55, z: 0, w: width * 0.96, h: height * 0.42 },
+      { x: -width * 0.40, y: height * 0.64, z: 0.04, w: width * 0.38, h: height * 0.48 },
+      { x: width * 0.40, y: height * 0.64, z: 0.04, w: width * 0.38, h: height * 0.48 },
+      { x: 0, y: height * 0.84, z: 0, w: width * 0.42, h: height * 0.28 },
+    ];
+    for (const sheet of sheets) {
+      const mesh = this.createScaledOverlay(sheet.w, sheet.h);
+      mesh.name = 'fire-overlay-plane';
+      mesh.position.set(sheet.x, sheet.y, sheet.z);
+      group.add(mesh);
+    }
+    return group;
+  }
+
   /** Camera-space lower flames. Shares the animated strip; does not remesh. */
   createFirstPersonOverlay(): THREE.Group {
     const group = new THREE.Group();
