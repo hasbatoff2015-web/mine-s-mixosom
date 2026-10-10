@@ -1,4 +1,6 @@
 import type { MobKind } from './mobDefinitions';
+import { MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
+import { MUTANT_ZOMBIE_MODEL } from './megaZombieModel';
 import {
   buildLegacyModel,
   type LegacyModelBox,
@@ -39,6 +41,11 @@ export const MOB_MODEL_DESCRIPTORS: Readonly<Record<MobKind, MobModelDescriptor>
   skeleton: Object.freeze({ kind: 'skeleton', texturePath: 'entity/skeleton', logicalTextureSize: [64, 32] as const }),
   creeper: Object.freeze({ kind: 'creeper', texturePath: 'entity/creeper', logicalTextureSize: [64, 32] as const }),
   spider: Object.freeze({ kind: 'spider', texturePath: 'entity/spider', logicalTextureSize: [64, 32] as const, overlayTexturePaths: Object.freeze(['entity/spider_eyes']) }),
+  mega_zombie: Object.freeze({
+    kind: 'mega_zombie',
+    texturePath: 'entity/mutant_zombie',
+    logicalTextureSize: [128, 128] as const,
+  }),
 });
 
 const box = (
@@ -258,6 +265,7 @@ export const MOB_LEGACY_MODELS: Readonly<Record<MobKind, readonly LegacyModelDef
   chicken: [CHICKEN_MODEL], wolf: [WOLF_MODEL, WOLF_COLLAR_MODEL], cat: [CAT_MODEL],
   zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
   creeper: [CREEPER_MODEL], spider: [SPIDER_MODEL],
+  mega_zombie: [MUTANT_ZOMBIE_MODEL],
 };
 
 const PART_NAMES: Readonly<Record<MobKind, {
@@ -292,6 +300,12 @@ const PART_NAMES: Readonly<Record<MobKind, {
   skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   spider: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6', 'leg7', 'leg8'], legSwingSigns: [] },
+  mega_zombie: {
+    head: 'head',
+    legs: ['leg1', 'leg2'],
+    legSwingSigns: [1, -1],
+    arms: ['arm1', 'arm2'],
+  },
 };
 
 export function createMobModel(
@@ -309,6 +323,7 @@ export function createMobModel(
       return { ...definition, texturePath: options.texturePath };
     });
     const built = buildLegacyModel(visuals, `mob:${kind}`, definitions);
+    if (kind === 'mega_zombie') built.root.scale.setScalar(MEGA_ZOMBIE_MODEL_SCALE);
     const names = PART_NAMES[kind];
     const model: MobModel = {
       root: built.root,

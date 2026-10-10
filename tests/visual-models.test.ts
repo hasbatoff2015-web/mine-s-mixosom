@@ -40,7 +40,7 @@ import { frontEdgeU, sideEdgeU } from './cuboidUvSample';
 import { decodeRgbaPng } from '../scripts/png-rgba.mjs';
 
 const MOB_KINDS: readonly MobKind[] = [
-  'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider',
+  'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider', 'mega_zombie',
 ];
 const ENTITY_TEXTURE_MODULES = import.meta.glob('../public/textures/entity/**/*.png');
 

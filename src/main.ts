@@ -46,7 +46,7 @@ if (import.meta.env.DEV) {
   const requestedView = search.get('view');
   const petState = search.get('petState');
   const petVariant = search.get('variant');
-  const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider', 'wolf', 'cat']);
+  const mobKinds = new Set<MobKind>(['cow', 'pig', 'chicken', 'sheep', 'zombie', 'skeleton', 'creeper', 'spider', 'wolf', 'cat', 'mega_zombie']);
   const qaViews = new Set<MobQaView>(['front', 'side', 'rear', 'three-quarter']);
   if (hudEditor) {
     runningDevHarness = true;

@@ -151,6 +151,7 @@ import {
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
 import { ItemId, collectiblePaintingDropItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { megaZombieHealthBarVisible } from '../entities/megaZombie';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -5286,12 +5287,14 @@ export class Game {
             attackerSprinting: session.player.sprinting,
             attackerYaw: session.player.yaw,
           });
-          const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
+          const godSwordHit = stack?.itemId === ItemId.GodSword;
+          const accepted = session.mobs.damage(mobTarget.mob, godSwordHit ? Math.max(result.damage, 1) : result.damage, {
             source: 'player',
             attackerPosition: session.player.position,
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
             attackerId: LOCAL_PLAYER_FOCUS_ID,
+            ...(godSwordHit ? { lethal: true } : {}),
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {
@@ -6717,6 +6720,7 @@ export class Game {
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
+      boss: this.megaZombieHud(session),
       playInfo: formatPlayInfo(
         session.online ? session.online.remotes.size + 1 : 1,
         session.player.position.x,
@@ -6833,6 +6837,24 @@ export class Game {
     this.streamingTrace.reset(performance.now());
     this.firstPerson?.setHeldItems();
     this.input.releaseActions();
+  }
+
+  private megaZombieHud(session: GameSession): { health: number; maxHealth: number } | null {
+    let boss: { health: number; maxHealth: number; spawn: { x: number; y: number; z: number } | null } | undefined;
+    for (const mob of session.mobs.entities) {
+      if (mob.kind !== 'mega_zombie') continue;
+      if (mob.state !== 'die' && !mob.alive) continue;
+      boss = {
+        health: mob.health,
+        maxHealth: mob.definition.maxHealth,
+        spawn: mob.boss?.configuredSpawn ?? null,
+      };
+      break;
+    }
+    if (!boss) return null;
+    const player = session.player.position;
+    if (!megaZombieHealthBarVisible(player, boss.spawn)) return null;
+    return { health: boss.health, maxHealth: boss.maxHealth };
   }
 
   private chunkDebugLine(session: GameSession): string {

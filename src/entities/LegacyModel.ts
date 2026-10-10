@@ -45,6 +45,11 @@ export interface LegacyModelPart {
   readonly boxes: readonly LegacyModelBox[];
   /** Legacy model Euler angles, radians. */
   readonly rotation?: LegacyVector;
+  /**
+   * Parent part name. Child pivots are relative to the parent, in legacy
+   * Y-down units, and are not shifted by the ground line.
+   */
+  readonly parent?: string;
 }
 
 export interface LegacyModelDefinition {
@@ -74,10 +79,13 @@ export function buildLegacyModel(
       if (!part) {
         part = new THREE.Group();
         part.name = `${name}:${partDefinition.name}`;
-        part.position.set(...legacyRotationPointToWorld(
-          partDefinition.rotationPoint,
-          definition.groundY ?? LEGACY_MODEL_GROUND_Y,
-        ));
+        const pivot = partDefinition.parent
+          ? legacyChildPivot(partDefinition.rotationPoint)
+          : legacyRotationPointToWorld(
+            partDefinition.rotationPoint,
+            definition.groundY ?? LEGACY_MODEL_GROUND_Y,
+          );
+        part.position.set(...pivot);
         if (partDefinition.rotation) part.rotation.set(...legacyRotationToThree(partDefinition.rotation));
         part.userData.baseRotationX = part.rotation.x;
         part.userData.baseRotationY = part.rotation.y;
@@ -88,7 +96,7 @@ export function buildLegacyModel(
         part.userData.baseLegacyPivotX = partDefinition.rotationPoint[0];
         part.userData.baseLegacyPivotY = partDefinition.rotationPoint[1];
         part.userData.baseLegacyPivotZ = partDefinition.rotationPoint[2];
-        root.add(part);
+        part.userData.legacyParent = partDefinition.parent;
         parts.set(partDefinition.name, part);
       }
       for (const box of partDefinition.boxes) {
@@ -115,5 +123,22 @@ export function buildLegacyModel(
       }
     }
   }
+  for (const definition of definitions) {
+    for (const partDefinition of definition.parts) {
+      const part = parts.get(partDefinition.name);
+      if (!part || part.parent) continue;
+      const parent = partDefinition.parent ? parts.get(partDefinition.parent) : undefined;
+      (parent ?? root).add(part);
+    }
+  }
   return { root, parts };
+}
+
+/** Child setRotationPoint, relative to the parent, legacy Y-down to Three Y-up. */
+export function legacyChildPivot(point: LegacyVector): LegacyVector {
+  return [
+    point[0] / LEGACY_MODEL_UNITS_PER_BLOCK,
+    -point[1] / LEGACY_MODEL_UNITS_PER_BLOCK,
+    point[2] / LEGACY_MODEL_UNITS_PER_BLOCK,
+  ];
 }

@@ -1,3 +1,5 @@
+import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src/entities/megaZombie';
+import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
@@ -58,6 +60,7 @@ import {
   isPetKind,
   raycastMobTarget,
   type MobEntity,
+  type MobRemovalReason,
   type RewoundMobPose,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
@@ -129,6 +132,7 @@ export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 export interface GameplayPlayer {
   restingBed?: BedRestState;
   readonly id: string;
+  readonly name?: string;
   connected: boolean;
   readonly controller: PlayerController;
   readonly inventory: Inventory;
@@ -225,6 +229,8 @@ export class ServerGameplay {
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
   readonly fireworks: FireworkManager;
+  mobDeathListener?: (mob: MobEntity) => void;
+  mobRemovedListener?: (mob: MobEntity, reason: MobRemovalReason) => void;
   readonly whMarks = new WhMarks();
   readonly redstone: RedstoneSystem;
   readonly farming: FarmingSystem;
@@ -288,7 +294,13 @@ export class ServerGameplay {
       random: this.random,
       ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
-      onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
+      onDeath: (mob) => {
+        this.pushEntityEvent(mob.id, 'death');
+        this.mobDeathListener?.(mob);
+      },
+      onRemove: (mob, reason) => {
+        this.mobRemovedListener?.(mob, reason);
+      },
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
       onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
@@ -468,6 +480,7 @@ export class ServerGameplay {
             alive: !player.survival.dead,
             targetable: player.gamemode === 'survival' && !player.survival.invisible,
             heldItemId: player.inventory.getSlot(player.selectedSlot)?.itemId,
+            ...(player.name ? { name: player.name } : {}),
           })),
           daylight: daylightFactor(this.world.timeOfDay),
         });
@@ -705,7 +718,7 @@ export class ServerGameplay {
     }
     const mobs: EntitySnapshot[] = [];
     for (const mob of this.mobs.entities) {
-      if (!inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
+      if (mob.kind !== 'mega_zombie' && !inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
       mobs.push({
         id: mob.id, kind: 'mob',
         x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw,
@@ -717,7 +730,17 @@ export class ServerGameplay {
         ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
         ...(mob.angry ? { angry: true } : {}),
         ...(mob.kind === 'creeper' ? { fuse: mob.fuseSeconds } : {}),
+        ...(mob.kind === 'mega_zombie' && mob.boss?.configuredSpawn ? {
+          anchorX: mob.boss.configuredSpawn.x,
+          anchorY: mob.boss.configuredSpawn.y,
+          anchorZ: mob.boss.configuredSpawn.z,
+        } : {}),
       });
+    }
+    const bossIndex = mobs.findIndex((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (bossIndex > 0) {
+      const [boss] = mobs.splice(bossIndex, 1);
+      if (boss) mobs.unshift(boss);
     }
     const items: EntitySnapshot[] = [];
     for (const item of this.drops.entities) {
@@ -729,7 +752,39 @@ export class ServerGameplay {
         itemId: item.stack.itemId, count: item.stack.count,
       });
     }
-    return packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const packed = packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const boss = mobs.find((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (boss && !packed.some((snapshot) => snapshot.id === boss.id)) {
+      return [boss, ...packed.slice(0, ENTITY_SNAPSHOT_CAP - 1)];
+    }
+    return packed;
+  }
+
+  scatterBossLoot(stacks: readonly ItemStack[], origin: Vec3Like): string[] {
+    const ids: string[] = [];
+    for (const stack of splitMegaZombieStacks(stacks, this.random)) {
+      const motion = megaZombieLootMotion(this.random);
+      const position = new Vec3(origin.x + motion.x, origin.y + motion.y, origin.z + motion.z);
+      const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z);
+      this.events.emit('itemDrop', event);
+      if (event.cancelled) continue;
+      ids.push(this.drops.spawn(stack, position, {
+        velocity: new Vec3(motion.vx, motion.vy, motion.vz),
+        merge: false,
+        lockMerge: true,
+        pickupDelaySeconds: 0.8,
+      }).id);
+    }
+    return ids;
+  }
+
+  launchBossFireworks(origin: Vec3Like): void {
+    const spreads: readonly (readonly [number, number])[] = [[0, 0], [-1.25, 0.55], [1.05, -0.7]];
+    for (let index = 0; index < spreads.length; index += 1) {
+      const spread = spreads[index]!;
+      const flight = MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS[index] ?? 1;
+      this.fireworks.spawn(new Vec3(origin.x + spread[0], origin.y + 1.5, origin.z + spread[1]), flight);
+    }
   }
 
   persistEntities(): Pick<
@@ -1881,12 +1936,14 @@ export class ServerGameplay {
     const attackerPosition = pose
       ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
       : attacker.controller.position;
-    const accepted = this.mobs.damage(mob, result.damage, {
+    const godSwordHit = stack?.itemId === ItemId.GodSword;
+    const accepted = this.mobs.damage(mob, godSwordHit ? Math.max(result.damage, 1) : result.damage, {
       source: 'player',
       attackerPosition,
       attackerYaw: result.attackerYaw,
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerId: attacker.id,
+      ...(godSwordHit ? { lethal: true } : {}),
     });
     if (accepted) {
       this.events.emit('entityDamaged', { entityId: mob.id, amount: result.damage, cause: 'melee' });

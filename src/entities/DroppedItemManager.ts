@@ -20,6 +20,8 @@ const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
 const ITEM_SHAPE = Object.freeze({ width: ITEM_WIDTH, height: ITEM_HEIGHT });
 export const DROPPED_ITEM_MAX_HEALTH = 5;
+/** Item meshes created during one render. The rest wait on the visual queue. */
+export const DROPPED_ITEM_VISUALS_PER_FRAME = 6;
 const ENVIRONMENT_DAMAGE_TICK_SECONDS = 0.05;
 
 export type DroppedItemRemovalReason = 'picked-up' | 'despawned' | 'merged' | 'capacity' | 'removed' | 'cleared' | 'burned';
@@ -35,6 +37,8 @@ export interface SerializedDroppedItem {
   readonly pickupDelaySeconds: number;
   /** Optional for backward compatibility with saves made before item fire damage. */
   readonly environmentHealth?: number;
+  /** Boss piles stay separate across saves. Absent on ordinary drops. */
+  readonly lockMerge?: boolean;
 }
 
 export interface DroppedItemSpawnOptions {
@@ -46,6 +50,10 @@ export interface DroppedItemSpawnOptions {
   readonly id?: string;
   /** Network snapshots must keep server IDs and must not merge into a different entity. */
   readonly merge?: boolean;
+  /** Server piles that must not collapse back together in mergeNearby. */
+  readonly lockMerge?: boolean;
+  /** Client copy of a server item. Pickup and merging stay on the server. */
+  readonly replica?: boolean;
 }
 
 export interface DroppedItemUpdateContext {
@@ -90,8 +98,12 @@ export class DroppedItemEntity {
   environmentHealth: number;
   environmentDamageSeconds = 0;
   onGround = false;
-  readonly visual?: EntityVisual;
+  visual?: EntityVisual;
   readonly bobPhase: number;
+  /** Persisted. Boss loot piles set this so later merge passes leave them alone. */
+  lockMerge: boolean;
+  /** Not persisted. Set on items spawned from a network snapshot. */
+  replica: boolean;
 
   constructor(
     readonly id: string,
@@ -103,6 +115,8 @@ export class DroppedItemEntity {
     environmentHealth: number,
     visual: EntityVisual | undefined,
     bobPhase: number,
+    lockMerge = false,
+    replica = false,
   ) {
     this.stack = stack;
     this.position = new Vec3(position.x, position.y, position.z);
@@ -113,6 +127,8 @@ export class DroppedItemEntity {
     this.environmentHealth = environmentHealth;
     this.visual = visual;
     this.bobPhase = bobPhase;
+    this.lockMerge = lockMerge;
+    this.replica = replica;
   }
 }
 
@@ -130,6 +146,8 @@ export class DroppedItemManager {
   private idCounter = 0;
   private mergeTimer = 0;
   private disposed = false;
+  private readonly visualQueue: DroppedItemEntity[] = [];
+  private immediateVisualsLeft = DROPPED_ITEM_VISUALS_PER_FRAME;
 
   constructor(
     sceneOrHost: EntityHost | object,
@@ -178,8 +196,6 @@ export class DroppedItemManager {
 
     if (this.itemsById.size >= this.maxItems) this.evictOldest();
     const id = this.allocateId(spawnOptions.id);
-    const visual = this.host.createDroppedItem(clonedStack.itemId, clonedStack.count) as EntityVisual | undefined;
-    if (visual) this.host.attach(visual);
     const velocity = spawnOptions.velocity ? new Vec3(spawnOptions.velocity.x, spawnOptions.velocity.y, spawnOptions.velocity.z) : new Vec3();
     const entity = new DroppedItemEntity(
       id,
@@ -189,12 +205,13 @@ export class DroppedItemManager {
       Math.max(0, spawnOptions.ageSeconds ?? 0),
       Math.max(0, spawnOptions.pickupDelaySeconds ?? this.defaultPickupDelay),
       this.normalizedEnvironmentHealth(spawnOptions.environmentHealth),
-      visual,
+      undefined,
       this.idCounter * 1.618,
+      spawnOptions.lockMerge === true,
+      spawnOptions.replica === true,
     );
     this.itemsById.set(id, entity);
-    this.updateCountScale(entity);
-    this.syncVisual(entity, 1);
+    this.enqueueOrAttachVisual(entity);
     this.options.onSpawn?.(entity);
     return entity;
   }
@@ -304,6 +321,7 @@ export class DroppedItemManager {
       ageSeconds: entity.ageSeconds,
       pickupDelaySeconds: entity.pickupDelaySeconds,
       environmentHealth: entity.environmentHealth,
+      ...(entity.lockMerge ? { lockMerge: true } : {}),
     }));
   }
 
@@ -326,6 +344,7 @@ export class DroppedItemManager {
             ageSeconds: entry.ageSeconds,
             pickupDelaySeconds: entry.pickupDelaySeconds,
             environmentHealth: entry.environmentHealth,
+            lockMerge: entry.lockMerge === true,
           },
         );
         restored += 1;
@@ -409,6 +428,8 @@ export class DroppedItemManager {
   }
 
   interpolateVisuals(alpha: number): void {
+    this.realizeQueuedVisuals(DROPPED_ITEM_VISUALS_PER_FRAME);
+    this.immediateVisualsLeft = DROPPED_ITEM_VISUALS_PER_FRAME;
     const t = Math.max(0, Math.min(1, alpha));
     for (const entity of this.itemsById.values()) this.syncVisual(entity, t);
   }
@@ -450,6 +471,7 @@ export class DroppedItemManager {
   ): DroppedItemEntity | undefined {
     const maximum = getItemDefinition(incoming.itemId).maxStack;
     for (const entity of this.itemsById.values()) {
+      if (entity.lockMerge || entity.replica) continue;
       if (!canStacksMerge(entity.stack, incoming)) continue;
       if (entity.position.distanceToSquared(position) > this.mergeRadiusSquared) continue;
       const space = maximum - entity.stack.count;
@@ -466,12 +488,12 @@ export class DroppedItemManager {
     const entities = [...this.itemsById.values()];
     for (let sourceIndex = 0; sourceIndex < entities.length; sourceIndex += 1) {
       const target = entities[sourceIndex];
-      if (!target || !this.itemsById.has(target.id)) continue;
+      if (!target || !this.itemsById.has(target.id) || target.lockMerge || target.replica) continue;
       const maximum = getItemDefinition(target.stack.itemId).maxStack;
       if (target.stack.count >= maximum) continue;
       for (let incomingIndex = sourceIndex + 1; incomingIndex < entities.length; incomingIndex += 1) {
         const incoming = entities[incomingIndex];
-        if (!incoming || !this.itemsById.has(incoming.id)) continue;
+        if (!incoming || !this.itemsById.has(incoming.id) || incoming.lockMerge || incoming.replica) continue;
         if (!canStacksMerge(target.stack, incoming.stack)) continue;
         if (target.position.distanceToSquared(incoming.position) > this.mergeRadiusSquared) continue;
         const moved = Math.min(maximum - target.stack.count, incoming.stack.count);
@@ -505,8 +527,40 @@ export class DroppedItemManager {
 
   private removeEntity(entity: DroppedItemEntity, reason: DroppedItemRemovalReason): void {
     if (!this.itemsById.delete(entity.id)) return;
+    const queued = this.visualQueue.indexOf(entity);
+    if (queued >= 0) this.visualQueue.splice(queued, 1);
     if (entity.visual) this.host.detach(entity.visual);
     this.options.onRemove?.(entity, reason);
+  }
+
+  private enqueueOrAttachVisual(entity: DroppedItemEntity): void {
+    if (!this.host.hasVisuals) return;
+    if (this.visualQueue.length === 0 && this.immediateVisualsLeft > 0) {
+      this.immediateVisualsLeft -= 1;
+      this.attachVisual(entity);
+      return;
+    }
+    this.visualQueue.push(entity);
+  }
+
+  private realizeQueuedVisuals(limit: number): void {
+    let created = 0;
+    while (this.visualQueue.length > 0 && created < limit) {
+      const entity = this.visualQueue.shift();
+      if (!entity || !this.itemsById.has(entity.id) || entity.visual) continue;
+      this.attachVisual(entity);
+      created += 1;
+    }
+  }
+
+  private attachVisual(entity: DroppedItemEntity): void {
+    if (entity.visual || !this.host.hasVisuals) return;
+    const visual = this.host.createDroppedItem(entity.stack.itemId, entity.stack.count);
+    if (!visual) return;
+    entity.visual = visual;
+    this.host.attach(visual);
+    this.updateCountScale(entity);
+    this.syncVisual(entity, 1);
   }
 
   private acceptedCount(decision: PickupDecision, available: number): number {

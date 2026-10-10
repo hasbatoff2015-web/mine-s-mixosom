@@ -302,6 +302,8 @@ export interface HudState {
   debug?: string;
   /** "Игроков" plus floored XYZ. Omitted updates leave the previous text. */
   playInfo?: string;
+  /** Active mega zombie. Null hides the bar. Omitted updates leave the previous bar. */
+  boss?: { readonly health: number; readonly maxHealth: number } | null;
 }
 
 export interface InventoryContext {
@@ -435,6 +437,10 @@ export class GameUI {
   private offhandHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
+  private bossBar?: HTMLElement;
+  private bossFill?: HTMLElement;
+  private bossPercent?: HTMLElement;
+  private bossKey = '';
   private hungerHtml = '';
   private airHtml = '';
   private airVisible = false;
@@ -457,6 +463,11 @@ export class GameUI {
         <div id="hurt-flash" aria-hidden="true"></div>
         <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" />${Array.from({ length: 12 }, (_, i) => `<span style="--spark-angle:${i * 30}deg"></span>`).join('')}</div>
         <div id="crosshair"></div>
+        <div id="boss-bar" class="hidden" aria-live="polite">
+          <div class="boss-bar-name">МЕГА-ЗОМБИ</div>
+          <div class="boss-bar-track"><span></span></div>
+          <div class="boss-bar-percent">100%</div>
+        </div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
           <div class="status-left">
@@ -534,6 +545,9 @@ export class GameUI {
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
+    this.bossBar = this.root.querySelector('#boss-bar') ?? undefined;
+    this.bossFill = this.root.querySelector('#boss-bar .boss-bar-track > span') ?? undefined;
+    this.bossPercent = this.root.querySelector('#boss-bar .boss-bar-percent') ?? undefined;
     this.hunger = this.root.querySelector('.hunger')!;
     this.air = this.root.querySelector('.air')!;
     this.armor = this.root.querySelector('.armor')!;
@@ -1044,6 +1058,28 @@ export class GameUI {
     this.pointerLockFallback.onclick = null;
   }
 
+  private renderBossBar(boss: { readonly health: number; readonly maxHealth: number } | null): void {
+    const bar = this.bossBar;
+    const fill = this.bossFill;
+    const percent = this.bossPercent;
+    if (!bar || !fill || !percent) return;
+    if (!boss || boss.maxHealth <= 0) {
+      if (this.bossKey !== 'hidden') {
+        this.bossKey = 'hidden';
+        bar.classList.add('hidden');
+      }
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, boss.health / boss.maxHealth));
+    const shown = Math.round(ratio * 100);
+    const key = `${shown}:${ratio.toFixed(4)}`;
+    if (key === this.bossKey) return;
+    this.bossKey = key;
+    bar.classList.remove('hidden');
+    fill.style.width = `${(ratio * 100).toFixed(2)}%`;
+    percent.textContent = `${shown}%`;
+  }
+
   updateHud(state: HudState): void {
     const offhandHtml = this.slotHtml(state.inventory.offhand, 'offhand-hud');
     if (offhandHtml !== this.offhandHtml) {
@@ -1065,6 +1101,7 @@ export class GameUI {
       this.selectedItemText = selectedItemText;
       this.selectedItem.textContent = selectedItemText;
     }
+    if (state.boss !== undefined) this.renderBossBar(state.boss);
     const heartsHtml = [
       ...heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)),
       ...absorptionHudIcons(state.absorption ?? 0).icons.map((icon) => this.absorptionHeartIconHtml(icon)),
