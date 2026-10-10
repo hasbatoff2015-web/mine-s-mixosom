@@ -98,6 +98,7 @@ export function applyEntitySnapshots(
           velocity: new THREE.Vector3(snap.vx ?? 0, snap.vy ?? 0, snap.vz ?? 0),
           pickupDelaySeconds: 999,
           merge: false,
+          replica: true,
         });
         ingestPose(interpolator, snap, tick, now);
         break;

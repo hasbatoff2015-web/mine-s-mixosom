@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { BlockId } from '../src/blocks';
-import { HeadlessEntityHost, MobManager } from '../src/entities';
+import { DroppedItemManager, HeadlessEntityHost, MobManager } from '../src/entities';
 import {
   MEGA_ZOMBIE_ATTACK_DAMAGE,
   MEGA_ZOMBIE_BAR_RADIUS,
+  MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS,
+  MEGA_ZOMBIE_LOOT_HORIZONTAL_SCALE,
+  MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS,
   MEGA_ZOMBIE_LOOT_UP_MIN,
+  MEGA_ZOMBIE_LOOT_UP_SPAN,
   MEGA_ZOMBIE_MAX_HEALTH,
   MEGA_ZOMBIE_REVENGE_SECONDS,
   TITANIUM_SWORD_NORMAL_HIT,
@@ -20,11 +24,20 @@ import {
   type ArenaAabb,
   type BossFocus,
 } from '../src/entities/megaZombie';
-import { MEGA_ZOMBIE_LOOT, rollMegaZombieLoot } from '../src/entities/megaZombieLoot';
+import {
+  MEGA_ZOMBIE_LOOT,
+  rollMegaZombieLoot,
+  splitMegaZombieCount,
+  splitMegaZombieStacks,
+} from '../src/entities/megaZombieLoot';
 import { applyMegaZombiePose } from '../src/entities/megaZombiePose';
 import { MOB_DEFINITIONS } from '../src/entities/mobDefinitions';
 import { Vec3 } from '../src/math/vec3';
+import { createItemStack } from '../src/inventory';
+import { getItemDefinition, ItemId } from '../src/items';
 import { MAX_HEALTH, reduceDamageByArmor } from '../src/survival/SurvivalSystem';
+import { EventBus } from '../server/events';
+import { ServerGameplay } from '../server/gameplay';
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../src/core/constants';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
@@ -292,34 +305,212 @@ describe('mega zombie simulation', () => {
   });
 });
 
+function lootTotals(random: () => number): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const stack of rollMegaZombieLoot(random)) {
+    totals.set(stack.itemId, (totals.get(stack.itemId) ?? 0) + stack.count);
+  }
+  return totals;
+}
+
+function pileSum(counts: readonly number[]): number {
+  return counts.reduce((sum, count) => sum + count, 0);
+}
+
 describe('mega zombie loot', () => {
-  it('copies the current event chest contents without calling the generator', () => {
+  it('keeps the chest rows that were not retuned and does not call the chest generator', () => {
     const source = readFileSync(new URL('../src/entities/megaZombieLoot.ts', import.meta.url), 'utf8');
     expect(source.includes('generateEventChestLoot')).toBe(false);
     expect(source.includes("from '../server")).toBe(false);
     expect(source.includes('from "../../server')).toBe(false);
     expect(source.includes('eventLoot')).toBe(false);
     expect(MEGA_ZOMBIE_LOOT).not.toBe(EVENT_CHEST_LOOT_TABLE);
-    expect(MEGA_ZOMBIE_LOOT.map((entry) => ({ ...entry }))).toEqual(
-      EVENT_CHEST_LOOT_TABLE.map((entry) => ({ ...entry })),
-    );
-    const stacks = rollMegaZombieLoot(() => 0);
-    expect(stacks.map((stack) => stack.itemId).sort()).toEqual(
-      MEGA_ZOMBIE_LOOT.map((entry) => entry.itemId).sort(),
-    );
+    const bossRequired = MEGA_ZOMBIE_LOOT.filter((entry) => entry.required).length;
+    const chestRequired = EVENT_CHEST_LOOT_TABLE.filter((entry) => entry.required).length;
+    expect(bossRequired).toBe(chestRequired + 4);
+    expect(bossRequired + 5 - bossRequired).toBe(5);
+
+    for (const entry of EVENT_CHEST_LOOT_TABLE) {
+      const boss = MEGA_ZOMBIE_LOOT.find((row) => row.itemId === entry.itemId);
+      if (entry.itemId === ItemId.PotionRepair) {
+        expect(boss).toBeUndefined();
+        continue;
+      }
+      if (entry.itemId === ItemId.RubyIngot) {
+        expect(boss).toEqual({ ...entry, min: 3, max: 3 });
+        continue;
+      }
+      expect(boss).toEqual(entry);
+    }
+    expect(MEGA_ZOMBIE_LOOT.find((row) => row.itemId === ItemId.CookedChicken)).toEqual({
+      itemId: ItemId.CookedChicken, min: 10, max: 10, chance: 1, required: true,
+    });
+    expect(MEGA_ZOMBIE_LOOT.find((row) => row.itemId === 'oak_planks')).toEqual({
+      itemId: 'oak_planks', min: 64, max: 64, chance: 1, required: true,
+    });
+    expect(MEGA_ZOMBIE_LOOT.find((row) => row.itemId === 'stone')).toEqual({
+      itemId: 'stone', min: 64, max: 64, chance: 1, required: true,
+    });
+    expect(MEGA_ZOMBIE_LOOT.find((row) => row.itemId === ItemId.FireworkRocket)).toEqual({
+      itemId: ItemId.FireworkRocket, min: 30, max: 30, chance: 1, required: true,
+    });
+    expect(getItemDefinition('stone')).toMatchObject({ kind: 'block', placesBlockId: BlockId.Stone, maxStack: 64 });
+    expect(getItemDefinition('oak_planks')).toMatchObject({ kind: 'block', placesBlockId: BlockId.OakPlanks, maxStack: 64 });
+    expect(getItemDefinition(ItemId.FireworkRocket).kind).toBe('resource');
+    expect(getItemDefinition(ItemId.CookedChicken).kind).toBe('food');
   });
 
-  it('tosses loot upward and sideways from beside the corpse', () => {
+  it('always drops the retuned rewards and never drops a repair potion', () => {
+    const sequences = [
+      () => 0,
+      () => 0.5,
+      () => 0.999,
+      (() => {
+        let index = 0;
+        const values = [0.1, 0.96, 0.2, 0.97, 0.4, 0.99];
+        return () => values[index++ % values.length]!;
+      })(),
+    ];
+    for (const random of sequences) {
+      const totals = lootTotals(random);
+      expect(totals.get(ItemId.RubyIngot)).toBe(3);
+      expect(totals.has(ItemId.PotionRepair)).toBe(false);
+      expect(totals.get(ItemId.CookedChicken)).toBe(10);
+      expect(totals.get('oak_planks')).toBe(64);
+      expect(totals.get('stone')).toBe(64);
+      expect(totals.get(ItemId.FireworkRocket)).toBe(30);
+    }
+    const minimum = lootTotals(() => 0);
+    expect(minimum.get(ItemId.GoldIngot)).toBe(9);
+    expect(minimum.get(ItemId.IronIngot)).toBe(11);
+    expect(minimum.get(ItemId.Coal)).toBe(18);
+    expect(minimum.get(ItemId.Diamond)).toBe(7);
+    expect(minimum.get(ItemId.CookedBeef)).toBe(10);
+    expect(minimum.get('obsidian')).toBe(10);
+    expect(minimum.get(ItemId.TitaniumIngot)).toBe(1);
+  });
+
+  it('splits multi-count resources into several piles without changing the total', () => {
+    const stone = splitMegaZombieCount(64, 64, () => 0.3);
+    const planks = splitMegaZombieCount(64, 64, () => 0.8);
+    const rubies = splitMegaZombieCount(3, 64, () => 0.2);
+    const single = splitMegaZombieCount(1, 64, () => 0.9);
+    const capped = splitMegaZombieCount(40, 16, () => 0.4);
+    for (const counts of [stone, planks, rubies, capped]) {
+      expect(counts.length).toBeGreaterThan(1);
+      expect(counts.every((count) => Number.isInteger(count) && count >= 1)).toBe(true);
+    }
+    expect(pileSum(stone)).toBe(64);
+    expect(pileSum(planks)).toBe(64);
+    expect(pileSum(rubies)).toBe(3);
+    expect(pileSum(capped)).toBe(40);
+    expect(Math.max(...stone)).toBeLessThanOrEqual(64);
+    expect(Math.max(...capped)).toBeLessThanOrEqual(16);
+    expect(single).toEqual([1]);
+    expect(splitMegaZombieCount(64, 1, () => 0.5)).toHaveLength(64);
+
+    const piles = splitMegaZombieStacks([
+      createItemStack('stone', 64),
+      createItemStack(ItemId.RubyIngot, 3),
+      createItemStack(ItemId.IronIngot, 12),
+      createItemStack(ItemId.TitaniumHoe, 1),
+    ], () => 0.35);
+    const summed = (itemId: string) => piles.filter((pile) => pile.itemId === itemId).reduce((sum, pile) => sum + pile.count, 0);
+    expect(piles.filter((pile) => pile.itemId === 'stone').length).toBeGreaterThan(1);
+    expect(piles.filter((pile) => pile.itemId === ItemId.RubyIngot).length).toBeGreaterThan(1);
+    expect(piles.filter((pile) => pile.itemId === ItemId.IronIngot).length).toBeGreaterThan(1);
+    expect(piles.filter((pile) => pile.itemId === ItemId.TitaniumHoe)).toHaveLength(1);
+    expect(summed('stone')).toBe(64);
+    expect(summed(ItemId.RubyIngot)).toBe(3);
+    expect(summed(ItemId.IronIngot)).toBe(12);
+    expect(summed(ItemId.TitaniumHoe)).toBe(1);
+    for (const pile of piles) {
+      expect(pile.count).toBeLessThanOrEqual(getItemDefinition(pile.itemId).maxStack);
+    }
+  });
+
+  it('scatters server piles twice as wide, keeps the upward toss, and does not drop twice by itself', () => {
+    expect(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS).toBeCloseTo(0.45 * 2);
+    expect(MEGA_ZOMBIE_LOOT_HORIZONTAL_SCALE).toBeCloseTo(3.2 * 2);
+    expect(MEGA_ZOMBIE_LOOT_UP_MIN).toBe(7.5);
+    expect(MEGA_ZOMBIE_LOOT_UP_SPAN).toBe(2.5);
+    expect(MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS).toEqual([1, 2, 3]);
     const samples = [0, 0.2, 0.8, 0.95].map((value) => megaZombieLootMotion(() => value));
     for (const motion of samples) {
-      expect(Math.abs(motion.x)).toBeLessThanOrEqual(0.45);
-      expect(Math.abs(motion.z)).toBeLessThanOrEqual(0.45);
+      expect(Math.abs(motion.x)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS);
+      expect(Math.abs(motion.z)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS);
+      expect(motion.y).toBeCloseTo(0.55);
       expect(motion.vy).toBeGreaterThanOrEqual(MEGA_ZOMBIE_LOOT_UP_MIN);
+      expect(motion.vy).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_UP_MIN + MEGA_ZOMBIE_LOOT_UP_SPAN);
       expect(Math.abs(motion.vx)).toBeGreaterThan(0);
       expect(Math.abs(motion.vz)).toBeGreaterThan(0);
     }
-    const directions = new Set(samples.map((motion) => Math.sign(motion.vx)));
-    expect(directions.size).toBeGreaterThan(1);
+    expect(new Set(samples.map((motion) => Math.sign(motion.vx))).size).toBeGreaterThan(1);
+    expect(Math.abs(megaZombieLootMotion(() => 0).x)).toBeCloseTo(0.9);
+    expect(Math.abs(megaZombieLootMotion(() => 1).x)).toBeCloseTo(0.9);
+    expect(Math.abs(megaZombieLootMotion(() => 0).vx)).toBeCloseTo(0.5 * 1.4 * 6.4);
+
+    const world = new VoxelWorld('mega-loot-scatter');
+    for (let x = 0; x <= 16; x += 1) {
+      for (let z = 0; z <= 16; z += 1) world.setBlock(x, 70, z, BlockId.Stone);
+    }
+    const gameplay = new ServerGameplay(world, new EventBus());
+    const rolled = rollMegaZombieLoot(() => 0);
+    const expected = new Map<string, number>();
+    for (const stack of rolled) expected.set(stack.itemId, (expected.get(stack.itemId) ?? 0) + stack.count);
+    const started = performance.now();
+    const ids = gameplay.scatterBossLoot(rolled, new Vec3(8, 72, 8));
+    const scatterMs = performance.now() - started;
+    expect(scatterMs).toBeLessThan(100);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(gameplay.drops.count).toBe(ids.length);
+    expect(gameplay.drops.count).toBeGreaterThan(rolled.length);
+    const actual = new Map<string, number>();
+    const angles = new Set<number>();
+    for (const item of gameplay.drops.entities) {
+      actual.set(item.stack.itemId, (actual.get(item.stack.itemId) ?? 0) + item.stack.count);
+      expect(item.stack.count).toBeLessThanOrEqual(getItemDefinition(item.stack.itemId).maxStack);
+      expect(item.lockMerge).toBe(true);
+      expect(Math.abs(item.position.x - 8)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS + 1e-6);
+      expect(Math.abs(item.position.z - 8)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS + 1e-6);
+      expect(item.velocity.y).toBeGreaterThanOrEqual(MEGA_ZOMBIE_LOOT_UP_MIN);
+      angles.add(Math.sign(item.velocity.x));
+    }
+    expect(actual).toEqual(expected);
+    expect(angles.size).toBeGreaterThan(1);
+    const stonePiles = [...gameplay.drops.entities].filter((item) => item.stack.itemId === 'stone');
+    expect(stonePiles.length).toBeGreaterThan(1);
+    expect(stonePiles.reduce((sum, item) => sum + item.stack.count, 0)).toBe(64);
+    const saved = gameplay.drops.serialize();
+    expect(saved.filter((item) => item.stack.itemId === 'stone').every((item) => item.lockMerge)).toBe(true);
+    const restored = new DroppedItemManager(new HeadlessEntityHost(), world);
+    expect(restored.restore(saved)).toBe(ids.length);
+    restored.update(1);
+    expect(restored.count).toBe(ids.length);
+    restored.dispose();
+
+    for (let step = 0; step < 40; step += 1) gameplay.drops.update(0.05);
+    const afterPhysics = new Map<string, number>();
+    for (const item of gameplay.drops.entities) {
+      afterPhysics.set(item.stack.itemId, (afterPhysics.get(item.stack.itemId) ?? 0) + item.stack.count);
+      expect(item.position.y).toBeGreaterThan(70);
+    }
+    expect(afterPhysics).toEqual(expected);
+    expect([...gameplay.drops.entities].filter((item) => item.stack.itemId === 'stone').length).toBe(stonePiles.length);
+    expect(gameplay.drops.entities.some((item) => item.onGround)).toBe(true);
+
+    let accepted = 0;
+    for (const item of [...gameplay.drops.entities]) {
+      item.pickupDelaySeconds = 0;
+      accepted += gameplay.drops.collectNearby(item.position, () => true);
+    }
+    expect(accepted).toBe([...expected.values()].reduce((sum, count) => sum + count, 0));
+    expect(gameplay.drops.count).toBe(0);
+
+    gameplay.launchBossFireworks(new Vec3(8, 72, 8));
+    expect(gameplay.fireworks.entities).toHaveLength(3);
+    expect(gameplay.fireworks.entities.map((rocket) => rocket.fuseTicks).sort((a, b) => a - b)).toEqual([33, 50, 67]);
+    expect(scatterMs).toBeGreaterThanOrEqual(0);
   });
 });
 

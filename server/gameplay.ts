@@ -1,4 +1,5 @@
-import { megaZombieLootMotion } from '../src/entities/megaZombie';
+import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src/entities/megaZombie';
+import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
@@ -761,7 +762,7 @@ export class ServerGameplay {
 
   scatterBossLoot(stacks: readonly ItemStack[], origin: Vec3Like): string[] {
     const ids: string[] = [];
-    for (const stack of stacks) {
+    for (const stack of splitMegaZombieStacks(stacks, this.random)) {
       const motion = megaZombieLootMotion(this.random);
       const position = new Vec3(origin.x + motion.x, origin.y + motion.y, origin.z + motion.z);
       const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z);
@@ -770,6 +771,7 @@ export class ServerGameplay {
       ids.push(this.drops.spawn(stack, position, {
         velocity: new Vec3(motion.vx, motion.vy, motion.vz),
         merge: false,
+        lockMerge: true,
         pickupDelaySeconds: 0.8,
       }).id);
     }
@@ -778,8 +780,10 @@ export class ServerGameplay {
 
   launchBossFireworks(origin: Vec3Like): void {
     const spreads: readonly (readonly [number, number])[] = [[0, 0], [-1.25, 0.55], [1.05, -0.7]];
-    for (const [ox, oz] of spreads) {
-      this.fireworks.spawn(new Vec3(origin.x + ox, origin.y + 1.5, origin.z + oz), 1);
+    for (let index = 0; index < spreads.length; index += 1) {
+      const spread = spreads[index]!;
+      const flight = MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS[index] ?? 1;
+      this.fireworks.spawn(new Vec3(origin.x + spread[0], origin.y + 1.5, origin.z + spread[1]), flight);
     }
   }
 

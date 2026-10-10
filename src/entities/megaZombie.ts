@@ -45,12 +45,14 @@ export const MEGA_ZOMBIE_CYCLE_SECONDS = 30 * 60;
 export const MEGA_ZOMBIE_WARNING_LEAD_SECONDS = 5 * 60;
 export const MEGA_ZOMBIE_DEATH_SECONDS = 1.25;
 /** Items appear next to the corpse. The burst is velocity, not a position teleport. */
-export const MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS = 0.45;
-/** `dropScatterVelocity` horizontal span is 1.4 × this, so about ±2.2 blocks/s. */
-export const MEGA_ZOMBIE_LOOT_HORIZONTAL_SCALE = 3.2;
-/** Upward speed before the existing item gravity (-18). Apex is roughly 1.5–2 blocks. */
+export const MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS = 0.9;
+/** `dropScatterVelocity` horizontal span is 1.4 × this, so about ±4.5 blocks/s. */
+export const MEGA_ZOMBIE_LOOT_HORIZONTAL_SCALE = 6.4;
+/** Upward speed before the existing item gravity (-18). Apex stays about 1.5–2 blocks. */
 export const MEGA_ZOMBIE_LOOT_UP_MIN = 7.5;
 export const MEGA_ZOMBIE_LOOT_UP_SPAN = 2.5;
+/** Death rockets use flights 1, 2, and 3 so the three bursts are not the same tick. */
+export const MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS = [1, 2, 3] as const;
 /** 3D distance from the configured `/boss setspawn` point. Matches entity interest (XYZ). */
 export const MEGA_ZOMBIE_BAR_RADIUS = 30;
 export const MEGA_ZOMBIE_SPAWN_SEARCH_RADIUS = 4;

@@ -2,13 +2,16 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { PlayerArrowManager } from '../src/combat/PlayerArrowManager';
 import {
+  DROPPED_ITEM_VISUALS_PER_FRAME,
   DroppedItemManager,
   FallingBlockManager,
   HeadlessEntityHost,
   MinecartManager,
   MobManager,
 } from '../src/entities';
-import { MEGA_ZOMBIE_MAX_HEALTH } from '../src/entities/megaZombie';
+import { MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS, MEGA_ZOMBIE_LOOT_UP_MIN, MEGA_ZOMBIE_MAX_HEALTH } from '../src/entities/megaZombie';
+import { rollMegaZombieLoot } from '../src/entities/megaZombieLoot';
+import { createItemStack } from '../src/inventory';
 import { createThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { Vec3 } from '../src/math/vec3';
 import { applyEntitySnapshots } from '../src/net/applyEntitySnapshots';
@@ -88,26 +91,70 @@ describe('mega zombie replication', () => {
     session.mobs.dispose();
   });
 
-  it('spawns item entities for boss loot and three firework rockets', () => {
+  it('spawns split item entities for boss loot and three staggered firework rockets', () => {
     const world = new VoxelWorld('mega-loot-net');
     const gameplay = new ServerGameplay(world, new EventBus());
-    const ids = gameplay.scatterBossLoot([
-      { itemId: 'diamond', count: 8 },
-      { itemId: 'coal', count: 20 },
-    ], new Vec3(10, 70, 10));
-    expect(ids).toHaveLength(2);
+    const rolled = rollMegaZombieLoot(() => 0);
+    const ids = gameplay.scatterBossLoot(rolled, new Vec3(10, 70, 10));
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBeGreaterThan(rolled.length);
     const items = [...gameplay.drops.entities];
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(ids.length);
     for (const item of items) {
-      expect(Math.abs(item.position.x - 10)).toBeLessThanOrEqual(0.5);
-      expect(Math.abs(item.position.z - 10)).toBeLessThanOrEqual(0.5);
-      expect(item.velocity.y).toBeGreaterThanOrEqual(7.5);
-      expect(Math.abs(item.velocity.x)).toBeGreaterThan(0);
+      expect(Math.abs(item.position.x - 10)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS + 1e-6);
+      expect(Math.abs(item.position.z - 10)).toBeLessThanOrEqual(MEGA_ZOMBIE_LOOT_ORIGIN_RADIUS + 1e-6);
+      expect(item.velocity.y).toBeGreaterThanOrEqual(MEGA_ZOMBIE_LOOT_UP_MIN);
+      expect(Math.abs(item.velocity.x) + Math.abs(item.velocity.z)).toBeGreaterThan(0);
     }
     gameplay.launchBossFireworks(new Vec3(10, 70, 10));
     expect(gameplay.fireworks.entities).toHaveLength(3);
+    expect(gameplay.fireworks.entities.map((rocket) => rocket.flight).sort()).toEqual([1, 2, 3]);
     const rockets = gameplay.snapshotsNear(new Vec3(10, 70, 10)).filter((entity) => entity.kind === 'firework');
     expect(rockets).toHaveLength(3);
+
+    const session = clientSession(world);
+    const serverCount = gameplay.drops.count;
+    applyEntitySnapshots(session, gameplay.snapshotsNear(new Vec3(10, 70, 10)));
+    expect(session.drops.count).toBe(serverCount);
+    expect(gameplay.drops.count).toBe(serverCount);
+    const immediate = session.drops.entities.filter((item) => item.visual).length;
+    expect(immediate).toBeLessThanOrEqual(DROPPED_ITEM_VISUALS_PER_FRAME);
+    expect(immediate).toBeGreaterThan(0);
+    session.drops.update(1);
+    expect(session.drops.count).toBe(serverCount);
+    for (let frame = 0; frame < 12; frame += 1) session.drops.interpolateVisuals(1);
+    expect(session.drops.entities.every((item) => item.visual)).toBe(true);
+    const removed = session.drops.entities[0]!;
+    session.drops.remove(removed.id);
+    session.drops.interpolateVisuals(1);
+    expect(session.drops.get(removed.id)).toBeUndefined();
+    session.drops.dispose();
+    session.mobs.dispose();
+    let leftover = 0;
+    session.scene.traverse((object) => {
+      if (object.name.startsWith('dropped-item')) leftover += 1;
+    });
+    expect(leftover).toBe(0);
+  });
+
+  it('builds only a few dropped-item meshes on the frame a burst appears', () => {
+    const scene = new THREE.Scene();
+    const world = new VoxelWorld('mega-visual-budget');
+    const drops = new DroppedItemManager(scene, world);
+    for (let index = 0; index < 24; index += 1) {
+      drops.spawn(createItemStack('stone', 8), new THREE.Vector3(index, 70, 0), { merge: false, id: `pile-${index}` });
+    }
+    expect(drops.count).toBe(24);
+    expect(drops.entities.filter((item) => item.visual).length).toBe(DROPPED_ITEM_VISUALS_PER_FRAME);
+    drops.interpolateVisuals(1);
+    expect(drops.entities.filter((item) => item.visual).length).toBe(DROPPED_ITEM_VISUALS_PER_FRAME * 2);
+    const queued = drops.entities.find((item) => !item.visual);
+    expect(queued).toBeDefined();
+    drops.remove(queued!.id);
+    for (let frame = 0; frame < 8; frame += 1) drops.interpolateVisuals(1);
+    expect(drops.get(queued!.id)).toBeUndefined();
+    expect(drops.entities.every((item) => item.visual)).toBe(true);
+    drops.dispose();
   });
 
   it('uses one headless host on the server', () => {

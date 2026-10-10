@@ -5,6 +5,7 @@
 - [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.
 - [x] 3D AABB, one scheduler, revenge, fixed loot copy, Mutant Zombie model.
 - [x] HP 1500, melee 5, god-sword lethal hit, no sunlight burn, HP bar within 30 blocks of spawn, `/boss kill`, upward loot toss, safe spawn snap.
+- [x] Retuned loot, server-side pile split, doubled horizontal scatter, staggered item meshes and firework flights.
 - [ ] Not merged. Draft PR **#128**.
 
 ## 2026-10-08: Collectible painting display names
