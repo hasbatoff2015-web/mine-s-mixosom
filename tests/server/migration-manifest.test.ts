@@ -14,6 +14,7 @@ import {
 } from '../../server/db/migrationManifest';
 import { runMigrations } from '../../server/db/migrations';
 import type { DbQueryResult, Queryable } from '../../server/db/types';
+import { ECONOMY_MAX_BALANCE } from '../../server/services/economy';
 
 interface AppliedRow {
   version: string;
@@ -121,7 +122,7 @@ const SAMPLE: readonly Migration[] = [
 
 describe('migration manifest', () => {
   it('is ordered, unique, and checksum-stable', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002']);
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002', '0003']);
     expect(new Set(MIGRATIONS.map((migration) => migration.version)).size).toBe(MIGRATIONS.length);
     expect(new Set(MIGRATIONS.map((migration) => migration.name)).size).toBe(MIGRATIONS.length);
     const checksum = migrationChecksum(MIGRATIONS[0]!);
@@ -137,6 +138,12 @@ describe('migration manifest', () => {
     expect(sql).not.toMatch(/DELETE\s+FROM/i);
     expect(sql).toContain('admin_audit_log is append-only');
     expect(sql).toContain('idempotency_requests');
+    expect(sql).toContain('economy_accounts');
+    expect(sql).toContain('economy_operations');
+    expect(sql).toContain('economy_ledger');
+    expect(sql).toContain('is append-only');
+    expect(sql).toContain(String(ECONOMY_MAX_BALANCE));
+    expect(sql).not.toMatch(/\b(float|real|double precision)\b/i);
     for (const key of MIGRATION_ADVISORY_LOCK_KEY) {
       expect(Number.isInteger(key)).toBe(true);
       expect(key).toBeGreaterThan(0);
@@ -227,7 +234,7 @@ describe('migration manifest', () => {
   it('records the foundation statements and their checksum', async () => {
     const shared = sharedState();
     const result = await runMigrations(new MigrationDb(shared), MIGRATIONS);
-    expect(result.applied).toEqual(['0001', '0002']);
+    expect(result.applied).toEqual(['0001', '0002', '0003']);
     expect(shared.statements).toEqual(MIGRATIONS.flatMap((migration) => [...migration.statements]));
     expect(shared.rows.map((row) => row.checksum)).toEqual(MIGRATIONS.map((migration) => migrationChecksum(migration)));
     expect(shared.statements.join('\n')).toContain('DROP CONSTRAINT admin_audit_log_request_scope');

@@ -82,12 +82,22 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
   }, 30_000);
 
   it('bootstraps once and a second startup does not reapply', async () => {
-    expect(main.appliedMigrations).toEqual(['0001', '0002']);
+    expect(main.appliedMigrations).toEqual(['0001', '0002', '0003']);
     const again = open(schema);
     await again.start();
     expect(again.appliedMigrations).toEqual([]);
     const count = await again.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('2');
+    expect(count.rows[0]?.n).toBe('3');
+    const tables = await again.query<{ accounts: string | null; operations: string | null; ledger: string | null }>(
+      `SELECT to_regclass('economy_accounts')::text AS accounts,
+              to_regclass('economy_operations')::text AS operations,
+              to_regclass('economy_ledger')::text AS ledger`,
+    );
+    expect(tables.rows[0]).toEqual({
+      accounts: 'economy_accounts',
+      operations: 'economy_operations',
+      ledger: 'economy_ledger',
+    });
   }, 30_000);
 
   it('serializes two migration runners', async () => {
@@ -95,9 +105,9 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
     const left = open(name);
     const right = open(name);
     await Promise.all([left.start(), right.start()]);
-    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001', '0002']);
+    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001', '0002', '0003']);
     const count = await left.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('2');
+    expect(count.rows[0]?.n).toBe('3');
   }, 30_000);
 
   it('rejects an edited applied checksum', async () => {

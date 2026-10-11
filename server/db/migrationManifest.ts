@@ -126,6 +126,133 @@ const ADMIN_AUDIT_DROP_REQUEST_UNIQUE_SQL = `ALTER TABLE admin_audit_log
 const ADMIN_AUDIT_REQUEST_INDEX_SQL = `CREATE INDEX admin_audit_log_request_created_idx
   ON admin_audit_log (deployment_id, request_id, created_at)`;
 
+/**
+ * Megacoins are exact integers. 999999999 is ECONOMY_MAX_BALANCE.
+ * Accounts are mutable. Operations and ledger rows are append-only.
+ */
+const ECONOMY_ACCOUNTS_SQL = `CREATE TABLE economy_accounts (
+  deployment_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  balance BIGINT NOT NULL,
+  display_name TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (deployment_id, player_id),
+  CONSTRAINT economy_accounts_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT economy_accounts_player_nonempty CHECK (length(btrim(player_id)) > 0),
+  CONSTRAINT economy_accounts_player_len CHECK (char_length(player_id) <= 128),
+  CONSTRAINT economy_accounts_display_name_nonempty CHECK (length(btrim(display_name)) > 0),
+  CONSTRAINT economy_accounts_display_name_len CHECK (char_length(display_name) <= 64),
+  CONSTRAINT economy_accounts_balance_range CHECK (balance >= 0 AND balance <= 999999999)
+)`;
+
+const ECONOMY_OPERATIONS_SQL = `CREATE TABLE economy_operations (
+  deployment_id TEXT NOT NULL,
+  operation_id UUID NOT NULL,
+  kind TEXT NOT NULL,
+  actor_id TEXT NULL,
+  source_type TEXT NULL,
+  source_id TEXT NULL,
+  request_id UUID NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (deployment_id, operation_id),
+  CONSTRAINT economy_operations_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT economy_operations_kind_check CHECK (kind IN ('INITIAL', 'SOURCE', 'TRANSFER', 'SINK', 'ADJUSTMENT')),
+  CONSTRAINT economy_operations_actor_len CHECK (actor_id IS NULL OR (length(btrim(actor_id)) > 0 AND char_length(actor_id) <= 128)),
+  CONSTRAINT economy_operations_source_pair CHECK (
+    (source_type IS NULL AND source_id IS NULL)
+    OR (source_type IS NOT NULL AND source_id IS NOT NULL)
+  ),
+  CONSTRAINT economy_operations_source_type_len CHECK (
+    source_type IS NULL OR (length(btrim(source_type)) > 0 AND char_length(source_type) <= 64)
+  ),
+  CONSTRAINT economy_operations_source_id_len CHECK (
+    source_id IS NULL OR (length(btrim(source_id)) > 0 AND char_length(source_id) <= 256)
+  )
+)`;
+
+const ECONOMY_OPERATIONS_SOURCE_INDEX_SQL = `CREATE UNIQUE INDEX economy_operations_source_uidx
+  ON economy_operations (deployment_id, source_type, source_id)
+  WHERE source_type IS NOT NULL AND source_id IS NOT NULL`;
+
+const ECONOMY_OPERATIONS_REQUEST_INDEX_SQL = `CREATE INDEX economy_operations_request_idx
+  ON economy_operations (deployment_id, request_id)
+  WHERE request_id IS NOT NULL`;
+
+const ECONOMY_LEDGER_SQL = `CREATE TABLE economy_ledger (
+  entry_id UUID PRIMARY KEY,
+  deployment_id TEXT NOT NULL,
+  operation_id UUID NOT NULL,
+  leg_index SMALLINT NOT NULL,
+  player_id TEXT NOT NULL,
+  delta BIGINT NOT NULL,
+  balance_before BIGINT NOT NULL,
+  balance_after BIGINT NOT NULL,
+  reason TEXT NOT NULL,
+  counterparty_player_id TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT economy_ledger_operation_fk
+    FOREIGN KEY (deployment_id, operation_id)
+    REFERENCES economy_operations (deployment_id, operation_id),
+  CONSTRAINT economy_ledger_leg_unique UNIQUE (deployment_id, operation_id, leg_index),
+  CONSTRAINT economy_ledger_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT economy_ledger_leg_index_nonnegative CHECK (leg_index >= 0),
+  CONSTRAINT economy_ledger_delta_nonzero CHECK (delta <> 0),
+  CONSTRAINT economy_ledger_before_nonnegative CHECK (balance_before >= 0),
+  CONSTRAINT economy_ledger_after_range CHECK (balance_after >= 0 AND balance_after <= 999999999),
+  CONSTRAINT economy_ledger_equation CHECK (balance_after = balance_before + delta),
+  CONSTRAINT economy_ledger_player_nonempty CHECK (length(btrim(player_id)) > 0),
+  CONSTRAINT economy_ledger_player_len CHECK (char_length(player_id) <= 128),
+  CONSTRAINT economy_ledger_reason_nonempty CHECK (length(btrim(reason)) > 0),
+  CONSTRAINT economy_ledger_reason_len CHECK (char_length(reason) <= 64),
+  CONSTRAINT economy_ledger_counterparty_len CHECK (
+    counterparty_player_id IS NULL OR (length(btrim(counterparty_player_id)) > 0 AND char_length(counterparty_player_id) <= 128)
+  )
+)`;
+
+const ECONOMY_LEDGER_PLAYER_INDEX_SQL = `CREATE INDEX economy_ledger_player_created_idx
+  ON economy_ledger (deployment_id, player_id, created_at DESC, entry_id DESC)`;
+
+const ECONOMY_APPEND_ONLY_FUNCTION_SQL = `CREATE FUNCTION economy_reject_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $econ$
+BEGIN
+  RAISE EXCEPTION '% is append-only', TG_TABLE_NAME;
+END;
+$econ$`;
+
+const ECONOMY_LEDGER_UPDATE_TRIGGER_SQL = `CREATE TRIGGER economy_ledger_no_update
+BEFORE UPDATE ON economy_ledger
+FOR EACH ROW
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
+const ECONOMY_LEDGER_DELETE_TRIGGER_SQL = `CREATE TRIGGER economy_ledger_no_delete
+BEFORE DELETE ON economy_ledger
+FOR EACH ROW
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
+const ECONOMY_LEDGER_TRUNCATE_TRIGGER_SQL = `CREATE TRIGGER economy_ledger_no_truncate
+BEFORE TRUNCATE ON economy_ledger
+FOR EACH STATEMENT
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
+const ECONOMY_OPERATIONS_UPDATE_TRIGGER_SQL = `CREATE TRIGGER economy_operations_no_update
+BEFORE UPDATE ON economy_operations
+FOR EACH ROW
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
+const ECONOMY_OPERATIONS_DELETE_TRIGGER_SQL = `CREATE TRIGGER economy_operations_no_delete
+BEFORE DELETE ON economy_operations
+FOR EACH ROW
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
+const ECONOMY_OPERATIONS_TRUNCATE_TRIGGER_SQL = `CREATE TRIGGER economy_operations_no_truncate
+BEFORE TRUNCATE ON economy_operations
+FOR EACH STATEMENT
+EXECUTE PROCEDURE economy_reject_mutation()`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -146,6 +273,25 @@ export const MIGRATIONS: readonly Migration[] = [
     statements: [
       ADMIN_AUDIT_DROP_REQUEST_UNIQUE_SQL,
       ADMIN_AUDIT_REQUEST_INDEX_SQL,
+    ],
+  },
+  {
+    version: '0003',
+    name: 'megacoin_ledger',
+    statements: [
+      ECONOMY_ACCOUNTS_SQL,
+      ECONOMY_OPERATIONS_SQL,
+      ECONOMY_OPERATIONS_SOURCE_INDEX_SQL,
+      ECONOMY_OPERATIONS_REQUEST_INDEX_SQL,
+      ECONOMY_LEDGER_SQL,
+      ECONOMY_LEDGER_PLAYER_INDEX_SQL,
+      ECONOMY_APPEND_ONLY_FUNCTION_SQL,
+      ECONOMY_LEDGER_UPDATE_TRIGGER_SQL,
+      ECONOMY_LEDGER_DELETE_TRIGGER_SQL,
+      ECONOMY_LEDGER_TRUNCATE_TRIGGER_SQL,
+      ECONOMY_OPERATIONS_UPDATE_TRIGGER_SQL,
+      ECONOMY_OPERATIONS_DELETE_TRIGGER_SQL,
+      ECONOMY_OPERATIONS_TRUNCATE_TRIGGER_SQL,
     ],
   },
 ];
