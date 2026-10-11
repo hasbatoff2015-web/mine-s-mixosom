@@ -100,4 +100,4 @@ On the live host, read `plugin-data/automine/automines.json` and the automine lo
 
 ## Git
 
-Feature branch `cursor/water-automine-kit-boss-d00d`. Not merged.
+Feature branch `cursor/water-automine-kit-boss-d00d`. Draft PR **#130**. Not merged.
