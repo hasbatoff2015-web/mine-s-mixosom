@@ -3,7 +3,7 @@
 ## Последний проход: PostgreSQL audit и idempotency — 2026-10-11
 
 - Это не админка и не перенос экономики. Чанки, сундуки, печи, мобы, дроп и снимки игроков остаются в `FsWorldStore`. JSON плагинов остаётся в `dataDir/<worldId>/plugin-data/`. `EconomyService`, `AuctionService` и `TradeService` не переведены на PostgreSQL.
-- Нет `FC_DATABASE_URL` — пул не создаётся, сокет не открывается, текущий сервер работает как раньше. URL без непустого `FC_DEPLOYMENT_ID` отклоняется. Ошибка соединения или миграции валит старт и отпускает `.instance.lock`. Тихого перехода на JSON нет.
+- Нет `FC_DATABASE_URL` — пул не создаётся, сокет не открывается, текущий сервер работает как раньше. URL без непустого `FC_DEPLOYMENT_ID` отклоняется. Ошибка соединения или миграции валит старт и отпускает `.instance.lock`. Тихого перехода на JSON нет. Сбой до конца загрузки мира не пишет `meta.json`, `world.json` и `players.json`. После успешной загрузки остановка по-прежнему сохраняет мир.
 - `FC_DB_POOL_MAX` по умолчанию 4, диапазон 1..8. `dev` и `prod` задаются явно, не из hostname. В лог и `/status` не попадают URL, пользователь и пароль.
 - Первая миграция: `schema_migrations`, append-only `admin_audit_log`, `idempotency_requests`. Несколько процессов сериализуются session advisory lock. Checksum SHA-256. Правка уже применённой миграции валит старт.
 - Релиз копирует runtime-замыкание `ws` и `pg` по `dependencies` манифестов. `npm install` на VPS по-прежнему не нужен. Миры в релиз не входят.

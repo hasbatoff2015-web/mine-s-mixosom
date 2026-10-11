@@ -6,6 +6,7 @@
 - [x] `FC_DEPLOYMENT_ID` is required with the URL. A configured connection or migration failure aborts startup and releases the world lock.
 - [x] Checksummed migrations under one session advisory lock. First migration: append-only `admin_audit_log` and `idempotency_requests`.
 - [x] The release copies the `ws` and `pg` runtime closure. The VPS still does not `npm install`.
+- [x] A startup failure before the canonical world load does not write `meta.json`, `world.json`, or `players.json`.
 - [ ] Economy, auction, trade, admin HTTP, and anti-dupe ledgers stay on their current storage.
 - [ ] Not merged. Draft PR **#129**.
 

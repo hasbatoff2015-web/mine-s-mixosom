@@ -13,7 +13,7 @@ The first migration creates `schema_migrations`, append-only `admin_audit_log`, 
 ## Implemented
 
 - `server/db/`: `Database` (`start`, `close`, `query`, `transaction`), checksummed migrations under a session advisory lock (`FCDB`/`MIG1`), `AdminAuditService`, `IdempotencyService`, canonical JSON SHA-256, secret redaction.
-- `WorldInstance.initialize` acquires the world lock, then starts the database, then loads the world. `stop` saves, releases the lock, and closes the pool. A failed save still releases the lock and closes the pool.
+- `WorldInstance.initialize` acquires the world lock, then starts the database, then loads the world. `canonicalWorldLoaded` becomes true only after that load or create finishes. `stop()` writes `meta.json`, `world.json`, and `players.json` only when the flag is set. A configured database that never connects fails before the load, so shutdown does not replace an existing world with the empty in-memory default and does not create those files for a new directory. After a successful load, shutdown still saves, including a failed listen and a later fatal error. A failed save still releases the lock and closes the pool.
 - Disabled mode is a no-op implementation. Tests inject a fake database. `new WorldInstance(config)` does not need PostgreSQL.
 - Migration `0001` `admin_audit_and_idempotency`. Triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on `admin_audit_log`.
 - Release packaging walks `dependencies` only (not optional, peer, or dev). `packageNameFromSpecifier` ignores prose such as `from '${name}'` in the server bundle.
@@ -36,7 +36,7 @@ The first migration creates `schema_migrations`, append-only `admin_audit_log`, 
 
 Typecheck (`tsc`, client, server) and import boundaries passed. Client production build is 10.30 MiB. `check:size` passed. `smoke:server:prod` started anarchy, survival, and peaceful with `database: disabled`, `/status` ready, SIGTERM exit 0, and the world lock removed.
 
-Focused Vitest covers config, disabled startup, unreachable-database redaction, lifecycle and world-lock cleanup, migration order and checksums, audit validation, canonical hashing, idempotency, systemd env comments, and the release closure. `git diff --check` is clean.
+Focused Vitest covers config, disabled startup, unreachable-database redaction, lifecycle and world-lock cleanup, migration order and checksums, audit validation, canonical hashing, idempotency, systemd env comments, and the release closure. A failed start before the canonical load leaves existing `meta.json`, `world.json`, and `players.json` byte-for-byte unchanged, and an empty directory does not gain those files. A corrupt save is not replaced. A normal start still creates a new world and a later stop still persists mutations. `git diff --check` is clean.
 
 Full Vitest on this branch: 26 failed, 3393 passed, 12 skipped (368 files). The 11 skipped integration tests were the PostgreSQL suite (`FC_TEST_DATABASE_URL` was unset for that run) plus one pre-existing skip. The same 11 files and the same 26 assertion messages fail on current `origin/main` `2dd09ee` (arrow visuals, combat presentation, fence jump, menu PIL, god-sword texture generator, SFX pack count, remote breaking overlays, UI source string, god-sword mob, pet hit timing, bow draw ticks). They are pre-existing.
 

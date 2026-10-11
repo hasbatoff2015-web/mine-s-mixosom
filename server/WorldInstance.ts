@@ -596,6 +596,12 @@ export interface WorldInstanceOptions {
 
 export class WorldInstance {
   readyState: WorldReadyState = 'UNINITIALIZED';
+  /**
+   * True only after `loadOrCreateWorld` finishes a canonical load or a new-world create.
+   * Constructor state, the world lock, and a started database are not enough.
+   * `stop()` must not write snapshots while this is false.
+   */
+  private canonicalWorldLoaded = false;
   readonly world: VoxelWorld;
   readonly events = new EventBus();
   readonly commands = new CommandRegistry();
@@ -1129,6 +1135,11 @@ export class WorldInstance {
     return this.world.seed;
   }
 
+  /** Authoritative world state is in memory and safe to write back to disk. */
+  get isPersistenceReady(): boolean {
+    return this.canonicalWorldLoaded;
+  }
+
   async initialize(): Promise<void> {
     // The lock is taken first so a configured database failure can release it
     // before gameplay services load. Migrations finish before readyState is READY.
@@ -1187,6 +1198,7 @@ export class WorldInstance {
       this.buyer.load();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
+      this.canonicalWorldLoaded = true;
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
@@ -1203,8 +1215,11 @@ export class WorldInstance {
     this.buyer.load();
     this.preloadSpawnChunks();
     this.dirty = true;
-    await this.save();
+    // The in-memory create is complete. This write commits it. The flag stays
+    // false until the write resolves, so a failed create is not saved again from stop().
+    await this.writeCanonicalSnapshot();
     this.readyState = 'READY';
+    this.canonicalWorldLoaded = true;
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
     if (this.config.serverMode === 'anarchy') {
       serverLog(
@@ -1338,8 +1353,9 @@ export class WorldInstance {
     // and a configured pool must not stay open after shutdown.
     let failure: unknown;
     try {
+      // disableAll is idle when plugins were never loaded or enabled.
       await this.plugins.disableAll();
-      await this.save();
+      if (this.canonicalWorldLoaded) await this.save();
     } catch (error) {
       failure = error;
     }
@@ -1357,6 +1373,13 @@ export class WorldInstance {
   }
 
   async save(): Promise<void> {
+    if (!this.canonicalWorldLoaded) {
+      throw new Error('Cannot save before the canonical world is loaded.');
+    }
+    return this.writeCanonicalSnapshot();
+  }
+
+  private async writeCanonicalSnapshot(): Promise<void> {
     const generation = ++this.saveGeneration;
     const run = this.saveQueue.then(() => this.flushWorldSnapshot(generation));
     this.saveQueue = run.then(() => undefined, () => undefined);

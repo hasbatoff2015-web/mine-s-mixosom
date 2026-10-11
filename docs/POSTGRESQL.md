@@ -27,6 +27,8 @@ If `FC_DATABASE_URL` is missing or blank, the server does not import a pool, doe
 
 A present URL without `FC_DEPLOYMENT_ID` is a startup error. If the URL is set and the server cannot connect, or a migration fails, or an applied migration checksum does not match this build, startup fails. The world lock is released. The server does not fall back to JSON for that configured database.
 
+PostgreSQL startup runs before the world is loaded. A failure there, or any other failure before canonical world initialization finishes, does not write `meta.json`, `world.json`, or `players.json`. A world that did finish loading is still saved on shutdown, including after a failed port bind.
+
 Dev and prod need separate databases. Audit and idempotency rows also store `deployment_id`, so a shared database still does not mix the two scopes. Do not point a dev process at the prod database.
 
 Three game processes can run at once. The default pool of 4 is 12 connections. The clamp of 8 is 24. Size the database for that, not for one process.
