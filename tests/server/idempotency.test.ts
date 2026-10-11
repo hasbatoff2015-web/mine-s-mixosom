@@ -14,6 +14,7 @@ describe('idempotency', () => {
     const requestId = randomUUID();
     db.seedIdempotency({
       deployment_id: 'dev',
+      request_scope: 'global',
       request_id: requestId,
       operation: 'grant',
       actor_id: 'admin-1',

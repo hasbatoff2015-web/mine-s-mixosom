@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { Inventory } from '../../src/inventory';
 import { PostgresDatabase } from '../../server/db/database';
-import { IdempotencyService } from '../../server/db/idempotency';
+import { economyRequestScope, IdempotencyService } from '../../server/db/idempotency';
 import { PostgresGameplayEconomy } from '../../server/economy/postgresAuthority';
 import { MegacoinService } from '../../server/economy/service';
 import { applyLegacyBalanceImport, inspectLegacyBalances, planLegacyImport } from '../../server/economy/legacyImport';
@@ -74,7 +74,7 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     megacoin = new MegacoinService(database, 'dev', 'anarchy');
     money = new PostgresGameplayEconomy(
       megacoin,
-      new IdempotencyService(database, 'dev'),
+      new IdempotencyService(database, 'dev', economyRequestScope('anarchy')),
       placed,
       new KillStatistics(store),
     );

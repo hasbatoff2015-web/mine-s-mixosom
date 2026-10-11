@@ -82,12 +82,12 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
   }, 30_000);
 
   it('bootstraps once and a second startup does not reapply', async () => {
-    expect(main.appliedMigrations).toEqual(['0001', '0002', '0003', '0004']);
+    expect(main.appliedMigrations).toEqual(['0001', '0002', '0003', '0004', '0005']);
     const again = open(schema);
     await again.start();
     expect(again.appliedMigrations).toEqual([]);
     const count = await again.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('4');
+    expect(count.rows[0]?.n).toBe('5');
     const tables = await again.query<{ accounts: string | null; operations: string | null; ledger: string | null }>(
       `SELECT to_regclass('economy_accounts')::text AS accounts,
               to_regclass('economy_operations')::text AS operations,
@@ -103,9 +103,9 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
     const left = open(name);
     const right = open(name);
     await Promise.all([left.start(), right.start()]);
-    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001', '0002', '0003', '0004']);
+    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001', '0002', '0003', '0004', '0005']);
     const count = await left.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('4');
+    expect(count.rows[0]?.n).toBe('5');
   }, 30_000);
 
   it('rejects an edited applied checksum', async () => {
@@ -173,8 +173,8 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
     const requestId = randomUUID();
     await main.query(
       `INSERT INTO idempotency_requests (
-        deployment_id, request_id, operation, actor_id, payload_hash, state
-      ) VALUES ($1, $2::uuid, 'grant', 'admin-1', $3, 'in_progress')`,
+        deployment_id, request_scope, request_id, operation, actor_id, payload_hash, state
+      ) VALUES ($1, 'global', $2::uuid, 'grant', 'admin-1', $3, 'in_progress')`,
       ['dev', requestId, hashPayload({ amount: 1 })],
     );
     const service = new IdempotencyService(main, 'dev');

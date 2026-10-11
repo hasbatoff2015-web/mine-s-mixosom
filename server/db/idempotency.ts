@@ -6,19 +6,31 @@ import { parseUuid } from './uuid';
 
 const MAX_JSON_CHARS = 65_536;
 
+/** Admin and other non-economy requests. Not a gameplay wallet. */
+export const GLOBAL_REQUEST_SCOPE = 'global';
+
+/** Isolates Anarchy, Survival, and Peaceful money requests from each other. */
+export function economyRequestScope(serverMode: string): string {
+  const mode = serverMode.trim();
+  if (mode !== 'anarchy' && mode !== 'survival' && mode !== 'peaceful') {
+    throw new IdempotencyValidationError('economy request scope requires anarchy, survival, or peaceful');
+  }
+  return `economy:${mode}`;
+}
+
 export const INSERT_IDEMPOTENCY_SQL = `INSERT INTO idempotency_requests (
-  deployment_id, request_id, operation, actor_id, payload_hash, state
-) VALUES ($1, $2::uuid, $3, $4, $5, 'in_progress')
-ON CONFLICT (deployment_id, request_id) DO NOTHING
+  deployment_id, request_scope, request_id, operation, actor_id, payload_hash, state
+) VALUES ($1, $2, $3::uuid, $4, $5, $6, 'in_progress')
+ON CONFLICT (deployment_id, request_scope, request_id) DO NOTHING
 RETURNING state`;
 
 export const UPDATE_IDEMPOTENCY_COMMIT_SQL = `UPDATE idempotency_requests
-SET state = 'committed', response = $3::jsonb, committed_at = NOW()
-WHERE deployment_id = $1 AND request_id = $2::uuid AND state = 'in_progress'`;
+SET state = 'committed', response = $4::jsonb, committed_at = NOW()
+WHERE deployment_id = $1 AND request_scope = $2 AND request_id = $3::uuid AND state = 'in_progress'`;
 
 export const SELECT_IDEMPOTENCY_SQL = `SELECT operation, actor_id, payload_hash, state, response
 FROM idempotency_requests
-WHERE deployment_id = $1 AND request_id = $2::uuid
+WHERE deployment_id = $1 AND request_scope = $2 AND request_id = $3::uuid
 FOR UPDATE`;
 
 export interface IdempotencyRequest {
@@ -45,14 +57,21 @@ interface IdempotencyRow {
  */
 export class IdempotencyService {
   readonly deploymentId: string;
+  readonly requestScope: string;
 
   constructor(
     private readonly database: Database,
     deploymentId: string,
+    requestScope = GLOBAL_REQUEST_SCOPE,
   ) {
     const trimmed = deploymentId.trim();
     if (!trimmed) throw new IdempotencyValidationError('deployment id is required');
+    const scope = requestScope.trim();
+    if (!/^[a-z0-9:_-]{1,64}$/.test(scope)) {
+      throw new IdempotencyValidationError('request scope is invalid');
+    }
     this.deploymentId = trimmed;
+    this.requestScope = scope;
   }
 
   async execute<T>(request: IdempotencyRequest, fn: (tx: Queryable) => Promise<T>): Promise<T> {
@@ -81,6 +100,7 @@ export class IdempotencyService {
     return this.database.transaction(async (tx) => {
       const claimed = await tx.query<{ state: string }>(INSERT_IDEMPOTENCY_SQL, [
         this.deploymentId,
+        this.requestScope,
         requestId,
         operation,
         actorId,
@@ -91,6 +111,7 @@ export class IdempotencyService {
         const encoded = encodeResponse(response);
         const committed = await tx.query(UPDATE_IDEMPOTENCY_COMMIT_SQL, [
           this.deploymentId,
+          this.requestScope,
           requestId,
           encoded,
         ]);
@@ -102,6 +123,7 @@ export class IdempotencyService {
 
       const existing = await tx.query<IdempotencyRow>(SELECT_IDEMPOTENCY_SQL, [
         this.deploymentId,
+        this.requestScope,
         requestId,
       ]);
       const row = existing.rows[0];

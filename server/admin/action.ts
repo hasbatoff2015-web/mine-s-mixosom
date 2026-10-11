@@ -2,7 +2,7 @@ import { canonicalJson } from '../db/canonicalJson';
 import { AdminAuditService, type AdminAuditRecord } from '../db/audit';
 import type { Database, Queryable } from '../db/types';
 import { DatabaseDisabledError, IdempotencyConflictError, IdempotencyPendingError, IdempotencyValidationError } from '../db/errors';
-import { IdempotencyService } from '../db/idempotency';
+import { GLOBAL_REQUEST_SCOPE, IdempotencyService } from '../db/idempotency';
 import { parseUuid } from '../db/uuid';
 import { serverLog } from '../log';
 import { AdminActionValidationError, AdminControlDisabledError, AdminIdentityError } from './errors';
@@ -39,7 +39,7 @@ export class AdminActionService {
     deploymentId: string,
     audit?: AdminAuditService,
   ) {
-    this.idempotency = new IdempotencyService(database, deploymentId);
+    this.idempotency = new IdempotencyService(database, deploymentId, GLOBAL_REQUEST_SCOPE);
     this.audit = audit ?? new AdminAuditService(database, deploymentId);
   }
 

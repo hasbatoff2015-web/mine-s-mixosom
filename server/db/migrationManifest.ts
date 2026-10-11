@@ -331,6 +331,28 @@ const ECONOMY_LEDGER_DROP_PLAYER_INDEX_SQL = `DROP INDEX economy_ledger_player_c
 const ECONOMY_LEDGER_PLAYER_SCOPE_INDEX_SQL = `CREATE INDEX economy_ledger_player_created_idx
   ON economy_ledger (deployment_id, economy_scope, player_id, created_at DESC, entry_id DESC)`;
 
+/**
+ * Request idempotency is a namespace, not a gameplay wallet.
+ * Rows from before this migration were deployment-global, so they stay `global`.
+ * Adding the column with a constant default does not rewrite the stored response.
+ */
+const IDEMPOTENCY_ADD_SCOPE_SQL = `ALTER TABLE idempotency_requests
+  ADD COLUMN request_scope TEXT NOT NULL DEFAULT 'global'`;
+
+const IDEMPOTENCY_DROP_SCOPE_DEFAULT_SQL = `ALTER TABLE idempotency_requests
+  ALTER COLUMN request_scope DROP DEFAULT`;
+
+const IDEMPOTENCY_SCOPE_CHECK_SQL = `ALTER TABLE idempotency_requests
+  ADD CONSTRAINT idempotency_requests_scope_check CHECK (
+    length(btrim(request_scope)) > 0 AND char_length(request_scope) <= 64
+  )`;
+
+const IDEMPOTENCY_DROP_PKEY_SQL = `ALTER TABLE idempotency_requests
+  DROP CONSTRAINT idempotency_requests_pkey`;
+
+const IDEMPOTENCY_ADD_PKEY_SQL = `ALTER TABLE idempotency_requests
+  ADD PRIMARY KEY (deployment_id, request_scope, request_id)`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -399,6 +421,17 @@ export const MIGRATIONS: readonly Migration[] = [
       ECONOMY_LEDGER_ADD_OPERATION_FK_SQL,
       ECONOMY_LEDGER_DROP_PLAYER_INDEX_SQL,
       ECONOMY_LEDGER_PLAYER_SCOPE_INDEX_SQL,
+    ],
+  },
+  {
+    version: '0005',
+    name: 'idempotency_request_scope',
+    statements: [
+      IDEMPOTENCY_ADD_SCOPE_SQL,
+      IDEMPOTENCY_DROP_SCOPE_DEFAULT_SQL,
+      IDEMPOTENCY_SCOPE_CHECK_SQL,
+      IDEMPOTENCY_DROP_PKEY_SQL,
+      IDEMPOTENCY_ADD_PKEY_SQL,
     ],
   },
 ];

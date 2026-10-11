@@ -160,7 +160,8 @@ describe.skipIf(databaseUrl === '')('gameplay economy scope', () => {
          ) VALUES ($1::uuid, 'test', $2::uuid, 0, $3, 100, 0, 100, 'INITIAL')`,
         [entryId, operationId, playerId],
       );
-      const second = await runMigrations(queryable, MIGRATIONS);
+      const through0004 = MIGRATIONS.filter((migration) => migration.version <= '0004');
+      const second = await runMigrations(queryable, through0004);
       expect(second.applied).toEqual(['0004']);
       const after = await client.query<{ version: string; checksum: string }>(
         'SELECT version, checksum FROM schema_migrations ORDER BY version',
@@ -192,7 +193,7 @@ describe.skipIf(databaseUrl === '')('gameplay economy scope', () => {
     }
     const database = open(schema);
     await database.start();
-    expect(database.appliedMigrations).toEqual([]);
+    expect(database.appliedMigrations).toEqual(['0005']);
     const anarchy = new MegacoinService(database, 'test', 'anarchy');
     expect(await anarchy.getAccount('legacy-player')).toBeNull();
     expect((await anarchy.ensureAccount({ playerId: 'legacy-player', displayName: 'Legacy' })).balance).toBe(100);

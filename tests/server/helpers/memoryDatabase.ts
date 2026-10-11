@@ -32,6 +32,7 @@ interface AuditRow {
 
 interface IdempotencyRecord {
   deployment_id: string;
+  request_scope: string;
   request_id: string;
   operation: string;
   actor_id: string;
@@ -144,15 +145,19 @@ export class MemoryDatabase implements Database {
 
   private insertIdempotency(state: MemoryState, params: readonly unknown[]): DbQueryResult<{ state: string }> {
     const deploymentId = String(params[0]);
-    const requestId = String(params[1]);
-    const existing = state.idempotency.find((row) => row.deployment_id === deploymentId && row.request_id === requestId);
+    const requestScope = String(params[1]);
+    const requestId = String(params[2]);
+    const existing = state.idempotency.find((row) => (
+      row.deployment_id === deploymentId && row.request_scope === requestScope && row.request_id === requestId
+    ));
     if (existing) return { rows: [], rowCount: 0 };
     state.idempotency.push({
       deployment_id: deploymentId,
+      request_scope: requestScope,
       request_id: requestId,
-      operation: String(params[2]),
-      actor_id: String(params[3]),
-      payload_hash: String(params[4]),
+      operation: String(params[3]),
+      actor_id: String(params[4]),
+      payload_hash: String(params[5]),
       state: 'in_progress',
       response: null,
       committed_at: null,
@@ -162,19 +167,29 @@ export class MemoryDatabase implements Database {
 
   private commitIdempotency(state: MemoryState, params: readonly unknown[]): DbQueryResult {
     const deploymentId = String(params[0]);
-    const requestId = String(params[1]);
-    const row = state.idempotency.find((existing) => existing.deployment_id === deploymentId && existing.request_id === requestId);
+    const requestScope = String(params[1]);
+    const requestId = String(params[2]);
+    const row = state.idempotency.find((existing) => (
+      existing.deployment_id === deploymentId
+      && existing.request_scope === requestScope
+      && existing.request_id === requestId
+    ));
     if (!row || row.state !== 'in_progress') return { rows: [], rowCount: 0 };
     row.state = 'committed';
-    row.response = JSON.parse(String(params[2]));
+    row.response = JSON.parse(String(params[3]));
     row.committed_at = new Date().toISOString();
     return { rows: [], rowCount: 1 };
   }
 
   private selectIdempotency(state: MemoryState, params: readonly unknown[]): DbQueryResult {
     const deploymentId = String(params[0]);
-    const requestId = String(params[1]);
-    const row = state.idempotency.find((existing) => existing.deployment_id === deploymentId && existing.request_id === requestId);
+    const requestScope = String(params[1]);
+    const requestId = String(params[2]);
+    const row = state.idempotency.find((existing) => (
+      existing.deployment_id === deploymentId
+      && existing.request_scope === requestScope
+      && existing.request_id === requestId
+    ));
     if (!row) return { rows: [], rowCount: 0 };
     return {
       rows: [{

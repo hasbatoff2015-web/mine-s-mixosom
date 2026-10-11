@@ -1,5 +1,5 @@
 import type { Database } from '../db/types';
-import { IdempotencyService } from '../db/idempotency';
+import { economyRequestScope, IdempotencyService } from '../db/idempotency';
 import type { ServerConfig } from '../config';
 import type { EconomyService } from '../services/economy';
 import type { JsonFileStore } from '../services/jsonStore';
@@ -24,7 +24,7 @@ export function createGameplayEconomy(
   }
   return new PostgresGameplayEconomy(
     new MegacoinService(database, config.database.deploymentId, config.serverMode),
-    new IdempotencyService(database, config.database.deploymentId),
+    new IdempotencyService(database, config.database.deploymentId, economyRequestScope(config.serverMode)),
     placed,
     new KillStatistics(store),
   );
