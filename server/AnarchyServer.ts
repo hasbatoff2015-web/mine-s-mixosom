@@ -17,6 +17,7 @@ import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerA
 import type { ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
+import { isPromise } from './economy/currencyPort';
 import { WorldInstance, type ConnectedSink, type ServerPlayer, type WorldInstanceOptions } from './WorldInstance';
 
 interface SocketBinding {
@@ -253,15 +254,34 @@ export class AnarchyServer {
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     const sink = new WsSink(socket);
-    const result = this.world.join({
+    const pending = this.world.join({
       sink,
       name: message.name,
       sessionToken: message.sessionToken,
       appearance: message.appearance,
     });
+    if (isPromise(pending)) {
+      pending.then(
+        (result) => this.finishJoin(socket, result, onJoin),
+        () => this.finishJoin(socket, { error: 'Сервер временно недоступен.' }, onJoin),
+      );
+      return;
+    }
+    this.finishJoin(socket, pending, onJoin);
+  }
+
+  private finishJoin(
+    socket: WebSocket,
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string },
+    onJoin: (playerId: string, connectionId: string) => void,
+  ): void {
     if ('error' in result) {
       this.send(socket, { type: 'error', code: 'join_failed', message: result.error });
       socket.close();
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.world.disconnect(result.player.id, true, result.player.connectionId);
       return;
     }
     const { player, resumed, previousConnectionId } = result;

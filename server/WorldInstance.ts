@@ -130,6 +130,7 @@ import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
 import { createGameplayEconomy } from './economy/createGameplayEconomy';
 import { isPromise } from './economy/currencyPort';
+import { clientMoneyRequest } from './economy/moneyRequest';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { DirectMessageService } from './services/directMessages';
@@ -1582,50 +1583,93 @@ export class WorldInstance {
     if (this.readyState !== 'READY') return { error: 'world not ready' };
     if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
 
+    const prepared = this.prepareJoin(options);
+    if ('error' in prepared) return prepared;
+    if (this.money.backend !== 'postgres') return prepared.publish();
+    const prepare = this.money.preparePlayer;
+    if (!prepare) return { error: 'Сервер временно недоступен.' };
+    const displayName = options.name?.trim() || prepared.player.name;
+    const work = prepare.call(this.money, prepared.player.id, displayName).then(
+      () => prepared.publish(),
+      () => {
+        serverLog('player join economy prepare failed', 'error');
+        return { error: 'Сервер временно недоступен.' };
+      },
+    );
+    return work as unknown as { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string };
+  }
+
+  /**
+   * Builds the joining player without publishing online state.
+   * PostgreSQL `preparePlayer` runs before `publish`, so a failed account
+   * load never emits `playerJoin` or leaves a connected player behind.
+   */
+  private prepareJoin(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+  }): { error: string } | {
+    player: ServerPlayer;
+    publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string };
+  } {
     if (options.sessionToken) {
       const existingId = this.tokens.get(options.sessionToken);
       const existing = existingId ? this.players.get(existingId) : undefined;
       if (existing) {
         const wasConnected = existing.connected;
         const previousConnectionId = existing.connectionId;
-        existing.connected = true;
-        existing.disconnectedAt = 0;
-        existing.sink = options.sink;
-        existing.connectionId = crypto.randomUUID();
-        existing.joinCount += 1;
-        existing.resumeCount += 1;
-        existing.lastInputConnectionId = existing.connectionId;
-        if (options.name) existing.name = options.name;
-        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
-        if (joinedAppearance) existing.appearance = joinedAppearance;
-        this.resetConnectionInput(existing);
-        this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
-        const fp = sessionTokenFingerprint(existing.sessionToken);
-        serverLog(
-          `player joined: ${existing.name} (${existing.id}, resume) `
-          + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
-          + `resumeCount=${existing.resumeCount}`,
-        );
-        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
-        this.buyer.restoreOverflow(existing.id, existing.inventory);
-        if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
-        return { player: existing, resumed: true, previousConnectionId };
+        return {
+          player: existing,
+          publish: () => {
+            existing.connected = true;
+            existing.disconnectedAt = 0;
+            existing.sink = options.sink;
+            existing.connectionId = crypto.randomUUID();
+            existing.joinCount += 1;
+            existing.resumeCount += 1;
+            existing.lastInputConnectionId = existing.connectionId;
+            if (options.name) existing.name = options.name;
+            const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+            if (joinedAppearance) existing.appearance = joinedAppearance;
+            this.resetConnectionInput(existing);
+            this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
+            const fp = sessionTokenFingerprint(existing.sessionToken);
+            serverLog(
+              `player joined: ${existing.name} (${existing.id}, resume) `
+              + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
+              + `resumeCount=${existing.resumeCount}`,
+            );
+            this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+            this.buyer.restoreOverflow(existing.id, existing.inventory);
+            if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
+            return { player: existing, resumed: true, previousConnectionId };
+          },
+        };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
       if (stored) {
-        const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
+        const restored = this.materializeStoredPlayer(stored, options.sink, options.name, false);
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) restored.appearance = joinedAppearance;
         restored.joinCount += 1;
         restored.resumeCount += 1;
-        serverLog(
-          `player joined: ${restored.name} (${restored.id}, resume) `
-          + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
-        );
-        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
-        this.buyer.restoreOverflow(restored.id, restored.inventory);
-        this.notifyFriendsOfPresence(restored, 'joined');
-        return { player: restored, resumed: true };
+        return {
+          player: restored,
+          publish: () => {
+            this.players.set(restored.id, restored);
+            this.tokens.set(restored.sessionToken, restored.id);
+            this.syncChunksFor(restored, { maxNewGenerates: Number.POSITIVE_INFINITY });
+            serverLog(
+              `player joined: ${restored.name} (${restored.id}, resume) `
+              + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
+            );
+            this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+            this.buyer.restoreOverflow(restored.id, restored.inventory);
+            this.notifyFriendsOfPresence(restored, 'joined');
+            return { player: restored, resumed: true };
+          },
+        };
       }
     }
 
@@ -1648,23 +1692,28 @@ export class WorldInstance {
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
     player.lastInputConnectionId = player.connectionId;
-    this.players.set(id, player);
-    this.tokens.set(sessionToken, id);
     const spawnChunkX = floorDiv(Math.floor(player.controller.position.x), 16);
     const spawnChunkZ = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewCx = spawnChunkX;
     player.viewCz = spawnChunkZ;
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
-    serverLog(
-      `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
-      + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
-    );
-    this.events.emit('playerJoin', { playerId: player.id, name: player.name });
-    this.buyer.restoreOverflow(player.id, player.inventory);
-    this.dirty = true;
-    this.notifyFriendsOfPresence(player, 'joined');
-    return { player, resumed: false };
+    return {
+      player,
+      publish: () => {
+        this.players.set(id, player);
+        this.tokens.set(sessionToken, id);
+        this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+        serverLog(
+          `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
+          + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
+        );
+        this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+        this.buyer.restoreOverflow(player.id, player.inventory);
+        this.dirty = true;
+        this.notifyFriendsOfPresence(player, 'joined');
+        return { player, resumed: false };
+      },
+    };
   }
 
   /**
@@ -1802,7 +1851,13 @@ export class WorldInstance {
     }
     if (action === 'buy' && (message.listingId || session.listingId)) {
       const listingId = message.listingId ?? session.listingId!;
-      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId);
+      const purchaseRequest = clientMoneyRequest(
+        message.clientRequestId,
+        'economy.auction_purchase',
+        player.id,
+        { listingId },
+      );
+      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId, purchaseRequest);
       const finishBuy = (bought: Awaited<typeof result>): void => {
         if (!bought.ok) {
           session.message = bought.error;
@@ -2230,7 +2285,7 @@ export class WorldInstance {
           ? this.trade.setMoney(player.id, message.money ?? 0)
           : message.action === 'ready'
             ? this.trade.ready(player.id)
-            : this.trade.accept(player.id);
+            : this.trade.accept(player.id, message.clientRequestId);
     const finishTrade = (done: Awaited<typeof result>): void => {
       this.flushTradeResult(done, done.ok ? undefined : done.error);
     };
@@ -5697,7 +5752,12 @@ export class WorldInstance {
     };
   }
 
-  private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
+  private materializeStoredPlayer(
+    stored: SerializedPersistedPlayer,
+    sink: ConnectedSink,
+    name?: string,
+    commitOnline = true,
+  ): ServerPlayer {
     const controller = new PlayerController({
       position: this.relocatePose(stored.x, stored.y, stored.z),
       yaw: stored.yaw,
@@ -5733,12 +5793,14 @@ export class WorldInstance {
     player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
-    this.players.set(player.id, player);
-    this.tokens.set(token, player.id);
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
     player.viewCz = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    if (commitOnline) {
+      this.players.set(player.id, player);
+      this.tokens.set(token, player.id);
+      this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    }
     return player;
   }
 
