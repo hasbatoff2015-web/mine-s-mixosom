@@ -56,6 +56,7 @@ export interface CurrencyPort {
     creditReason: string,
     pairId?: string,
     request?: EconomyCommandRequest,
+    sourceId?: string,
   ): EconomyResult | Promise<EconomyResult>;
   setBalance(
     playerId: string,

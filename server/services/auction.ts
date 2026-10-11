@@ -495,6 +495,8 @@ export class AuctionService {
         'AUCTION_PURCHASE',
         'AUCTION_SALE',
         listing.listingId,
+        undefined,
+        `${listing.listingId}:${buyerId}`,
       );
       return thenResult(moved, (result) => {
         if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
@@ -507,6 +509,8 @@ export class AuctionService {
             'AUCTION_SALE',
             'AUCTION_PURCHASE',
             `${listing.listingId}-rollback`,
+            undefined,
+            `${listing.listingId}:${buyerId}:rollback`,
           );
           const fail = { ok: false as const, error: 'Недостаточно места в инвентаре.' };
           return thenResult(refund, () => fail);

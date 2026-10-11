@@ -14,6 +14,7 @@ Unset `FC_ECONOMY_BACKEND` stays on the JSON `EconomyService`. `postgres` requir
 - `deathEventId` on survival state for one death, cleared on respawn.
 - `rewardEventId` on an accepted player block break.
 - `clientRequestId` on chat and on auction, clan, buyer, and trade actions.
+- Auction settlement source is `listingId:buyerId`, so a different buyer is not a replay of the first payment.
 - Display-name update with no ledger row.
 - Explicit import: `npm run economy:import`.
 - Kill counts in postgres mode live in `economy/kills.json`.

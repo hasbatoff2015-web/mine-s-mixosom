@@ -124,8 +124,10 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     creditReason: string,
     pairId?: string,
     request?: EconomyCommandRequest,
+    sourceId?: string,
   ): Promise<EconomyResult> {
-    const source = pairId ? { type: 'AUCTION', id: pairId } : undefined;
+    const id = sourceId ?? pairId;
+    const source = id ? { type: 'AUCTION', id } : undefined;
     return this.move(fromPlayerId, toPlayerId, amount, debitReason, creditReason, request, source);
   }
 

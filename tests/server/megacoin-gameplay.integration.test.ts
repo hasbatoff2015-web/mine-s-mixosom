@@ -255,7 +255,7 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     expect(replay.ok).toBe(false);
     expect(money.getBalance(ada)).toBe(sellerAfter);
     expect(money.getBalance(bea)).toBe(buyerAfter);
-    const operation = await megacoin.findBySource('AUCTION', listingId);
+    const operation = await megacoin.findBySource('AUCTION', `${listingId}:${bea}`);
     expect(operation?.kind).toBe('TRANSFER');
     expect(operation?.legs).toHaveLength(2);
   });
