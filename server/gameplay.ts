@@ -339,6 +339,7 @@ export class ServerGameplay {
             playerId: ownerId,
             attackerId: ownerId,
             mobKind: mob.kind,
+            economyInstanceId: mob.economyInstanceId,
           });
         }
       },
@@ -509,7 +510,12 @@ export class ServerGameplay {
           });
           this.events.emit('playerDamaged', { playerId: victim.id, amount: event.amount, cause: event.source });
           if (victim.survival.dead) {
-            this.events.emit('entityDeath', { entityId: victim.id, cause: event.source, playerId: victim.id });
+            this.events.emit('entityDeath', {
+              entityId: victim.id,
+              cause: event.source,
+              playerId: victim.id,
+              deathEventId: victim.survival.deathEventId,
+            });
           }
           if (result.fullHurt) {
             this.mobs.assignOwnedWolfTarget(victim.id, event.mobId, 'mob', 'defend');
@@ -887,7 +893,12 @@ export class ServerGameplay {
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (block === BlockId.WhiteBed) clearBedBlocks(this.world, x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
-    this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
+    this.events.emit('blockBroken', {
+      playerId: player.id,
+      x, y, z,
+      blockId: block,
+      rewardEventId: globalThis.crypto.randomUUID(),
+    });
     if (player.gamemode === 'survival' && harvestable) {
       const paintingItemId = collectiblePaintingDropItemId(block, blockState);
       if (paintingItemId) {
@@ -1992,6 +2003,7 @@ export class ServerGameplay {
         playerId: attacker.id,
         attackerId: attacker.id,
         mobKind: mob.kind,
+        economyInstanceId: mob.economyInstanceId,
       });
     }
     return accepted ? 'hit' : 'immune';
@@ -2096,6 +2108,7 @@ export class ServerGameplay {
         entityId: victim.id,
         cause,
         playerId: victim.id,
+        deathEventId: victim.survival.deathEventId,
         ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
       });
     }

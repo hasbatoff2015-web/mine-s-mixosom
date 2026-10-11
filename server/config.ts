@@ -41,8 +41,34 @@ export interface ServerConfig {
    * Voxel world snapshots stay on the filesystem either way.
    */
   readonly database: DatabaseConfig;
+  /**
+   * `legacy_json` keeps the synchronous JSON wallet.
+   * `postgres` makes PostgreSQL the only currency authority.
+   * It is not a fallback when a query fails.
+   */
+  readonly economy: EconomyBackendConfig;
   /** Exactly two equal admin ids, or disabled when FC_ADMIN_IDS is blank. */
   readonly adminIdentity: AdminIdentityConfig;
+}
+
+export type EconomyBackendConfig =
+  | { readonly backend: 'legacy_json' }
+  | { readonly backend: 'postgres' };
+
+/**
+ * Missing or blank stays on the JSON wallet so existing processes keep working.
+ * `postgres` requires FC_DATABASE_URL. A failed database does not fall back.
+ */
+export function loadEconomyBackendConfig(env: NodeJS.ProcessEnv, database: DatabaseConfig): EconomyBackendConfig {
+  const raw = env.FC_ECONOMY_BACKEND;
+  if (raw === undefined || raw.trim() === '' || raw.trim() === 'legacy_json') return { backend: 'legacy_json' };
+  if (raw.trim() !== 'postgres') {
+    throw new Error('FC_ECONOMY_BACKEND must be legacy_json or postgres.');
+  }
+  if (!database.enabled) {
+    throw new Error('FC_ECONOMY_BACKEND=postgres requires FC_DATABASE_URL and FC_DEPLOYMENT_ID.');
+  }
+  return { backend: 'postgres' };
 }
 
 /** One process default. Three game servers can run on one machine. */
@@ -174,6 +200,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
     database: loadDatabaseConfig(env),
+    economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
     adminIdentity: loadAdminIdentityConfig(env),
   };
 }

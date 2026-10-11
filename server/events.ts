@@ -93,6 +93,8 @@ export interface BlockBrokenEvent {
   readonly y: number;
   readonly z: number;
   readonly blockId: number;
+  /** One accepted player break. Not coordinates. Absent for explosions. */
+  readonly rewardEventId?: string;
 }
 
 export interface BlockPlacedEvent {
@@ -125,6 +127,10 @@ export interface EntityDeathEvent {
   readonly attackerId?: string;
   /** Present when the dead entity is a mob. */
   readonly mobKind?: string;
+  /** Persistent mob reward identity. Not `mob-N`. */
+  readonly economyInstanceId?: string;
+  /** One player death. Reused if that death is retried. */
+  readonly deathEventId?: string;
 }
 
 export interface PlayerDamagedEvent {
