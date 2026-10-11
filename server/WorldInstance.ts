@@ -98,6 +98,8 @@ import {
   inventoryIntentHash,
   isMutatingInventoryAction,
 } from './inventoryRequests';
+import { clearCarryState, loadCarryState } from './carryState';
+import { isSharedWorldChestBlock } from '../src/inventory/portalChest';
 import { AdminInspectionService, type AdminPlayerSnapshot } from './admin/inspection';
 import { AdminIdentityPolicy } from './admin/identity';
 import { createDatabase, type Database } from './db/database';
@@ -726,8 +728,8 @@ export class WorldInstance {
           z: position.z,
           health: player.survival.health,
           inventory: player.inventory.serialize(),
-          inventoryRevision: player.inventory.revision,
-          ...(container ? { containerKind: window.kind, containerRevision: container } : {}),
+          inventoryRevision: player.inventoryRevision,
+          ...(container !== undefined ? { containerKind: window.kind, containerRevision: container } : {}),
         };
       },
       findStored: (playerId) => {
@@ -2854,7 +2856,9 @@ export class WorldInstance {
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
-      this.flushPlayerInventory(player);
+      for (const viewer of this.connectedPlayers()) {
+        if (viewer.inventoryDirty || viewer.id === player.id) this.flushPlayerInventory(viewer);
+      }
     }
     return result;
   }
@@ -3127,14 +3131,16 @@ export class WorldInstance {
         return;
       }
     }
-    const carryBefore = this.carrySignature(player);
+    if (this.abandonDestroyedContainer(player)) {
+      this.flushPlayerInventory(player);
+      return;
+    }
     const portalBefore = this.slotSignature(player.portalChest.slots);
     const chest = this.openChest(player);
     const furnace = this.openFurnace(player);
     const chestBefore = chest ? this.slotSignature(chest.slots) : '';
     const furnaceBefore = furnace ? this.slotSignature(furnace.slots) : '';
     this.gameplay.applyInventory(player, action);
-    if (this.carrySignature(player) !== carryBefore) player.carryRevision += 1;
     if (this.slotSignature(player.portalChest.slots) !== portalBefore) player.portalChestRevision += 1;
     const window = player.window;
     if (chest && window.x !== undefined && window.y !== undefined && window.z !== undefined
@@ -3175,11 +3181,29 @@ export class WorldInstance {
     )).join('|');
   }
 
+  /**
+   * A chest or furnace window whose block is gone must not recreate container
+   * state. The player returns to the inventory window and stays connected.
+   */
+  private abandonDestroyedContainer(player: ServerPlayer): boolean {
+    const window = player.window;
+    if (window.kind !== 'chest' && window.kind !== 'furnace') return false;
+    if (window.x === undefined || window.y === undefined || window.z === undefined) return false;
+    const block = this.world.getBlock(window.x, window.y, window.z);
+    const alive = window.kind === 'chest'
+      ? isSharedWorldChestBlock(block)
+      : block === BlockId.Furnace;
+    if (alive) return false;
+    player.window = { kind: 'inventory' };
+    return true;
+  }
+
   private openChest(player: ServerPlayer): { slots: Array<ItemStack | null> } | undefined {
     const window = player.window;
     if (window.kind !== 'chest' || window.x === undefined || window.y === undefined || window.z === undefined) {
       return undefined;
     }
+    if (!isSharedWorldChestBlock(this.world.getBlock(window.x, window.y, window.z))) return undefined;
     return this.world.getChest(window.x, window.y, window.z);
   }
 
@@ -3188,6 +3212,7 @@ export class WorldInstance {
     if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
       return undefined;
     }
+    if (this.world.getBlock(window.x, window.y, window.z) !== BlockId.Furnace) return undefined;
     return this.world.getFurnace(window.x, window.y, window.z);
   }
 
@@ -5553,8 +5578,7 @@ export class WorldInstance {
         for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
         if (player.inventory.offhand) count += player.inventory.offhand.count;
         player.inventory.clear();
-        player.cursor = null;
-        player.craftSlots = player.craftSlots.map(() => null);
+        clearCarryState(player);
         player.inventoryDirty = true;
         instance.flushPlayerInventory(player);
         return count;
@@ -5632,9 +5656,9 @@ export class WorldInstance {
     );
     if (stored.cursor) {
       try {
-        player.cursor = stored.cursor as ItemStack;
+        loadCarryState(player, stored.cursor as ItemStack);
       } catch {
-        player.cursor = null;
+        loadCarryState(player, null);
       }
     }
     player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
@@ -5879,8 +5903,7 @@ export class WorldInstance {
         for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
         if (player.inventory.offhand) count += player.inventory.offhand.count;
         player.inventory.clear();
-        player.cursor = null;
-        player.craftSlots = player.craftSlots.map(() => null);
+        clearCarryState(player);
         player.inventoryDirty = true;
         this.flushPlayerInventory(player);
         return ok(count > 0 ? `Cleared ${count} item(s) from inventory` : 'Inventory is already empty');

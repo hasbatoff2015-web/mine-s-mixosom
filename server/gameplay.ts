@@ -2,6 +2,8 @@ import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src
 import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
+import { clearCarryState, replaceCarryState } from './carryState';
+import { isSharedWorldChestBlock } from '../src/inventory/portalChest';
 import {
   BlockId,
   getBlockDefinition,
@@ -143,6 +145,8 @@ export interface GameplayPlayer {
   selectedSlot: number;
   cursor: ItemStack | null;
   craftSlots: Array<ItemStack | null>;
+  /** Present on authoritative players. Test doubles may omit it. */
+  carryRevision?: number;
   window: InventoryWindow;
   ridingCartId?: string;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
@@ -607,8 +611,7 @@ export class ServerGameplay {
     take(player.cursor);
     for (const stack of player.craftSlots) take(stack);
     player.inventory.clear();
-    player.cursor = null;
-    player.craftSlots = player.craftSlots.map(() => null);
+    clearCarryState(player);
     player.inventoryDirty = true;
     return ids;
   }
@@ -814,18 +817,31 @@ export class ServerGameplay {
     if (state.redstone) this.redstone.restore(state.redstone as never);
   }
 
+  private chestForOpenWindow(player: GameplayPlayer): { slots: Array<ItemStack | null> } | undefined {
+    const window = player.window;
+    if (window.kind === 'portal-chest') return player.portalChest;
+    if (window.kind !== 'chest' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (!isSharedWorldChestBlock(this.world.getBlock(window.x, window.y, window.z))) return undefined;
+    return this.world.chests.get(blockKey(window.x, window.y, window.z));
+  }
+
+  private furnaceForOpenWindow(player: GameplayPlayer) {
+    const window = player.window;
+    if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (this.world.getBlock(window.x, window.y, window.z) !== BlockId.Furnace) return undefined;
+    return this.world.furnaces.get(blockKey(window.x, window.y, window.z));
+  }
+
   applyInventory(player: GameplayPlayer, action: ClientInventoryActionMessage) {
     if (isManualDropAction(action) && this.blocksManualItemDrop?.(player.id)) {
       return { ok: false, dropped: [] };
     }
-    const chest = player.window.kind === 'portal-chest'
-      ? player.portalChest
-      : player.window.kind === 'chest' && player.window.x !== undefined
-        ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-        : undefined;
-    const furnace = player.window.kind === 'furnace' && player.window.x !== undefined
-      ? this.world.getFurnace(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-      : undefined;
+    const chest = this.chestForOpenWindow(player);
+    const furnace = this.furnaceForOpenWindow(player);
     const state = {
       inventory: player.inventory,
       cursor: player.cursor,
@@ -836,8 +852,7 @@ export class ServerGameplay {
       furnace,
     };
     const result = applyInventoryUiAction(state, action);
-    player.cursor = state.cursor;
-    player.craftSlots = state.craftSlots;
+    replaceCarryState(player, state.cursor, state.craftSlots);
     player.window = state.window;
     player.inventoryDirty = true;
     if (action.action === 'select' && action.slot !== undefined) player.selectedSlot = action.slot;
@@ -1186,7 +1201,7 @@ export class ServerGameplay {
           player.presentSwing?.();
           if (kind === 'crafting-table') {
             player.window = { kind: 'crafting-table', x, y, z };
-            player.craftSlots = Array.from({ length: 9 }, () => null);
+            replaceCarryState(player, player.cursor, Array.from({ length: 9 }, () => null));
           } else if (kind === 'chest') {
             player.window = { kind: 'chest', x, y, z };
           } else if (kind === 'portal-chest') {
@@ -1720,19 +1735,30 @@ export class ServerGameplay {
     clearDoorBlocks(this.world, x, y, z);
   }
 
+  private closeContainerViewers(kind: 'chest' | 'furnace', x: number, y: number, z: number): void {
+    for (const viewer of this.listPlayers?.() ?? []) {
+      const window = viewer.window;
+      if (window.kind !== kind || window.x !== x || window.y !== y || window.z !== z) continue;
+      viewer.window = { kind: 'inventory' };
+      viewer.inventoryDirty = true;
+    }
+  }
+
   private releaseContents(player: GameplayPlayer, x: number, y: number, z: number, block: number): void {
     const key = blockKey(x, y, z);
     if (block === BlockId.Chest || block === BlockId.EventChest) {
       const chest = this.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
-      this.world.chests.delete(key);
+      this.world.removeChestState(x, y, z);
+      this.closeContainerViewers('chest', x, y, z);
     } else if (block === BlockId.PortalChest) {
       // Personal storage is player-owned; breaking the block never drops or wipes it.
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
       const wasBurning = (furnace?.burnTime ?? 0) > 0;
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
-      this.world.furnaces.delete(key);
+      this.world.removeFurnaceState(x, y, z);
+      this.closeContainerViewers('furnace', x, y, z);
       if (wasBurning) this.world.syncFurnaceBurnBit(x, y, z, true);
     }
   }

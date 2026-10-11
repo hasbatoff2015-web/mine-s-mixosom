@@ -1692,6 +1692,24 @@ export class VoxelWorld {
     return next;
   }
 
+  /**
+   * Runtime removal. The generation moves forward so a later container at the
+   * same coordinates does not accept the previous lifetime's revision.
+   * Loading code that never had a connected viewer can still delete the map entry
+   * only when a record existed; an absent record does not invent a generation.
+   */
+  removeChestState(x: number, y: number, z: number): boolean {
+    const removed = this.chests.delete(blockKey(x, y, z));
+    if (removed) this.bumpContainerRevision('chest', x, y, z);
+    return removed;
+  }
+
+  removeFurnaceState(x: number, y: number, z: number): boolean {
+    const removed = this.furnaces.delete(blockKey(x, y, z));
+    if (removed) this.bumpContainerRevision('furnace', x, y, z);
+    return removed;
+  }
+
   getChest(x: number, y: number, z: number): ChestState {
     const key = blockKey(x, y, z);
     let chest = this.chests.get(key);
@@ -1760,7 +1778,7 @@ export class VoxelWorld {
       existing.burnTime = 0;
       existing.burnTotal = 0;
       if (existing.cookTime === 0 && !existing.cookInputId && existing.slots.every((slot) => !slot)) {
-        this.furnaces.delete(key);
+        this.removeFurnaceState(x, y, z);
       }
     }
     this.syncFurnaceLitVisual(x, y, z, wasBurning);
@@ -1803,7 +1821,10 @@ export class VoxelWorld {
         changed.push({ ...pos, wasBurning: true });
       }
     }
-    for (const key of remove) this.furnaces.delete(key);
+    for (const key of remove) {
+      const pos = parseBlockKey(key);
+      this.removeFurnaceState(pos.x, pos.y, pos.z);
+    }
     for (const key of wanted) {
       const pos = parseBlockKey(key);
       this.furnaces.set(key, {

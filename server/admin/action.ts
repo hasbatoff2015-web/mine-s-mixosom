@@ -190,6 +190,12 @@ function safeErrorMetadata(error: unknown): Record<string, unknown> {
     : 'ERROR';
   const category = error instanceof Error ? error.name.slice(0, 80) : 'Error';
   const raw = error instanceof Error ? error.message : String(error);
-  const message = raw.replace(/postgres(?:ql)?:\/\/\S+/gi, 'postgresql://[redacted]').slice(0, 300);
-  return { errorCode: code, errorCategory: category, message };
+  const looksSecret = /postgres(?:ql)?:\/\//i.test(raw)
+    || /\bpassword\b/i.test(raw)
+    || /\buser\s+["']/i.test(raw);
+  return {
+    errorCode: code,
+    errorCategory: category,
+    message: looksSecret ? 'database operation failed' : raw.slice(0, 200),
+  };
 }

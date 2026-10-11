@@ -5540,13 +5540,13 @@ export class Game {
     if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
-      session.world.chests.delete(key);
+      session.world.removeChestState(hit.x, hit.y, hit.z);
     } else if (hit.block === BlockId.PortalChest) {
       // Personal portal storage stays with the player.
     } else if (hit.block === BlockId.Furnace) {
       const furnace = session.world.furnaces.get(key);
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
-      session.world.furnaces.delete(key);
+      session.world.removeFurnaceState(hit.x, hit.y, hit.z);
     }
   }
 

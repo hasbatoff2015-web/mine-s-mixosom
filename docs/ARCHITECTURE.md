@@ -12,7 +12,7 @@ PostgreSQL is optional and server-only. `FC_DATABASE_URL` unset means `DisabledD
 
 `EconomyService` stays synchronous and authoritative. Auction, trade, and clan behavior are unchanged except that their inventory writes advance the in-memory inventory revision. There is no PostgreSQL economy ledger and no item `instanceId`.
 
-Player inventories carry a runtime revision. Chests, furnaces, and portal chests carry a container revision that is not saved. Client inventory mutations send `requestId`, `expectedInventoryRevision`, and, when a container is open, `expectedContainerRevision`. A repeated request does not apply twice. A stale revision is rejected and the server resends authoritative state. That is not a ban or a kick. Inventory clicks do not query PostgreSQL.
+Player inventories carry a runtime revision. Cursor and crafting-grid changes share that published revision through one carry replacement. Chests, furnaces, and portal chests have a container revision. A crafting table does not. Destroying a chest or furnace advances that generation and closes viewers; a stale GUI cannot recreate the container. Client mutations send `requestId` and `expectedInventoryRevision`, plus `expectedContainerRevision` only for those three container kinds. The old `craft` network message is gone. A repeated request does not apply twice. A stale revision resyncs. That is not a ban or a kick. Inventory clicks do not query PostgreSQL.
 
 Voxel snapshots stay in `FsWorldStore` (`world.json`, `players.json`, `meta.json`). Plugin JSON stays in `dataDir/<worldId>/plugin-data/`. The public `/status` body is unchanged.
 

@@ -38,6 +38,11 @@ export type Vec3 = readonly [number, number, number];
 
 export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
 
+/** Mutable shared or personal container state. A crafting table grid is carry state, not one of these. */
+export function isRevisionedContainerKind(kind: string | undefined): kind is 'chest' | 'furnace' | 'portal-chest' {
+  return kind === 'chest' || kind === 'furnace' || kind === 'portal-chest';
+}
+
 export type InventoryActionKind =
   | 'click'
   | 'drop_selected'
@@ -432,11 +437,6 @@ export interface ClientInventoryActionMessage {
   readonly expectedContainerRevision?: number;
 }
 
-export interface ClientCraftMessage {
-  readonly type: 'craft';
-  readonly shift?: boolean;
-}
-
 export interface ClientInteractMessage extends ClientBlockIntentFields {
   readonly type: 'interact';
   readonly targetX?: number;
@@ -795,7 +795,6 @@ export type ClientMessage =
   | ClientViewMessage
   | ClientPingMessage
   | ClientInventoryActionMessage
-  | ClientCraftMessage
   | ClientInteractMessage
   | ClientAttackMessage
   | ClientBowReleaseMessage
@@ -1683,7 +1682,6 @@ export const CLIENT_MESSAGE_TYPES = [
   'view',
   'ping',
   'inventory_action',
-  'craft',
   'interact',
   'attack',
   'bow_release',
@@ -2364,10 +2362,6 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(typeof expectedInventoryRevision === 'number' ? { expectedInventoryRevision } : {}),
         ...(typeof expectedContainerRevision === 'number' ? { expectedContainerRevision } : {}),
       };
-    }
-    case 'craft': {
-      if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'craft.shift invalid' };
-      return { type: 'craft', ...(raw.shift === true ? { shift: true } : {}) };
     }
     case 'interact': {
       const intent = parseIntentFields(raw);

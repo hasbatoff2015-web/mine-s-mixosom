@@ -453,7 +453,7 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
       const chest = world.getChest(cell.x, cell.y, cell.z);
       chest.slots = cell.chest.map(serializeStack);
     } else {
-      world.chests.delete(key);
+      world.removeChestState(cell.x, cell.y, cell.z);
     }
     const wasBurning = (world.furnaces.get(key)?.burnTime ?? 0) > 0;
     if (cell.furnace) {
@@ -468,7 +468,7 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
         cookTime: cell.furnace.cookTime,
       });
     } else {
-      world.furnaces.delete(key);
+      world.removeFurnaceState(cell.x, cell.y, cell.z);
     }
     world.syncFurnaceBurnBit(cell.x, cell.y, cell.z, wasBurning);
     if (cell.sign) {
@@ -1204,7 +1204,7 @@ export class WorldEventsManager {
     if (active?.chest) this.host.closeChestWindow(active.chest.x, active.chest.y, active.chest.z);
     if (active?.snapshot) restoreSnapshot(this.host.world, active.snapshot);
     else if (active?.chest) {
-      this.host.world.chests.delete(blockKey(active.chest.x, active.chest.y, active.chest.z));
+      this.host.world.removeChestState(active.chest.x, active.chest.y, active.chest.z);
       this.host.world.applyBlockBatch(
         [{ x: active.chest.x, y: active.chest.y, z: active.chest.z, block: BlockId.Air }],
         EVENT_TRANSIENT_BATCH,

@@ -136,6 +136,7 @@ import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
   isClanActionKind,
+  isRevisionedContainerKind,
   isGameMenuScreenKind,
   isMenuActionKind,
   type ClientDirectMessageActionMessage,
@@ -3164,7 +3165,9 @@ export class GameUI {
     const context = this.inventoryContext;
     if (!context || this.amountDialog) return;
     if (context.submitAction) {
-      const container = context.kind === 'inventory' ? undefined : (context.containerRevision ?? 0);
+      const container = isRevisionedContainerKind(context.kind)
+        ? (context.containerRevision ?? 0)
+        : undefined;
       context.submitAction(stampInventoryIntent(message, {
         inventory: context.inventoryRevision ?? 0,
         container,

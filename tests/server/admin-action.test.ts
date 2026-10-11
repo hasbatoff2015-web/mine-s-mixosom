@@ -136,6 +136,23 @@ describe('admin action service', () => {
     expect(calls).toBe(0);
   });
 
+  it('stores a generic failure audit when the error text contains a database url', async () => {
+    const db = new MemoryDatabase('dev');
+    const service = new AdminActionService(db, POLICY, 'dev');
+    const body = request();
+    const secret = 'postgresql://db:super-secret-password@127.0.0.1:5432/megacraft_dev';
+    await expect(service.execute(body, async () => {
+      throw new Error(`connect ${secret} password authentication failed for user "db"`);
+    })).rejects.toThrow(secret);
+    const row = (await service.history(body.requestId))[0];
+    expect(row?.success).toBe(false);
+    const encoded = JSON.stringify(row?.metadata);
+    expect(encoded).not.toContain(secret);
+    expect(encoded).not.toContain('super-secret-password');
+    expect(encoded).not.toContain('user "db"');
+    expect(row?.metadata.message).toBe('database operation failed');
+  });
+
   it('fails closed when admin ids are not configured', async () => {
     const service = new AdminActionService(
       new MemoryDatabase('dev'),

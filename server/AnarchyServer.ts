@@ -441,14 +441,6 @@ export class AnarchyServer {
       case 'inventory_action':
         this.world.applyInventoryAction(player, message);
         return;
-      case 'craft':
-        this.world.applyInventoryAction(player, {
-          type: 'inventory_action',
-          action: 'click',
-          key: 'result',
-          shift: message.shift === true,
-        });
-        return;
       case 'interact': {
         const intent = blockIntentFromFields(message);
         if (hasCapturedBlockIntent(message) && !intent) {
