@@ -426,9 +426,28 @@ export class PostgresGameplayEconomy implements CurrencyPort {
         actorId: request.actorId,
         payload: request.payload,
       }, async (tx) => run(tx));
-      await this.warm(playerIds);
+      if (!detailed.replayed) this.applyCommittedBalances(detailed.value, playerIds);
       return { ...detailed.value, replayed: detailed.replayed || Boolean(detailed.value.replayed) };
     });
+  }
+
+  /**
+   * The idempotency transaction has already committed. Balances in `result`
+   * are that commit. A stored replay keeps an older balance and must not
+   * replace the cache. This method does not read the database.
+   */
+  private applyCommittedBalances(result: EconomyResult, playerIds: readonly string[]): void {
+    if (
+      playerIds.length >= 2
+      && typeof result.fromBalance === 'number'
+      && typeof result.toBalance === 'number'
+    ) {
+      this.balances.set(playerIds[0]!, result.fromBalance);
+      this.balances.set(playerIds[1]!, result.toBalance);
+      return;
+    }
+    const playerId = playerIds[0];
+    if (playerId && typeof result.balance === 'number') this.balances.set(playerId, result.balance);
   }
 
   private async guard(run: () => Promise<EconomyResult>): Promise<EconomyResult> {

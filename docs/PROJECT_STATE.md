@@ -3,6 +3,7 @@
 ## Последний проход: Stage 2B follow-up — 2026-10-11
 
 - Кошелёк геймплея — `(deployment_id, economy_scope, player_id)`. `deployment_id` — среда (`dev` / `prod`). `economy_scope` — `ServerConfig.serverMode`: `anarchy`, `survival` или `peaceful`. Один игрок в prod не делит обычные Мегакоины между режимами.
+- Идемпотентность запроса — `(deployment_id, request_scope, request_id)`. Админ остаётся в `global`. Деньги геймплея — `economy:anarchy`, `economy:survival` или `economy:peaceful`. Миграция `0005`. Старые строки остаются `global`. Успешный commit денег — это успех для клиента; повтор старого запроса не откатывает кэш баланса.
 - Миграция `0004` добавляет scope в счета, операции и ledger. Старые строки остаются в `legacy_global`. Игровой сервер этот scope не открывает. `0001`–`0003` не менялись. Миграция не минтит и не удаляет деньги.
 - Клиентское денежное действие в режиме postgres требует UUID: `/pay`, `/eco give|take|set|reset`, продажа скупщику, покупка на аукционе, `confirm_create` клана и финальный accept обмена, если есть деньги. Без UUID или с не-UUID движение отклоняется. Консоль получает свой серверный UUID.
 - У лота аукциона есть серверный `economySettlementId`. Источник покупки — `AUCTION_PURCHASE` и этот UUID. Повтор с другим покупателем после уже записанного источника — конфликт, предмет не выдаётся. Починка зависшего `ACTIVE` лота — Stage 2C.

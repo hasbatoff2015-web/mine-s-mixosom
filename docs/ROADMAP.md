@@ -6,6 +6,7 @@
 - [x] Each auction listing has a persistent `economySettlementId`. Purchase source is that UUID, not `ah-N` and not the buyer.
 - [x] Migration `0004` scopes accounts, operations, and ledger by `anarchy` / `survival` / `peaceful`. Older rows stay `legacy_global`.
 - [x] Join prepares the PostgreSQL account before the player is online. Tracked background work consumes rejections.
+- [x] Idempotency namespace is `global` or `economy:<serverMode>`. A committed money transaction stays a success without a later required read.
 - [ ] Item-plus-money and world-reward crash recovery stay Stage 2C. Not merged. Draft PR **#129**.
 
 ## 2026-10-11: Gameplay Megacoins on PostgreSQL when configured
