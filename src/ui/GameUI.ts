@@ -8,6 +8,7 @@ import {
 } from '../inventory';
 import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
+import { stampInventoryIntent } from '../net/inventoryIntent';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
@@ -317,6 +318,9 @@ export interface InventoryContext {
   onDrop(stack: ItemStack): void;
   onChanged(): void;
   submitAction?: (message: ClientInventoryActionMessage) => void;
+  /** Last accepted server revisions. Online submits stamp these onto the message. */
+  inventoryRevision?: number;
+  containerRevision?: number;
 }
 
 interface OverlayCloseOptions {
@@ -3150,11 +3154,21 @@ export class GameUI {
     return null;
   }
 
+  noteInventoryRevisions(inventoryRevision: number, containerRevision?: number): void {
+    if (!this.inventoryContext) return;
+    this.inventoryContext.inventoryRevision = inventoryRevision;
+    this.inventoryContext.containerRevision = containerRevision;
+  }
+
   private submitInventoryAction(message: ClientInventoryActionMessage): void {
     const context = this.inventoryContext;
     if (!context || this.amountDialog) return;
     if (context.submitAction) {
-      context.submitAction(message);
+      const container = context.kind === 'inventory' ? undefined : (context.containerRevision ?? 0);
+      context.submitAction(stampInventoryIntent(message, {
+        inventory: context.inventoryRevision ?? 0,
+        container,
+      }));
       this.dragPreview = null;
       this.syncCursorElementContents();
       this.syncCursorStackElement();

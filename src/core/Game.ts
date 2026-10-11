@@ -1442,6 +1442,7 @@ export class Game {
         session.online.containerRevision = typeof message.containerRevision === 'number'
           ? message.containerRevision
           : undefined;
+        this.ui.noteInventoryRevisions(session.online.inventoryRevision, session.online.containerRevision);
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
           parseNetworkItemStacks(message.craftSlots),
@@ -1459,6 +1460,7 @@ export class Game {
         applyFurnaceSync(session.world, message, parseNetworkItemStack);
         if (typeof message.containerRevision === 'number') {
           session.online.containerRevision = message.containerRevision;
+          this.ui.noteInventoryRevisions(session.online.inventoryRevision, message.containerRevision);
         }
         if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
         return;
