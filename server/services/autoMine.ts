@@ -14,6 +14,12 @@ export const AUTOMINE_MAX_VOLUME = 32 * 32 * 32;
 export const AUTOMINE_BLOCKS_PER_TICK = 64;
 /** Time-sliced cuboid lighting after fill. Must stay well under a 50 ms tick. */
 export const AUTOMINE_LIGHT_BUDGET_MS = 8;
+/**
+ * Lighting slices before a reset is released even if its own light token
+ * has not committed. Stops a backed-up region queue from freezing RESETTING.
+ */
+export const AUTOMINE_LIGHTING_TICK_LIMIT = 400;
+const SCHEDULE_SKIP_LOG_MS = 30_000;
 export const AUTOMINE_NAME_MAX = 24;
 export const AUTOMINE_WEIGHT_TOTAL = 10_000;
 
@@ -26,18 +32,20 @@ export interface AutoMineBlockWeight {
 
 /**
  * Fixed composition. Weights are hundredths of a percent and sum to 10_000 (100%).
- * Lower list entries are rarer; Obsidian matches Coal; Titanium is the rarest.
+ * The wooden entries are logs (дубовое / берёзовое / еловое бревно), not planks.
+ * Each log weight is half the previous table. Freed weight goes to stone, except
+ * the slice that raises iron ore to the coal and obsidian rate. Titanium stays rarest.
  */
 export const AUTOMINE_COMPOSITION: readonly AutoMineBlockWeight[] = Object.freeze([
-  { blockId: BlockId.OakLog, weight: 1800 },
-  { blockId: BlockId.BirchLog, weight: 1400 },
-  { blockId: BlockId.SpruceLog, weight: 1400 },
-  { blockId: BlockId.Stone, weight: 2500 },
+  { blockId: BlockId.OakLog, weight: 900 },
+  { blockId: BlockId.BirchLog, weight: 700 },
+  { blockId: BlockId.SpruceLog, weight: 700 },
+  { blockId: BlockId.Stone, weight: 4500 },
   { blockId: BlockId.Gravel, weight: 1000 },
   { blockId: BlockId.CoalOre, weight: 500 },
   { blockId: BlockId.RedstoneOre, weight: 400 },
   { blockId: BlockId.GoldOre, weight: 250 },
-  { blockId: BlockId.IronOre, weight: 200 },
+  { blockId: BlockId.IronOre, weight: 500 },
   { blockId: BlockId.Obsidian, weight: 500 },
   { blockId: BlockId.DiamondOre, weight: 45 },
   { blockId: BlockId.TitaniumOre, weight: 5 },
@@ -117,6 +125,8 @@ export interface AutoMineJob {
   offset: number;
   phase: AutoMineJobPhase;
   lightingTicks: number;
+  /** Token from `VoxelWorld.queueLight` for this fill's own region. */
+  lightToken: number;
   readonly originals?: readonly number[];
 }
 
@@ -401,6 +411,7 @@ export class AutoMineManager {
   private readonly jobs = new Map<string, AutoMineJob>();
   private readonly originals = new Map<string, number[]>();
   private readonly jobMetrics = new Map<string, AutoMineResetMetrics>();
+  private readonly scheduleSkipLoggedAt = new Map<string, number>();
 
   constructor(private readonly host: AutoMineHost) {}
 
@@ -574,8 +585,22 @@ export class AutoMineManager {
     this.processJobs();
     for (const mine of this.mines) {
       if (this.jobs.has(mine.name)) continue;
-      if (mine.worldId !== this.host.worldId()) continue;
-      if (!mine.intervalSeconds || !mine.teleport || mine.nextResetAt === null) continue;
+      if (mine.worldId !== this.host.worldId()) {
+        this.noteScheduleSkip(
+          mine.name,
+          `worldId '${mine.worldId}' does not match '${this.host.worldId()}'`,
+          now,
+        );
+        continue;
+      }
+      if (!mine.intervalSeconds || !mine.teleport || mine.nextResetAt === null) {
+        this.noteScheduleSkip(
+          mine.name,
+          'interval, teleport, or nextResetAt is missing',
+          now,
+        );
+        continue;
+      }
       if (now < mine.nextResetAt) continue;
       const result = this.requestReset(mine.name);
       if (!result.ok) {
@@ -612,6 +637,7 @@ export class AutoMineManager {
       offset: 0,
       phase: 'generating',
       lightingTicks: 0,
+      lightToken: 0,
       originals,
     });
     this.jobMetrics.set(mine.name, {
@@ -713,9 +739,16 @@ export class AutoMineManager {
     return 0;
   }
 
+  private noteScheduleSkip(name: string, reason: string, now: number): void {
+    const last = this.scheduleSkipLoggedAt.get(name) ?? Number.NEGATIVE_INFINITY;
+    if (now - last < SCHEDULE_SKIP_LOG_MS) return;
+    this.scheduleSkipLoggedAt.set(name, now);
+    this.host.log(`auto-reset '${name}' waiting: ${reason}`);
+  }
+
   private queueJobLighting(job: AutoMineJob): void {
     const volume = job.volume;
-    this.host.world.queueLight({
+    job.lightToken = this.host.world.queueLight({
       minX: volume.minX - LATERAL_SKY_RADIUS,
       minY: volume.minY,
       minZ: volume.minZ - LATERAL_SKY_RADIUS,
@@ -735,7 +768,15 @@ export class AutoMineManager {
     const started = performance.now();
     this.host.world.processLighting(Math.max(1, this.lightBudgetMs), originX, originZ);
     if (metrics) metrics.maxRelightMs = Math.max(metrics.maxRelightMs, performance.now() - started);
-    if (this.host.world.hasQueuedRegionLight) return;
+    if (this.host.world.isEditLightTokenSettled(job.lightToken)) {
+      this.finishJob(job);
+      return;
+    }
+    if (job.lightingTicks < AUTOMINE_LIGHTING_TICK_LIMIT) return;
+    this.host.log(
+      `job '${job.name}' lighting exceeded ${AUTOMINE_LIGHTING_TICK_LIMIT} ticks`
+      + ` with regionJobs=${this.host.world.editLightQueueLength}; releasing the reset schedule`,
+    );
     this.finishJob(job);
   }
 

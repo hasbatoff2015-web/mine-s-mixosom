@@ -4,6 +4,7 @@ import { VoxelWorld } from '../../src/world/World';
 import {
   AUTOMINE_ALLOWED_BLOCKS,
   AUTOMINE_COMPOSITION,
+  AUTOMINE_LIGHTING_TICK_LIMIT,
   AUTOMINE_MAX_EDGE,
   AUTOMINE_WEIGHT_TOTAL,
   AutoMineManager,
@@ -84,8 +85,16 @@ describe('AutoMine weights', () => {
     const obsidian = AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.Obsidian)!;
     const titanium = AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.TitaniumOre)!;
     expect(obsidian.weight).toBe(coal.weight);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.OakLog)?.weight).toBe(900);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.BirchLog)?.weight).toBe(700);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.SpruceLog)?.weight).toBe(700);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.Stone)?.weight).toBe(4500);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.IronOre)?.weight).toBe(coal.weight);
+    expect(AUTOMINE_COMPOSITION.find((entry) => entry.blockId === BlockId.Gravel)?.weight).toBe(1000);
     expect(titanium.weight).toBe(Math.min(...AUTOMINE_COMPOSITION.map((entry) => entry.weight)));
     expect(titanium.weight).toBe(5);
+    expect(formatAutoMinePercent(900)).toBe('9%');
+    expect(formatAutoMinePercent(4500)).toBe('45%');
     expect(formatAutoMinePercent(1800)).toBe('18%');
     expect(formatAutoMinePercent(250)).toBe('2.5%');
     expect(formatAutoMinePercent(45)).toBe('0.45%');
@@ -102,22 +111,22 @@ describe('AutoMine weights', () => {
 
   it('selects cumulative ranges deterministically', () => {
     expect(selectAutoMineBlockSlot(0)).toBe(BlockId.OakLog);
-    expect(selectAutoMineBlockSlot(1799)).toBe(BlockId.OakLog);
-    expect(selectAutoMineBlockSlot(1800)).toBe(BlockId.BirchLog);
-    expect(selectAutoMineBlockSlot(3199)).toBe(BlockId.BirchLog);
-    expect(selectAutoMineBlockSlot(3200)).toBe(BlockId.SpruceLog);
-    expect(selectAutoMineBlockSlot(4599)).toBe(BlockId.SpruceLog);
-    expect(selectAutoMineBlockSlot(4600)).toBe(BlockId.Stone);
-    expect(selectAutoMineBlockSlot(7099)).toBe(BlockId.Stone);
-    expect(selectAutoMineBlockSlot(7100)).toBe(BlockId.Gravel);
-    expect(selectAutoMineBlockSlot(8099)).toBe(BlockId.Gravel);
-    expect(selectAutoMineBlockSlot(8100)).toBe(BlockId.CoalOre);
-    expect(selectAutoMineBlockSlot(8599)).toBe(BlockId.CoalOre);
-    expect(selectAutoMineBlockSlot(8600)).toBe(BlockId.RedstoneOre);
-    expect(selectAutoMineBlockSlot(8999)).toBe(BlockId.RedstoneOre);
-    expect(selectAutoMineBlockSlot(9000)).toBe(BlockId.GoldOre);
-    expect(selectAutoMineBlockSlot(9249)).toBe(BlockId.GoldOre);
-    expect(selectAutoMineBlockSlot(9250)).toBe(BlockId.IronOre);
+    expect(selectAutoMineBlockSlot(899)).toBe(BlockId.OakLog);
+    expect(selectAutoMineBlockSlot(900)).toBe(BlockId.BirchLog);
+    expect(selectAutoMineBlockSlot(1599)).toBe(BlockId.BirchLog);
+    expect(selectAutoMineBlockSlot(1600)).toBe(BlockId.SpruceLog);
+    expect(selectAutoMineBlockSlot(2299)).toBe(BlockId.SpruceLog);
+    expect(selectAutoMineBlockSlot(2300)).toBe(BlockId.Stone);
+    expect(selectAutoMineBlockSlot(6799)).toBe(BlockId.Stone);
+    expect(selectAutoMineBlockSlot(6800)).toBe(BlockId.Gravel);
+    expect(selectAutoMineBlockSlot(7799)).toBe(BlockId.Gravel);
+    expect(selectAutoMineBlockSlot(7800)).toBe(BlockId.CoalOre);
+    expect(selectAutoMineBlockSlot(8299)).toBe(BlockId.CoalOre);
+    expect(selectAutoMineBlockSlot(8300)).toBe(BlockId.RedstoneOre);
+    expect(selectAutoMineBlockSlot(8699)).toBe(BlockId.RedstoneOre);
+    expect(selectAutoMineBlockSlot(8700)).toBe(BlockId.GoldOre);
+    expect(selectAutoMineBlockSlot(8949)).toBe(BlockId.GoldOre);
+    expect(selectAutoMineBlockSlot(8950)).toBe(BlockId.IronOre);
     expect(selectAutoMineBlockSlot(9449)).toBe(BlockId.IronOre);
     expect(selectAutoMineBlockSlot(9450)).toBe(BlockId.Obsidian);
     expect(selectAutoMineBlockSlot(9949)).toBe(BlockId.Obsidian);
@@ -126,7 +135,8 @@ describe('AutoMine weights', () => {
     expect(selectAutoMineBlockSlot(9995)).toBe(BlockId.TitaniumOre);
     expect(selectAutoMineBlockSlot(9999)).toBe(BlockId.TitaniumOre);
     expect(selectAutoMineBlock(0)).toBe(BlockId.OakLog);
-    expect(selectAutoMineBlock(0.18)).toBe(BlockId.BirchLog);
+    expect(selectAutoMineBlock(0.09)).toBe(BlockId.BirchLog);
+    expect(selectAutoMineBlock(0.18)).toBe(BlockId.SpruceLog);
     expect(selectAutoMineBlock(0.9995)).toBe(BlockId.TitaniumOre);
     expect(selectAutoMineBlock(1)).toBe(BlockId.TitaniumOre);
   });
@@ -412,6 +422,77 @@ describe('AutoMine evacuation and timer', () => {
     expect(again.isResetting('timed')).toBe(true);
     drain(again, 'timed');
     expect(again.get('timed')?.nextResetAt).toBe(now + 60_000);
+  });
+});
+
+describe('AutoMine reset schedule', () => {
+  it('finishes while an unrelated region-light job is still queued', () => {
+    const world = new VoxelWorld('automine-unrelated-light');
+    const volume = volumeFromCorners({ x: 4, y: 40, z: 4 }, { x: 6, y: 42, z: 6 });
+    const manager = new AutoMineManager(memoryHost(world));
+    manager.enabled = true;
+    manager.blocksPerTick = 64;
+    const original = world.processLighting.bind(world);
+    world.processLighting = ((budget, x, z, counters) => {
+      const elapsed = original(budget, x, z, counters);
+      if (!world.hasQueuedRegionLight) {
+        world.queueLight(
+          { minX: 200, minY: 10, minZ: 200, maxX: 206, maxY: 14, maxZ: 206 },
+          true,
+          true,
+          'fluid',
+        );
+      }
+      return elapsed;
+    }) as VoxelWorld['processLighting'];
+    expect(manager.create('pit', volume, 'anarchy').ok).toBe(true);
+    drain(manager, 'pit', 40);
+    expect(manager.statusOf('pit')).toBe('READY');
+    expect(world.hasQueuedRegionLight).toBe(true);
+  });
+
+  it('releases a reset when its own light token never commits', () => {
+    const world = new VoxelWorld('automine-light-watchdog');
+    const logs: string[] = [];
+    const volume = volumeFromCorners({ x: 4, y: 40, z: 4 }, { x: 6, y: 42, z: 6 });
+    const host = memoryHost(world, { log: (message) => logs.push(message) });
+    const manager = new AutoMineManager(host);
+    manager.enabled = true;
+    manager.blocksPerTick = 64;
+    world.processLighting = (() => 0) as VoxelWorld['processLighting'];
+    expect(manager.create('pit', volume, 'anarchy').ok).toBe(true);
+    drain(manager, 'pit', AUTOMINE_LIGHTING_TICK_LIMIT + 5);
+    expect(manager.statusOf('pit')).toBe('READY');
+    expect(logs.some((line) => line.includes('releasing the reset schedule'))).toBe(true);
+  });
+
+  it('logs a world mismatch and a missing schedule without resetting', () => {
+    const world = new VoxelWorld('automine-skip-log');
+    const logs: string[] = [];
+    let now = 1_000_000;
+    const host = memoryHost(world, {
+      log: (message) => logs.push(message),
+      worldId: () => 'survival',
+      now: () => now,
+    });
+    host.store.mines.push({
+      name: 'pit',
+      worldId: 'anarchy',
+      minX: 0, minY: 4, minZ: 0, maxX: 1, maxY: 5, maxZ: 1,
+      intervalSeconds: 30,
+      teleport: { worldId: 'anarchy', x: 1, y: 8, z: 1, yaw: 0, pitch: 0 },
+      nextResetAt: 0,
+    });
+    const manager = new AutoMineManager(host);
+    manager.load();
+    manager.enabled = true;
+    manager.tick(now);
+    manager.tick(now);
+    expect(logs.filter((line) => line.includes('worldId'))).toHaveLength(1);
+    expect(manager.isResetting('pit')).toBe(false);
+    now += 30_000;
+    manager.tick(now);
+    expect(logs.filter((line) => line.includes('worldId'))).toHaveLength(2);
   });
 });
 

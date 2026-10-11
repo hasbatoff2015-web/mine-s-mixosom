@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback
+
+- [x] Settled swim speed is 0.8× ground speed. Land, sneak, air, and lava caps stay on their previous constants.
+- [x] Automine logs are halved; stone is 45%; iron ore matches coal at 5%. Weights still sum to 10 000.
+- [x] An automine reset finishes on its own light token. A full region-light queue no longer holds `RESETTING`.
+- [x] Player Q throws travel about twice as far horizontally. The vertical hop is unchanged.
+- [x] Builtin `/kit` stores kits in plugin-data and gives `start` once on the first join.
+- [x] Mega Zombie ignores attack knockback. Other mobs do not.
+- [ ] Not merged. Wait for an explicit merge command.
+
 ## 2026-10-08: Mega Zombie boss
 
 - [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.

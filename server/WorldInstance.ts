@@ -1460,7 +1460,7 @@ export class WorldInstance {
           + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
           + `resumeCount=${existing.resumeCount}`,
         );
-        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name, firstJoin: false });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
         if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
         return { player: existing, resumed: true, previousConnectionId };
@@ -1476,7 +1476,7 @@ export class WorldInstance {
           `player joined: ${restored.name} (${restored.id}, resume) `
           + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
         );
-        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name, firstJoin: false });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
         this.notifyFriendsOfPresence(restored, 'joined');
         return { player: restored, resumed: true };
@@ -1514,7 +1514,7 @@ export class WorldInstance {
       `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
       + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
     );
-    this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+    this.events.emit('playerJoin', { playerId: player.id, name: player.name, firstJoin: true });
     this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
     this.notifyFriendsOfPresence(player, 'joined');

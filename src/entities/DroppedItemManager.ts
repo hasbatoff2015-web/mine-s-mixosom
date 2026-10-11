@@ -18,6 +18,26 @@ import { resolveEntityHost } from './resolveEntityHost';
 
 const ITEM_WIDTH = 0.28;
 const ITEM_HEIGHT = 0.28;
+/** Horizontal toss speed for a level Q drop. Twice the previous 3.2. */
+export const PLAYER_DROP_HORIZONTAL_SPEED = 6.4;
+/** Look contribution on Y. Kept at the previous full-vector scale so pitch does not double. */
+export const PLAYER_DROP_LOOK_SPEED = 3.2;
+export const PLAYER_DROP_HOP = 1.6;
+
+/** Q-drop velocity. Horizontal distance scales with `horizontalSpeed`; the hop does not. */
+export function playerDropVelocity(direction: Vec3Like, horizontalSpeed = PLAYER_DROP_HORIZONTAL_SPEED): Vec3 {
+  const length = Math.hypot(direction.x, direction.y, direction.z);
+  const velocity = new Vec3();
+  if (!(length > 1e-8)) {
+    velocity.y = PLAYER_DROP_HOP;
+    return velocity;
+  }
+  const inv = 1 / length;
+  velocity.x = direction.x * inv * Math.max(0, horizontalSpeed);
+  velocity.z = direction.z * inv * Math.max(0, horizontalSpeed);
+  velocity.y = direction.y * inv * PLAYER_DROP_LOOK_SPEED + PLAYER_DROP_HOP;
+  return velocity;
+}
 const ITEM_SHAPE = Object.freeze({ width: ITEM_WIDTH, height: ITEM_HEIGHT });
 export const DROPPED_ITEM_MAX_HEALTH = 5;
 /** Item meshes created during one render. The rest wait on the visual queue. */
@@ -216,18 +236,18 @@ export class DroppedItemManager {
     return entity;
   }
 
-  /** Spawns a Q-style tossed item with forward and upward momentum. */
+  /** Spawns a Q-style tossed item. `speed` is the horizontal scale, not the full 3D vector. */
   drop(
     stack: Readonly<ItemStack>,
     origin: Vec3Like,
     direction: Vec3Like,
-    speed = 3.2,
+    speed = PLAYER_DROP_HORIZONTAL_SPEED,
     pickupDelaySeconds = 1.25,
   ): DroppedItemEntity {
-    const velocity = new Vec3(direction.x, direction.y, direction.z);
-    if (velocity.lengthSq() > 0) velocity.normalize().multiplyScalar(Math.max(0, speed));
-    velocity.y += 1.6;
-    return this.spawn(stack, origin, { velocity, pickupDelaySeconds });
+    return this.spawn(stack, origin, {
+      velocity: playerDropVelocity(direction, speed),
+      pickupDelaySeconds,
+    });
   }
 
   update(deltaSeconds: number, context: DroppedItemUpdateContext = {}): void {
