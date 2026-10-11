@@ -23,8 +23,9 @@ import {
   TRADE_UNKNOWN_ERROR,
   tradeInventoryFullError,
 } from '../../shared/trade';
+import { randomUUID } from 'node:crypto';
 import { inventoryCanAccept } from './auction';
-import type { EconomyService } from './economy';
+import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
 
 export { TRADE_PLUGIN_NAME, TRADE_SLOT_COUNT };
 
@@ -37,6 +38,8 @@ export interface TradeOffer {
 
 export interface TradeSession {
   readonly tradeId: string;
+  /** Stable for the money legs of this session. Not the presentation counter. */
+  readonly settlementId: string;
   readonly playerA: string;
   readonly playerB: string;
   offers: Record<string, TradeOffer>;
@@ -106,7 +109,7 @@ export class TradeService {
     sendMessage: () => undefined,
   };
 
-  constructor(private readonly economy: EconomyService) {}
+  constructor(private readonly economy: CurrencyPort) {}
 
   setRuntime(runtime: TradeRuntime): void {
     this.runtime = runtime;
@@ -164,6 +167,7 @@ export class TradeService {
     const tradeId = `trade-${this.nextTrade++}`;
     const session: TradeSession = {
       tradeId,
+      settlementId: randomUUID(),
       playerA: request.fromPlayerId,
       playerB: playerId,
       offers: {
@@ -262,7 +266,7 @@ export class TradeService {
     if (!self.ready || !partner.ready) return { ok: false, error: TRADE_NOT_READY_ERROR };
     self.accepted = true;
     if (!partner.accepted) return { ok: true, affected: [session.playerA, session.playerB] };
-    return this.complete(session);
+    return this.complete(session) as TradeResult;
   }
 
   cancel(playerId: string): TradeResult {
@@ -310,7 +314,7 @@ export class TradeService {
     return { ok: true, affected: [session.playerA, session.playerB] };
   }
 
-  private complete(session: TradeSession): TradeResult {
+  private complete(session: TradeSession): TradeResult | Promise<TradeResult> {
     return this.withLocks([session.playerA, session.playerB], () => {
       if (!this.runtime.isOnline(session.playerA) || !this.runtime.isOnline(session.playerB)) {
         return this.closeSession(session, TRADE_OFFLINE_ERROR);
@@ -322,9 +326,6 @@ export class TradeService {
       const offerB = offerOf(session, session.playerB);
       if (!offerA.ready || !offerB.ready || !offerA.accepted || !offerB.accepted) {
         return { ok: false, error: TRADE_NOT_READY_ERROR };
-      }
-      if (offerA.money > this.runtime.balance(session.playerA) || offerB.money > this.runtime.balance(session.playerB)) {
-        return { ok: false, error: TRADE_MONEY_ERROR };
       }
       const incomingA = offerB.slots.filter((slot): slot is ItemStack => slot !== null).map((slot) => cloneStack(slot)!);
       const incomingB = offerA.slots.filter((slot): slot is ItemStack => slot !== null).map((slot) => cloneStack(slot)!);
@@ -340,30 +341,53 @@ export class TradeService {
           return { ok: false, error: tradeInventoryFullError(this.runtime.displayName(session.playerB)) };
         }
       }
-      if (offerA.money > 0) {
-        const moved = this.economy.transfer(session.playerA, session.playerB, offerA.money, 'TRADE');
-        if (!moved.ok) return { ok: false, error: moved.error ?? TRADE_MONEY_ERROR };
-      }
-      if (offerB.money > 0) {
-        const moved = this.economy.transfer(session.playerB, session.playerA, offerB.money, 'TRADE');
-        if (!moved.ok) {
-          if (offerA.money > 0) this.economy.transfer(session.playerB, session.playerA, offerA.money, 'TRADE');
-          return { ok: false, error: moved.error ?? TRADE_MONEY_ERROR };
-        }
-      }
-      for (const stack of incomingA) invA.add(cloneStack(stack)!);
-      for (const stack of incomingB) invB.add(cloneStack(stack)!);
-      offerA.slots.fill(null);
-      offerB.slots.fill(null);
-      this.dropSession(session);
-      this.runtime.sendMessage(session.playerA, 'Обмен выполнен.');
-      this.runtime.sendMessage(session.playerB, 'Обмен выполнен.');
-      return {
-        ok: true,
-        completed: true,
-        closed: true,
-        affected: [session.playerA, session.playerB],
-      };
+      const moved = this.payTrade(session, offerA.money, offerB.money);
+      return thenResult(moved, (paid) => {
+        if (!paid.ok) return { ok: false as const, error: paid.error ?? TRADE_MONEY_ERROR };
+        for (const stack of incomingA) invA.add(cloneStack(stack)!);
+        for (const stack of incomingB) invB.add(cloneStack(stack)!);
+        offerA.slots.fill(null);
+        offerB.slots.fill(null);
+        this.dropSession(session);
+        this.runtime.sendMessage(session.playerA, 'Обмен выполнен.');
+        this.runtime.sendMessage(session.playerB, 'Обмен выполнен.');
+        return {
+          ok: true as const,
+          completed: true,
+          closed: true,
+          affected: [session.playerA, session.playerB],
+        };
+      });
+    });
+  }
+
+  private payTrade(session: TradeSession, moneyA: number, moneyB: number): TradeResult | Promise<TradeResult> {
+    const pay = (
+      from: string,
+      to: string,
+      amount: number,
+      sourceId: string,
+    ): { ok: boolean; error?: string } | Promise<{ ok: boolean; error?: string }> => {
+      if (amount <= 0) return { ok: true };
+      return this.economy.transfer(from, to, amount, 'TRADE', undefined, sourceId);
+    };
+    const first = pay(session.playerA, session.playerB, moneyA, `${session.settlementId}:a`);
+    return thenResult(first, (paidA) => {
+      if (!paidA.ok) return { ok: false as const, error: paidA.error ?? TRADE_MONEY_ERROR };
+      const second = pay(session.playerB, session.playerA, moneyB, `${session.settlementId}:b`);
+      return thenResult(second, (paidB) => {
+        if (paidB.ok) return { ok: true as const };
+        if (moneyA <= 0) return { ok: false as const, error: paidB.error ?? TRADE_MONEY_ERROR };
+        const undo = this.economy.transfer(
+          session.playerB,
+          session.playerA,
+          moneyA,
+          'TRADE',
+          undefined,
+          `${session.settlementId}:a:undo`,
+        );
+        return thenResult(undo, () => ({ ok: false as const, error: paidB.error ?? TRADE_MONEY_ERROR }));
+      });
     });
   }
 
@@ -400,16 +424,25 @@ export class TradeService {
     this.requests.splice(0, this.requests.length, ...next);
   }
 
-  private withLocks(playerIds: readonly string[], fn: () => TradeResult): TradeResult {
+  private withLocks<T extends TradeResult | Promise<TradeResult>>(playerIds: readonly string[], fn: () => T): T {
     const unique = [...new Set(playerIds)].sort();
     if (unique.some((id) => this.locks.has(id))) {
-      return { ok: false, error: 'Обмен уже выполняется.' };
+      return { ok: false, error: 'Обмен уже выполняется.' } as T;
     }
     for (const id of unique) this.locks.add(id);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       for (const id of unique) this.locks.delete(id);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
 }

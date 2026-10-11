@@ -390,6 +390,8 @@ export interface ClientChatMessage {
   readonly text: string;
   /** Client intent only. Server ignores forged sender/recipients/coords/clan. */
   readonly channel?: ChatChannel;
+  /** One send. Replays of the same id must not move money twice. */
+  readonly clientRequestId?: string;
 }
 
 export interface ClientViewMessage {
@@ -568,6 +570,7 @@ export interface ClientAuctionActionMessage {
   readonly slot?: number;
   readonly amount?: number;
   readonly price?: string | number;
+  readonly clientRequestId?: string;
 }
 
 export type ClanActionKind =
@@ -641,6 +644,7 @@ export interface ClientClanActionMessage {
   readonly name?: string;
   readonly text?: string;
   readonly sort?: 'money' | 'kills';
+  readonly clientRequestId?: string;
 }
 
 export type BuyerActionKind =
@@ -672,6 +676,7 @@ export interface ClientBuyerActionMessage {
   readonly price?: string | number;
   readonly name?: string;
   readonly hologramText?: string;
+  readonly clientRequestId?: string;
 }
 
 export type MenuActionKind =
@@ -771,6 +776,7 @@ export interface ClientTradeActionMessage {
   readonly slot?: number;
   readonly tradeSlot?: number;
   readonly money?: string | number;
+  readonly clientRequestId?: string;
 }
 
 export type DirectMessageActionKind = 'send' | 'history';
@@ -1970,6 +1976,15 @@ function parseClientRequestId(value: unknown, error: string): string | undefined
   return value;
 }
 
+const ECONOMY_REQUEST_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseEconomyRequestId(value: unknown, error: string): string | undefined | { error: string } {
+  const parsed = parseClientRequestId(value, error);
+  if (!parsed || typeof parsed === 'object') return parsed;
+  if (!ECONOMY_REQUEST_UUID.test(parsed)) return { error };
+  return parsed;
+}
+
 export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
   if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) return undefined;
   if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.range)) return undefined;
@@ -2240,7 +2255,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (text.length > MAX_CHAT_LENGTH) return { error: 'chat.text too long' };
       const channel = raw.channel === undefined ? 'global' : raw.channel;
       if (!isChatChannel(channel)) return { error: 'chat.channel invalid' };
-      return { type: 'chat', text, channel };
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'chat.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+      return { type: 'chat', text, channel, ...(clientRequestId ? { clientRequestId } : {}) };
     }
     case 'view': {
       if (!Number.isInteger(raw.cx) || !Number.isInteger(raw.cz) || !Number.isInteger(raw.radius)) {
@@ -2555,6 +2572,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const amount = raw.amount === undefined ? undefined : finite(raw.amount) ? Math.floor(raw.amount) : undefined;
       if (raw.amount !== undefined && amount === undefined) return { error: 'auction_action.amount invalid' };
       const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'auction_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'auction_action',
         action: raw.action as AuctionActionKind,
@@ -2564,6 +2583,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(slot !== undefined ? { slot } : {}),
         ...(amount !== undefined ? { amount } : {}),
         ...(price !== undefined ? { price } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'clan_action': {
@@ -2585,6 +2605,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         if (raw.text.length > MAX_CHAT_LENGTH) return { error: 'clan_action.text too long' };
       }
       const text = typeof raw.text === 'string' ? raw.text : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'clan_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'clan_action',
         action: raw.action as ClanActionKind,
@@ -2598,6 +2620,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(name !== undefined ? { name } : {}),
         ...(text !== undefined ? { text } : {}),
         ...(sort ? { sort } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'buyer_interact': {
@@ -2617,6 +2640,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
       const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
       const hologramText = typeof raw.hologramText === 'string' ? raw.hologramText.slice(0, 80) : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'buyer_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'buyer_action',
         action: raw.action as BuyerActionKind,
@@ -2626,6 +2651,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(price !== undefined ? { price } : {}),
         ...(name !== undefined ? { name } : {}),
         ...(hologramText !== undefined ? { hologramText } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'direct_message_action': {
@@ -2695,12 +2721,15 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const tradeSlot = raw.tradeSlot === undefined ? undefined : finite(raw.tradeSlot) ? Math.floor(raw.tradeSlot) : undefined;
       if (raw.tradeSlot !== undefined && tradeSlot === undefined) return { error: 'trade_action.tradeSlot invalid' };
       const money = typeof raw.money === 'string' || typeof raw.money === 'number' ? raw.money : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'trade_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'trade_action',
         action: raw.action as TradeActionKind,
         ...(slot !== undefined ? { slot } : {}),
         ...(tradeSlot !== undefined ? { tradeSlot } : {}),
         ...(money !== undefined ? { money } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     default:

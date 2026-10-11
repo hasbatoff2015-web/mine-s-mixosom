@@ -65,7 +65,23 @@ Three identities stay separate. `IdempotencyService` owns the request. `operatio
 
 `validateEconomyJsonImport` checks a future import list and writes nothing. No startup path reads `balances.json` into these tables.
 
-Direct calls with the database disabled throw `DatabaseDisabledError`. The JSON `EconomyService` used by rewards, auction, trade, clans, the buyer, and `/eco` does not change.
+Direct calls with the database disabled throw `DatabaseDisabledError`.
+
+## Currency authority
+
+`FC_ECONOMY_BACKEND` is `legacy_json` when unset. That mode keeps the synchronous JSON wallet and does not write Megacoin rows. `postgres` requires `FC_DATABASE_URL` and `FC_DEPLOYMENT_ID`. Startup fails if that database does not become ready. A later query failure does not switch the process back to JSON.
+
+In postgres mode the gameplay port is `PostgresGameplayEconomy`. Rewards, player transfers, `/eco`, buyer sales, auction settlement, trade money, and the clan creation fee post through it. `economy/balances.json` and `economy/transactions.json` are not currency authority and are not rewritten by those operations. Placed-block cells stay in `economy/placed-blocks.json`. Kill counts in this mode stay in `economy/kills.json`.
+
+A mob reward source is `economyInstanceId`, a UUID stored on the mob. Loading an old mob without one generates it once and the next save keeps it. A player-death source is `deathEventId`, created when health reaches 0 and cleared on respawn. A block-break source is a new UUID for that accepted break. Coordinates and `mob-1` are not sources.
+
+`clientRequestId` on chat and on auction, clan, buyer, and trade actions is the request identity. `IdempotencyService` stores it in the same transaction as the money movement. The economic source id is separate: the same mob death still pays once if a later request repeats it.
+
+Changing the nickname updates `economy_accounts.display_name` and `updated_at` only.
+
+`npm run economy:import -- --dry-run --file balances.json` prints the plan and writes nothing. `--apply --file balances.json --batch <uuid>` creates the opening 100 and, when the legacy balance is not 100, one `LEGACY_IMPORT` adjustment. The same batch does not apply twice. It is not invoked on startup.
+
+The simulation tick and inventory clicks do not query PostgreSQL. Event rewards are tracked promises. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool. That is not a claim that a crash between an item edit and a committed transfer is recoverable. That cross-domain window is Stage 2C. Reconciliation stays on demand and does not repair rows.
 
 ## Release
 

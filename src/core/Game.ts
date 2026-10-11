@@ -2637,7 +2637,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openAuction(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeAuctionAndResumeLook(true),
     });
   }
@@ -2678,7 +2678,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openClan(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeClanAndResumeLook(true),
     });
   }
@@ -2734,7 +2734,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openTrade(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeTradeAndResumeLook(true),
     });
   }
@@ -2800,7 +2800,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openBuyer(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeBuyerAndResumeLook(true),
     });
   }
@@ -6134,7 +6134,12 @@ export class Game {
     this.ui.setChatInputHistory(this.chat.history);
     this.ui.clearChatDraft();
     if (session.online) {
-      session.online.client.send({ type: 'chat', text: trimmed, channel });
+      session.online.client.send({
+        type: 'chat',
+        text: trimmed,
+        channel,
+        clientRequestId: globalThis.crypto.randomUUID(),
+      });
       return;
     }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());

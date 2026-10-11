@@ -16,6 +16,7 @@ import {
   ECONOMY_TIMESTAMP_TEXT,
   type EconomyAccount,
   type EconomyAdjustment,
+  type EconomyFractionInput,
   type EconomyHistoryPage,
   type EconomyHistoryQuery,
   type EconomyLedgerEntry,
@@ -49,6 +50,17 @@ const UPDATE_BALANCE_SQL = `UPDATE economy_accounts
 SET balance = $3, updated_at = NOW()
 WHERE deployment_id = $1 AND player_id = $2
 RETURNING player_id, balance::text AS balance, display_name, created_at, updated_at`;
+
+const UPDATE_NAME_SQL = `UPDATE economy_accounts
+SET display_name = $3, updated_at = NOW()
+WHERE deployment_id = $1 AND player_id = $2
+RETURNING player_id, balance::text AS balance, display_name, created_at, updated_at`;
+
+const LIST_TOP_SQL = `SELECT player_id, balance::text AS balance, display_name, created_at, updated_at
+FROM economy_accounts
+WHERE deployment_id = $1
+ORDER BY balance DESC, display_name ASC, player_id ASC
+LIMIT $2`;
 
 const INSERT_OPERATION_SQL = `INSERT INTO economy_operations (
   deployment_id, operation_id, kind, actor_id, source_type, source_id, request_id, metadata
@@ -166,7 +178,9 @@ export class PostgresEconomyRepository implements EconomyRepository {
   constructor(private readonly deploymentId: string) {}
 
   async ensureAccount(tx: Queryable, input: EnsureAccountInput): Promise<EconomyAccount> {
-    return this.lockAccount(tx, input.playerId, input.displayName);
+    const account = await this.lockAccount(tx, input.playerId, input.displayName);
+    if (account.displayName === input.displayName) return account;
+    return this.rename(tx, input.playerId, input.displayName);
   }
 
   async getAccount(tx: Queryable, playerId: string): Promise<EconomyAccount | null> {
@@ -215,13 +229,13 @@ export class PostgresEconomyRepository implements EconomyRepository {
         {
           playerId: input.fromPlayerId,
           delta: -input.amount,
-          reason: input.reason,
+          reason: input.debitReason ?? input.reason,
           counterpartyPlayerId: input.toPlayerId,
         },
         {
           playerId: input.toPlayerId,
           delta: input.amount,
-          reason: input.reason,
+          reason: input.creditReason ?? input.reason,
           counterpartyPlayerId: input.fromPlayerId,
         },
       ]);
@@ -236,8 +250,8 @@ export class PostgresEconomyRepository implements EconomyRepository {
     if (toNext > ECONOMY_MAX_BALANCE) throw new EconomyLimitError();
     const fromAccount = await this.updateBalance(tx, from.playerId, from.balance - input.amount);
     const toAccount = await this.updateBalance(tx, to.playerId, toNext);
-    await this.insertLeg(tx, operationId, 0, from.playerId, -input.amount, from.balance, input.reason, to.playerId);
-    await this.insertLeg(tx, operationId, 1, to.playerId, input.amount, to.balance, input.reason, from.playerId);
+    await this.insertLeg(tx, operationId, 0, from.playerId, -input.amount, from.balance, input.debitReason ?? input.reason, to.playerId);
+    await this.insertLeg(tx, operationId, 1, to.playerId, input.amount, to.balance, input.creditReason ?? input.reason, from.playerId);
     return {
       replayed: false,
       operation: await this.requireOperation(tx, operationId),
@@ -250,6 +264,105 @@ export class PostgresEconomyRepository implements EconomyRepository {
    * A repeated source compares the original leg's balance_after to the requested
    * target and does not post a second adjustment.
    */
+  /**
+   * Locks the sender, then moves floor(balance * numerator / denominator).
+   * The same source replays the original amount and does not recompute it.
+   * A zero share still records the source so a later retry cannot pay.
+   */
+  async transferFraction(
+    tx: Queryable,
+    input: EconomyFractionInput,
+  ): Promise<EconomyMutation & { readonly amount: number }> {
+    if (input.source) {
+      const existing = await this.findBySource(tx, input.source.type, input.source.id);
+      if (existing) {
+        return {
+          replayed: true,
+          operation: existing,
+          accounts: [
+            await this.mustAccount(tx, input.fromPlayerId),
+            await this.mustAccount(tx, input.toPlayerId),
+          ],
+          amount: fractionAmount(existing),
+        };
+      }
+    }
+    const fromName = nameFor(input.fromPlayerId, input.fromDisplayName);
+    const toName = nameFor(input.toPlayerId, input.toDisplayName);
+    const fromFirst = input.fromPlayerId < input.toPlayerId;
+    const first = await this.lockAccount(
+      tx,
+      fromFirst ? input.fromPlayerId : input.toPlayerId,
+      fromFirst ? fromName : toName,
+    );
+    const second = await this.lockAccount(
+      tx,
+      fromFirst ? input.toPlayerId : input.fromPlayerId,
+      fromFirst ? toName : fromName,
+    );
+    const from = fromFirst ? first : second;
+    const to = fromFirst ? second : first;
+    if (input.source) {
+      const existing = await this.findBySource(tx, input.source.type, input.source.id);
+      if (existing) {
+        return {
+          replayed: true,
+          operation: existing,
+          accounts: [from, to],
+          amount: fractionAmount(existing),
+        };
+      }
+    }
+    const amount = Math.floor((from.balance * input.numerator) / input.denominator);
+    const operationId = randomUUID();
+    const inserted = await this.insertOperation(tx, {
+      operationId,
+      kind: 'TRANSFER',
+      actorId: input.actorId ?? null,
+      source: input.source,
+      requestId: input.requestId ?? null,
+      metadata: input.metadata ?? {},
+    });
+    if (!inserted) {
+      const existing = await this.requireSource(tx, input.source);
+      return {
+        replayed: true,
+        operation: existing,
+        accounts: [await this.mustAccount(tx, input.fromPlayerId), await this.mustAccount(tx, input.toPlayerId)],
+        amount: fractionAmount(existing),
+      };
+    }
+    if (amount <= 0) {
+      return {
+        replayed: false,
+        operation: await this.requireOperation(tx, operationId),
+        accounts: [from, to],
+        amount: 0,
+      };
+    }
+    const toNext = to.balance + amount;
+    if (toNext > ECONOMY_MAX_BALANCE) throw new EconomyLimitError();
+    const fromAccount = await this.updateBalance(tx, from.playerId, from.balance - amount);
+    const toAccount = await this.updateBalance(tx, to.playerId, toNext);
+    await this.insertLeg(tx, operationId, 0, from.playerId, -amount, from.balance, input.reason, to.playerId);
+    await this.insertLeg(tx, operationId, 1, to.playerId, amount, to.balance, input.reason, from.playerId);
+    return {
+      replayed: false,
+      operation: await this.requireOperation(tx, operationId),
+      accounts: [fromAccount, toAccount],
+      amount,
+    };
+  }
+
+  async updateDisplayName(tx: Queryable, playerId: string, displayName: string): Promise<EconomyAccount | null> {
+    return this.rename(tx, playerId, displayName);
+  }
+
+  async listTop(tx: Queryable, limit: number): Promise<readonly EconomyAccount[]> {
+    const result = await tx.query<AccountRow>(LIST_TOP_SQL, [this.deploymentId, limit]);
+    return result.rows.map((row) => mapAccount(row, this.deploymentId));
+  }
+
   async setBalance(tx: Queryable, input: EconomySetBalanceInput): Promise<EconomyAdjustment> {
     const reason = input.reason ?? 'ADMIN_SET';
     const account = await this.lockAccount(tx, input.playerId, nameFor(input.playerId, input.displayName));
@@ -487,6 +600,13 @@ export class PostgresEconomyRepository implements EconomyRepository {
     ]);
   }
 
+  private async rename(tx: Queryable, playerId: string, displayName: string): Promise<EconomyAccount> {
+    const result = await tx.query<AccountRow>(UPDATE_NAME_SQL, [this.deploymentId, playerId, displayName]);
+    const row = result.rows[0];
+    if (!row) throw new EconomyAccountNotFoundError();
+    return mapAccount(row, this.deploymentId);
+  }
+
   private async updateBalance(tx: Queryable, playerId: string, balance: number): Promise<EconomyAccount> {
     const result = await tx.query<AccountRow>(UPDATE_BALANCE_SQL, [this.deploymentId, playerId, balance]);
     const row = result.rows[0];
@@ -517,6 +637,11 @@ export class PostgresEconomyRepository implements EconomyRepository {
     const legs = await tx.query<LegRow>(READ_LEGS_SQL, [this.deploymentId, row.operation_id]);
     return mapOperation(row, legs.rows.map(mapLeg));
   }
+}
+
+function fractionAmount(operation: EconomyOperationView): number {
+  const leg = operation.legs.find((entry) => entry.delta < 0) ?? operation.legs[0];
+  return leg ? Math.abs(leg.delta) : 0;
 }
 
 function nameFor(playerId: string, displayName: string | undefined): string {

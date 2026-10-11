@@ -125,6 +125,28 @@ export interface EconomyTransferInput {
   readonly toDisplayName?: string;
   readonly amount: number;
   readonly reason: string;
+  /** Ledger reason on the sender leg. Defaults to `reason`. */
+  readonly debitReason?: string;
+  /** Ledger reason on the recipient leg. Defaults to `reason`. */
+  readonly creditReason?: string;
+  readonly actorId?: string;
+  readonly source?: EconomySource;
+  readonly requestId?: string;
+  readonly metadata?: Readonly<Record<string, unknown>>;
+}
+
+/**
+ * One transfer whose amount is `floor(senderBalance * numerator / denominator)`
+ * after the sender row is locked. A zero amount records the source and no leg.
+ */
+export interface EconomyFractionInput {
+  readonly fromPlayerId: string;
+  readonly toPlayerId: string;
+  readonly fromDisplayName?: string;
+  readonly toDisplayName?: string;
+  readonly numerator: number;
+  readonly denominator: number;
+  readonly reason: string;
   readonly actorId?: string;
   readonly source?: EconomySource;
   readonly requestId?: string;

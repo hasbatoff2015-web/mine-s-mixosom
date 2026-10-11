@@ -430,7 +430,7 @@ export class AnarchyServer {
         return;
       }
       case 'chat':
-        this.world.handleChat(player, message.text, message.channel ?? 'global');
+        this.world.handleChat(player, message.text, message.channel ?? 'global', message.clientRequestId);
         return;
       case 'view':
         this.world.setView(player, message.cx, message.cz, message.radius);

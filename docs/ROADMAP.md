@@ -1,11 +1,19 @@
 # Roadmap
 
+## 2026-10-11: Gameplay Megacoins on PostgreSQL when configured
+
+- [x] `FC_ECONOMY_BACKEND=legacy_json|postgres`. Postgres mode has no JSON currency writes and no fallback.
+- [x] Durable sources: mob `economyInstanceId`, player `deathEventId`, block `rewardEventId`. Runtime `mob-N` is not a source.
+- [x] Rewards, `/pay`, `/eco`, buyer, auction, trade money, and clan fee use `CurrencyPort`. PvP share is one transfer.
+- [x] Display name updates do not append ledger rows. `npm run economy:import` is explicit and idempotent per batch.
+- [ ] Item-plus-money crash recovery stays Stage 2C. Not merged. Draft PR **#129**.
+
 ## 2026-10-11: Megacoin ledger foundation, gameplay still on JSON
 
 - [x] One inventory-intent stamp. `GameUI` owns revisions. `Game.sendInventoryAction` does not stamp again.
 - [x] Migration `0003`: integer `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`.
 - [x] `MegacoinService` posts initial 100, credit, debit, transfer, and adjustment in one transaction. Source identity pays once. Reconciliation does not repair.
-- [ ] Gameplay cutover is Stage 2B. `EconomyService` remains the authority. No dual-write. No JSON balance import. Auction, trade, buyer, and clans stay on JSON.
+- [x] Gameplay cutover is the following section. This section is the ledger-only pass.
 - [ ] Not merged. Draft PR **#129**.
 
 ## 2026-10-11: PostgreSQL audit and idempotency foundation

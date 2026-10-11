@@ -3,7 +3,7 @@ import type { AutoMineManager } from '../services/autoMine';
 import type { AuctionService, AuctionView } from '../services/auction';
 import type { BuyerService } from '../services/buyer';
 import type { ClanService, ClanView, ClanResult } from '../services/clan';
-import type { EconomyService } from '../services/economy';
+import type { CurrencyPort } from '../economy/currencyPort';
 import type { FriendsService } from '../services/friends';
 import type { HomeService } from '../services/home';
 import type { PermissionService } from '../services/permissions';
@@ -34,7 +34,7 @@ export interface BuiltinPluginContext {
   readonly selection: PlayerSelectionService;
   readonly autoMine: AutoMineManager;
   readonly worldEvents: WorldEventsManager;
-  readonly economy: EconomyService;
+  readonly economy: CurrencyPort;
   readonly auction: AuctionService;
   readonly clan: ClanService;
   readonly buyer: BuyerService;

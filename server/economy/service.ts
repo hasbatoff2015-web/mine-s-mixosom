@@ -18,6 +18,7 @@ import {
   type EconomyReconciliation,
   type EconomySetBalanceInput,
   type EconomySource,
+  type EconomyFractionInput,
   type EconomyTransferInput,
   type EconomyWriteInput,
   type EnsureAccountInput,
@@ -31,11 +32,11 @@ const METADATA_LIMIT = 65_536;
  * `EconomyService`. This class is not called from rewards, auction, trade,
  * clans, or the buyer.
  *
- * Pass the `tx` from `IdempotencyService.execute` when Stage 2B wires a
- * command. The request row, the economic operation, and the ledger legs then
- * commit or roll back together. Calling these methods without that wrapper
- * still posts exactly one operation per successful call; source identity is
- * what stops the same mob death or listing from paying twice.
+ * Pass the `tx` from `IdempotencyService.execute` when a command should commit
+ * the request row, the economic operation, and the ledger legs together.
+ * Calling these methods without that wrapper still posts exactly one operation
+ * per successful call. Source identity stops the same mob death or listing
+ * from paying twice. Request identity does not.
  */
 export class MegacoinService {
   readonly deploymentId: string;
@@ -95,12 +96,50 @@ export class MegacoinService {
       ...(input.toDisplayName !== undefined ? { toDisplayName: parseDisplayName(input.toDisplayName) } : {}),
       amount: parsePositiveAmount(input.amount),
       reason: parseReason(input.reason),
+      ...(input.debitReason !== undefined ? { debitReason: parseReason(input.debitReason) } : {}),
+      ...(input.creditReason !== undefined ? { creditReason: parseReason(input.creditReason) } : {}),
       ...optionalActor(input.actorId),
       ...optionalSource(input.source),
       ...optionalRequest(input.requestId),
       metadata: parseMetadata(input.metadata),
     };
     return this.run(tx, (db) => this.repository.transfer(db, parsed));
+  }
+
+  /**
+   * Locks the sender and moves the floored share. Retries of the same source
+   * return the original amount. They do not read a newer balance and pay again.
+   */
+  async transferFraction(input: EconomyFractionInput, tx?: Queryable): Promise<EconomyMutation & { readonly amount: number }> {
+    const fromPlayerId = parsePlayerId(input.fromPlayerId);
+    const toPlayerId = parsePlayerId(input.toPlayerId);
+    if (fromPlayerId === toPlayerId) throw new EconomyValidationError('transfer requires two players');
+    if (!Number.isSafeInteger(input.numerator) || input.numerator < 1
+      || !Number.isSafeInteger(input.denominator) || input.denominator < 1
+      || input.numerator > input.denominator) {
+      throw new EconomyValidationError('share must be a positive integer fraction');
+    }
+    const parsed: EconomyFractionInput = {
+      fromPlayerId,
+      toPlayerId,
+      ...(input.fromDisplayName !== undefined ? { fromDisplayName: parseDisplayName(input.fromDisplayName) } : {}),
+      ...(input.toDisplayName !== undefined ? { toDisplayName: parseDisplayName(input.toDisplayName) } : {}),
+      numerator: input.numerator,
+      denominator: input.denominator,
+      reason: parseReason(input.reason),
+      ...optionalActor(input.actorId),
+      ...optionalSource(input.source),
+      ...optionalRequest(input.requestId),
+      metadata: parseMetadata(input.metadata),
+    };
+    return this.run(tx, (db) => this.repository.transferFraction(db, parsed));
+  }
+
+  async listTop(limit: number, tx?: Queryable): Promise<readonly EconomyAccount[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50) {
+      throw new EconomyValidationError('leaderboard limit is outside 1..50');
+    }
+    return this.run(tx, (db) => this.repository.listTop(db, limit));
   }
 
   async setBalance(input: EconomySetBalanceInput, tx?: Queryable): Promise<EconomyAdjustment> {

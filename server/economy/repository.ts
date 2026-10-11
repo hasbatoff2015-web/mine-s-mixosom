@@ -7,6 +7,7 @@ import type {
   EconomyMutation,
   EconomyOperationView,
   EconomyReconciliation,
+  EconomyFractionInput,
   EconomySetBalanceInput,
   EconomyTransferInput,
   EconomyWriteInput,
@@ -23,7 +24,10 @@ export interface EconomyRepository {
   credit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation>;
   debit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation>;
   transfer(tx: Queryable, input: EconomyTransferInput): Promise<EconomyMutation>;
+  transferFraction(tx: Queryable, input: EconomyFractionInput): Promise<EconomyMutation & { readonly amount: number }>;
   setBalance(tx: Queryable, input: EconomySetBalanceInput): Promise<EconomyAdjustment>;
+  updateDisplayName(tx: Queryable, playerId: string, displayName: string): Promise<EconomyAccount | null>;
+  listTop(tx: Queryable, limit: number): Promise<readonly EconomyAccount[]>;
   history(tx: Queryable, query: EconomyHistoryQuery): Promise<EconomyHistoryPage>;
   getOperation(tx: Queryable, operationId: string): Promise<EconomyOperationView | null>;
   findBySource(tx: Queryable, sourceType: string, sourceId: string): Promise<EconomyOperationView | null>;

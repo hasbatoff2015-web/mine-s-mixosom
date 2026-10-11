@@ -69,7 +69,7 @@ import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import { BlockId } from '../../src/blocks';
-import type { EconomyService } from './economy';
+import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import type { JsonFileStore } from './jsonStore';
 import { overlappingClaims } from './claimAnchors';
 import type { Claim, ClaimStore } from './claims';
@@ -356,7 +356,7 @@ export class ClanService {
 
   constructor(
     private readonly store: JsonFileStore,
-    private readonly economy: EconomyService,
+    private readonly economy: CurrencyPort,
     private readonly now: () => number = Date.now,
     private readonly createPolicy: ClanCreatePolicy = defaultClanCreatePolicy,
   ) {
@@ -700,7 +700,12 @@ export class ClanService {
     return { ok: true, clan };
   }
 
-  createClan(playerId: string, rawName: string | undefined, icon: string | undefined): ClanResult {
+  createClan(
+    playerId: string,
+    rawName: string | undefined,
+    icon: string | undefined,
+    request?: EconomyCommandRequest,
+  ): ClanResult {
     const parsed = validateClanName(rawName);
     const key = parsed.ok ? clanNameKey(parsed.name) : '';
     return this.withLocks([`player:${playerId}`, key ? `name:${key}` : ''], () => {
@@ -712,11 +717,18 @@ export class ClanService {
       for (const clan of this.clans.values()) {
         if (clan.nameKey === key) return { ok: false, error: CLAN_NAME_TAKEN_ERROR };
       }
-      const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE');
-      if (!paid.ok) return { ok: false, error: paid.error ?? 'Недостаточно Мегакоинов.' };
+      const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request);
+      return thenResult(paid, (result) => {
+        if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
+        return this.finishCreate(playerId, parsed.name, key, icon);
+      });
+    }) as ClanResult;
+  }
+
+  private finishCreate(playerId: string, name: string, key: string, icon: ClanIconId): ClanResult {
       const clan: ClanRecord = {
         clanId: `clan-${this.nextClanId++}`,
-        name: parsed.name,
+        name,
         nameKey: key,
         icon,
         ownerId: playerId,
@@ -732,7 +744,6 @@ export class ClanService {
       session.selectedClanId = clan.clanId;
       session.message = `Клан ${clan.name} создан.`;
       return { ok: true, clan };
-    });
   }
 
   deleteClan(playerId: string, clanId?: string): ClanResult {
@@ -1263,7 +1274,7 @@ export class ClanService {
     });
   }
 
-  handleAction(playerId: string, message: ClientClanActionMessage): void {
+  handleAction(playerId: string, message: ClientClanActionMessage): void | Promise<void> {
     const purgedInvites = this.purgeExpired();
     const session = this.session(playerId);
     const previousMessage = session.message;
@@ -1345,11 +1356,23 @@ export class ClanService {
       return;
     }
     if (action === 'confirm_create') {
-      const result = this.createClan(playerId, session.nameText, session.selectedIcon);
-      if (!result.ok) {
-        session.screen = 'create';
-        session.message = result.error;
-      }
+      const request = message.clientRequestId
+        ? {
+          requestId: message.clientRequestId,
+          operation: 'economy.clan_create',
+          actorId: playerId,
+          payload: { name: session.nameText ?? '', icon: session.selectedIcon ?? '' },
+        }
+        : undefined;
+      const result = this.createClan(playerId, session.nameText, session.selectedIcon, request);
+      const apply = (created: ClanResult): void => {
+        if (!created.ok) {
+          session.screen = 'create';
+          session.message = created.error;
+        }
+      };
+      if (isPromise(result)) return result.then(apply);
+      apply(result);
       return;
     }
     if (action === 'confirm_delete') {
@@ -2383,16 +2406,25 @@ export class ClanService {
     return Math.max(1, Math.min(totalPages, Math.trunc(page)));
   }
 
-  private withLocks(keys: readonly string[], fn: () => ClanResult): ClanResult {
+  private withLocks<T extends ClanResult | Promise<ClanResult>>(keys: readonly string[], fn: () => T): T {
     const unique = [...new Set(keys.filter(Boolean))].sort();
     for (const key of unique) {
-      if (this.locks.has(key)) return { ok: false, error: CLAN_BUSY_ERROR };
+      if (this.locks.has(key)) return { ok: false, error: CLAN_BUSY_ERROR } as T;
     }
     for (const key of unique) this.locks.add(key);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       for (const key of unique) this.locks.delete(key);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
 }

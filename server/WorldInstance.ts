@@ -128,6 +128,8 @@ import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView 
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
+import { createGameplayEconomy } from './economy/createGameplayEconomy';
+import { isPromise } from './economy/currencyPort';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { DirectMessageService } from './services/directMessages';
@@ -634,6 +636,8 @@ export class WorldInstance {
   readonly autoMine: AutoMineManager;
   readonly worldEvents: WorldEventsManager;
   readonly economy: EconomyService;
+  /** Currency port. Same object as `economy` in legacy_json mode. */
+  readonly money: import('./economy/currencyPort').CurrencyPort;
   readonly auction: AuctionService;
   readonly clan: ClanService;
   readonly buyer: BuyerService;
@@ -746,7 +750,7 @@ export class WorldInstance {
         }
         return { id: stored.id, name: stored.name, gamemode, inventory };
       },
-      balance: (playerId) => this.economy.getBalance(playerId),
+      balance: (playerId) => this.money.getBalance(playerId),
     });
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
@@ -771,12 +775,13 @@ export class WorldInstance {
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
     this.economy = new EconomyService(this.pluginStore);
-    this.auction = new AuctionService(this.pluginStore, this.economy);
-    this.clan = new ClanService(this.pluginStore, this.economy);
+    this.money = createGameplayEconomy(config, this.database, this.pluginStore, this.economy);
+    this.auction = new AuctionService(this.pluginStore, this.money);
+    this.clan = new ClanService(this.pluginStore, this.money);
     this.homes = new HomeService(this.pluginStore);
     this.friends = new FriendsService(this.pluginStore);
     this.directMessages = new DirectMessageService(this.pluginStore, (a, b) => this.friends.isFriend(a, b));
-    this.trade = new TradeService(this.economy);
+    this.trade = new TradeService(this.money);
     this.notifications = new NotificationService(this.pluginStore);
     const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
       this.notifyUnread(playerId, category);
@@ -790,7 +795,7 @@ export class WorldInstance {
         if (live) return live.name;
         const stored = this.storedPlayers[playerId];
         if (stored) return stored.name;
-        return this.economy.displayName(playerId);
+        return this.money.displayName(playerId);
       },
       sendMessage: (playerId, text, extra) => {
         const target = this.players.get(playerId);
@@ -830,9 +835,9 @@ export class WorldInstance {
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
-      displayName: (playerId) => this.economy.displayName(playerId) === playerId.slice(0, 8)
+      displayName: (playerId) => this.money.displayName(playerId) === playerId.slice(0, 8)
         ? (this.players.get(playerId)?.name ?? this.storedPlayers[playerId]?.name ?? playerId.slice(0, 8))
-        : this.economy.displayName(playerId),
+        : this.money.displayName(playerId),
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       sendMessage: (playerId, text) => {
         const target = this.players.get(playerId);
@@ -851,10 +856,10 @@ export class WorldInstance {
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
       displayName: (playerId) => this.players.get(playerId)?.name
         ?? this.storedPlayers[playerId]?.name
-        ?? this.economy.displayName(playerId),
+        ?? this.money.displayName(playerId),
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       inventory: (playerId) => this.players.get(playerId)?.inventory,
-      balance: (playerId) => this.economy.getBalance(playerId),
+      balance: (playerId) => this.money.getBalance(playerId),
       sendMessage: (playerId, text) => {
         const target = this.players.get(playerId);
         if (!target?.connected) return;
@@ -956,7 +961,7 @@ export class WorldInstance {
         }
       },
       log: (message) => serverLog(`plugin automine ${message}`),
-      onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
+      onBlocksWritten: (cells) => this.money.clearPlacedCells(cells),
     });
     this.worldEvents = new WorldEventsManager({
       world: this.world,
@@ -1165,7 +1170,7 @@ export class WorldInstance {
         z: mob.position.z,
       });
     };
-    this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
+    this.buyer = new BuyerService(this.pluginStore, this.money, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
@@ -1217,6 +1222,9 @@ export class WorldInstance {
   }
 
   async initialize(): Promise<void> {
+    if (this.config.economy.backend === 'postgres' && !this.database.enabled) {
+      throw new Error('FC_ECONOMY_BACKEND=postgres requires a configured database.');
+    }
     // The lock is taken first so a configured database failure can release it
     // before gameplay services load. Migrations finish before readyState is READY.
     await this.acquireWorldLock();
@@ -1264,7 +1272,7 @@ export class WorldInstance {
       }
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
-      this.economy.load();
+      this.money.load();
       this.auction.load();
       this.clan.load();
       this.homes.load();
@@ -1281,7 +1289,7 @@ export class WorldInstance {
     this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
     this.createdAt = Date.now();
     this.permissions.load();
-    this.economy.load();
+    this.money.load();
     this.auction.load();
     this.clan.load();
     this.homes.load();
@@ -1333,7 +1341,7 @@ export class WorldInstance {
         selection: this.selection,
         autoMine: this.autoMine,
         worldEvents: this.worldEvents,
-        economy: this.economy,
+        economy: this.money,
         auction: this.auction,
         clan: this.clan,
         buyer: this.buyer,
@@ -1436,6 +1444,11 @@ export class WorldInstance {
       failure = error;
     }
     try {
+      await this.money.shutdown?.();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    try {
       await this.releaseWorldLock();
     } catch (error) {
       if (!failure) failure = error;
@@ -1500,7 +1513,7 @@ export class WorldInstance {
     };
     await this.worldStore.save(snapshot);
     if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
-    this.economy.persist();
+    this.money.persist();
     this.auction.persist();
     this.clan.persist();
     this.notifications.persist();
@@ -1790,32 +1803,39 @@ export class WorldInstance {
     if (action === 'buy' && (message.listingId || session.listingId)) {
       const listingId = message.listingId ?? session.listingId!;
       const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId);
-      if (!result.ok) {
-        session.message = result.error;
-        if (result.error === 'Этот товар уже продан.' || result.error === 'Срок продажи этого товара истёк.') {
-          session.screen = 'browse';
-          session.listingId = undefined;
+      const finishBuy = (bought: Awaited<typeof result>): void => {
+        if (!bought.ok) {
+          session.message = bought.error;
+          if (bought.error === 'Этот товар уже продан.' || bought.error === 'Срок продажи этого товара истёк.') {
+            session.screen = 'browse';
+            session.listingId = undefined;
+          }
+          this.flushAuction(player);
+          return;
+        }
+        player.inventoryDirty = true;
+        this.flushPlayerInventory(player);
+        const search = session.search;
+        const page = session.page;
+        this.auction.openBrowse(player.id, search);
+        this.auction.session(player.id).page = page;
+        const seller = this.players.get(bought.listing!.sellerPlayerId);
+        if (seller?.connected) {
+          this.sendTo(seller, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: `${player.name} купил ваш лот за ${formatMegacoins(bought.listing!.price)}.`,
+            kind: 'system',
+          });
         }
         this.flushAuction(player);
+      };
+      if (isPromise(result)) {
+        this.money.track?.(result.then(finishBuy, () => finishBuy({ ok: false, error: 'Экономика временно недоступна.' })));
         return;
       }
-      player.inventoryDirty = true;
-      this.flushPlayerInventory(player);
-      const search = session.search;
-      const page = session.page;
-      this.auction.openBrowse(player.id, search);
-      this.auction.session(player.id).page = page;
-      const seller = this.players.get(result.listing!.sellerPlayerId);
-      if (seller?.connected) {
-        this.sendTo(seller, {
-          type: 'chat',
-          from: 'server',
-          playerId: 'server',
-          text: `${player.name} купил ваш лот за ${formatMegacoins(result.listing!.price)}.`,
-          kind: 'system',
-        });
-      }
-      this.flushAuction(player);
+      finishBuy(result);
       return;
     }
     if (action === 'select_slot' && message.slot !== undefined) {
@@ -1958,7 +1978,7 @@ export class WorldInstance {
   openClan(playerId: string, view: ClanView, extra?: string): ClanResult | void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return { ok: false, error: 'Игрок не в сети.' };
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     this.clan.purgeExpired();
     let result: ClanResult = { ok: true };
     if (view === 'ranking') this.clan.openRanking(playerId);
@@ -1998,10 +2018,11 @@ export class WorldInstance {
       });
       return;
     }
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     const beforeIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     const isClose = message.action === 'close';
-    this.clan.handleAction(player.id, message);
+    const clanOutcome = this.clan.handleAction(player.id, message);
+    const finishClan = (): void => {
     if (isClose) this.menuReturn.delete(player.id);
     const afterIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     const notify = new Set<string>([...beforeIds, ...afterIds, player.id]);
@@ -2012,6 +2033,12 @@ export class WorldInstance {
       if (other?.connected) this.flushClan(other);
     }
     if (restoring) this.tryRestoreMenu(player);
+    };
+    if (isPromise(clanOutcome)) {
+      this.money.track?.(clanOutcome.then(finishClan, finishClan));
+      return;
+    }
+    finishClan();
   }
 
   private hasClanPermission(player: ServerPlayer, action: ClientClanActionMessage['action']): boolean {
@@ -2117,22 +2144,29 @@ export class WorldInstance {
       return;
     }
     const result = this.buyer.handleAction(player.id, player.inventory, message, can);
-    if (result.inventoryDirty) this.flushPlayerInventory(player);
-    if (result.broadcast) this.broadcastBuyers();
-    if (result.chat) {
+    const finishBuyer = (done: Awaited<typeof result>): void => {
+    if (done.inventoryDirty) this.flushPlayerInventory(player);
+    if (done.broadcast) this.broadcastBuyers();
+    if (done.chat) {
       this.sendTo(player, {
         type: 'chat',
         from: 'server',
         playerId: 'server',
-        text: result.chat,
+        text: done.chat,
         kind: 'system',
       });
     }
-    if (result.openHologramEditor && result.buyer) {
-      this.openBuyerHologramEditor(player, result.buyer.hologramName);
+    if (done.openHologramEditor && done.buyer) {
+      this.openBuyerHologramEditor(player, done.buyer.hologramName);
       return;
     }
     this.flushBuyer(player);
+    };
+    if (isPromise(result)) {
+      this.money.track?.(result.then(finishBuyer, () => finishBuyer({ ok: false, error: 'Экономика временно недоступна.' })));
+      return;
+    }
+    finishBuyer(result);
   }
 
   private openBuyerHologramEditor(player: ServerPlayer, hologramName: string): void {
@@ -2169,7 +2203,7 @@ export class WorldInstance {
   }
 
   handleMenuAction(player: ServerPlayer, message: ClientMenuActionMessage): void {
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     if (message.action === 'close') {
       this.menuSessions.delete(player.id);
       this.menuReturn.delete(player.id);
@@ -2197,7 +2231,14 @@ export class WorldInstance {
           : message.action === 'ready'
             ? this.trade.ready(player.id)
             : this.trade.accept(player.id);
-    this.flushTradeResult(result, result.ok ? undefined : result.error);
+    const finishTrade = (done: Awaited<typeof result>): void => {
+      this.flushTradeResult(done, done.ok ? undefined : done.error);
+    };
+    if (isPromise(result)) {
+      this.money.track?.(result.then(finishTrade, () => finishTrade({ ok: false, error: 'Экономика временно недоступна.' })));
+      return;
+    }
+    finishTrade(result);
   }
 
   private menuPlayer(player: ServerPlayer): MenuPlayer {
@@ -2445,8 +2486,8 @@ export class WorldInstance {
         ...payload,
         partnerName: this.players.get(partnerId)?.name
           ?? this.storedPlayers[partnerId]?.name
-          ?? this.economy.displayName(partnerId),
-        balance: this.economy.getBalance(player.id),
+          ?? this.money.displayName(partnerId),
+        balance: this.money.getBalance(player.id),
       });
       return;
     }
@@ -2457,7 +2498,7 @@ export class WorldInstance {
     const session = this.menuSessions.get(player.id);
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
-    const balance = this.economy.getBalance(player.id);
+    const balance = this.money.getBalance(player.id);
     const storedNotifications = this.notifications.counts(player.id);
     const notifications = {
       ...storedNotifications,
@@ -2512,7 +2553,7 @@ export class WorldInstance {
         playerId: request.fromPlayerId,
         name: this.players.get(request.fromPlayerId)?.name
           ?? this.storedPlayers[request.fromPlayerId]?.name
-          ?? this.economy.displayName(request.fromPlayerId),
+          ?? this.money.displayName(request.fromPlayerId),
         online: this.players.get(request.fromPlayerId)?.connected === true,
         canTeleport: false,
         requestId: request.requestId,
@@ -2562,21 +2603,21 @@ export class WorldInstance {
           playerId: request.fromPlayerId,
           name: this.players.get(request.fromPlayerId)?.name
             ?? this.storedPlayers[request.fromPlayerId]?.name
-            ?? this.economy.displayName(request.fromPlayerId),
+            ?? this.money.displayName(request.fromPlayerId),
           requestId: request.requestId,
         })),
         tradeOutgoing: this.trade.outgoingRequests(player.id).map((request) => ({
           playerId: request.toPlayerId,
           name: this.players.get(request.toPlayerId)?.name
             ?? this.storedPlayers[request.toPlayerId]?.name
-            ?? this.economy.displayName(request.toPlayerId),
+            ?? this.money.displayName(request.toPlayerId),
         })),
       };
     }
     if (session.screen === 'rating') {
       return {
         ...base,
-        ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
+        ...buildRankingSnapshot(this.clan, this.money, player.id, session.ratingKind, session.ratingPage),
       };
     }
     if (session.screen === 'duels') {
@@ -3944,6 +3985,12 @@ export class WorldInstance {
     if (!command) return { ok: true, lines: [] };
     try {
       const dispatched = this.commands.dispatch(command, createConsoleCommandSender());
+      if (isPromise(dispatched.result)) {
+        this.money.track?.(dispatched.result.then((result) => {
+          for (const line of result.lines) serverLog(`console: ${line}`);
+        }, () => undefined));
+        return { ok: true, lines: [] };
+      }
       return dispatched.result ?? { ok: false, lines: ['Empty command.'] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -3952,7 +3999,12 @@ export class WorldInstance {
     }
   }
 
-  handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
+  handleChat(
+    player: ServerPlayer,
+    text: string,
+    channel: ChatChannel = 'global',
+    clientRequestId?: string,
+  ): void {
     if (text.startsWith('/')) {
       const commandEvent = this.events.createPlayerCommand(player.id, text);
       this.events.emit('playerCommand', commandEvent);
@@ -3963,38 +4015,50 @@ export class WorldInstance {
       const dispatched = this.commands.dispatch(text, {
         ...player.commandSender(),
         operator: this.isOperator(player),
+        ...(clientRequestId ? { clientRequestId } : {}),
       });
-      this.events.emit('playerCommandExecuted', {
-        playerId: player.id,
-        command: text,
-        ok: dispatched.result?.ok ?? false,
-      });
-      const kind = dispatched.result?.ok ? 'command' : 'error';
-      const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
-      this.sendTo(player, {
-        type: 'command_result',
-        ok: dispatched.result?.ok ?? false,
-        name,
-        lines: dispatched.result?.lines ?? [],
-      });
-      this.sendTo(player, {
-        type: 'chat',
-        from: 'server',
-        playerId: 'server',
-        text,
-        kind,
-      });
-      for (const line of dispatched.result?.lines ?? []) {
+      const publish = (result: { ok: boolean; lines: readonly string[] } | undefined): void => {
+        this.events.emit('playerCommandExecuted', {
+          playerId: player.id,
+          command: text,
+          ok: result?.ok ?? false,
+        });
+        const kind = result?.ok ? 'command' : 'error';
+        const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+        this.sendTo(player, {
+          type: 'command_result',
+          ok: result?.ok ?? false,
+          name,
+          lines: result?.lines ?? [],
+        });
         this.sendTo(player, {
           type: 'chat',
           from: 'server',
           playerId: 'server',
-          text: line,
-          kind: dispatched.result?.ok ? 'system' : 'error',
+          text,
+          kind,
         });
+        for (const line of result?.lines ?? []) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: line,
+            kind,
+          });
+        }
+        this.flushPlayerInventory(player);
+        this.flushBlockChanges();
+      };
+      if (isPromise(dispatched.result)) {
+        const work = dispatched.result.then(publish, (error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Command failed.';
+          publish({ ok: false, lines: [message] });
+        });
+        this.money.track?.(work);
+        return;
       }
-      this.flushPlayerInventory(player);
-      this.flushBlockChanges();
+      publish(dispatched.result);
       return;
     }
     const trimmed = text.replace(/\s+$/g, '');
@@ -4602,7 +4666,12 @@ export class WorldInstance {
         player.survival.damage(amount, cause === 'fall' ? 'fall' : 'generic', { armor: player.inventory });
         this.events.emit('playerDamaged', { playerId: player.id, amount, cause });
         if (player.survival.dead) {
-          this.events.emit('entityDeath', { entityId: player.id, cause, playerId: player.id });
+          this.events.emit('entityDeath', {
+            entityId: player.id,
+            cause,
+            playerId: player.id,
+            deathEventId: player.survival.deathEventId,
+          });
         }
         this.flushHealthIfDeadThenRespawn(player);
       });

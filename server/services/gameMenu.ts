@@ -10,7 +10,7 @@ import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
 import type { TradeService } from './trade';
 import type { ClanService } from './clan';
-import type { EconomyService } from './economy';
+import type { CurrencyPort } from '../economy/currencyPort';
 import {
   RANKING_NO_CLAN_MESSAGE,
   formatKillsLabel,
@@ -142,7 +142,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
 
 export function buildRankingSnapshot(
   clan: ClanService,
-  economy: EconomyService,
+  economy: CurrencyPort,
   playerId: string,
   kind: RankingKind,
   page: number,

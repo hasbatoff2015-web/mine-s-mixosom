@@ -19,7 +19,7 @@ import {
 } from '../../shared/auctionHistory';
 import type { NotificationCategory } from '../../shared/notifications';
 import { formatMegacoins } from './economy';
-import type { EconomyService } from './economy';
+import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
 import type { JsonFileStore } from './jsonStore';
 
 export const AUCTION_PLUGIN_NAME = 'auction';
@@ -257,7 +257,7 @@ export class AuctionService {
 
   constructor(
     private readonly store: JsonFileStore,
-    private readonly economy: EconomyService,
+    private readonly economy: CurrencyPort,
     private readonly now: () => number = Date.now,
   ) {
     this.load();
@@ -485,9 +485,6 @@ export class AuctionService {
       if (listing.sellerPlayerId === buyerId) {
         return { ok: false, error: 'Нельзя купить собственный товар.' };
       }
-      if (!this.economy.hasBalance(buyerId, listing.price)) {
-        return { ok: false, error: 'Недостаточно Мегакоинов.' };
-      }
       if (!inventoryCanAccept(inventory, listing.item)) {
         return { ok: false, error: 'Недостаточно места в инвентаре.' };
       }
@@ -499,31 +496,35 @@ export class AuctionService {
         'AUCTION_SALE',
         listing.listingId,
       );
-      if (!moved.ok) {
-        return { ok: false, error: moved.error ?? 'Недостаточно Мегакоинов.' };
-      }
-      const leftover = inventory.add(cloneStack(listing.item)!);
-      if (leftover) {
-        this.economy.settle(
-          listing.sellerPlayerId,
-          buyerId,
-          listing.price,
-          'AUCTION_SALE',
-          'AUCTION_PURCHASE',
-          `${listing.listingId}-rollback`,
-        );
-        return { ok: false, error: 'Недостаточно места в инвентаре.' };
-      }
-      listing.status = 'SOLD';
-      listing.updatedAt = this.now();
-      listing.soldToPlayerId = buyerId;
-      listing.salePairId = listing.listingId;
-      this.economy.rememberName(buyerId, buyerName);
-      this.persistListings();
-      this.recordCompletedSale(listing, buyerId);
-      this.runtime.notifyUnread?.(listing.sellerPlayerId, 'auction');
-      return { ok: true, listing };
-    });
+      return thenResult(moved, (result) => {
+        if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
+        const leftover = inventory.add(cloneStack(listing.item)!);
+        if (leftover) {
+          const refund = this.economy.settle(
+            listing.sellerPlayerId,
+            buyerId,
+            listing.price,
+            'AUCTION_SALE',
+            'AUCTION_PURCHASE',
+            `${listing.listingId}-rollback`,
+          );
+          const fail = { ok: false as const, error: 'Недостаточно места в инвентаре.' };
+          return thenResult(refund, () => fail);
+        }
+        listing.status = 'SOLD';
+        listing.updatedAt = this.now();
+        listing.soldToPlayerId = buyerId;
+        listing.salePairId = listing.listingId;
+        const named = this.economy.rememberName(buyerId, buyerName);
+        const finish = () => {
+          this.persistListings();
+          this.recordCompletedSale(listing, buyerId);
+          this.runtime.notifyUnread?.(listing.sellerPlayerId, 'auction');
+          return { ok: true as const, listing };
+        };
+        return thenResult(named, finish);
+      });
+    }) as AuctionResult;
   }
 
   cancelListing(playerId: string, listingId: string): AuctionResult {
@@ -621,17 +622,26 @@ export class AuctionService {
     }
   }
 
-  private withLocks(playerId: string, listingId: string, fn: () => AuctionResult): AuctionResult {
+  private withLocks<T extends AuctionResult | Promise<AuctionResult>>(playerId: string, listingId: string, fn: () => T): T {
     if (this.listingLocks.has(listingId) || this.playerLocks.has(playerId)) {
-      return { ok: false, error: 'Этот товар уже продан.' };
+      return { ok: false, error: 'Этот товар уже продан.' } as T;
     }
     this.listingLocks.add(listingId);
     this.playerLocks.add(playerId);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       this.listingLocks.delete(listingId);
       this.playerLocks.delete(playerId);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
 

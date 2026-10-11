@@ -57,12 +57,19 @@ describe('megacoin core without PostgreSQL', () => {
     const gameplay = readFileSync('server/gameplay.ts', 'utf8');
     const anarchy = readFileSync('server/AnarchyServer.ts', 'utf8');
     const entry = readFileSync('server/index.ts', 'utf8');
-    for (const source of [economy, auction, trade, clan, buyer, world, gameplay, anarchy, entry]) {
+    for (const source of [economy, auction, trade, clan, buyer]) {
       expect(source).not.toContain('MegacoinService');
-      expect(source).not.toContain('server/economy');
-      expect(source).not.toContain("from '../economy");
       expect(source).not.toContain("from '../db/");
     }
+    for (const source of [gameplay, anarchy, entry]) {
+      expect(source).not.toContain('MegacoinService');
+      expect(source).not.toContain("from '../db/");
+    }
+    expect(world).toContain('createGameplayEconomy');
+    expect(auction).not.toContain('PostgresGameplayEconomy');
+    expect(trade).not.toContain('PostgresGameplayEconomy');
+    expect(clan).not.toContain('PostgresGameplayEconomy');
+    expect(buyer).not.toContain('PostgresGameplayEconomy');
     expect(ECONOMY_INITIAL_BALANCE).toBe(100);
     const store = {
       load<T>(_name: string, fallback: T): T { return fallback; },

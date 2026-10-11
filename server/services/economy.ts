@@ -65,6 +65,7 @@ export interface EconomyResult {
   readonly toBalance?: number;
   readonly transaction?: EconomyTransaction;
   readonly transactions?: readonly EconomyTransaction[];
+  readonly replayed?: boolean;
 }
 
 export interface EconomyTopEntry {

@@ -31,7 +31,7 @@ import {
 } from '../../src/inventory';
 import { isKnownItemId, tryGetItemDefinition } from '../../src/items';
 import { formatMegacoins } from './economy';
-import type { EconomyService } from './economy';
+import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import { createHologramRecord, type HologramNetwork } from './holograms';
 import type { JsonFileStore } from './jsonStore';
 
@@ -116,7 +116,7 @@ export class BuyerService {
 
   constructor(
     private readonly store: JsonFileStore,
-    private readonly economy: EconomyService,
+    private readonly economy: CurrencyPort,
     private readonly holograms: HologramNetwork,
     private readonly worldId: () => string = () => 'anarchy',
     private readonly now: () => number = Date.now,
@@ -441,7 +441,7 @@ export class BuyerService {
     }
     if (message.action === 'sell') {
       if (!can.use) return { ok: false, error: 'You do not have permission.' };
-      return this.sell(playerId, inventory, session);
+      return this.sell(playerId, inventory, session, saleRequest(playerId, message)) as BuyerResult;
     }
     return { ok: true };
   }
@@ -704,7 +704,12 @@ export class BuyerService {
     return { ok: true, buyer: result.buyer, broadcast: true };
   }
 
-  private sell(playerId: string, inventory: Inventory, session: BuyerSession): BuyerResult {
+  private sell(
+    playerId: string,
+    inventory: Inventory,
+    session: BuyerSession,
+    request?: EconomyCommandRequest,
+  ): BuyerResult {
     return this.withLocks([`player:${playerId}`, `buyer:${session.buyerId}`], () => {
       const buyer = this.buyers.get(session.buyerId);
       if (!buyer) return { ok: false, error: BUYER_STALE_ERROR };
@@ -727,18 +732,20 @@ export class BuyerService {
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
       const held = cloneStack(slot)!;
-      session.tradeSlot = null;
-      const paid = this.economy.deposit(playerId, total, 'TRADER_SELL');
-      if (!paid.ok) {
-        session.tradeSlot = held;
-        session.message = paid.error ?? 'Не удалось начислить Мегакоины.';
-        return { ok: false, error: session.message };
-      }
-      const name = itemName(buyer.itemId) ?? buyer.itemId;
-      const chat = `Вы продали ${held.count} × ${name} за ${formatMegacoins(total)}.`;
-      session.message = undefined;
-      return { ok: true, chat, inventoryDirty: true };
-    });
+      const paid = this.economy.deposit(playerId, total, 'TRADER_SELL', undefined, undefined, request);
+      return thenResult(paid, (result) => {
+        if (!result.ok) {
+          session.tradeSlot = held;
+          session.message = result.error ?? 'Не удалось начислить Мегакоины.';
+          return { ok: false as const, error: session.message };
+        }
+        session.tradeSlot = null;
+        const name = itemName(buyer.itemId) ?? buyer.itemId;
+        const chat = `Вы продали ${held.count} × ${name} за ${formatMegacoins(total)}.`;
+        session.message = undefined;
+        return { ok: true as const, chat, inventoryDirty: true };
+      });
+    }) as BuyerResult;
   }
 
   private returnTradeSlot(playerId: string, session: BuyerSession, inventory?: Inventory): ItemStack | null {
@@ -791,16 +798,35 @@ export class BuyerService {
     };
   }
 
-  private withLocks(keys: readonly string[], fn: () => BuyerResult): BuyerResult {
+  private withLocks<T extends BuyerResult | Promise<BuyerResult>>(keys: readonly string[], fn: () => T): T {
     const unique = [...new Set(keys.filter(Boolean))].sort();
     for (const key of unique) {
-      if (this.locks.has(key)) return { ok: false, error: BUYER_BUSY_ERROR };
+      if (this.locks.has(key)) return { ok: false, error: BUYER_BUSY_ERROR } as T;
     }
     for (const key of unique) this.locks.add(key);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       for (const key of unique) this.locks.delete(key);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
+}
+
+function saleRequest(playerId: string, message: ClientBuyerActionMessage): EconomyCommandRequest | undefined {
+  if (!message.clientRequestId) return undefined;
+  return {
+    requestId: message.clientRequestId,
+    operation: 'economy.trader_sell',
+    actorId: playerId,
+    payload: { action: 'sell', buyerId: message.buyerId ?? null, slot: message.slot ?? null, amount: message.amount ?? null },
+  };
 }

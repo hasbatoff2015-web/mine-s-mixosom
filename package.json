@@ -30,6 +30,7 @@
     "pack:release": "node scripts/release-ops.mjs pack",
     "start:server": "node dist/server/index.mjs",
     "smoke:server:prod": "node scripts/server-production-smoke.mjs",
+    "economy:import": "vite-node scripts/import-legacy-economy.ts",
     "status:servers": "node scripts/check-game-servers.mjs",
     "benchmark:performance": "vite-node scripts/benchmark-performance.ts",
     "benchmark:lighting": "vite-node scripts/benchmark-lighting.ts",

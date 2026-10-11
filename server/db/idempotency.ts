@@ -56,6 +56,19 @@ export class IdempotencyService {
   }
 
   async execute<T>(request: IdempotencyRequest, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+    const detailed = await this.executeDetailed(request, fn);
+    return detailed.value;
+  }
+
+  /**
+   * Same transaction as `execute`. `replayed` is true when the callback did not
+   * run because this request was already committed. Callers use that to avoid
+   * repeating a non-database side effect such as consuming an item.
+   */
+  async executeDetailed<T>(
+    request: IdempotencyRequest,
+    fn: (tx: Queryable) => Promise<T>,
+  ): Promise<{ readonly replayed: boolean; readonly value: T }> {
     if (typeof request.deploymentId !== 'string' || request.deploymentId.trim() !== this.deploymentId) {
       throw new IdempotencyConflictError('deployment');
     }
@@ -84,7 +97,7 @@ export class IdempotencyService {
         if ((committed.rowCount ?? 0) !== 1) {
           throw new IdempotencyValidationError('idempotency claim could not be committed');
         }
-        return JSON.parse(encoded) as T;
+        return { replayed: false, value: JSON.parse(encoded) as T };
       }
 
       const existing = await tx.query<IdempotencyRow>(SELECT_IDEMPOTENCY_SQL, [
@@ -100,7 +113,7 @@ export class IdempotencyService {
       if (row.state !== 'committed') {
         throw new IdempotencyValidationError(`unexpected idempotency state ${row.state}`);
       }
-      return row.response as T;
+      return { replayed: true, value: row.response as T };
     });
   }
 }
