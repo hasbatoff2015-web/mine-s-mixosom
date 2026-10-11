@@ -410,6 +410,10 @@ export class GameUI {
   private craftSelectedId = '';
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  /** Last server inventory revision, kept while the window is closed. */
+  private knownInventoryRevision = 0;
+  /** Last server container revision. Omitted unless the open window is revisioned. */
+  private knownContainerRevision?: number;
   private auctionState?: ServerAuctionMessage;
   private auctionActions?: AuctionGuiActions;
   private auctionSearchTimer?: number;
@@ -2182,7 +2186,7 @@ export class GameUI {
     }
     if (check !== true) return;
     if (context.submitAction) {
-      context.submitAction({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id });
+      context.submitAction(this.stampInventorySubmission({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id }));
       return;
     }
     const result = craftOnceByRecipeId(context.inventory, recipe.id);
@@ -2711,7 +2715,7 @@ export class GameUI {
     if (context.submitAction) {
       const counts = inventoryItemCounts(context.inventory);
       this.ghostCraft = ghostFromRecipe(recipe, gridSize, counts);
-      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId: entry.id, shift });
+      context.submitAction(this.stampInventorySubmission({ type: 'inventory_action', action: 'recipe', recipeId: entry.id, shift }));
       this.renderInventory();
       return;
     }
@@ -3156,22 +3160,32 @@ export class GameUI {
   }
 
   noteInventoryRevisions(inventoryRevision: number, containerRevision?: number): void {
+    this.knownInventoryRevision = inventoryRevision;
+    this.knownContainerRevision = containerRevision;
     if (!this.inventoryContext) return;
     this.inventoryContext.inventoryRevision = inventoryRevision;
     this.inventoryContext.containerRevision = containerRevision;
+  }
+
+  /**
+   * Sole owner of inventory-intent stamps. The open window decides whether a
+   * container revision belongs on the message. A remembered chest revision
+   * must not ride along on inventory or crafting-table actions.
+   */
+  stampInventorySubmission(message: ClientInventoryActionMessage): ClientInventoryActionMessage {
+    const context = this.inventoryContext;
+    const inventory = context?.inventoryRevision ?? this.knownInventoryRevision;
+    const container = context && isRevisionedContainerKind(context.kind)
+      ? (context.containerRevision ?? this.knownContainerRevision ?? 0)
+      : undefined;
+    return stampInventoryIntent(message, { inventory, container });
   }
 
   private submitInventoryAction(message: ClientInventoryActionMessage): void {
     const context = this.inventoryContext;
     if (!context || this.amountDialog) return;
     if (context.submitAction) {
-      const container = isRevisionedContainerKind(context.kind)
-        ? (context.containerRevision ?? 0)
-        : undefined;
-      context.submitAction(stampInventoryIntent(message, {
-        inventory: context.inventoryRevision ?? 0,
-        container,
-      }));
+      context.submitAction(this.stampInventorySubmission(message));
       this.dragPreview = null;
       this.syncCursorElementContents();
       this.syncCursorStackElement();

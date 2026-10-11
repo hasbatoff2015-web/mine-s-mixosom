@@ -18,3 +18,15 @@ export function stampInventoryIntent(
     ...(revisions.container !== undefined ? { expectedContainerRevision: revisions.container } : {}),
   };
 }
+
+/**
+ * Network send for an inventory mutation that GameUI already stamped.
+ * A second stamp would mint a new requestId and could attach a container
+ * revision from a window the player has already left.
+ */
+export function transmitInventoryIntent(
+  send: (message: ClientInventoryActionMessage) => void,
+  message: ClientInventoryActionMessage,
+): void {
+  send(message);
+}

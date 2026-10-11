@@ -315,7 +315,7 @@ import {
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
 } from '../net/onlineContainerSync';
-import { stampInventoryIntent } from '../net/inventoryIntent';
+import { transmitInventoryIntent } from '../net/inventoryIntent';
 import {
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
@@ -408,7 +408,7 @@ import {
   bufferPendingAppearance,
   takePendingAppearance,
 } from '../net/remoteAppearance';
-import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ClientInventoryActionMessage, ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -4274,14 +4274,7 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => {
-          const online = session.online;
-          if (!online) return;
-          online.client.send(stampInventoryIntent(message, {
-            inventory: online.inventoryRevision,
-            container: online.containerRevision,
-          }));
-        }
+        ? (message) => this.sendInventoryAction(message)
         : undefined,
     });
     session.online?.client.send({ type: 'inventory_action', action: 'open', kind: 'inventory' });
@@ -4325,14 +4318,7 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => {
-          const online = session.online;
-          if (!online) return;
-          online.client.send(stampInventoryIntent(message, {
-            inventory: online.inventoryRevision,
-            container: online.containerRevision,
-          }));
-        }
+        ? (message) => this.sendInventoryAction(message)
         : undefined,
     });
   }
@@ -5966,20 +5952,24 @@ export class Game {
     }
   }
 
+  /** Forwards a GameUI-stamped inventory mutation. Does not stamp again. */
+  private sendInventoryAction(message: ClientInventoryActionMessage): void {
+    const online = this.session?.online;
+    if (!online) return;
+    transmitInventoryIntent((payload) => online.client.send(payload), message);
+  }
+
   private dropSelectedItem(): void {
     const session = this.session;
     if (!session || this.lifecycle.state !== 'PLAYING') return;
     const stack = this.selectedStack();
     if (!stack) return;
     if (session.online) {
-      session.online.client.send(stampInventoryIntent({
+      this.sendInventoryAction(this.ui.stampInventorySubmission({
         type: 'inventory_action',
         action: 'drop_selected',
         slot: session.selectedSlot,
         count: 1,
-      }, {
-        inventory: session.online.inventoryRevision,
-        container: session.online.containerRevision,
       }));
       return;
     }
