@@ -111,6 +111,7 @@ function baseEnv(worldPath: string, world: string, port: string, extra: NodeJS.P
     FC_DEPLOYMENT_ID: '',
     FC_DB_POOL_MAX: '',
     FC_TEST_DATABASE_URL: '',
+    FC_ADMIN_IDS: '',
     ...extra,
   };
 }

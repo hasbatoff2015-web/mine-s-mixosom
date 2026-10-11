@@ -41,6 +41,8 @@ export interface ServerConfig {
    * Voxel world snapshots stay on the filesystem either way.
    */
   readonly database: DatabaseConfig;
+  /** Exactly two equal admin ids, or disabled when FC_ADMIN_IDS is blank. */
+  readonly adminIdentity: AdminIdentityConfig;
 }
 
 /** One process default. Three game servers can run on one machine. */
@@ -49,6 +51,26 @@ export const DB_POOL_MIN = 1;
 export const DB_POOL_MAX_LIMIT = 8;
 
 const DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ADMIN_ID = DEPLOYMENT_ID;
+
+export type AdminIdentityConfig =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly ids: readonly [string, string] };
+
+/**
+ * Blank disables admin writes. A present value must be exactly two distinct ids.
+ * These ids are not passwords and they are not game-operator names.
+ */
+export function loadAdminIdentityConfig(env: NodeJS.ProcessEnv): AdminIdentityConfig {
+  const raw = env.FC_ADMIN_IDS;
+  if (raw === undefined || raw.trim() === '') return { enabled: false };
+  const parts = raw.split(',').map((part) => part.trim());
+  if (parts.length !== 2 || parts.some((part) => !ADMIN_ID.test(part))) {
+    throw new Error('FC_ADMIN_IDS must be exactly two ids: letters, digits, ".", "_" or "-", 1-64 characters, comma-separated.');
+  }
+  if (parts[0] === parts[1]) throw new Error('FC_ADMIN_IDS must be two different ids.');
+  return { enabled: true, ids: [parts[0]!, parts[1]!] };
+}
 
 export type DatabaseConfig =
   | { readonly enabled: false }
@@ -152,6 +174,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
     database: loadDatabaseConfig(env),
+    adminIdentity: loadAdminIdentityConfig(env),
   };
 }
 

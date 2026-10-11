@@ -182,13 +182,13 @@ export function registerIdempotencyCases(
         await audit.append(input, tx);
         throw new Error('rollback');
       })).rejects.toThrow('rollback');
-      expect(await audit.getByRequestId(requestId)).toBeNull();
+      expect(await audit.getLatestByRequestId(requestId)).toBeNull();
       const result = await service.execute(request, async (tx) => {
         await audit.append(input, tx);
         return { ok: true };
       });
       expect(result).toEqual({ ok: true });
-      const row = await audit.getByRequestId(requestId);
+      const row = await audit.getLatestByRequestId(requestId);
       expect(row?.reason).toBe(input.reason);
       expect(row?.deploymentId).toBe(DEPLOYMENT);
       const replay = await service.execute(request, async () => ({ ok: false }));

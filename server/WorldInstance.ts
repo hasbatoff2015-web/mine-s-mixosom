@@ -93,6 +93,8 @@ import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig, ServerMode } from './config';
 import { acquireWorldDirectoryLock, type WorldDirectoryLock } from './worldLock';
+import { AdminInspectionService, type AdminPlayerSnapshot } from './admin/inspection';
+import { AdminIdentityPolicy } from './admin/identity';
 import { createDatabase, type Database } from './db/database';
 import {
   CommandRegistry,
@@ -635,6 +637,8 @@ export class WorldInstance {
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
   readonly database: Database;
+  readonly adminIdentity: AdminIdentityPolicy;
+  private readonly adminInspection: AdminInspectionService;
   private worldLock?: WorldDirectoryLock;
   tickNumber = 0;
   spawn: [number, number, number];
@@ -690,6 +694,44 @@ export class WorldInstance {
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
     this.database = options?.database ?? createDatabase(config);
+    this.adminIdentity = new AdminIdentityPolicy(config.adminIdentity);
+    this.adminInspection = new AdminInspectionService(this.adminIdentity, {
+      worldId: config.worldId,
+      findOnline: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player?.connected) return undefined;
+        const position = player.controller.position;
+        const window = player.window;
+        const container = this.containerRevisionFor(player);
+        return {
+          id: player.id,
+          name: player.name,
+          gamemode: player.gamemode,
+          x: position.x,
+          y: position.y,
+          z: position.z,
+          health: player.survival.health,
+          inventory: player.inventory.serialize(),
+          inventoryRevision: player.inventory.revision,
+          ...(container ? { containerKind: window.kind, containerRevision: container } : {}),
+        };
+      },
+      findStored: (playerId) => {
+        const stored = this.storedPlayers[playerId];
+        if (!stored) return undefined;
+        const gamemode = stored.gamemode === 'creative' ? 'creative' : 'survival';
+        let inventory;
+        try {
+          inventory = stored.inventory
+            ? Inventory.deserialize(stored.inventory).serialize()
+            : new Inventory().serialize();
+        } catch {
+          inventory = new Inventory().serialize();
+        }
+        return { id: stored.id, name: stored.name, gamemode, inventory };
+      },
+      balance: (playerId) => this.economy.getBalance(playerId),
+    });
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
     this.world.onFurnaceLitChanged = (change) => {
@@ -1138,6 +1180,18 @@ export class WorldInstance {
   /** Authoritative world state is in memory and safe to write back to disk. */
   get isPersistenceReady(): boolean {
     return this.canonicalWorldLoaded;
+  }
+
+  /**
+   * Read-only admin view. Both configured admin ids are accepted.
+   * Game operators are not. Returns null when the player is unknown.
+   */
+  inspectPlayer(adminId: string, playerId: string): AdminPlayerSnapshot | null {
+    return this.adminInspection.inspect(adminId, playerId);
+  }
+
+  private containerRevisionFor(_player: ServerPlayer): number | undefined {
+    return undefined;
   }
 
   async initialize(): Promise<void> {

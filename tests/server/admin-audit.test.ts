@@ -46,16 +46,21 @@ describe('admin audit validation', () => {
     expect(row.success).toBe(true);
     expect(row.metadata).toEqual({ a: 'note', b: 1 });
     expect(row.eventId).toMatch(/^[0-9a-f-]{36}$/);
-    await expect(audit.append(input({ requestId }))).rejects.toThrow(/unique|duplicate/i);
-    const loaded = await audit.getByRequestId(requestId);
-    expect(loaded?.eventId).toBe(row.eventId);
-    expect(await audit.getByRequestId(randomUUID())).toBeNull();
+    const second = await audit.append(input({ requestId, success: false, reason: 'retry failed' }));
+    expect(second.eventId).not.toBe(row.eventId);
+    const history = await audit.listByRequestId(requestId);
+    expect(history.map((entry) => entry.success)).toEqual([true, false]);
+    expect((await audit.getLatestByRequestId(requestId))?.eventId).toBe(second.eventId);
+    expect(await audit.listByRequestId(randomUUID())).toEqual([]);
+    expect(await audit.getLatestByRequestId(randomUUID())).toBeNull();
   });
 
   it('exposes append and read, not a normal mutation API', () => {
     const names = Object.getOwnPropertyNames(AdminAuditService.prototype);
     expect(names).toContain('append');
-    expect(names).toContain('getByRequestId');
+    expect(names).toContain('listByRequestId');
+    expect(names).toContain('getLatestByRequestId');
+    expect(names).not.toContain('getByRequestId');
     expect(names.filter((name) => /update|delete|remove/i.test(name))).toEqual([]);
   });
 });

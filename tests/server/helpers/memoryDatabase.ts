@@ -44,6 +44,7 @@ interface IdempotencyRecord {
 interface MemoryState {
   audit: AuditRow[];
   idempotency: IdempotencyRecord[];
+  probes: number;
 }
 
 function cloneState(state: MemoryState): MemoryState {
@@ -54,7 +55,7 @@ export class MemoryDatabase implements Database {
   readonly enabled = true;
   readonly deploymentId: string;
   readonly appliedMigrations: readonly string[] = [];
-  private state: MemoryState = { audit: [], idempotency: [] };
+  private state: MemoryState = { audit: [], idempotency: [], probes: 0 };
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
 
@@ -104,6 +105,13 @@ export class MemoryDatabase implements Database {
     if (sql === INSERT_IDEMPOTENCY_SQL) return this.insertIdempotency(state, params) as DbQueryResult<T>;
     if (sql === UPDATE_IDEMPOTENCY_COMMIT_SQL) return this.commitIdempotency(state, params) as DbQueryResult<T>;
     if (sql === SELECT_IDEMPOTENCY_SQL) return this.selectIdempotency(state, params) as DbQueryResult<T>;
+    if (sql === 'INSERT INTO admin_action_probe DEFAULT VALUES') {
+      state.probes += 1;
+      return { rows: [], rowCount: 1 };
+    }
+    if (sql === 'SELECT probes FROM admin_action_probe') {
+      return { rows: [{ n: state.probes } as T], rowCount: 1 };
+    }
     throw new Error(`MemoryDatabase has no handler for SQL: ${sql.slice(0, 80)}`);
   }
 
@@ -123,9 +131,6 @@ export class MemoryDatabase implements Database {
       metadata: JSON.parse(String(params[11])),
       created_at: new Date(),
     };
-    if (state.audit.some((existing) => existing.deployment_id === row.deployment_id && existing.request_id === row.request_id)) {
-      throw new Error('duplicate key value violates unique constraint "admin_audit_log_request_scope"');
-    }
     state.audit.push(row);
     return { rows: [structuredClone(row)], rowCount: 1 };
   }
@@ -133,8 +138,8 @@ export class MemoryDatabase implements Database {
   private selectAudit(state: MemoryState, params: readonly unknown[]): DbQueryResult<AuditRow> {
     const deploymentId = String(params[0]);
     const requestId = String(params[1]);
-    const row = state.audit.find((existing) => existing.deployment_id === deploymentId && existing.request_id === requestId);
-    return { rows: row ? [structuredClone(row)] : [], rowCount: row ? 1 : 0 };
+    const rows = state.audit.filter((existing) => existing.deployment_id === deploymentId && existing.request_id === requestId);
+    return { rows: rows.map((row) => structuredClone(row)), rowCount: rows.length };
   }
 
   private insertIdempotency(state: MemoryState, params: readonly unknown[]): DbQueryResult<{ state: string }> {

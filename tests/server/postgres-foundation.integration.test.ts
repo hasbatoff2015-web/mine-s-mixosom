@@ -82,12 +82,12 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
   }, 30_000);
 
   it('bootstraps once and a second startup does not reapply', async () => {
-    expect(main.appliedMigrations).toEqual(['0001']);
+    expect(main.appliedMigrations).toEqual(['0001', '0002']);
     const again = open(schema);
     await again.start();
     expect(again.appliedMigrations).toEqual([]);
     const count = await again.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('1');
+    expect(count.rows[0]?.n).toBe('2');
   }, 30_000);
 
   it('serializes two migration runners', async () => {
@@ -95,9 +95,9 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
     const left = open(name);
     const right = open(name);
     await Promise.all([left.start(), right.start()]);
-    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001']);
+    expect([...left.appliedMigrations, ...right.appliedMigrations].sort()).toEqual(['0001', '0002']);
     const count = await left.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-    expect(count.rows[0]?.n).toBe('1');
+    expect(count.rows[0]?.n).toBe('2');
   }, 30_000);
 
   it('rejects an edited applied checksum', async () => {
@@ -129,9 +129,36 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
     await expect(main.query('UPDATE admin_audit_log SET reason = $1', ['changed'])).rejects.toThrow(/append-only/);
     await expect(main.query('DELETE FROM admin_audit_log WHERE request_id = $1::uuid', [requestId])).rejects.toThrow(/append-only/);
     await expect(main.query('TRUNCATE TABLE admin_audit_log')).rejects.toThrow(/append-only/);
-    const still = await audit.getByRequestId(requestId);
+    const still = await audit.getLatestByRequestId(requestId);
     expect(still?.reason).toBe('stored literally');
     expect(still?.adminId).toBe(evil);
+  }, 30_000);
+
+  it('keeps two immutable audit attempts for one request id', async () => {
+    const audit = new AdminAuditService(main, 'dev');
+    const requestId = randomUUID();
+    const first = await audit.append({
+      requestId,
+      adminId: 'admin-owner',
+      action: 'note',
+      targetType: 'player',
+      reason: 'first attempt failed',
+      success: false,
+    });
+    const second = await audit.append({
+      requestId,
+      adminId: 'admin-owner',
+      action: 'note',
+      targetType: 'player',
+      reason: 'retry succeeded',
+      success: true,
+    });
+    expect(first.eventId).not.toBe(second.eventId);
+    const history = await audit.listByRequestId(requestId);
+    expect(history.map((row) => row.success)).toEqual([false, true]);
+    await expect(main.query('UPDATE admin_audit_log SET reason = $1', ['changed'])).rejects.toThrow(/append-only/);
+    await expect(main.query('DELETE FROM admin_audit_log WHERE request_id = $1::uuid', [requestId])).rejects.toThrow(/append-only/);
+    await expect(main.query('TRUNCATE TABLE admin_audit_log')).rejects.toThrow(/append-only/);
   }, 30_000);
 
   it('does not run the callback for a visible in-progress row', async () => {

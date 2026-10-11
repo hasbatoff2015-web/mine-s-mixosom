@@ -121,7 +121,7 @@ const SAMPLE: readonly Migration[] = [
 
 describe('migration manifest', () => {
   it('is ordered, unique, and checksum-stable', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001']);
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002']);
     expect(new Set(MIGRATIONS.map((migration) => migration.version)).size).toBe(MIGRATIONS.length);
     expect(new Set(MIGRATIONS.map((migration) => migration.name)).size).toBe(MIGRATIONS.length);
     const checksum = migrationChecksum(MIGRATIONS[0]!);
@@ -227,8 +227,10 @@ describe('migration manifest', () => {
   it('records the foundation statements and their checksum', async () => {
     const shared = sharedState();
     const result = await runMigrations(new MigrationDb(shared), MIGRATIONS);
-    expect(result.applied).toEqual(['0001']);
-    expect(shared.statements).toEqual([...MIGRATIONS[0]!.statements]);
-    expect(shared.rows[0]?.checksum).toBe(migrationChecksum(MIGRATIONS[0]!));
+    expect(result.applied).toEqual(['0001', '0002']);
+    expect(shared.statements).toEqual(MIGRATIONS.flatMap((migration) => [...migration.statements]));
+    expect(shared.rows.map((row) => row.checksum)).toEqual(MIGRATIONS.map((migration) => migrationChecksum(migration)));
+    expect(shared.statements.join('\n')).toContain('DROP CONSTRAINT admin_audit_log_request_scope');
+    expect(shared.statements.join('\n')).not.toMatch(/DROP\s+TABLE/i);
   });
 });

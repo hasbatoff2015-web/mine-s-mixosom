@@ -116,6 +116,16 @@ const IDEMPOTENCY_SQL = `CREATE TABLE idempotency_requests (
   CONSTRAINT idempotency_requests_actor_len CHECK (char_length(actor_id) <= 128)
 )`;
 
+/**
+ * event_id stays the primary key. request_id is the logical request and may
+ * appear on more than one immutable attempt (failure, then a later success).
+ */
+const ADMIN_AUDIT_DROP_REQUEST_UNIQUE_SQL = `ALTER TABLE admin_audit_log
+  DROP CONSTRAINT admin_audit_log_request_scope`;
+
+const ADMIN_AUDIT_REQUEST_INDEX_SQL = `CREATE INDEX admin_audit_log_request_created_idx
+  ON admin_audit_log (deployment_id, request_id, created_at)`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -128,6 +138,14 @@ export const MIGRATIONS: readonly Migration[] = [
       ADMIN_AUDIT_DELETE_TRIGGER_SQL,
       ADMIN_AUDIT_TRUNCATE_TRIGGER_SQL,
       IDEMPOTENCY_SQL,
+    ],
+  },
+  {
+    version: '0002',
+    name: 'admin_audit_request_attempts',
+    statements: [
+      ADMIN_AUDIT_DROP_REQUEST_UNIQUE_SQL,
+      ADMIN_AUDIT_REQUEST_INDEX_SQL,
     ],
   },
 ];

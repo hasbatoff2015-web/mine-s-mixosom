@@ -16,7 +16,8 @@ RETURNING event_id, deployment_id, request_id, admin_id, action, target_type, ta
 export const SELECT_ADMIN_AUDIT_BY_REQUEST_SQL = `SELECT event_id, deployment_id, request_id, admin_id, action, target_type, target_id,
   reason, server_mode, world_id, success, metadata, created_at
 FROM admin_audit_log
-WHERE deployment_id = $1 AND request_id = $2::uuid`;
+WHERE deployment_id = $1 AND request_id = $2::uuid
+ORDER BY created_at ASC, event_id ASC`;
 
 export interface AdminAuditInput {
   readonly requestId: string;
@@ -106,7 +107,20 @@ export class AdminAuditService {
     return this.database.transaction(write);
   }
 
-  async getByRequestId(requestId: string, tx?: Queryable): Promise<AdminAuditRecord | null> {
+  /** Every immutable attempt for one logical request, oldest first. */
+  async listByRequestId(requestId: string, tx?: Queryable): Promise<readonly AdminAuditRecord[]> {
+    const rows = await this.readRequest(requestId, tx);
+    return rows.map(mapAuditRow);
+  }
+
+  /** The newest attempt, or null when this request has no audit rows. */
+  async getLatestByRequestId(requestId: string, tx?: Queryable): Promise<AdminAuditRecord | null> {
+    const rows = await this.readRequest(requestId, tx);
+    const row = rows[rows.length - 1];
+    return row ? mapAuditRow(row) : null;
+  }
+
+  private async readRequest(requestId: string, tx?: Queryable): Promise<readonly AdminAuditRow[]> {
     const parsed = parseUuid(requestId);
     if (!parsed) throw new AdminAuditValidationError('requestId must be a UUID');
     const queryable = tx ?? this.database;
@@ -114,8 +128,7 @@ export class AdminAuditService {
       this.deploymentId,
       parsed,
     ]);
-    const row = found.rows[0];
-    return row ? mapAuditRow(row) : null;
+    return found.rows;
   }
 }
 

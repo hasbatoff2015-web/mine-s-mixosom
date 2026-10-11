@@ -136,6 +136,7 @@ async function smokeMode(worldPath, { mode, world }) {
     FC_DEPLOYMENT_ID: '',
     FC_DB_POOL_MAX: '',
     FC_TEST_DATABASE_URL: '',
+    FC_ADMIN_IDS: '',
   });
   try {
     const { port, body } = await waitForStatus(session, mode, world);

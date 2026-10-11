@@ -63,6 +63,8 @@ export class Inventory {
   readonly #slots: Array<ItemStack | null>;
   readonly #armor: Record<ArmorSlot, ItemStack | null>;
   #offhand: ItemStack | null;
+  /** Runtime only. Not written into the player save. Clients must not assume +1. */
+  #revision = 0;
 
   constructor() {
     this.#slots = Array.from({ length: Inventory.SLOT_COUNT }, () => null);
@@ -85,6 +87,11 @@ export class Inventory {
 
   get offhand(): ItemStack | null {
     return cloneStack(this.#offhand);
+  }
+
+  /** Monotonic count of authoritative slot changes since this object was created. */
+  get revision(): number {
+    return this.#revision;
   }
 
   getSlot(ref: InventorySlotRef): ItemStack | null {
