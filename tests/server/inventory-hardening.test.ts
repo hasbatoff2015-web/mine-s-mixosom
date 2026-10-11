@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { blockKey } from '../../src/core/constants';
-import { createItemStack } from '../../src/inventory';
+import { createItemStack, type ItemStack } from '../../src/inventory';
 import { stampInventoryIntent } from '../../src/net/inventoryIntent';
 import {
   CLIENT_MESSAGE_TYPES,
@@ -163,7 +163,7 @@ describe('inventory mutation hardening', () => {
     replaceCarryState(player, player.cursor, player.craftSlots);
     expect(player.inventoryRevision).toBe(afterCursor);
 
-    const grid = player.craftSlots.map(() => null);
+    const grid: Array<ItemStack | null> = player.craftSlots.map(() => null);
     grid[0] = createItemStack('stick', 2);
     replaceCarryState(player, null, grid);
     expect(player.inventory.revision).toBe(slotRevision);

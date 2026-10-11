@@ -25,7 +25,7 @@ Migration `0003` creates `economy_accounts`, `economy_operations`, and `economy_
 
 ## Changed files
 
-`src/ui/GameUI.ts`, `src/core/Game.ts`, `src/net/inventoryIntent.ts`, `server/db/migrationManifest.ts`, `server/economy/*`, `tests/inventory-intent-composition.test.ts`, `tests/server/megacoin.test.ts`, `tests/server/megacoin.integration.test.ts`, `tests/server/postgres-foundation.integration.test.ts`, `tests/server/migration-manifest.test.ts`, `docs/ARCHITECTURE.md`, `docs/POSTGRESQL.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`.
+`src/ui/GameUI.ts`, `src/core/Game.ts`, `src/net/inventoryIntent.ts`, `server/db/migrationManifest.ts`, `server/economy/*`, `tests/inventory-intent-composition.test.ts`, `tests/online-gameplay-polish.test.ts`, `tests/server/inventory-hardening.test.ts`, `tests/server/megacoin.test.ts`, `tests/server/megacoin.integration.test.ts`, `tests/server/postgres-foundation.integration.test.ts`, `tests/server/migration-manifest.test.ts`, `docs/ARCHITECTURE.md`, `docs/POSTGRESQL.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`.
 
 ## Architecture decisions
 
@@ -39,11 +39,24 @@ Migration `0003` creates `economy_accounts`, `economy_operations`, and `economy_
 
 ## Tests
 
-Measured counts are written into this section after the validation run on this commit.
+Focused Vitest, including real PostgreSQL: 30 files, 257 passed. That run covered inventory composition, inventory hardening and revisions, database config, disabled mode, lifecycle, redaction, migration manifest, admin audit, admin actions, idempotency, JSON economy, auction, trade, buyer, clan, and bow PvP timing.
+
+Real PostgreSQL 16, database `fc_foundation_test`, private schema dropped afterward:
+
+- `tests/server/postgres-foundation.integration.test.ts`: 12 passed
+- `tests/server/megacoin.integration.test.ts`: 16 passed
+
+The Megacoin run checked migration `0003` apply-once and checksum rejection, the opening 100 and its ledger leg, credit, debit, insufficient rollback, max balance, atomic transfer with two legs, adjustment up and down, zero-delta set, append-only `UPDATE` / `DELETE` / `TRUNCATE`, source replay and conflict, history paging in both cursor directions, concurrent account creation, concurrent withdrawals, concurrent credit and debit, two transfers that share a player, and eight rounds of opposite transfers.
+
+`npm run typecheck`, `typecheck:client`, `typecheck:server`, and `check:boundaries` passed after annotating one test grid as `Array<ItemStack | null>`. `typecheck:sim` fails with the same 9 errors as `origin/main` `2dd09ee` (`document` / canvas in `voxelVisuals.ts` and `TextureAtlas.ts`, plus the Vite skin-hash module).
+
+`npm run build` produced a 10.31 MiB client. `build:server`, `check:size`, and `smoke:server:prod` passed. Anarchy, survival, and peaceful came up without `FC_DATABASE_URL`, answered `/status`, and exited 0 on SIGTERM with the world lock removed. `git diff --check` was clean.
+
+Full Vitest without `FC_TEST_DATABASE_URL`: 26 failed, 3440 passed, 29 skipped (377 files). The 29 skips are 16 Megacoin integration tests, 12 foundation integration tests, and 1 pre-existing lifecycle skip. The 26 failed names are the same 26 as a same-machine run of `origin/main` (3352 passed, 26 failed, 1 skipped, 359 files). A first full run that overlapped the production build also failed `tick-load-flight` at about 51–52 ms against a 50 ms mean. That file passed alone (3 tests) and did not fail in the isolated full run.
 
 ## Visual QA
 
-Not run. The inventory change is a wire-message composition fix. No new HUD.
+Not run. The inventory change is a wire-message composition fix. No new HUD. The browser was not opened.
 
 ## Performance
 
@@ -51,7 +64,7 @@ No database query was added to the 20 TPS tick or to an inventory click. The led
 
 ## Known issues
 
-The full Vitest failures that already exist on `origin/main` are unchanged by this pass unless the validation run shows a new one. `typecheck:sim` fails on `origin/main` for the same DOM imports.
+The 26 full-suite failures match current `origin/main` `2dd09ee`. They include arrow visuals, classic combat presentation, fence jump height, the menu screenshot helper (`PIL` is not installed), the god-sword texture generator, the SFX pack count, remote breaking overlays, one UI source string for a click `submitAction` call that `origin/main` also does not contain, god-sword mob spend, pet hit timing, and bow draw ticks. `typecheck:sim` fails on `origin/main` for the same DOM and Vite virtual-module errors. Database backups and a live cutover are not part of this change.
 
 ## Deferred
 
