@@ -1,0 +1,168 @@
+import { createHash } from 'node:crypto';
+
+export interface Migration {
+  readonly version: string;
+  readonly name: string;
+  /** One SQL statement each. The runner executes them in order inside one transaction. */
+  readonly statements: readonly string[];
+}
+
+/**
+ * Session advisory lock shared by Anarchy, Survival, and Peaceful.
+ * The two int4 keys are the big-endian bytes of "FCDB" and "MIG1".
+ * Both fit in signed int32.
+ */
+export const MIGRATION_ADVISORY_LOCK_KEY: readonly [number, number] = [1178813506, 1296647985];
+
+export const ADVISORY_LOCK_SQL = 'SELECT pg_advisory_lock($1, $2)';
+export const ADVISORY_UNLOCK_SQL = 'SELECT pg_advisory_unlock($1, $2)';
+
+export const SCHEMA_MIGRATIONS_SQL = `CREATE TABLE IF NOT EXISTS schema_migrations (
+  version TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT schema_migrations_version_nonempty CHECK (length(btrim(version)) > 0),
+  CONSTRAINT schema_migrations_name_nonempty CHECK (length(btrim(name)) > 0),
+  CONSTRAINT schema_migrations_checksum_nonempty CHECK (length(btrim(checksum)) > 0)
+)`;
+
+export const SELECT_MIGRATIONS_SQL = 'SELECT version, name, checksum FROM schema_migrations ORDER BY version';
+export const INSERT_MIGRATION_SQL = 'INSERT INTO schema_migrations (version, name, checksum) VALUES ($1, $2, $3)';
+
+/**
+ * Foundation tables only. Later migrations may ALTER these tables.
+ * Row UPDATE/DELETE on admin_audit_log is rejected by trigger, which does not
+ * block a future migration from dropping that trigger, changing columns, and
+ * installing it again.
+ */
+const ADMIN_AUDIT_LOG_SQL = `CREATE TABLE admin_audit_log (
+  event_id UUID PRIMARY KEY,
+  deployment_id TEXT NOT NULL,
+  request_id UUID NOT NULL,
+  admin_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NULL,
+  reason TEXT NOT NULL,
+  server_mode TEXT NULL,
+  world_id TEXT NULL,
+  success BOOLEAN NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT admin_audit_log_deployment_id_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT admin_audit_log_request_scope UNIQUE (deployment_id, request_id),
+  CONSTRAINT admin_audit_log_admin_id_nonempty CHECK (length(btrim(admin_id)) > 0),
+  CONSTRAINT admin_audit_log_action_nonempty CHECK (length(btrim(action)) > 0),
+  CONSTRAINT admin_audit_log_target_type_nonempty CHECK (length(btrim(target_type)) > 0),
+  CONSTRAINT admin_audit_log_reason_nonempty CHECK (length(btrim(reason)) > 0),
+  CONSTRAINT admin_audit_log_admin_id_len CHECK (char_length(admin_id) <= 128),
+  CONSTRAINT admin_audit_log_action_len CHECK (char_length(action) <= 200),
+  CONSTRAINT admin_audit_log_target_type_len CHECK (char_length(target_type) <= 128),
+  CONSTRAINT admin_audit_log_target_id_len CHECK (target_id IS NULL OR char_length(target_id) <= 256),
+  CONSTRAINT admin_audit_log_reason_len CHECK (char_length(reason) <= 4000),
+  CONSTRAINT admin_audit_log_server_mode_len CHECK (server_mode IS NULL OR char_length(server_mode) <= 32),
+  CONSTRAINT admin_audit_log_world_id_len CHECK (world_id IS NULL OR char_length(world_id) <= 128)
+)`;
+
+const ADMIN_AUDIT_INDEX_SQL = `CREATE INDEX admin_audit_log_deployment_created_idx
+  ON admin_audit_log (deployment_id, created_at)`;
+
+const ADMIN_AUDIT_FUNCTION_SQL = `CREATE FUNCTION admin_audit_log_reject_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $audit$
+BEGIN
+  RAISE EXCEPTION 'admin_audit_log is append-only';
+END;
+$audit$`;
+
+const ADMIN_AUDIT_UPDATE_TRIGGER_SQL = `CREATE TRIGGER admin_audit_log_no_update
+BEFORE UPDATE ON admin_audit_log
+FOR EACH ROW
+EXECUTE PROCEDURE admin_audit_log_reject_mutation()`;
+
+const ADMIN_AUDIT_DELETE_TRIGGER_SQL = `CREATE TRIGGER admin_audit_log_no_delete
+BEFORE DELETE ON admin_audit_log
+FOR EACH ROW
+EXECUTE PROCEDURE admin_audit_log_reject_mutation()`;
+
+const ADMIN_AUDIT_TRUNCATE_TRIGGER_SQL = `CREATE TRIGGER admin_audit_log_no_truncate
+BEFORE TRUNCATE ON admin_audit_log
+FOR EACH STATEMENT
+EXECUTE PROCEDURE admin_audit_log_reject_mutation()`;
+
+const IDEMPOTENCY_SQL = `CREATE TABLE idempotency_requests (
+  deployment_id TEXT NOT NULL,
+  request_id UUID NOT NULL,
+  operation TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  payload_hash TEXT NOT NULL,
+  state TEXT NOT NULL,
+  response JSONB NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  committed_at TIMESTAMPTZ NULL,
+  PRIMARY KEY (deployment_id, request_id),
+  CONSTRAINT idempotency_requests_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT idempotency_requests_operation_nonempty CHECK (length(btrim(operation)) > 0),
+  CONSTRAINT idempotency_requests_actor_nonempty CHECK (length(btrim(actor_id)) > 0),
+  CONSTRAINT idempotency_requests_hash_sha256 CHECK (payload_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT idempotency_requests_state_check CHECK (state IN ('in_progress', 'committed')),
+  CONSTRAINT idempotency_requests_commit_shape CHECK (
+    (state = 'in_progress' AND committed_at IS NULL)
+    OR (state = 'committed' AND committed_at IS NOT NULL)
+  ),
+  CONSTRAINT idempotency_requests_operation_len CHECK (char_length(operation) <= 200),
+  CONSTRAINT idempotency_requests_actor_len CHECK (char_length(actor_id) <= 128)
+)`;
+
+export const MIGRATIONS: readonly Migration[] = [
+  {
+    version: '0001',
+    name: 'admin_audit_and_idempotency',
+    statements: [
+      ADMIN_AUDIT_LOG_SQL,
+      ADMIN_AUDIT_INDEX_SQL,
+      ADMIN_AUDIT_FUNCTION_SQL,
+      ADMIN_AUDIT_UPDATE_TRIGGER_SQL,
+      ADMIN_AUDIT_DELETE_TRIGGER_SQL,
+      ADMIN_AUDIT_TRUNCATE_TRIGGER_SQL,
+      IDEMPOTENCY_SQL,
+    ],
+  },
+];
+
+export function migrationSql(migration: Migration): string {
+  return migration.statements.map((statement) => statement.trim()).join('\n\n');
+}
+
+export function migrationChecksum(migration: Migration): string {
+  return createHash('sha256').update(migrationSql(migration), 'utf8').digest('hex');
+}
+
+export function assertMigrationManifest(migrations: readonly Migration[]): void {
+  const versions = new Set<string>();
+  const names = new Set<string>();
+  let previous = '';
+  for (const migration of migrations) {
+    if (!/^[0-9]{4}$/.test(migration.version)) {
+      throw new Error(`migration version must be four digits, got "${migration.version}"`);
+    }
+    if (previous && migration.version <= previous) {
+      throw new Error(`migration ${migration.version} is out of order`);
+    }
+    previous = migration.version;
+    if (versions.has(migration.version)) throw new Error(`duplicate migration version ${migration.version}`);
+    versions.add(migration.version);
+    if (!/^[a-z0-9_]+$/.test(migration.name)) {
+      throw new Error(`migration ${migration.version} has an invalid name`);
+    }
+    if (names.has(migration.name)) throw new Error(`duplicate migration name ${migration.name}`);
+    names.add(migration.name);
+    if (migration.statements.length === 0 || migration.statements.some((statement) => statement.trim() === '')) {
+      throw new Error(`migration ${migration.version} has no SQL`);
+    }
+  }
+}
+
+assertMigrationManifest(MIGRATIONS);

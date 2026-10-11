@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-11: PostgreSQL audit and idempotency foundation
+
+- [x] Optional `pg` pool. Missing `FC_DATABASE_URL` keeps filesystem persistence and opens no connection.
+- [x] `FC_DEPLOYMENT_ID` is required with the URL. A configured connection or migration failure aborts startup and releases the world lock.
+- [x] Checksummed migrations under one session advisory lock. First migration: append-only `admin_audit_log` and `idempotency_requests`.
+- [x] The release copies the `ws` and `pg` runtime closure. The VPS still does not `npm install`.
+- [ ] Economy, auction, trade, admin HTTP, and anti-dupe ledgers stay on their current storage.
+- [ ] Not merged. Draft PR.
+
 ## 2026-10-08: Mega Zombie boss
 
 - [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.
@@ -306,7 +315,7 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 
 ## 2026-09-23: production release tooling
 
-- [x] Pack a release with `dist/server/index.mjs` and external `ws`. No world files, no `npm install` on the VPS.
+- [x] Pack a release with `dist/server/index.mjs` and the external runtime closure (`ws`, and `pg` plus its production dependencies). No world files, no `npm install` on the VPS.
 - [x] `deploy-release.sh` installs, atomically switches `current`, restarts the three systemd units, and requires all three `/status` checks.
 - [x] Failed deploy restores the previous `current`. `rollback-release.sh` and dry-run cleanup never delete world data.
 

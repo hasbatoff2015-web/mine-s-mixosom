@@ -93,6 +93,7 @@ import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig, ServerMode } from './config';
 import { acquireWorldDirectoryLock, type WorldDirectoryLock } from './worldLock';
+import { createDatabase, type Database } from './db/database';
 import {
   CommandRegistry,
   createConsoleCommandSender,
@@ -588,6 +589,11 @@ function inputFromCommand(command: PlayerCommand): ClientInputMessage {
   };
 }
 
+export interface WorldInstanceOptions {
+  /** Tests inject a fake. Production builds one from `config.database`. */
+  readonly database?: Database;
+}
+
 export class WorldInstance {
   readyState: WorldReadyState = 'UNINITIALIZED';
   readonly world: VoxelWorld;
@@ -622,6 +628,7 @@ export class WorldInstance {
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
+  readonly database: Database;
   private worldLock?: WorldDirectoryLock;
   tickNumber = 0;
   spawn: [number, number, number];
@@ -675,7 +682,8 @@ export class WorldInstance {
   /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
   private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
 
-  constructor(readonly config: ServerConfig) {
+  constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
+    this.database = options?.database ?? createDatabase(config);
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
     this.world.onFurnaceLitChanged = (change) => {
@@ -1122,10 +1130,19 @@ export class WorldInstance {
   }
 
   async initialize(): Promise<void> {
+    // The lock is taken first so a configured database failure can release it
+    // before gameplay services load. Migrations finish before readyState is READY.
     await this.acquireWorldLock();
     try {
+      await this.database.start();
       await this.loadOrCreateWorld();
     } catch (error) {
+      try {
+        await this.database.close();
+      } catch (closeError) {
+        const detail = closeError instanceof Error ? closeError.message : String(closeError);
+        serverLog(`database close after failed startup: ${detail}`, 'error');
+      }
       await this.releaseWorldLock();
       throw error;
     }
@@ -1317,9 +1334,26 @@ export class WorldInstance {
     if (this.persistTimer) clearInterval(this.persistTimer);
     this.eventLoopDelay?.disable();
     this.eventLoopDelay = undefined;
-    await this.plugins.disableAll();
-    await this.save();
-    await this.releaseWorldLock();
+    // A failed save must not skip these. The next process needs the directory,
+    // and a configured pool must not stay open after shutdown.
+    let failure: unknown;
+    try {
+      await this.plugins.disableAll();
+      await this.save();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await this.releaseWorldLock();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    try {
+      await this.database.close();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    if (failure) throw failure;
   }
 
   async save(): Promise<void> {
@@ -3917,6 +3951,8 @@ export class WorldInstance {
   }
 
   tick(): void {
+    // PostgreSQL is not queried from the 20 TPS loop. Audit and idempotency
+    // run only when a future service calls them.
     this.lastPhysicsTicksThisLoop = 1;
     this.clearAppliedSteps();
     this.simulateGameplayTick();

@@ -17,10 +17,12 @@
 dist/server/index.mjs
 package.json
 node_modules/ws/
+node_modules/pg/
+node_modules/<production dependencies of pg>/
 RELEASE_ID
 ```
 
-`build:server` оставляет `ws` внешним. Поэтому пакет копируется в релиз на машине сборки. На VPS `npm install` не запускается. `server/data` и `/var/lib/frontier-cubes` в релиз не входят.
+`build:server` оставляет npm-пакеты внешними. `pack:release` копирует runtime-замыкание по полю `dependencies` манифестов: `ws`, `pg` и то, что нужно `pg` в проде. `optionalDependencies` и `peerDependencies` не копируются. На VPS `npm install` не запускается. `server/data` и `/var/lib/frontier-cubes` в релиз не входят. PostgreSQL при этом не обязателен: без `FC_DATABASE_URL` процесс его не открывает. См. `docs/POSTGRESQL.md`.
 
 Игровые unit-ы работают от пользователя `frontier-cubes`. Скрипт выкладки запускает администратор. После копирования релиз принадлежит root и доступен на чтение сервисному пользователю. Unit-файлы не меняются, поэтому `systemctl daemon-reload` при смене релиза не нужен.
 
@@ -71,7 +73,7 @@ sudo bash scripts/deploy-release.sh \
 
 `--source` может быть каталогом или `.tar.gz`. Порядок внутри скрипта:
 
-1. Проверить id и наличие `dist/server/index.mjs` и `node_modules/ws`.
+1. Проверить id и наличие `dist/server/index.mjs`, `node_modules/ws` и `node_modules/pg`.
 2. Скопировать только эти файлы в `/opt/frontier-cubes/releases/<id>/`. Существующий id не перезаписывается.
 3. Атомарно переключить ссылку: `ln -s <new> current.new`, затем `mv -Tf current.new current`.
 4. `systemctl restart` трёх unit-ов: `frontier-cubes-anarchy.service`, `frontier-cubes-survival.service`, `frontier-cubes-peaceful.service`. Это SIGTERM: мир сохраняется, `.instance.lock` снимается.
@@ -128,7 +130,7 @@ npm run status:servers
 
 - `invalid release id` — в id есть путь или пробел. Нужен SHA или другой один сегмент.
 - `missing dist/server/index.mjs` — на машине сборки не был `npm run build:server`.
-- `missing node_modules/ws` — pack запускали без установленных зависимостей.
+- `missing node_modules/ws` или `missing node_modules/pg` — pack запускали без установленных зависимостей, либо в релизе нет замыкания `pg`.
 - `release already exists` — этот id уже стоит. Соберите другой SHA.
 - `health-check failed` — смотрите `journalctl` конкретного unit-а. Мир на диске остаётся прежним.
 - `no previous release recorded` — откатывать ещё нечего, это первая успешная выкладка.

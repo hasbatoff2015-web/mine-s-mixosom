@@ -66,6 +66,10 @@ function baseEnv(worldPath: string, world: string, port: string, extra: NodeJS.P
     FC_EXAMPLE_PLUGIN: '',
     FC_NO_BUILTIN_PLUGINS: '',
     FC_TEST_FATAL: '',
+    FC_DATABASE_URL: '',
+    FC_DEPLOYMENT_ID: '',
+    FC_DB_POOL_MAX: '',
+    FC_TEST_DATABASE_URL: '',
     ...extra,
   };
 }
@@ -231,6 +235,33 @@ describe('production server process lifecycle', () => {
       expect(log).toContain(message);
       expect(log).toContain('world saved');
       expect(log.match(/\[server\] stopped/g)).toHaveLength(1);
+      expect(await exists(lockPath)).toBe(false);
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
+      await rm(worldPath, { recursive: true, force: true });
+    }
+  }, START_TIMEOUT_MS);
+
+  it('fails startup when the configured database is unreachable and does not keep the world lock', async () => {
+    const worldPath = await mkdtemp(join(tmpdir(), 'fc-db-down-'));
+    const world = 'db-down';
+    const password = 'super-secret-password';
+    const user = 'fc_audit_user';
+    const session = startServer(baseEnv(worldPath, world, '0', {
+      FC_DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:1/megacraft_dev`,
+      FC_DEPLOYMENT_ID: 'dev',
+    }));
+    const lockPath = join(worldPath, world, '.instance.lock');
+    try {
+      const code = await waitClose(session.child, START_TIMEOUT_MS);
+      const log = session.output();
+      expect(code.code).toBe(1);
+      expect(log).toContain('startup failed');
+      expect(log).not.toContain('server ready');
+      expect(log).not.toContain('database: ready');
+      expect(log).not.toContain(password);
+      expect(log).not.toContain(user);
+      expect(log).not.toContain('postgresql://');
       expect(await exists(lockPath)).toBe(false);
     } finally {
       if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');

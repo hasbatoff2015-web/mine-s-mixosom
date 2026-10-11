@@ -36,6 +36,63 @@ export interface ServerConfig {
   readonly loadExamplePlugin: boolean;
   /** Core plugins (permissions, TPA, home, …). Default on for every server mode. */
   readonly loadBuiltinPlugins: boolean;
+  /**
+   * Optional PostgreSQL for audit and idempotency.
+   * Voxel world snapshots stay on the filesystem either way.
+   */
+  readonly database: DatabaseConfig;
+}
+
+/** One process default. Three game servers can run on one machine. */
+export const DB_POOL_DEFAULT = 4;
+export const DB_POOL_MIN = 1;
+export const DB_POOL_MAX_LIMIT = 8;
+
+const DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+export type DatabaseConfig =
+  | { readonly enabled: false }
+  | {
+    readonly enabled: true;
+    readonly url: string;
+    readonly deploymentId: string;
+    readonly poolMax: number;
+  };
+
+/**
+ * Missing URL disables PostgreSQL with no connection attempt.
+ * A present URL without a deployment id is rejected. Dev and prod are never inferred.
+ */
+export function loadDatabaseConfig(env: NodeJS.ProcessEnv): DatabaseConfig {
+  const rawUrl = env.FC_DATABASE_URL;
+  if (rawUrl === undefined || rawUrl.trim() === '') return { enabled: false };
+  const url = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('FC_DATABASE_URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+    throw new Error('FC_DATABASE_URL must use the postgres: or postgresql: scheme.');
+  }
+  const deploymentId = (env.FC_DEPLOYMENT_ID ?? '').trim();
+  if (!deploymentId) throw new Error('FC_DEPLOYMENT_ID is required when FC_DATABASE_URL is set.');
+  if (!DEPLOYMENT_ID.test(deploymentId)) {
+    throw new Error('FC_DEPLOYMENT_ID must be 1-64 characters: letters, digits, ".", "_" or "-".');
+  }
+  return {
+    enabled: true,
+    url,
+    deploymentId,
+    poolMax: integerEnv(env, 'FC_DB_POOL_MAX', DB_POOL_DEFAULT, DB_POOL_MIN, DB_POOL_MAX_LIMIT),
+  };
+}
+
+/** Log-safe description. Never includes the URL, username, or password. */
+export function databaseLogLabel(database: DatabaseConfig): string {
+  if (!database.enabled) return 'database: disabled';
+  return `database: enabled deployment=${database.deploymentId} poolMax=${database.poolMax}`;
 }
 
 /**
@@ -94,6 +151,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
+    database: loadDatabaseConfig(env),
   };
 }
 

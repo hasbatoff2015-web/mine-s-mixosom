@@ -1,5 +1,15 @@
 # Архитектура
 
+## PostgreSQL — 2026-10-11
+
+PostgreSQL is optional and server-only. `FC_DATABASE_URL` unset means `DisabledDatabase`: no pool and no socket. A set URL requires `FC_DEPLOYMENT_ID` (`dev` / `prod` are explicit; the hostname is not a scope). Connection or migration failure aborts startup and releases the world lock. There is no JSON fallback for a configured database.
+
+`WorldInstance` owns the `Database` lifecycle. `initialize()` takes the world lock, runs `database.start()` (migrations), then loads the world. `stop()` still saves the filesystem snapshot, then releases the lock and closes the pool even if save fails. Tests pass `{ database }` into `AnarchyServer` / `WorldInstance`. `new WorldInstance(config)` without that option follows `config.database` and does not need a server when the URL is absent. The 20 TPS loop does not call the database. `EconomyService`, `AuctionService`, and `TradeService` are not wired to it.
+
+`server/db/` is the SQL boundary: pool, transactions on one client, checksummed migrations, `AdminAuditService`, and `IdempotencyService`. Domain ledgers stay future work. The first migration creates `schema_migrations`, append-only `admin_audit_log`, and `idempotency_requests`. An advisory lock serializes migrations across the three game processes. Details and the manual setup example are in `docs/POSTGRESQL.md`.
+
+Voxel snapshots stay in `FsWorldStore` (`world.json`, `players.json`, `meta.json`). Plugin JSON stays in `dataDir/<worldId>/plugin-data/`. The public `/status` body is unchanged.
+
 ## Mega Zombie — 2026-10-08
 
 `mega_zombie` is a `MobKind` in `MobManager`, not a second entity system. Stats live in `MOB_DEFINITIONS`. AI, arena clamp, revenge, and the last player attacker live on `MobEntity.boss` and run inside the existing 20 TPS `update`. Fire damage still goes through `MobManager.damage` with `source: 'fire'` and does not change that attacker. Client code only poses the rig, scales the fire overlay, and draws the HUD bar from replicated `health` / `maxHealth` / `onFire` / `state`.
@@ -1787,7 +1797,7 @@ flowchart LR
 
 `IdbWorldStore` wraps `SaveService`: IndexedDB database `frontier-cubes-saves`, store `worlds`, key `summary.id`. Structured clone on the storage boundary; summaries sorted by `updatedAt`; autosaves still chained in `Game`. Missing IndexedDB falls back to an in-memory Map (not durable).
 
-`FsWorldStore` maps the snapshot onto `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Layout is not a single JSON file. Concurrent `save` calls are serialized. Corrupt existing files throw `PersistenceError`.
+`FsWorldStore` maps the snapshot onto `server/data/worlds/<worldId>/` (`meta.json`, `world.json`, `players.json`). Layout is not a single JSON file. Concurrent `save` calls are serialized. Corrupt existing files throw `PersistenceError`. PostgreSQL is not this store. Chunks, players, chests, furnaces, mobs, and plugin JSON stay on disk. See the PostgreSQL section above and `docs/POSTGRESQL.md`.
 
 **Online Anarchy** does not write IndexedDB. Server persist interval and shutdown save are unchanged. Snapshot creation runs only on save/export, not per tick.
 

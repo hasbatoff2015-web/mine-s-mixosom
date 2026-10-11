@@ -43,7 +43,7 @@ sudo chmod 750 /var/lib/frontier-cubes /var/lib/frontier-cubes/worlds \
 
 ## Установка релиза
 
-Сборка и выкладка описаны в `docs/DEPLOYMENT.md`. Коротко: `npm run build:server`, `npm run pack:release`, затем на сервере `scripts/deploy-release.sh`. Каталоги миров этот шаг не изменяет. `npm install` на VPS не нужен: в релиз уже входит `dist/server/index.mjs` и external-пакет `ws`.
+Сборка и выкладка описаны в `docs/DEPLOYMENT.md`. Коротко: `npm run build:server`, `npm run pack:release`, затем на сервере `scripts/deploy-release.sh`. Каталоги миров этот шаг не изменяет. `npm install` на VPS не нужен: в релиз уже входят `dist/server/index.mjs` и external-пакеты `ws` и `pg` вместе с production-зависимостями `pg`. PostgreSQL для текущего геймплея не требуется. Если его позже включат, URL задаётся в env, а не в unit. См. `docs/POSTGRESQL.md`. Unit-ы не ждут локальный `postgresql.service`: база может быть на другой машине.
 
 ## Unit-файлы и env
 

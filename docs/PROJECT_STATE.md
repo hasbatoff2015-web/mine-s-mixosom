@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: PostgreSQL audit и idempotency — 2026-10-11
+
+- Это не админка и не перенос экономики. Чанки, сундуки, печи, мобы, дроп и снимки игроков остаются в `FsWorldStore`. JSON плагинов остаётся в `dataDir/<worldId>/plugin-data/`. `EconomyService`, `AuctionService` и `TradeService` не переведены на PostgreSQL.
+- Нет `FC_DATABASE_URL` — пул не создаётся, сокет не открывается, текущий сервер работает как раньше. URL без непустого `FC_DEPLOYMENT_ID` отклоняется. Ошибка соединения или миграции валит старт и отпускает `.instance.lock`. Тихого перехода на JSON нет.
+- `FC_DB_POOL_MAX` по умолчанию 4, диапазон 1..8. `dev` и `prod` задаются явно, не из hostname. В лог и `/status` не попадают URL, пользователь и пароль.
+- Первая миграция: `schema_migrations`, append-only `admin_audit_log`, `idempotency_requests`. Несколько процессов сериализуются session advisory lock. Checksum SHA-256. Правка уже применённой миграции валит старт.
+- Релиз копирует runtime-замыкание `ws` и `pg` по `dependencies` манифестов. `npm install` на VPS по-прежнему не нужен. Миры в релиз не входят.
+- Обычный Vitest не требует PostgreSQL. Реальный прогон — только при `FC_TEST_DATABASE_URL`, в отдельной схеме. Подробности: `docs/POSTGRESQL.md`.
+
 ## Последний проход: лут Мега-зомби — 2026-10-10
 
 - Рубиновые слитки всегда 3. Зелье починки из таблицы босса убрано. Всегда падают жареная курица ×10, доски ×64, камень ×64 и подбираемые фейерверки ×30. Остальные строки и порог добора `requiredCount + 5` не сдвинуты.
@@ -345,7 +354,7 @@
 ## Последний проход: release deployment — 2026-09-23
 
 - Релиз: `/opt/frontier-cubes/releases/<id>/` и атомарный `current`. Id — git SHA (`--short=12`) или явный `--release-id`.
-- `npm run pack:release` без аргументов пишет `release/<git-sha>/`: `dist/server/index.mjs` и external `ws`. На VPS `npm install` не нужен. Миры в `/var/lib/frontier-cubes/worlds/<mode>` скрипты не изменяют.
+- `npm run pack:release` без аргументов пишет `release/<git-sha>/`: `dist/server/index.mjs` и external runtime-замыкание (`ws`, `pg` и production-зависимости `pg`). На VPS `npm install` не нужен. Миры в `/var/lib/frontier-cubes/worlds/<mode>` скрипты не изменяют.
 - `scripts/deploy-release.sh` ставит релиз, переключает `current`, делает `systemctl restart` трёх unit-ов и `status:servers`. Неуспех возвращает предыдущий `current`. `scripts/rollback-release.sh` откатывает. `scripts/cleanup-releases.sh` по умолчанию только печатает план.
 - Подробности: `docs/DEPLOYMENT.md`.
 

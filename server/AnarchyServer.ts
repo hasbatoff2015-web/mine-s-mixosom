@@ -17,7 +17,7 @@ import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerA
 import type { ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
-import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
+import { WorldInstance, type ConnectedSink, type ServerPlayer, type WorldInstanceOptions } from './WorldInstance';
 
 interface SocketBinding {
   playerId: string;
@@ -47,8 +47,8 @@ export class AnarchyServer {
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
 
-  constructor(readonly config: ServerConfig) {
-    this.world = new WorldInstance(config);
+  constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
+    this.world = new WorldInstance(config, options);
   }
 
   get port(): number {
