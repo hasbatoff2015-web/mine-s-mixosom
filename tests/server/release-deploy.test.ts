@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error untyped release helper; the shell scripts call the same module
-import { assertOutsideWorldData, assertReleaseBundle, assertReleaseId, cleanupPlan, copyRuntimePackages, gitReleaseId, installRelease, packRelease, runtimeDependencyClosure, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
+import { assertOutsideWorldData, assertReleaseBundle, assertReleaseId, cleanupPlan, copyRuntimePackages, externalPackageNames, gitReleaseId, installRelease, packRelease, packageNameFromSpecifier, runtimeDependencyClosure, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../..');
 const bashProbe = spawn('bash', ['-c', 'echo ok'], { stdio: 'ignore' });
@@ -277,6 +277,13 @@ async function directoryBytes(dir: string): Promise<number> {
 }
 
 describe('postgres runtime closure', () => {
+  it('ignores prose that looks like an import and keeps real package names', () => {
+    expect(packageNameFromSpecifier('${name}')).toBeNull();
+    expect(packageNameFromSpecifier('pg')).toBe('pg');
+    expect(packageNameFromSpecifier('@scope/pkg/file.js')).toBe('@scope/pkg');
+    expect(externalPackageNames("ok(`removed from '\${name}'.`);\nimport pg from 'pg';\nimport ws from 'ws';\n")).toEqual(['pg', 'ws']);
+  });
+
   it('follows production manifests and leaves optional packages behind', () => {
     const closure = runtimeDependencyClosure(ROOT, ['ws', 'pg']);
     const names = closure.map((pkg: { name: string; dependencies: string[] }) => pkg.name);

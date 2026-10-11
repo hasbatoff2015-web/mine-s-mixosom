@@ -7,7 +7,7 @@
 - [x] Checksummed migrations under one session advisory lock. First migration: append-only `admin_audit_log` and `idempotency_requests`.
 - [x] The release copies the `ws` and `pg` runtime closure. The VPS still does not `npm install`.
 - [ ] Economy, auction, trade, admin HTTP, and anti-dupe ledgers stay on their current storage.
-- [ ] Not merged. Draft PR.
+- [ ] Not merged. Draft PR **#129**.
 
 ## 2026-10-08: Mega Zombie boss
 

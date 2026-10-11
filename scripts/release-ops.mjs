@@ -76,16 +76,22 @@ export async function resolveReleaseSource(source) {
   throw new Error(`release source has no ${BUNDLE_RELATIVE}: ${source}`);
 }
 
+const PACKAGE_NAME = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 export function packageNameFromSpecifier(spec) {
   if (typeof spec !== 'string' || spec === '') return null;
   if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:') || spec.startsWith('file:')) return null;
+  let name;
   if (spec.startsWith('@')) {
-    const [scope, name] = spec.split('/');
-    if (!scope || !name) return null;
-    return `${scope}/${name}`;
+    const [scope, pkg] = spec.split('/');
+    if (!scope || !pkg) return null;
+    name = `${scope}/${pkg}`;
+  } else {
+    name = spec.split('/')[0] ?? '';
   }
-  const name = spec.split('/')[0];
-  return name || null;
+  // Template text such as `from '${name}'` is not an import specifier.
+  if (!PACKAGE_NAME.test(name)) return null;
+  return name;
 }
 
 export function externalPackageNames(source) {

@@ -7,7 +7,7 @@
 - `FC_DB_POOL_MAX` по умолчанию 4, диапазон 1..8. `dev` и `prod` задаются явно, не из hostname. В лог и `/status` не попадают URL, пользователь и пароль.
 - Первая миграция: `schema_migrations`, append-only `admin_audit_log`, `idempotency_requests`. Несколько процессов сериализуются session advisory lock. Checksum SHA-256. Правка уже применённой миграции валит старт.
 - Релиз копирует runtime-замыкание `ws` и `pg` по `dependencies` манифестов. `npm install` на VPS по-прежнему не нужен. Миры в релиз не входят.
-- Обычный Vitest не требует PostgreSQL. Реальный прогон — только при `FC_TEST_DATABASE_URL`, в отдельной схеме. Подробности: `docs/POSTGRESQL.md`.
+- Обычный Vitest не требует PostgreSQL. Реальный прогон — только при `FC_TEST_DATABASE_URL`, в отдельной схеме. Локальный прогон 2026-10-11 против `fc_foundation_test` прошёл (11 тестов). Подробности: `docs/POSTGRESQL.md`, `docs/reports/2026-10-11_postgres-audit-idempotency-foundation.md`.
 
 ## Последний проход: лут Мега-зомби — 2026-10-10
 
