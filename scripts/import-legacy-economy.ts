@@ -1,8 +1,8 @@
 /**
  * One-shot legacy JSON balance import. Not run on server startup.
  *
- *   FC_DATABASE_URL=... FC_DEPLOYMENT_ID=dev npm run economy:import -- --dry-run balances.json
- *   FC_DATABASE_URL=... FC_DEPLOYMENT_ID=dev npm run economy:import -- --apply balances.json --batch <uuid>
+ *   FC_DATABASE_URL=... FC_DEPLOYMENT_ID=dev npm run economy:import -- --dry-run --file balances.json --scope anarchy
+ *   FC_DATABASE_URL=... FC_DEPLOYMENT_ID=dev npm run economy:import -- --apply --file balances.json --scope anarchy --batch <uuid>
  *
  * The file is `{ "players": [{ "playerId", "name"|"displayName", "balance" }] }`
  * or a bare array of those accounts. `--apply` without `--batch` refuses to run.
@@ -40,24 +40,34 @@ function readAccounts(path: string): EconomyJsonImportAccount[] {
   });
 }
 
+const GAMEPLAY_SCOPES = new Set(['anarchy', 'survival', 'peaceful']);
 const dryRun = process.argv.includes('--dry-run');
 const apply = process.argv.includes('--apply');
 const file = arg('--file');
-if (!file || dryRun === apply) {
-  console.error('Usage: npm run economy:import -- --dry-run --file <balances.json>');
-  console.error('       npm run economy:import -- --apply --file <balances.json> --batch <uuid>');
+const scope = arg('--scope');
+if (!file || dryRun === apply || !scope || !GAMEPLAY_SCOPES.has(scope)) {
+  console.error('Usage: npm run economy:import -- --dry-run --file <balances.json> --scope anarchy|survival|peaceful');
+  console.error('       npm run economy:import -- --apply --file <balances.json> --scope anarchy|survival|peaceful --batch <uuid>');
   process.exit(1);
 }
 
+const deploymentIdForReport = process.env.FC_DEPLOYMENT_ID?.trim() || null;
 const inspected = inspectLegacyBalances(readAccounts(file));
-if (inspected.issues.invalidPlayers.length > 0 || inspected.issues.duplicatePlayers.length > 0) {
-  console.error(JSON.stringify({ ...planLegacyImport([]), ...inspected.issues, applied: false }, null, 2));
-  process.exit(1);
-}
 const batch = arg('--batch') ?? (dryRun ? randomUUID() : '');
 const plan = planLegacyImport(inspected.accounts, batch || randomUUID());
+const report = {
+  deploymentId: deploymentIdForReport,
+  economyScope: scope,
+  ...plan,
+  invalidPlayers: inspected.issues.invalidPlayers,
+  duplicatePlayers: inspected.issues.duplicatePlayers,
+};
+if (inspected.issues.invalidPlayers.length > 0 || inspected.issues.duplicatePlayers.length > 0) {
+  console.error(JSON.stringify({ ...report, applied: false }, null, 2));
+  process.exit(1);
+}
 if (!apply) {
-  console.log(JSON.stringify(plan, null, 2));
+  console.log(JSON.stringify(report, null, 2));
   process.exit(0);
 }
 if (!arg('--batch')) {
@@ -74,7 +84,7 @@ if (!url || !deploymentId) {
 const database = new PostgresDatabase({ url, deploymentId, poolMax: 2 });
 await database.start();
 try {
-  const megacoin = new MegacoinService(database, deploymentId);
+  const megacoin = new MegacoinService(database, deploymentId, scope);
   const applied = await applyLegacyBalanceImport(megacoin, inspected.accounts, arg('--batch')!);
   console.log(JSON.stringify(applied, null, 2));
 } finally {

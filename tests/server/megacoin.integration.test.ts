@@ -72,7 +72,7 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
     schema = await makeSchema();
     database = open(schema);
     await database.start();
-    economy = new MegacoinService(database, 'dev');
+    economy = new MegacoinService(database, 'dev', 'anarchy');
   }, 30_000);
 
   afterAll(async () => {
@@ -91,7 +91,7 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
   }, 30_000);
 
   it('applies migration 0003 once and keeps checksum protection', async () => {
-    expect(database.appliedMigrations).toEqual(['0001', '0002', '0003']);
+    expect(database.appliedMigrations).toEqual(['0001', '0002', '0003', '0004']);
     const again = open(schema);
     await again.start();
     expect(again.appliedMigrations).toEqual([]);
@@ -102,6 +102,7 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
       '0001:admin_audit_and_idempotency',
       '0002:admin_audit_request_attempts',
       '0003:megacoin_ledger',
+      '0004:gameplay_economy_scope',
     ]);
     const fresh = await makeSchema();
     const first = open(fresh);
@@ -258,8 +259,8 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
     );
     await expect(database.query(
       `INSERT INTO economy_ledger (
-        entry_id, deployment_id, operation_id, leg_index, player_id, delta, balance_before, balance_after, reason
-      ) VALUES ($1::uuid, 'dev', $2::uuid, 1, $3, 0, 100, 100, 'OTHER')`,
+        entry_id, deployment_id, economy_scope, operation_id, leg_index, player_id, delta, balance_before, balance_after, reason
+      ) VALUES ($1::uuid, 'dev', 'anarchy', $2::uuid, 1, $3, 0, 100, 100, 'OTHER')`,
       [randomUUID(), initial.rows[0]?.operation_id, ada.playerId],
     )).rejects.toThrow(/delta|check/i);
     expect(await economy.getBalance(ada.playerId)).toBe(100);

@@ -253,6 +253,84 @@ BEFORE TRUNCATE ON economy_operations
 FOR EACH STATEMENT
 EXECUTE PROCEDURE economy_reject_mutation()`;
 
+/**
+ * Gameplay Megacoins are one wallet per server mode.
+ * Rows written before this migration have no mode, so they stay in `legacy_global`.
+ * Adding the column with a constant default does not rewrite rows and does not
+ * fire the append-only triggers. No balance is minted or deleted.
+ */
+const ECONOMY_SCOPE_CHECK = `IN ('anarchy', 'survival', 'peaceful', 'legacy_global')`;
+
+const ECONOMY_ACCOUNTS_ADD_SCOPE_SQL = `ALTER TABLE economy_accounts
+  ADD COLUMN economy_scope TEXT NOT NULL DEFAULT 'legacy_global'`;
+
+const ECONOMY_ACCOUNTS_DROP_SCOPE_DEFAULT_SQL = `ALTER TABLE economy_accounts
+  ALTER COLUMN economy_scope DROP DEFAULT`;
+
+const ECONOMY_ACCOUNTS_SCOPE_CHECK_SQL = `ALTER TABLE economy_accounts
+  ADD CONSTRAINT economy_accounts_scope_check CHECK (economy_scope ${ECONOMY_SCOPE_CHECK})`;
+
+const ECONOMY_ACCOUNTS_DROP_PKEY_SQL = `ALTER TABLE economy_accounts
+  DROP CONSTRAINT economy_accounts_pkey`;
+
+const ECONOMY_ACCOUNTS_ADD_PKEY_SQL = `ALTER TABLE economy_accounts
+  ADD PRIMARY KEY (deployment_id, economy_scope, player_id)`;
+
+const ECONOMY_OPERATIONS_ADD_SCOPE_SQL = `ALTER TABLE economy_operations
+  ADD COLUMN economy_scope TEXT NOT NULL DEFAULT 'legacy_global'`;
+
+const ECONOMY_OPERATIONS_DROP_SCOPE_DEFAULT_SQL = `ALTER TABLE economy_operations
+  ALTER COLUMN economy_scope DROP DEFAULT`;
+
+const ECONOMY_OPERATIONS_SCOPE_CHECK_SQL = `ALTER TABLE economy_operations
+  ADD CONSTRAINT economy_operations_scope_check CHECK (economy_scope ${ECONOMY_SCOPE_CHECK})`;
+
+const ECONOMY_LEDGER_DROP_OPERATION_FK_SQL = `ALTER TABLE economy_ledger
+  DROP CONSTRAINT economy_ledger_operation_fk`;
+
+const ECONOMY_OPERATIONS_DROP_PKEY_SQL = `ALTER TABLE economy_operations
+  DROP CONSTRAINT economy_operations_pkey`;
+
+const ECONOMY_OPERATIONS_ADD_PKEY_SQL = `ALTER TABLE economy_operations
+  ADD PRIMARY KEY (deployment_id, economy_scope, operation_id)`;
+
+const ECONOMY_OPERATIONS_DROP_SOURCE_INDEX_SQL = `DROP INDEX economy_operations_source_uidx`;
+
+const ECONOMY_OPERATIONS_SOURCE_SCOPE_INDEX_SQL = `CREATE UNIQUE INDEX economy_operations_source_uidx
+  ON economy_operations (deployment_id, economy_scope, source_type, source_id)
+  WHERE source_type IS NOT NULL AND source_id IS NOT NULL`;
+
+const ECONOMY_OPERATIONS_DROP_REQUEST_INDEX_SQL = `DROP INDEX economy_operations_request_idx`;
+
+const ECONOMY_OPERATIONS_REQUEST_SCOPE_INDEX_SQL = `CREATE INDEX economy_operations_request_idx
+  ON economy_operations (deployment_id, economy_scope, request_id)
+  WHERE request_id IS NOT NULL`;
+
+const ECONOMY_LEDGER_ADD_SCOPE_SQL = `ALTER TABLE economy_ledger
+  ADD COLUMN economy_scope TEXT NOT NULL DEFAULT 'legacy_global'`;
+
+const ECONOMY_LEDGER_DROP_SCOPE_DEFAULT_SQL = `ALTER TABLE economy_ledger
+  ALTER COLUMN economy_scope DROP DEFAULT`;
+
+const ECONOMY_LEDGER_SCOPE_CHECK_SQL = `ALTER TABLE economy_ledger
+  ADD CONSTRAINT economy_ledger_scope_check CHECK (economy_scope ${ECONOMY_SCOPE_CHECK})`;
+
+const ECONOMY_LEDGER_DROP_LEG_UNIQUE_SQL = `ALTER TABLE economy_ledger
+  DROP CONSTRAINT economy_ledger_leg_unique`;
+
+const ECONOMY_LEDGER_ADD_LEG_UNIQUE_SQL = `ALTER TABLE economy_ledger
+  ADD CONSTRAINT economy_ledger_leg_unique UNIQUE (deployment_id, economy_scope, operation_id, leg_index)`;
+
+const ECONOMY_LEDGER_ADD_OPERATION_FK_SQL = `ALTER TABLE economy_ledger
+  ADD CONSTRAINT economy_ledger_operation_fk
+  FOREIGN KEY (deployment_id, economy_scope, operation_id)
+  REFERENCES economy_operations (deployment_id, economy_scope, operation_id)`;
+
+const ECONOMY_LEDGER_DROP_PLAYER_INDEX_SQL = `DROP INDEX economy_ledger_player_created_idx`;
+
+const ECONOMY_LEDGER_PLAYER_SCOPE_INDEX_SQL = `CREATE INDEX economy_ledger_player_created_idx
+  ON economy_ledger (deployment_id, economy_scope, player_id, created_at DESC, entry_id DESC)`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -292,6 +370,35 @@ export const MIGRATIONS: readonly Migration[] = [
       ECONOMY_OPERATIONS_UPDATE_TRIGGER_SQL,
       ECONOMY_OPERATIONS_DELETE_TRIGGER_SQL,
       ECONOMY_OPERATIONS_TRUNCATE_TRIGGER_SQL,
+    ],
+  },
+  {
+    version: '0004',
+    name: 'gameplay_economy_scope',
+    statements: [
+      ECONOMY_ACCOUNTS_ADD_SCOPE_SQL,
+      ECONOMY_ACCOUNTS_DROP_SCOPE_DEFAULT_SQL,
+      ECONOMY_ACCOUNTS_SCOPE_CHECK_SQL,
+      ECONOMY_ACCOUNTS_DROP_PKEY_SQL,
+      ECONOMY_ACCOUNTS_ADD_PKEY_SQL,
+      ECONOMY_OPERATIONS_ADD_SCOPE_SQL,
+      ECONOMY_OPERATIONS_DROP_SCOPE_DEFAULT_SQL,
+      ECONOMY_OPERATIONS_SCOPE_CHECK_SQL,
+      ECONOMY_LEDGER_DROP_OPERATION_FK_SQL,
+      ECONOMY_OPERATIONS_DROP_PKEY_SQL,
+      ECONOMY_OPERATIONS_ADD_PKEY_SQL,
+      ECONOMY_OPERATIONS_DROP_SOURCE_INDEX_SQL,
+      ECONOMY_OPERATIONS_SOURCE_SCOPE_INDEX_SQL,
+      ECONOMY_OPERATIONS_DROP_REQUEST_INDEX_SQL,
+      ECONOMY_OPERATIONS_REQUEST_SCOPE_INDEX_SQL,
+      ECONOMY_LEDGER_ADD_SCOPE_SQL,
+      ECONOMY_LEDGER_DROP_SCOPE_DEFAULT_SQL,
+      ECONOMY_LEDGER_SCOPE_CHECK_SQL,
+      ECONOMY_LEDGER_DROP_LEG_UNIQUE_SQL,
+      ECONOMY_LEDGER_ADD_LEG_UNIQUE_SQL,
+      ECONOMY_LEDGER_ADD_OPERATION_FK_SQL,
+      ECONOMY_LEDGER_DROP_PLAYER_INDEX_SQL,
+      ECONOMY_LEDGER_PLAYER_SCOPE_INDEX_SQL,
     ],
   },
 ];

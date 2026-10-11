@@ -32,67 +32,67 @@ import {
 } from './types';
 
 const INSERT_ACCOUNT_SQL = `INSERT INTO economy_accounts (
-  deployment_id, player_id, balance, display_name
-) VALUES ($1, $2, $3, $4)
-ON CONFLICT (deployment_id, player_id) DO NOTHING
+  deployment_id, economy_scope, player_id, balance, display_name
+) VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (deployment_id, economy_scope, player_id) DO NOTHING
 RETURNING player_id`;
 
 const LOCK_ACCOUNT_SQL = `SELECT player_id, balance::text AS balance, display_name, created_at, updated_at
 FROM economy_accounts
-WHERE deployment_id = $1 AND player_id = $2
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3
 FOR UPDATE`;
 
 const READ_ACCOUNT_SQL = `SELECT player_id, balance::text AS balance, display_name, created_at, updated_at
 FROM economy_accounts
-WHERE deployment_id = $1 AND player_id = $2`;
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3`;
 
 const UPDATE_BALANCE_SQL = `UPDATE economy_accounts
-SET balance = $3, updated_at = NOW()
-WHERE deployment_id = $1 AND player_id = $2
+SET balance = $4, updated_at = NOW()
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3
 RETURNING player_id, balance::text AS balance, display_name, created_at, updated_at`;
 
 const UPDATE_NAME_SQL = `UPDATE economy_accounts
-SET display_name = $3, updated_at = NOW()
-WHERE deployment_id = $1 AND player_id = $2
+SET display_name = $4, updated_at = NOW()
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3
 RETURNING player_id, balance::text AS balance, display_name, created_at, updated_at`;
 
 const LIST_TOP_SQL = `SELECT player_id, balance::text AS balance, display_name, created_at, updated_at
 FROM economy_accounts
-WHERE deployment_id = $1
+WHERE deployment_id = $1 AND economy_scope = $2
 ORDER BY balance DESC, display_name ASC, player_id ASC
-LIMIT $2`;
+LIMIT $3`;
 
 const INSERT_OPERATION_SQL = `INSERT INTO economy_operations (
-  deployment_id, operation_id, kind, actor_id, source_type, source_id, request_id, metadata
-) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::uuid, $8::jsonb)
+  deployment_id, economy_scope, operation_id, kind, actor_id, source_type, source_id, request_id, metadata
+) VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8::uuid, $9::jsonb)
 RETURNING operation_id`;
 
 const INSERT_SOURCED_OPERATION_SQL = `INSERT INTO economy_operations (
-  deployment_id, operation_id, kind, actor_id, source_type, source_id, request_id, metadata
-) VALUES ($1, $2::uuid, $3, $4, $5, $6, $7::uuid, $8::jsonb)
-ON CONFLICT (deployment_id, source_type, source_id)
+  deployment_id, economy_scope, operation_id, kind, actor_id, source_type, source_id, request_id, metadata
+) VALUES ($1, $2, $3::uuid, $4, $5, $6, $7, $8::uuid, $9::jsonb)
+ON CONFLICT (deployment_id, economy_scope, source_type, source_id)
 WHERE source_type IS NOT NULL AND source_id IS NOT NULL
 DO NOTHING
 RETURNING operation_id`;
 
 const INSERT_LEG_SQL = `INSERT INTO economy_ledger (
-  entry_id, deployment_id, operation_id, leg_index, player_id,
+  entry_id, deployment_id, economy_scope, operation_id, leg_index, player_id,
   delta, balance_before, balance_after, reason, counterparty_player_id
-) VALUES ($1::uuid, $2, $3::uuid, $4, $5, $6, $7, $8, $9, $10)`;
+) VALUES ($1::uuid, $2, $3, $4::uuid, $5, $6, $7, $8, $9, $10, $11)`;
 
 const READ_OPERATION_SQL = `SELECT operation_id, kind, actor_id, source_type, source_id, request_id, metadata, created_at
 FROM economy_operations
-WHERE deployment_id = $1 AND operation_id = $2::uuid`;
+WHERE deployment_id = $1 AND economy_scope = $2 AND operation_id = $3::uuid`;
 
 const READ_SOURCE_SQL = `SELECT operation_id, kind, actor_id, source_type, source_id, request_id, metadata, created_at
 FROM economy_operations
-WHERE deployment_id = $1 AND source_type = $2 AND source_id = $3`;
+WHERE deployment_id = $1 AND economy_scope = $2 AND source_type = $3 AND source_id = $4`;
 
 const READ_REQUEST_SQL = `SELECT operation_id
 FROM economy_operations
-WHERE deployment_id = $1 AND request_id = $2::uuid
+WHERE deployment_id = $1 AND economy_scope = $2 AND request_id = $3::uuid
 ORDER BY created_at ASC, operation_id ASC
-LIMIT $3`;
+LIMIT $4`;
 
 const LEDGER_TIME_SQL = `to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"."US"Z"')`;
 
@@ -100,30 +100,30 @@ const READ_LEGS_SQL = `SELECT entry_id, operation_id, leg_index, player_id, delt
   balance_before::text AS balance_before, balance_after::text AS balance_after,
   reason, counterparty_player_id, ${LEDGER_TIME_SQL} AS created_at
 FROM economy_ledger
-WHERE deployment_id = $1 AND operation_id = $2::uuid
+WHERE deployment_id = $1 AND economy_scope = $2 AND operation_id = $3::uuid
 ORDER BY leg_index ASC`;
 
 const HISTORY_BEFORE_SQL = `SELECT entry_id, operation_id, leg_index, player_id, delta::text AS delta,
   balance_before::text AS balance_before, balance_after::text AS balance_after,
   reason, counterparty_player_id, ${LEDGER_TIME_SQL} AS created_at
 FROM economy_ledger
-WHERE deployment_id = $1 AND player_id = $2
-  AND ($3::timestamptz IS NULL OR (created_at, entry_id) < ($3::timestamptz, $4::uuid))
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3
+  AND ($4::timestamptz IS NULL OR (created_at, entry_id) < ($4::timestamptz, $5::uuid))
 ORDER BY created_at DESC, entry_id DESC
-LIMIT $5`;
+LIMIT $6`;
 
 const HISTORY_AFTER_SQL = `SELECT entry_id, operation_id, leg_index, player_id, delta::text AS delta,
   balance_before::text AS balance_before, balance_after::text AS balance_after,
   reason, counterparty_player_id, ${LEDGER_TIME_SQL} AS created_at
 FROM economy_ledger
-WHERE deployment_id = $1 AND player_id = $2
-  AND (created_at, entry_id) > ($3::timestamptz, $4::uuid)
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3
+  AND (created_at, entry_id) > ($4::timestamptz, $5::uuid)
 ORDER BY created_at ASC, entry_id ASC
-LIMIT $5`;
+LIMIT $6`;
 
 const RECONCILE_SUM_SQL = `SELECT COALESCE(SUM(delta), 0)::text AS total
 FROM economy_ledger
-WHERE deployment_id = $1 AND player_id = $2`;
+WHERE deployment_id = $1 AND economy_scope = $2 AND player_id = $3`;
 
 interface AccountRow {
   player_id: string;
@@ -175,7 +175,10 @@ interface OperationInsert {
 }
 
 export class PostgresEconomyRepository implements EconomyRepository {
-  constructor(private readonly deploymentId: string) {}
+  constructor(
+    private readonly deploymentId: string,
+    private readonly economyScope: string,
+  ) {}
 
   async ensureAccount(tx: Queryable, input: EnsureAccountInput): Promise<EconomyAccount> {
     const account = await this.lockAccount(tx, input.playerId, input.displayName);
@@ -184,7 +187,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   async getAccount(tx: Queryable, playerId: string): Promise<EconomyAccount | null> {
-    const result = await tx.query<AccountRow>(READ_ACCOUNT_SQL, [this.deploymentId, playerId]);
+    const result = await tx.query<AccountRow>(READ_ACCOUNT_SQL, [this.deploymentId, this.economyScope, playerId]);
     const row = result.rows[0];
     return row ? mapAccount(row, this.deploymentId) : null;
   }
@@ -359,7 +362,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   async listTop(tx: Queryable, limit: number): Promise<readonly EconomyAccount[]> {
-    const result = await tx.query<AccountRow>(LIST_TOP_SQL, [this.deploymentId, limit]);
+    const result = await tx.query<AccountRow>(LIST_TOP_SQL, [this.deploymentId, this.economyScope, limit]);
     return result.rows.map((row) => mapAccount(row, this.deploymentId));
   }
 
@@ -424,8 +427,8 @@ export class PostgresEconomyRepository implements EconomyRepository {
   async history(tx: Queryable, query: EconomyHistoryQuery): Promise<EconomyHistoryPage> {
     const limit = query.limit ?? ECONOMY_HISTORY_DEFAULT_LIMIT;
     const params = query.after
-      ? [this.deploymentId, query.playerId, query.after.createdAt, query.after.entryId, limit + 1]
-      : [this.deploymentId, query.playerId, query.before?.createdAt ?? null, query.before?.entryId ?? null, limit + 1];
+      ? [this.deploymentId, this.economyScope, query.playerId, query.after.createdAt, query.after.entryId, limit + 1]
+      : [this.deploymentId, this.economyScope, query.playerId, query.before?.createdAt ?? null, query.before?.entryId ?? null, limit + 1];
     const result = await tx.query<LegRow>(query.after ? HISTORY_AFTER_SQL : HISTORY_BEFORE_SQL, params);
     const page = result.rows.slice(0, limit).map(mapLeg);
     const last = page[page.length - 1];
@@ -439,14 +442,14 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   async getOperation(tx: Queryable, operationId: string): Promise<EconomyOperationView | null> {
-    const result = await tx.query<OperationRow>(READ_OPERATION_SQL, [this.deploymentId, operationId]);
+    const result = await tx.query<OperationRow>(READ_OPERATION_SQL, [this.deploymentId, this.economyScope, operationId]);
     const row = result.rows[0];
     if (!row) return null;
     return this.withLegs(tx, row);
   }
 
   async findBySource(tx: Queryable, sourceType: string, sourceId: string): Promise<EconomyOperationView | null> {
-    const result = await tx.query<OperationRow>(READ_SOURCE_SQL, [this.deploymentId, sourceType, sourceId]);
+    const result = await tx.query<OperationRow>(READ_SOURCE_SQL, [this.deploymentId, this.economyScope, sourceType, sourceId]);
     const row = result.rows[0];
     if (!row) return null;
     return this.withLegs(tx, row);
@@ -455,6 +458,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
   async listByRequestId(tx: Queryable, requestId: string): Promise<readonly EconomyOperationView[]> {
     const result = await tx.query<{ operation_id: string }>(READ_REQUEST_SQL, [
       this.deploymentId,
+      this.economyScope,
       requestId,
       ECONOMY_REQUEST_LOOKUP_LIMIT + 1,
     ]);
@@ -470,10 +474,10 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   async reconcile(tx: Queryable, playerId: string): Promise<EconomyReconciliation> {
-    const locked = await tx.query<AccountRow>(LOCK_ACCOUNT_SQL, [this.deploymentId, playerId]);
+    const locked = await tx.query<AccountRow>(LOCK_ACCOUNT_SQL, [this.deploymentId, this.economyScope, playerId]);
     const account = locked.rows[0];
     if (!account) throw new EconomyAccountNotFoundError();
-    const sum = await tx.query<{ total: string }>(RECONCILE_SUM_SQL, [this.deploymentId, playerId]);
+    const sum = await tx.query<{ total: string }>(RECONCILE_SUM_SQL, [this.deploymentId, this.economyScope, playerId]);
     const balance = parseInteger(account.balance, 'balance');
     const ledgerTotal = parseInteger(sum.rows[0]?.total ?? '0', 'ledger total');
     return { playerId, balance, ledgerTotal, matches: balance === ledgerTotal };
@@ -525,11 +529,12 @@ export class PostgresEconomyRepository implements EconomyRepository {
   private async lockAccount(tx: Queryable, playerId: string, displayName: string): Promise<EconomyAccount> {
     const inserted = await tx.query(INSERT_ACCOUNT_SQL, [
       this.deploymentId,
+      this.economyScope,
       playerId,
       ECONOMY_INITIAL_BALANCE,
       displayName,
     ]);
-    const locked = await tx.query<AccountRow>(LOCK_ACCOUNT_SQL, [this.deploymentId, playerId]);
+    const locked = await tx.query<AccountRow>(LOCK_ACCOUNT_SQL, [this.deploymentId, this.economyScope, playerId]);
     const row = locked.rows[0];
     if (!row) throw new EconomyValidationError('account missing after insert');
     if (inserted.rows.length > 0) await this.writeInitial(tx, playerId);
@@ -562,6 +567,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
   private async insertOperation(tx: Queryable, input: OperationInsert): Promise<boolean> {
     const params = [
       this.deploymentId,
+      this.economyScope,
       input.operationId,
       input.kind,
       input.actorId,
@@ -589,6 +595,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
     await tx.query(INSERT_LEG_SQL, [
       randomUUID(),
       this.deploymentId,
+      this.economyScope,
       operationId,
       legIndex,
       playerId,
@@ -601,14 +608,14 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   private async rename(tx: Queryable, playerId: string, displayName: string): Promise<EconomyAccount> {
-    const result = await tx.query<AccountRow>(UPDATE_NAME_SQL, [this.deploymentId, playerId, displayName]);
+    const result = await tx.query<AccountRow>(UPDATE_NAME_SQL, [this.deploymentId, this.economyScope, playerId, displayName]);
     const row = result.rows[0];
     if (!row) throw new EconomyAccountNotFoundError();
     return mapAccount(row, this.deploymentId);
   }
 
   private async updateBalance(tx: Queryable, playerId: string, balance: number): Promise<EconomyAccount> {
-    const result = await tx.query<AccountRow>(UPDATE_BALANCE_SQL, [this.deploymentId, playerId, balance]);
+    const result = await tx.query<AccountRow>(UPDATE_BALANCE_SQL, [this.deploymentId, this.economyScope, playerId, balance]);
     const row = result.rows[0];
     if (!row) throw new EconomyValidationError('account update missed');
     return mapAccount(row, this.deploymentId);
@@ -634,7 +641,7 @@ export class PostgresEconomyRepository implements EconomyRepository {
   }
 
   private async withLegs(tx: Queryable, row: OperationRow): Promise<EconomyOperationView> {
-    const legs = await tx.query<LegRow>(READ_LEGS_SQL, [this.deploymentId, row.operation_id]);
+    const legs = await tx.query<LegRow>(READ_LEGS_SQL, [this.deploymentId, this.economyScope, row.operation_id]);
     return mapOperation(row, legs.rows.map(mapLeg));
   }
 }

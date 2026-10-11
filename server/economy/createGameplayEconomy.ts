@@ -23,7 +23,7 @@ export function createGameplayEconomy(
     throw new Error('FC_ECONOMY_BACKEND=postgres requires a configured database.');
   }
   return new PostgresGameplayEconomy(
-    new MegacoinService(database, config.database.deploymentId),
+    new MegacoinService(database, config.database.deploymentId, config.serverMode),
     new IdempotencyService(database, config.database.deploymentId),
     placed,
     new KillStatistics(store),

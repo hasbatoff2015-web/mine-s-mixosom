@@ -27,24 +27,37 @@ import {
 const REASON_TEXT = /^[A-Z][A-Z0-9_]{0,63}$/;
 const METADATA_LIMIT = 65_536;
 
+/** Ordinary gameplay wallets. `legacy_global` is migration history, not a server mode. */
+export const GAMEPLAY_ECONOMY_SCOPES = ['anarchy', 'survival', 'peaceful'] as const;
+export type GameplayEconomyScope = (typeof GAMEPLAY_ECONOMY_SCOPES)[number];
+
+export function parseGameplayEconomyScope(value: string): GameplayEconomyScope {
+  const scope = value.trim();
+  if (scope === 'anarchy' || scope === 'survival' || scope === 'peaceful') return scope;
+  throw new EconomyValidationError('economy scope must be anarchy, survival, or peaceful');
+}
+
 /**
- * PostgreSQL Megacoin core. Gameplay still uses the synchronous JSON
- * `EconomyService`. This class is not called from rewards, auction, trade,
- * clans, or the buyer.
+ * PostgreSQL Megacoin core for one deployment and one gameplay scope.
+ * Every read and write stays inside that scope. `legacy_global` is refused
+ * so a gameplay server cannot spend balances imported before scopes existed.
  *
  * Pass the `tx` from `IdempotencyService.execute` when a command should commit
  * the request row, the economic operation, and the ledger legs together.
  * Calling these methods without that wrapper still posts exactly one operation
  * per successful call. Source identity stops the same mob death or listing
- * from paying twice. Request identity does not.
+ * from paying twice inside this scope. The same source id in another scope
+ * is a different event. Request identity does not.
  */
 export class MegacoinService {
   readonly deploymentId: string;
+  readonly economyScope: GameplayEconomyScope;
   private readonly repository: EconomyRepository;
 
   constructor(
     private readonly database: Database,
     deploymentId: string,
+    economyScope: string,
     repository?: EconomyRepository,
   ) {
     const id = deploymentId.trim();
@@ -53,7 +66,8 @@ export class MegacoinService {
       throw new EconomyValidationError('deployment id does not match the database');
     }
     this.deploymentId = id;
-    this.repository = repository ?? new PostgresEconomyRepository(id);
+    this.economyScope = parseGameplayEconomyScope(economyScope);
+    this.repository = repository ?? new PostgresEconomyRepository(id, this.economyScope);
   }
 
   async ensureAccount(input: EnsureAccountInput, tx?: Queryable): Promise<EconomyAccount> {

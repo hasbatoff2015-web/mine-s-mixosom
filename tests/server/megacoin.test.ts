@@ -9,7 +9,7 @@ import { ECONOMY_INITIAL_BALANCE, ECONOMY_MAX_BALANCE, EconomyService } from '..
 
 describe('megacoin core without PostgreSQL', () => {
   it('fails closed when the database is disabled and does not mint a balance', async () => {
-    const service = new MegacoinService(new DisabledDatabase(), 'dev');
+    const service = new MegacoinService(new DisabledDatabase(), 'dev', 'anarchy');
     await expect(service.ensureAccount({ playerId: 'ada', displayName: 'Ada' })).rejects.toBeInstanceOf(DatabaseDisabledError);
     await expect(service.getBalance('ada')).rejects.toBeInstanceOf(DatabaseDisabledError);
     await expect(service.credit({
@@ -19,8 +19,13 @@ describe('megacoin core without PostgreSQL', () => {
     })).rejects.toBeInstanceOf(DatabaseDisabledError);
   });
 
+  it('refuses the migration legacy scope as a gameplay wallet', () => {
+    expect(() => new MegacoinService(new DisabledDatabase(), 'dev', 'legacy_global')).toThrow(EconomyValidationError);
+    expect(() => new MegacoinService(new DisabledDatabase(), 'dev', 'hostname')).toThrow(EconomyValidationError);
+  });
+
   it('rejects floating-point money before any database call', async () => {
-    const service = new MegacoinService(new DisabledDatabase(), 'dev');
+    const service = new MegacoinService(new DisabledDatabase(), 'dev', 'anarchy');
     await expect(service.credit({
       playerId: 'ada',
       amount: 1.5,

@@ -8,8 +8,9 @@
  *
  * Operation identity is `economy_operations.operation_id`. One row is one
  * economic event (an initial grant, a source, a transfer, a sink, or an
- * adjustment). Source identity `(deployment_id, source_type, source_id)` makes
- * the same automatic reward, such as one mob death, post at most once.
+ * adjustment). Source identity `(deployment_id, economy_scope, source_type, source_id)`
+ * makes the same automatic reward, such as one mob death, post at most once
+ * inside one gameplay mode. Anarchy and Survival may reuse a source id.
  *
  * Ledger identity is `economy_ledger.entry_id`. A transfer has one operation
  * and two ledger legs. Corrections are new operations. Ledger rows are not edited.
