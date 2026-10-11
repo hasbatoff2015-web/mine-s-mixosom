@@ -11,7 +11,7 @@ These stay on the current filesystem snapshot, under `dataDir/<worldId>/`:
 - player world snapshots
 - `world.json`, `players.json`, `meta.json`
 
-Plugin JSON stays in `dataDir/<worldId>/plugin-data/` through `JsonFileStore`. Gameplay economy, auction, and trade still use that JSON. Trade still keeps offers in memory. Migration `0003` adds a Megacoin ledger that gameplay does not call yet. See "Megacoin ledger" below.
+Plugin JSON stays in `dataDir/<worldId>/plugin-data/` through `JsonFileStore`. Auction listings and buyer records still use that JSON. Trade offers stay in memory. In `postgres` mode the Megacoin balance does not. `WorldInstance` builds `MegacoinService` for `config.serverMode` and currency commands call it. See "Megacoin ledger" and "Currency authority" below.
 
 ## When it is disabled
 
@@ -29,7 +29,9 @@ A present URL without `FC_DEPLOYMENT_ID` is a startup error. If the URL is set a
 
 PostgreSQL startup runs before the world is loaded. A failure there, or any other failure before canonical world initialization finishes, does not write `meta.json`, `world.json`, or `players.json`. A world that did finish loading is still saved on shutdown, including after a failed port bind.
 
-Dev and prod need separate databases. Audit and idempotency rows also store `deployment_id`, so a shared database still does not mix the two scopes. Do not point a dev process at the prod database.
+`FC_DEPLOYMENT_ID` is the environment (`dev` or `prod`). It is not the game mode. Gameplay Megacoins also store `economy_scope`, which is `ServerConfig.serverMode`: `anarchy`, `survival`, or `peaceful`. The same player in prod therefore has three wallets. A world directory, hostname, port, or display name is not that identity. Resetting the map does not reset the wallet.
+
+Dev and prod need separate databases. Do not point a dev process at the prod database.
 
 Three game processes can run at once. The default pool of 4 is 12 connections. The clamp of 8 is 24. Size the database for that, not for one process.
 
@@ -51,17 +53,21 @@ Idempotency claims a request, runs the callback, and stores the response in that
 
 Migration `0003` (`megacoin_ledger`) adds three tables. `0001` and `0002` are unchanged. The same advisory lock, checksum, and per-migration transaction apply.
 
-`economy_accounts` is one balance per `(deployment_id, player_id)`. `balance` is `BIGINT`, from 0 through 999999999. There is no floating-point column.
+Migration `0004` (`gameplay_economy_scope`) adds `economy_scope` to accounts, operations, and the ledger. `0001`, `0002`, and `0003` are not edited. The column is added `NOT NULL DEFAULT 'legacy_global'` and the default is then dropped, so existing rows stay in `legacy_global` without an `UPDATE` and without minting or deleting money. New gameplay inserts must name `anarchy`, `survival`, or `peaceful`. A gameplay `MegacoinService` refuses `legacy_global`.
 
-`economy_operations` is one economic event. `kind` is `INITIAL`, `SOURCE`, `TRANSFER`, `SINK`, or `ADJUSTMENT`. A partial unique index on `(deployment_id, source_type, source_id)` covers rows where both source columns are set, so one mob death or one admin adjustment id cannot post twice. `request_id` is indexed and is not unique.
+Current account identity is `(deployment_id, economy_scope, player_id)`. Source identity is `(deployment_id, economy_scope, source_type, source_id)`. Operation primary key is `(deployment_id, economy_scope, operation_id)`. Ledger legs reference that key and are unique on `(deployment_id, economy_scope, operation_id, leg_index)`. History, rankings, and reconciliation filter by the service scope. A transfer stays inside one scope.
 
-`economy_ledger` is one balance leg. `balance_after = balance_before + delta`, `delta <> 0`, and both balances stay inside the account range. `(deployment_id, operation_id, leg_index)` is unique. A transfer is one operation and two legs. Triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on the ledger and on operations. Application code has no method that edits a posted leg. A correction is a new `ADJUSTMENT`.
+`economy_accounts.balance` is `BIGINT`, from 0 through 999999999. There is no floating-point column.
 
-Creating an account inserts balance 100, one `INITIAL` operation, and one ledger leg of +100 in the same transaction. A repeated or concurrent create does not mint another 100.
+`economy_operations.kind` is `INITIAL`, `SOURCE`, `TRANSFER`, `SINK`, or `ADJUSTMENT`. `request_id` is indexed and is not unique.
 
-`MegacoinService` (`server/economy/`) is not constructed by `WorldInstance`. Credit, debit, transfer, and `setBalance` each use one transaction. A transfer locks the two player rows in JavaScript string order, so A→B and B→A take the same locks. `setBalance` appends the difference. If the requested balance is already current, it returns success and writes no leg. That no-op does not consume a source id. History is paged (`limit`, `before` or `after`) and is not capped in storage. Reconciliation returns `{ playerId, balance, ledgerTotal, matches }` and does not change rows.
+`economy_ledger` checks `balance_after = balance_before + delta` and `delta <> 0`. Triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on the ledger and on operations. Application code has no method that edits a posted leg. A correction is a new `ADJUSTMENT`.
 
-Three identities stay separate. `IdempotencyService` owns the request. `operation_id` owns the economic event. `entry_id` owns one ledger leg. Stage 2B can pass the transaction from `IdempotencyService.execute` into `MegacoinService` so the request row and the money move commit together. This pass does not do that wiring.
+Creating an account inserts balance 100, one `INITIAL` operation, and one ledger leg of +100 in the same transaction. A repeated or concurrent create in the same scope does not mint another 100. The same player can receive that opening grant once per scope.
+
+`createGameplayEconomy` constructs `MegacoinService` with the database, `FC_DEPLOYMENT_ID`, and `config.serverMode`. Credit, debit, transfer, and `setBalance` each use one transaction. A transfer locks the two player rows in JavaScript string order, so A→B and B→A take the same locks. `setBalance` appends the difference. If the requested balance is already current, it returns success and writes no leg. That no-op does not consume a source id. History is paged (`limit`, `before` or `after`) and is not capped in storage. Reconciliation returns `{ playerId, balance, ledgerTotal, matches }` and does not change rows.
+
+Three identities stay separate. `IdempotencyService` owns the request. `operation_id` owns the economic event. `entry_id` owns one ledger leg. Postgres gameplay commands that move money pass the transaction from `IdempotencyService.executeDetailed` into `MegacoinService`, so the request row and the money move commit together.
 
 `validateEconomyJsonImport` checks a future import list and writes nothing. No startup path reads `balances.json` into these tables.
 
@@ -75,13 +81,29 @@ In postgres mode the gameplay port is `PostgresGameplayEconomy`. Rewards, player
 
 A mob reward source is `economyInstanceId`, a UUID stored on the mob. Loading an old mob without one generates it once and the next save keeps it. A player-death source is `deathEventId`, created when health reaches 0 and cleared on respawn. A block-break source is a new UUID for that accepted break. Coordinates and `mob-1` are not sources.
 
-`clientRequestId` on chat and on auction, clan, buyer, and trade actions is the request identity. `IdempotencyService` stores it in the same transaction as the money movement. The economic source id is separate: the same mob death still pays once if a later request repeats it.
+Ordinary chat, browse, refresh, pagination, close, selection, and text edits do not need a request id. A client-originated money mutation does. In postgres mode the server rejects a missing or non-UUID `clientRequestId` before money moves for `/pay`, `/eco give`, `/eco take`, `/eco set`, `/eco reset`, buyer sell, auction buy, clan `confirm_create`, and a trade accept that would move money. It does not invent a request id for that packet. A trusted console command gets a new server-owned UUID. Replaying the same client UUID does not move money again. A new UUID is a new intent.
 
-Changing the nickname updates `economy_accounts.display_name` and `updated_at` only.
+The economic source id is separate. The same mob death still pays once inside one scope if a later request repeats it. The same source id in another scope is a different event.
 
-`npm run economy:import -- --dry-run --file balances.json` prints the plan and writes nothing. `--apply --file balances.json --batch <uuid>` creates the opening 100 and, when the legacy balance is not 100, one `LEGACY_IMPORT` adjustment. The same batch does not apply twice. It is not invoked on startup.
+An auction listing keeps the visible `ah-N` id and a server-owned `economySettlementId` (`crypto.randomUUID()` at create). Relist creates a new listing and a new UUID. An old listing file without the field gets one UUID on load, and that file is saved before a purchase can use it. The purchase source is `AUCTION_PURCHASE` / `economySettlementId`. A refund source is `AUCTION_REFUND` / the same UUID. The buyer id is not part of that source. A second buyer of a listing whose money already committed gets a conflict and does not receive the item. Repairing a listing that is still `ACTIVE` after that commit is Stage 2C.
 
-The simulation tick and inventory clicks do not query PostgreSQL. Event rewards are tracked promises. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool. That is not a claim that a crash between an item edit and a committed transfer is recoverable. That cross-domain window is Stage 2C. Reconciliation stays on demand and does not repair rows.
+Postgres join prepares the account before the player is published. `preparePlayer` ensures the account, loads the balance, applies the display name, and fills the cache. `playerJoin`, friend presence, buyer overflow, chunk streaming, and the welcome packet run after that. If PostgreSQL is down for that join, the attempt returns a generic temporary error, the player is not left connected, and the process stays up. Already connected players stay connected. Their later money mutations fail closed. No JSON wallet is consulted.
+
+Changing the nickname updates `economy_accounts.display_name` and `updated_at` only, and only in that scope.
+
+`npm run economy:import` requires `--scope anarchy|survival|peaceful`. `--dry-run --file balances.json --scope anarchy` prints deployment, scope, player count, total, min, max, invalid rows, duplicates, and the expected total, and writes nothing. `--apply` also requires `--batch <uuid>` and writes only that scope. The same batch does not apply twice inside the scope. It is not invoked on startup. It does not import into `legacy_global`.
+
+The simulation tick, movement, and inventory clicks do not query PostgreSQL. Event rewards are tracked promises. `track` consumes a rejection before the promise is stored, so a failed background reward is logged without database text and does not become an unhandled rejection. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool.
+
+Stage 2C is still open. This branch does not make these crash windows atomic:
+
+- auction money can commit before the listing JSON is marked sold
+- trade money is two transfers plus compensation, then items move
+- buyer money can commit before the held item is consumed
+- the clan fee can commit before the clan JSON is saved
+- a block reward can commit before the world snapshot that removes the block is saved; a new `rewardEventId` after restart can pay again
+
+Reconciliation stays on demand and does not repair rows.
 
 ## Release
 

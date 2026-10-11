@@ -1,6 +1,6 @@
 # PostgreSQL audit and idempotency foundation
 
-Stage 2A later added the Megacoin ledger in `docs/reports/2026-10-11_megacoin-ledger-foundation.md`. Gameplay still uses JSON `EconomyService`. This report is the earlier audit and idempotency pass.
+This report is the earlier audit and idempotency pass. Later passes added the Megacoin ledger, the postgres gameplay cutover, and economy scope. Current behavior is `docs/POSTGRESQL.md` and `docs/reports/2026-10-11_megacoin-stage2b-followup.md`.
 
 ## Goal
 

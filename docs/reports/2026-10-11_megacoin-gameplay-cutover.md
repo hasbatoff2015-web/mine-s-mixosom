@@ -1,5 +1,7 @@
 # Gameplay Megacoin cutover (Stage 2B)
 
+Partly superseded by `docs/reports/2026-10-11_megacoin-stage2b-followup.md`. Current auction source is `economySettlementId`, and a client money mutation requires a UUID. The notes below are this cutover pass.
+
 ## Goal
 
 Make PostgreSQL the only Megacoin authority when `FC_ECONOMY_BACKEND=postgres`, and fix two Stage 2A audit findings: economic source ids must not be runtime mob counters, and account display names must follow nicknames. Do not dual-write. Do not claim item-plus-money crash atomicity.
@@ -13,8 +15,8 @@ Unset `FC_ECONOMY_BACKEND` stays on the JSON `EconomyService`. `postgres` requir
 - `economyInstanceId` on mobs, persisted, generated once for old snapshots.
 - `deathEventId` on survival state for one death, cleared on respawn.
 - `rewardEventId` on an accepted player block break.
-- `clientRequestId` on chat and on auction, clan, buyer, and trade actions.
-- Auction settlement source is `listingId:buyerId`, so a different buyer is not a replay of the first payment.
+- This pass accepted an optional `clientRequestId` on chat and on auction, clan, buyer, and trade actions. The follow-up requires a UUID before a client money mutation.
+- This pass used auction source `listingId:buyerId`. The follow-up replaced that with one server-owned settlement UUID per listing.
 - Display-name update with no ledger row.
 - Explicit import: `npm run economy:import`.
 - Kill counts in postgres mode live in `economy/kills.json`.

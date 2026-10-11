@@ -1,5 +1,7 @@
 # Megacoin ledger foundation (Stage 2A)
 
+Historical pass. Gameplay postgres mode now uses this ledger, scoped by migration `0004`. Current behavior is `docs/POSTGRESQL.md` and `docs/reports/2026-10-11_megacoin-stage2b-followup.md`. The notes below describe the ledger-only pass, not the current server.
+
 ## Goal
 
 Stop the client from stamping one inventory intent twice, and add a PostgreSQL Megacoin account plus an immutable ledger. Do not switch gameplay onto that ledger.
@@ -8,7 +10,7 @@ Stop the client from stamping one inventory intent twice, and add a PostgreSQL M
 
 `GameUI.stampInventorySubmission` is the only production stamp. `Game.sendInventoryAction` forwards the stamped message. A remembered chest revision is not attached to inventory or crafting-table actions.
 
-Migration `0003` creates `economy_accounts`, `economy_operations`, and `economy_ledger`. `MegacoinService` can create an account, credit, debit, transfer, adjust, page history, and reconcile. The synchronous JSON `EconomyService` is still what rewards, auction, trade, clans, the buyer, and `/eco` call. There is no dual-write and no automatic import of JSON balances.
+Migration `0003` creates `economy_accounts`, `economy_operations`, and `economy_ledger`. `MegacoinService` can create an account, credit, debit, transfer, adjust, page history, and reconcile. At the end of this pass the synchronous JSON `EconomyService` was still what rewards, auction, trade, clans, the buyer, and `/eco` called. There was no dual-write and no automatic import of JSON balances.
 
 ## Implemented
 
@@ -30,7 +32,7 @@ Migration `0003` creates `economy_accounts`, `economy_operations`, and `economy_
 ## Architecture decisions
 
 - One stamp owner. The open window knows whether a container revision belongs on the message. Regenerating `requestId` in `Game.ts` was the bug.
-- Gameplay stays on `server/services/economy.ts`. The PostgreSQL core is not constructed from `WorldInstance`.
+- This pass left gameplay on `server/services/economy.ts` and did not construct the PostgreSQL core from `WorldInstance`. Later passes did.
 - No dual-write. Two authorities would make a failed second write ambiguous.
 - Ledger and operations are append-only in the database. Accounts are mutable because the balance is the current total, explained by the ledger.
 - A zero-delta set is success with `operation: null`. It is not an economic event.
@@ -68,7 +70,7 @@ The 26 full-suite failures match current `origin/main` `2dd09ee`. They include a
 
 ## Deferred
 
-Stage 2B: cut gameplay callers over, decide JSON balance import, and compose `IdempotencyService.execute` with `MegacoinService`. Auction, trade, buyer, clans, and PvP rewards stay on JSON until that pass. No admin HTTP.
+Stage 2B, later on this branch, cut gameplay callers over. This pass did not. No admin HTTP was added here.
 
 ## Next work
 

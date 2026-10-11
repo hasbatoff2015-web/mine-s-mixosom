@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: Stage 2B follow-up — 2026-10-11
+
+- Кошелёк геймплея — `(deployment_id, economy_scope, player_id)`. `deployment_id` — среда (`dev` / `prod`). `economy_scope` — `ServerConfig.serverMode`: `anarchy`, `survival` или `peaceful`. Один игрок в prod не делит обычные Мегакоины между режимами.
+- Миграция `0004` добавляет scope в счета, операции и ledger. Старые строки остаются в `legacy_global`. Игровой сервер этот scope не открывает. `0001`–`0003` не менялись. Миграция не минтит и не удаляет деньги.
+- Клиентское денежное действие в режиме postgres требует UUID: `/pay`, `/eco give|take|set|reset`, продажа скупщику, покупка на аукционе, `confirm_create` клана и финальный accept обмена, если есть деньги. Без UUID или с не-UUID движение отклоняется. Консоль получает свой серверный UUID.
+- У лота аукциона есть серверный `economySettlementId`. Источник покупки — `AUCTION_PURCHASE` и этот UUID. Повтор с другим покупателем после уже записанного источника — конфликт, предмет не выдаётся. Починка зависшего `ACTIVE` лота — Stage 2C.
+- Вход в postgres готовит счёт до `playerJoin`, чанков и welcome. Ошибка базы на входе отклоняет этот вход и не оставляет подключённого игрока. Процесс из-за одного входа не падает. Фоновый `track` потребляет отказ промиса.
+- Импорт: `npm run economy:import -- --scope anarchy|survival|peaceful`.
+- Stage 2C по-прежнему открыт: аукцион, обмен, скупщик, взнос клана и награда за блок против снимка мира. Подробности: `docs/reports/2026-10-11_megacoin-stage2b-followup.md`, `docs/POSTGRESQL.md`.
+
 ## Последний проход: PostgreSQL — валютная власть геймплея — 2026-10-11
 
 - `FC_ECONOMY_BACKEND=legacy_json` (значение по умолчанию) оставляет JSON `EconomyService`. `postgres` требует `FC_DATABASE_URL` и делает PostgreSQL единственной валютной властью. Одного и того же движения нет в обоих хранилищах. Ошибка базы не переключает режим.
@@ -15,7 +25,7 @@
 - Штамп инвентарного намерения один: `GameUI.stampInventorySubmission`. `Game.sendInventoryAction` только отправляет уже проштампованное сообщение. Старая ревизия сундука не попадает на crafting-table и обычный инвентарь.
 - Миграция `0003` `megacoin_ledger`: `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`. Миграции `0001` и `0002` не менялись.
 - `MegacoinService` в `server/economy/` умеет счёт, кредит, списание, перевод, adjustment, историю страницами и сверку. Начальные 100 — одна операция `INITIAL` и нога `+100`. Повтор и гонка создания не минтят ещё 100. Один `source` платит один раз. Нулевая установка баланса не пишет ногу и не занимает source.
-- Геймплей по-прежнему на синхронном JSON `EconomyService`. Dual-write нет. Auction, Trade, Buyer, Clan, награды и `/eco` не переведены. Импорт JSON-балансов не запускается. Клики инвентаря и тик мира в PostgreSQL не ходят.
+- На момент этого ledger-only прохода геймплей ещё был на синхронном JSON `EconomyService`. Следующие проходы перевели режим `postgres` на `MegacoinService`. Dual-write не добавлялся. Клики инвентаря и тик мира в PostgreSQL не ходят.
 - Нет `FC_DATABASE_URL` — игровой сервер как раньше. Прямой вызов `MegacoinService` без базы падает `DatabaseDisabledError`.
 - Подробности: `docs/reports/2026-10-11_megacoin-ledger-foundation.md`, `docs/POSTGRESQL.md`.
 

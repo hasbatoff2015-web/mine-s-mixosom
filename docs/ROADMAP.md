@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-11: Stage 2B follow-up — request ids, auction settlement, economy scope
+
+- [x] Client money mutations in postgres mode require a UUID. A missing or invalid id is rejected before money moves. Console commands get a server-owned id.
+- [x] Each auction listing has a persistent `economySettlementId`. Purchase source is that UUID, not `ah-N` and not the buyer.
+- [x] Migration `0004` scopes accounts, operations, and ledger by `anarchy` / `survival` / `peaceful`. Older rows stay `legacy_global`.
+- [x] Join prepares the PostgreSQL account before the player is online. Tracked background work consumes rejections.
+- [ ] Item-plus-money and world-reward crash recovery stay Stage 2C. Not merged. Draft PR **#129**.
+
 ## 2026-10-11: Gameplay Megacoins on PostgreSQL when configured
 
 - [x] `FC_ECONOMY_BACKEND=legacy_json|postgres`. Postgres mode has no JSON currency writes and no fallback.
@@ -8,7 +16,7 @@
 - [x] Display name updates do not append ledger rows. `npm run economy:import` is explicit and idempotent per batch.
 - [ ] Item-plus-money crash recovery stays Stage 2C. Not merged. Draft PR **#129**.
 
-## 2026-10-11: Megacoin ledger foundation, gameplay still on JSON
+## 2026-10-11: Megacoin ledger foundation (Stage 2A historical pass)
 
 - [x] One inventory-intent stamp. `GameUI` owns revisions. `Game.sendInventoryAction` does not stamp again.
 - [x] Migration `0003`: integer `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`.
