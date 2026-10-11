@@ -315,6 +315,7 @@ import {
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
 } from '../net/onlineContainerSync';
+import { stampInventoryIntent } from '../net/inventoryIntent';
 import {
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
@@ -489,6 +490,10 @@ export interface OnlineAnarchySession {
   urgentMeshKeys: Set<string>;
   lastViewKey?: string;
   lastStateTick: number;
+  /** Last server inventory generation. Clicks send this; they do not invent the next one. */
+  inventoryRevision: number;
+  /** Set while a chest, furnace, or portal chest snapshot is open. */
+  containerRevision?: number;
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
@@ -1092,6 +1097,7 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
+        inventoryRevision: 0,
         ownHurtSeq: presentationHurtSeq(welcome.you.presentation ?? IDLE_PLAYER_PRESENTATION),
         ...(() => {
           const isolation = resolvePredIsolation();
@@ -1432,6 +1438,10 @@ export class Game {
           }
         }
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack, session.portalChest);
+        if (typeof message.inventoryRevision === 'number') session.online.inventoryRevision = message.inventoryRevision;
+        session.online.containerRevision = typeof message.containerRevision === 'number'
+          ? message.containerRevision
+          : undefined;
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
           parseNetworkItemStacks(message.craftSlots),
@@ -1447,6 +1457,9 @@ export class Game {
         return;
       case 'furnace_sync':
         applyFurnaceSync(session.world, message, parseNetworkItemStack);
+        if (typeof message.containerRevision === 'number') {
+          session.online.containerRevision = message.containerRevision;
+        }
         if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
         return;
       case 'furnace_lit':
@@ -4259,7 +4272,14 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => session.online?.client.send(message)
+        ? (message) => {
+          const online = session.online;
+          if (!online) return;
+          online.client.send(stampInventoryIntent(message, {
+            inventory: online.inventoryRevision,
+            container: online.containerRevision,
+          }));
+        }
         : undefined,
     });
     session.online?.client.send({ type: 'inventory_action', action: 'open', kind: 'inventory' });
@@ -4303,7 +4323,14 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => session.online?.client.send(message)
+        ? (message) => {
+          const online = session.online;
+          if (!online) return;
+          online.client.send(stampInventoryIntent(message, {
+            inventory: online.inventoryRevision,
+            container: online.containerRevision,
+          }));
+        }
         : undefined,
     });
   }
@@ -5943,12 +5970,15 @@ export class Game {
     const stack = this.selectedStack();
     if (!stack) return;
     if (session.online) {
-      session.online.client.send({
+      session.online.client.send(stampInventoryIntent({
         type: 'inventory_action',
         action: 'drop_selected',
         slot: session.selectedSlot,
         count: 1,
-      });
+      }, {
+        inventory: session.online.inventoryRevision,
+        container: session.online.containerRevision,
+      }));
       return;
     }
     const dropped = { ...stack, count: 1 };

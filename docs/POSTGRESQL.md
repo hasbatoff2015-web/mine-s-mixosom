@@ -38,7 +38,7 @@ Three game processes can run at once. The default pool of 4 is 12 connections. T
 ## What the first migration creates
 
 - `schema_migrations` (`version`, `name`, `checksum`, `applied_at`)
-- `admin_audit_log`, append-only
+- `admin_audit_log`, append-only. Migration `0002` allows more than one row for the same `deployment_id` and `request_id`. `event_id` stays the primary key. `UPDATE`, `DELETE`, and `TRUNCATE` stay rejected.
 - `idempotency_requests`
 
 Migrations run once at startup, before the world is ready, on one connection holding a session advisory lock. Anarchy, Survival, and Peaceful can start together. Each pending migration and its `schema_migrations` insert share one transaction. Applied SQL is checksummed with SHA-256. Editing an applied migration fails startup. The runner does not delete history or recreate the schema.

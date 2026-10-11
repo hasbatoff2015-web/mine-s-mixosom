@@ -424,6 +424,12 @@ export interface ClientInventoryActionMessage {
   readonly y?: number;
   readonly z?: number;
   readonly recipeId?: string;
+  /** One client intent. The server owns the resulting items. */
+  readonly requestId?: string;
+  /** Inventory revision the client last accepted. Not an instruction to set it. */
+  readonly expectedInventoryRevision?: number;
+  /** Shared container revision the client last accepted, when a container is involved. */
+  readonly expectedContainerRevision?: number;
 }
 
 export interface ClientCraftMessage {
@@ -1037,6 +1043,9 @@ export interface ServerInventoryMessage {
     readonly burnTotal?: number;
     readonly cookTime?: number;
   };
+  /** Server-owned inventory generation. Clients replace their copy; they do not add one. */
+  readonly inventoryRevision?: number;
+  readonly containerRevision?: number;
 }
 
 /** Live furnace slots and progress for players who already have that GUI open. */
@@ -1049,6 +1058,7 @@ export interface ServerFurnaceSyncMessage {
   readonly burnTime: number;
   readonly burnTotal: number;
   readonly cookTime: number;
+  readonly containerRevision?: number;
 }
 
 export interface ServerHealthMessage {
@@ -1744,6 +1754,37 @@ const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
   'select', 'open', 'close', 'recipe', 'craft_recipe',
 ];
 
+const MUTATING_INVENTORY_ACTIONS = new Set<InventoryActionKind>([
+  'click', 'drop_selected', 'drop_cursor', 'drop_slot', 'move_stack', 'split_stack',
+  'hotbar_swap', 'offhand_swap', 'collect_matching', 'drag_distribute', 'quick_move_matching',
+  'recipe', 'craft_recipe',
+]);
+
+const INVENTORY_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseInventoryRequestId(value: unknown): string | { readonly error: string } | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !INVENTORY_REQUEST_ID.test(value)) {
+    return { error: 'inventory_action.requestId invalid' };
+  }
+  return value.toLowerCase();
+}
+
+function parseRevision(value: unknown, field: string): number | { readonly error: string } | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) {
+    return { error: `${field} invalid` };
+  }
+  return value;
+}
+
+function inventoryActionNeedsContainerRevision(action: InventoryActionKind, raw: Record<string, unknown>): boolean {
+  if (raw.kind === 'chest' || raw.kind === 'furnace' || raw.kind === 'portal-chest') return true;
+  const keys = [raw.key, raw.sourceKey, raw.targetKey];
+  if (Array.isArray(raw.keys)) keys.push(...raw.keys);
+  return keys.some((key) => typeof key === 'string' && (key.startsWith('container-') || key.startsWith('furnace-')));
+}
+
 /** Enough for player storage, equipment, a chest, a furnace, and a craft grid. */
 const MAX_INVENTORY_KEYS = 80;
 const MAX_INVENTORY_SIGNATURE = 480;
@@ -2228,7 +2269,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.action === 'craft_recipe') {
         const recipeId = optionalString(raw.recipeId, 64);
         if (!recipeId) return { error: 'inventory_action.recipeId invalid' };
-        return { type: 'inventory_action', action: 'craft_recipe', recipeId };
+        const requestId = parseInventoryRequestId(raw.requestId);
+        if (requestId && typeof requestId === 'object') return requestId;
+        const expectedInventoryRevision = parseRevision(raw.expectedInventoryRevision, 'inventory_action.expectedInventoryRevision');
+        if (expectedInventoryRevision && typeof expectedInventoryRevision === 'object') return expectedInventoryRevision;
+        if (typeof requestId !== 'string') return { error: 'inventory_action.requestId invalid' };
+        if (typeof expectedInventoryRevision !== 'number') return { error: 'inventory_action.expectedInventoryRevision invalid' };
+        return {
+          type: 'inventory_action',
+          action: 'craft_recipe',
+          recipeId,
+          requestId,
+          expectedInventoryRevision,
+        };
       }
       if (raw.button !== undefined && raw.button !== 'left' && raw.button !== 'right') {
         return { error: 'inventory_action.button invalid' };
@@ -2276,6 +2329,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         return { error: 'inventory_action.hotbar_swap invalid' };
       }
       if (action === 'drag_distribute' && !keys) return { error: 'inventory_action.keys invalid' };
+      const requestId = parseInventoryRequestId(raw.requestId);
+      if (requestId && typeof requestId === 'object') return requestId;
+      const expectedInventoryRevision = parseRevision(raw.expectedInventoryRevision, 'inventory_action.expectedInventoryRevision');
+      if (expectedInventoryRevision && typeof expectedInventoryRevision === 'object') return expectedInventoryRevision;
+      const expectedContainerRevision = parseRevision(raw.expectedContainerRevision, 'inventory_action.expectedContainerRevision');
+      if (expectedContainerRevision && typeof expectedContainerRevision === 'object') return expectedContainerRevision;
+      if (MUTATING_INVENTORY_ACTIONS.has(action)) {
+        if (typeof requestId !== 'string') return { error: 'inventory_action.requestId invalid' };
+        if (typeof expectedInventoryRevision !== 'number') return { error: 'inventory_action.expectedInventoryRevision invalid' };
+        if (inventoryActionNeedsContainerRevision(action, raw) && typeof expectedContainerRevision !== 'number') {
+          return { error: 'inventory_action.expectedContainerRevision invalid' };
+        }
+      }
       return {
         type: 'inventory_action',
         action,
@@ -2294,6 +2360,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(y !== undefined ? { y } : {}),
         ...(z !== undefined ? { z } : {}),
         ...(recipeId ? { recipeId } : {}),
+        ...(typeof requestId === 'string' ? { requestId } : {}),
+        ...(typeof expectedInventoryRevision === 'number' ? { expectedInventoryRevision } : {}),
+        ...(typeof expectedContainerRevision === 'number' ? { expectedContainerRevision } : {}),
       };
     }
     case 'craft': {
@@ -2804,6 +2873,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'furnace_sync invalid' };
       }
       if (!Array.isArray(raw.slots) || raw.slots.length > 3) return { error: 'furnace_sync invalid' };
+      const containerRevision = parseRevision(raw.containerRevision, 'furnace_sync.containerRevision');
+      if (containerRevision && typeof containerRevision === 'object') return containerRevision;
       const ticks = (value: number): number => Math.max(0, Math.min(1_000_000, value));
       return {
         type: 'furnace_sync',
@@ -2814,6 +2885,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         burnTime: ticks(burnTime),
         burnTotal: ticks(burnTotal),
         cookTime: ticks(cookTime),
+        ...(typeof containerRevision === 'number' ? { containerRevision } : {}),
       };
     }
     case 'command_result': {

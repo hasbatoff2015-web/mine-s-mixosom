@@ -26,6 +26,11 @@ function furnace(): FurnaceState {
   return { slots: [null, null, null], burnTime: 0, burnTotal: 0, cookTime: 0 };
 }
 
+const WIRE_INTENT = {
+  requestId: '11111111-1111-4111-8111-111111111111',
+  expectedInventoryRevision: 0,
+};
+
 function chest(): ChestState {
   return { slots: Array.from({ length: 27 }, () => null) };
 }
@@ -514,6 +519,7 @@ describe('inventory action protocol', () => {
       action: 'drag_distribute',
       button: 'left',
       keys: ['inventory-1', 'inventory-1', 'inventory-2'],
+      ...WIRE_INTENT,
     })).toMatchObject({ keys: ['inventory-1', 'inventory-2'] });
     const forged = parseClientMessage({
       type: 'inventory_action',
@@ -522,6 +528,7 @@ describe('inventory action protocol', () => {
       count: 2,
       itemId: 'diamond_sword',
       sourceCount: 64,
+      ...WIRE_INTENT,
     });
     expect(forged).not.toHaveProperty('itemId');
     expect(forged).not.toHaveProperty('sourceCount');
@@ -705,6 +712,7 @@ describe('online shift double-click bulk transfer', () => {
       signature: dirtHint,
       itemId: 'diamond',
       count: 64,
+      ...WIRE_INTENT,
     });
     expect(parsed).toMatchObject({
       type: 'inventory_action',

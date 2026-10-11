@@ -7,7 +7,9 @@
 - [x] Checksummed migrations under one session advisory lock. First migration: append-only `admin_audit_log` and `idempotency_requests`.
 - [x] The release copies the `ws` and `pg` runtime closure. The VPS still does not `npm install`.
 - [x] A startup failure before the canonical world load does not write `meta.json`, `world.json`, or `players.json`.
-- [ ] Economy, auction, trade, admin HTTP, and anti-dupe ledgers stay on their current storage.
+- [x] Exactly two equal admin ids. `AdminActionService` is internal. Audit attempts for one request id are immutable and can repeat after `0002`.
+- [x] In-memory inventory and container revisions plus per-connection request replay. No auto-ban. No PostgreSQL economy cutover. No item UUID.
+- [ ] Admin HTTP, Passkey, Tailscale, the economy ledger, and unique-item ids stay future work.
 - [ ] Not merged. Draft PR **#129**.
 
 ## 2026-10-08: Mega Zombie boss

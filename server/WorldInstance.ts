@@ -93,6 +93,11 @@ import { APPLIED_STEPS_MAX } from '../shared/playerCommand';
 import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig, ServerMode } from './config';
 import { acquireWorldDirectoryLock, type WorldDirectoryLock } from './worldLock';
+import {
+  InventoryRequestLog,
+  inventoryIntentHash,
+  isMutatingInventoryAction,
+} from './inventoryRequests';
 import { AdminInspectionService, type AdminPlayerSnapshot } from './admin/inspection';
 import { AdminIdentityPolicy } from './admin/identity';
 import { createDatabase, type Database } from './db/database';
@@ -356,6 +361,15 @@ export class ServerPlayer implements GameplayPlayer {
   /** Last furnace_sync payload sent while this player's furnace GUI is open. */
   furnaceSyncSignature?: string;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
+  /** Cursor and craft-grid changes that are not inventory slots. */
+  carryRevision = 0;
+  portalChestRevision = 0;
+  readonly inventoryRequests = new InventoryRequestLog();
+  lastInventoryConflictAt = 0;
+
+  get inventoryRevision(): number {
+    return this.inventory.revision + this.carryRevision;
+  }
   healthSignature = '';
   effectSignature = '';
   appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
@@ -1190,7 +1204,13 @@ export class WorldInstance {
     return this.adminInspection.inspect(adminId, playerId);
   }
 
-  private containerRevisionFor(_player: ServerPlayer): number | undefined {
+  private containerRevisionFor(player: ServerPlayer): number | undefined {
+    const window = player.window;
+    if (window.kind === 'portal-chest') return player.portalChestRevision;
+    if ((window.kind === 'chest' || window.kind === 'furnace')
+      && window.x !== undefined && window.y !== undefined && window.z !== undefined) {
+      return this.world.containerRevision(window.kind, window.x, window.y, window.z);
+    }
     return undefined;
   }
 
@@ -3099,11 +3119,76 @@ export class WorldInstance {
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    if (isMutatingInventoryAction(action) && action.requestId) {
+      const decision = player.inventoryRequests.take(action.requestId, inventoryIntentHash(action));
+      if (decision === 'conflict') this.noteInventoryConflict(player);
+      if (decision !== 'new' || !this.inventoryRevisionMatches(player, action)) {
+        this.flushPlayerInventory(player);
+        return;
+      }
+    }
+    const carryBefore = this.carrySignature(player);
+    const portalBefore = this.slotSignature(player.portalChest.slots);
+    const chest = this.openChest(player);
+    const furnace = this.openFurnace(player);
+    const chestBefore = chest ? this.slotSignature(chest.slots) : '';
+    const furnaceBefore = furnace ? this.slotSignature(furnace.slots) : '';
     this.gameplay.applyInventory(player, action);
+    if (this.carrySignature(player) !== carryBefore) player.carryRevision += 1;
+    if (this.slotSignature(player.portalChest.slots) !== portalBefore) player.portalChestRevision += 1;
+    const window = player.window;
+    if (chest && window.x !== undefined && window.y !== undefined && window.z !== undefined
+      && this.slotSignature(chest.slots) !== chestBefore) {
+      this.world.bumpContainerRevision('chest', window.x, window.y, window.z);
+    }
+    if (furnace && window.x !== undefined && window.y !== undefined && window.z !== undefined
+      && this.slotSignature(furnace.slots) !== furnaceBefore) {
+      this.world.bumpContainerRevision('furnace', window.x, window.y, window.z);
+    }
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     this.flushSharedContainerViewers(player);
+  }
+
+  private inventoryRevisionMatches(player: ServerPlayer, action: ClientInventoryActionMessage): boolean {
+    if (action.expectedInventoryRevision !== player.inventoryRevision) return false;
+    const containerRevision = this.containerRevisionFor(player);
+    if (containerRevision === undefined) return action.expectedContainerRevision === undefined;
+    return action.expectedContainerRevision === containerRevision;
+  }
+
+  private noteInventoryConflict(player: ServerPlayer): void {
+    const now = Date.now();
+    if (now - player.lastInventoryConflictAt < 5_000) return;
+    player.lastInventoryConflictAt = now;
+    serverLog(`inventory request id conflict player=${player.id}`, 'warn');
+  }
+
+  private carrySignature(player: ServerPlayer): string {
+    return `${this.slotSignature([player.cursor])}|${this.slotSignature(player.craftSlots)}`;
+  }
+
+  private slotSignature(slots: readonly (ItemStack | null | undefined)[]): string {
+    return slots.map((stack) => (
+      stack ? `${stack.itemId}:${stack.count}:${stack.durability ?? ''}:${JSON.stringify(stack.metadata ?? null)}` : ''
+    )).join('|');
+  }
+
+  private openChest(player: ServerPlayer): { slots: Array<ItemStack | null> } | undefined {
+    const window = player.window;
+    if (window.kind !== 'chest' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    return this.world.getChest(window.x, window.y, window.z);
+  }
+
+  private openFurnace(player: ServerPlayer): { slots: readonly (ItemStack | null)[] } | undefined {
+    const window = player.window;
+    if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    return this.world.getFurnace(window.x, window.y, window.z);
   }
 
   attack(player: ServerPlayer): void {
@@ -4371,6 +4456,7 @@ export class WorldInstance {
     player.pendingEntityUses.length = 0;
     player.bowReleaseCommandStates.clear();
     player.bowReleaseBoundaryThisTick = undefined;
+    player.inventoryRequests.clear();
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
@@ -4770,6 +4856,10 @@ export class WorldInstance {
           cookTime: furnace.cookTime,
         } : {}),
       },
+      inventoryRevision: player.inventoryRevision,
+      ...(this.containerRevisionFor(player) !== undefined
+        ? { containerRevision: this.containerRevisionFor(player) }
+        : {}),
     });
   }
 
@@ -4803,6 +4893,7 @@ export class WorldInstance {
         burnTime,
         burnTotal,
         cookTime,
+        containerRevision: this.world.containerRevision('furnace', window.x, window.y, window.z),
       });
     }
   }

@@ -8,7 +8,7 @@ Add a production-safe PostgreSQL layer for a later admin panel and anti-duplicat
 
 `FC_DATABASE_URL` absent keeps the server on the current filesystem path and opens no database connection. A present URL requires `FC_DEPLOYMENT_ID`. Connection failure, migration failure, and an edited applied checksum abort startup and release `.instance.lock`. There is no JSON fallback.
 
-The first migration creates `schema_migrations`, append-only `admin_audit_log`, and `idempotency_requests`. `IdempotencyService.execute` claims the request, runs the callback, and stores the response in one PostgreSQL transaction. `pack:release` copies the `ws` and `pg` runtime dependency closure. The VPS still does not run `npm install`.
+The first migration creates `schema_migrations`, append-only `admin_audit_log`, and `idempotency_requests`. Migration `0002` lets one `request_id` have several immutable audit attempts. `FC_ADMIN_IDS` enables exactly two equal admins, separate from game operators. `AdminActionService` is not exposed over HTTP. Economy stays on `EconomyService` because its reads and writes are synchronous across gameplay; this pass does not add a PostgreSQL ledger or a dual-write. Inventory and container revisions are in memory. Repeated inventory `requestId`s do not apply twice. A stale revision resyncs and does not ban. `pack:release` copies the `ws` and `pg` runtime dependency closure. The VPS still does not run `npm install`.
 
 ## Implemented
 

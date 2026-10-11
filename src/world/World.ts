@@ -251,11 +251,23 @@ export interface LightOriginHudCounts {
   readonly other: number;
 }
 
+function containerRevisionKey(kind: 'chest' | 'furnace', x: number, y: number, z: number): string {
+  return `${kind}:${blockKey(x, y, z)}`;
+}
+
+function furnaceSlotSignature(furnace: FurnaceState): string {
+  return furnace.slots.map((stack) => (
+    stack ? `${stack.itemId}:${stack.count}:${stack.durability ?? ''}` : ''
+  )).join('|');
+}
+
 export class VoxelWorld {
   readonly chunks = new Map<string, Chunk>();
   readonly modifications = new Map<string, Map<number, BlockId>>();
   readonly chests = new Map<string, ChestState>();
   readonly furnaces = new Map<string, FurnaceState>();
+  /** Runtime container generations. Not part of the world snapshot. */
+  private readonly containerRevisions = new Map<string, number>();
   readonly signs = new Map<string, SignLines>();
   signVersion = 0;
   /** Bumped only when a painting cell or its state changes. Fluids do not touch it. */
@@ -1669,6 +1681,17 @@ export class VoxelWorld {
     return this.fluidScheduled.length;
   }
 
+  containerRevision(kind: 'chest' | 'furnace', x: number, y: number, z: number): number {
+    return this.containerRevisions.get(containerRevisionKey(kind, x, y, z)) ?? 0;
+  }
+
+  bumpContainerRevision(kind: 'chest' | 'furnace', x: number, y: number, z: number): number {
+    const key = containerRevisionKey(kind, x, y, z);
+    const next = (this.containerRevisions.get(key) ?? 0) + 1;
+    this.containerRevisions.set(key, next);
+    return next;
+  }
+
   getChest(x: number, y: number, z: number): ChestState {
     const key = blockKey(x, y, z);
     let chest = this.chests.get(key);
@@ -1907,6 +1930,7 @@ export class VoxelWorld {
 
   private tickFurnaces(): void {
     for (const [key, furnace] of this.furnaces) {
+      const slotsBefore = furnaceSlotSignature(furnace);
       const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
       const inputId = input?.itemId;
@@ -1951,6 +1975,10 @@ export class VoxelWorld {
       } else furnace.cookTime = 0;
 
       if (furnace.burnTime > 0) furnace.burnTime -= 1;
+      if (furnaceSlotSignature(furnace) !== slotsBefore) {
+        const parsed = parseBlockKey(key);
+        this.bumpContainerRevision('furnace', parsed.x, parsed.y, parsed.z);
+      }
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);
