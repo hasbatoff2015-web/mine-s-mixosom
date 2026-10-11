@@ -1,5 +1,15 @@
 # Состояние проекта
 
+## Последний проход: PostgreSQL Megacoin ledger, без cutover — 2026-10-11
+
+- Ветка `cursor/admin-antidupe-postgres-foundation-26a8` — долгая интеграционная ветка. В `main` не влита. Draft PR **#129**.
+- Штамп инвентарного намерения один: `GameUI.stampInventorySubmission`. `Game.sendInventoryAction` только отправляет уже проштампованное сообщение. Старая ревизия сундука не попадает на crafting-table и обычный инвентарь.
+- Миграция `0003` `megacoin_ledger`: `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`. Миграции `0001` и `0002` не менялись.
+- `MegacoinService` в `server/economy/` умеет счёт, кредит, списание, перевод, adjustment, историю страницами и сверку. Начальные 100 — одна операция `INITIAL` и нога `+100`. Повтор и гонка создания не минтят ещё 100. Один `source` платит один раз. Нулевая установка баланса не пишет ногу и не занимает source.
+- Геймплей по-прежнему на синхронном JSON `EconomyService`. Dual-write нет. Auction, Trade, Buyer, Clan, награды и `/eco` не переведены. Импорт JSON-балансов не запускается. Клики инвентаря и тик мира в PostgreSQL не ходят.
+- Нет `FC_DATABASE_URL` — игровой сервер как раньше. Прямой вызов `MegacoinService` без базы падает `DatabaseDisabledError`.
+- Подробности: `docs/reports/2026-10-11_megacoin-ledger-foundation.md`, `docs/POSTGRESQL.md`.
+
 ## Последний проход: PostgreSQL audit и idempotency — 2026-10-11
 
 - Это не админка и не перенос экономики. Чанки, сундуки, печи, мобы, дроп и снимки игроков остаются в `FsWorldStore`. JSON плагинов остаётся в `dataDir/<worldId>/plugin-data/`. `EconomyService`, `AuctionService` и `TradeService` не переведены на PostgreSQL.

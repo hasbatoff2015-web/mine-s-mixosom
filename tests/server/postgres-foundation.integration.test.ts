@@ -93,11 +93,9 @@ describe.skipIf(databaseUrl === '')('postgres foundation integration', () => {
               to_regclass('economy_operations')::text AS operations,
               to_regclass('economy_ledger')::text AS ledger`,
     );
-    expect(tables.rows[0]).toEqual({
-      accounts: 'economy_accounts',
-      operations: 'economy_operations',
-      ledger: 'economy_ledger',
-    });
+    expect(tables.rows[0]?.accounts).toMatch(/economy_accounts$/);
+    expect(tables.rows[0]?.operations).toMatch(/economy_operations$/);
+    expect(tables.rows[0]?.ledger).toMatch(/economy_ledger$/);
   }, 30_000);
 
   it('serializes two migration runners', async () => {

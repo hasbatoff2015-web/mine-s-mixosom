@@ -11,7 +11,7 @@ These stay on the current filesystem snapshot, under `dataDir/<worldId>/`:
 - player world snapshots
 - `world.json`, `players.json`, `meta.json`
 
-Plugin JSON stays in `dataDir/<worldId>/plugin-data/` through `JsonFileStore`. Economy, auction, and trade are unchanged in this change. Economy and auction still use JSON. Trade still keeps offers in memory.
+Plugin JSON stays in `dataDir/<worldId>/plugin-data/` through `JsonFileStore`. Gameplay economy, auction, and trade still use that JSON. Trade still keeps offers in memory. Migration `0003` adds a Megacoin ledger that gameplay does not call yet. See "Megacoin ledger" below.
 
 ## When it is disabled
 
@@ -46,6 +46,26 @@ Migrations run once at startup, before the world is ready, on one connection hol
 The audit trigger rejects `UPDATE`, `DELETE`, and `TRUNCATE`. A later migration can still change the table by dropping that trigger inside its own migration transaction. Application code has no update or delete method.
 
 Idempotency claims a request, runs the callback, and stores the response in that same transaction. The same deployment, request id, operation, actor, and payload hash returns the stored response and does not run the callback again. A different operation, actor, or payload is a conflict. A thrown callback rolls back, so the request can be retried.
+
+## Megacoin ledger
+
+Migration `0003` (`megacoin_ledger`) adds three tables. `0001` and `0002` are unchanged. The same advisory lock, checksum, and per-migration transaction apply.
+
+`economy_accounts` is one balance per `(deployment_id, player_id)`. `balance` is `BIGINT`, from 0 through 999999999. There is no floating-point column.
+
+`economy_operations` is one economic event. `kind` is `INITIAL`, `SOURCE`, `TRANSFER`, `SINK`, or `ADJUSTMENT`. A partial unique index on `(deployment_id, source_type, source_id)` covers rows where both source columns are set, so one mob death or one admin adjustment id cannot post twice. `request_id` is indexed and is not unique.
+
+`economy_ledger` is one balance leg. `balance_after = balance_before + delta`, `delta <> 0`, and both balances stay inside the account range. `(deployment_id, operation_id, leg_index)` is unique. A transfer is one operation and two legs. Triggers reject `UPDATE`, `DELETE`, and `TRUNCATE` on the ledger and on operations. Application code has no method that edits a posted leg. A correction is a new `ADJUSTMENT`.
+
+Creating an account inserts balance 100, one `INITIAL` operation, and one ledger leg of +100 in the same transaction. A repeated or concurrent create does not mint another 100.
+
+`MegacoinService` (`server/economy/`) is not constructed by `WorldInstance`. Credit, debit, transfer, and `setBalance` each use one transaction. A transfer locks the two player rows in JavaScript string order, so A→B and B→A take the same locks. `setBalance` appends the difference. If the requested balance is already current, it returns success and writes no leg. That no-op does not consume a source id. History is paged (`limit`, `before` or `after`) and is not capped in storage. Reconciliation returns `{ playerId, balance, ledgerTotal, matches }` and does not change rows.
+
+Three identities stay separate. `IdempotencyService` owns the request. `operation_id` owns the economic event. `entry_id` owns one ledger leg. Stage 2B can pass the transaction from `IdempotencyService.execute` into `MegacoinService` so the request row and the money move commit together. This pass does not do that wiring.
+
+`validateEconomyJsonImport` checks a future import list and writes nothing. No startup path reads `balances.json` into these tables.
+
+Direct calls with the database disabled throw `DatabaseDisabledError`. The JSON `EconomyService` used by rewards, auction, trade, clans, the buyer, and `/eco` does not change.
 
 ## Release
 

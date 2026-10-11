@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-11: Megacoin ledger foundation, gameplay still on JSON
+
+- [x] One inventory-intent stamp. `GameUI` owns revisions. `Game.sendInventoryAction` does not stamp again.
+- [x] Migration `0003`: integer `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`.
+- [x] `MegacoinService` posts initial 100, credit, debit, transfer, and adjustment in one transaction. Source identity pays once. Reconciliation does not repair.
+- [ ] Gameplay cutover is Stage 2B. `EconomyService` remains the authority. No dual-write. No JSON balance import. Auction, trade, buyer, and clans stay on JSON.
+- [ ] Not merged. Draft PR **#129**.
+
 ## 2026-10-11: PostgreSQL audit and idempotency foundation
 
 - [x] Optional `pg` pool. Missing `FC_DATABASE_URL` keeps filesystem persistence and opens no connection.
@@ -9,7 +17,7 @@
 - [x] A startup failure before the canonical world load does not write `meta.json`, `world.json`, or `players.json`.
 - [x] Exactly two equal admin ids. `AdminActionService` is internal. Audit attempts for one request id are immutable and can repeat after `0002`.
 - [x] In-memory inventory and container revisions plus per-connection request replay. No auto-ban. No PostgreSQL economy cutover. No item UUID.
-- [ ] Admin HTTP, Passkey, Tailscale, the economy ledger, and unique-item ids stay future work.
+- [ ] Admin HTTP, Passkey, Tailscale, the gameplay economy cutover, and unique-item ids stay future work. The ledger schema is the following Stage 2A section.
 - [ ] Not merged. Draft PR **#129**.
 
 ## 2026-10-08: Mega Zombie boss

@@ -1,5 +1,7 @@
 # PostgreSQL audit and idempotency foundation
 
+Stage 2A later added the Megacoin ledger in `docs/reports/2026-10-11_megacoin-ledger-foundation.md`. Gameplay still uses JSON `EconomyService`. This report is the earlier audit and idempotency pass.
+
 ## Goal
 
 Add a production-safe PostgreSQL layer for a later admin panel and anti-duplication system: pool, config, migrations, transactions, append-only admin audit storage, and reusable idempotency. Do not change gameplay, economy, auction, trade, the client protocol, or world persistence.
