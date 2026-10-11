@@ -7,7 +7,17 @@ export const KIT_START_NAME = 'start';
 export interface KitStack {
   itemId: string;
   count: number;
+  durability?: number;
 }
+
+export interface KitInventoryStack {
+  readonly itemId: string;
+  readonly count: number;
+  readonly durability?: number;
+}
+
+/** Command words that are not kit names. `start` is both a command and the starter kit. */
+export const KIT_RESERVED_NAMES = new Set(['help', 'create', 'delete', 'give']);
 
 export interface KitDefinition {
   name: string;
@@ -26,7 +36,32 @@ export interface KitGiveResult {
 }
 
 export interface KitPlayer {
-  give(itemId: string, count: number): KitGiveResult;
+  give(itemId: string, count: number, options?: { readonly durability?: number }): KitGiveResult;
+}
+
+export function snapshotKitItems(stacks: readonly KitInventoryStack[]): KitStack[] {
+  const items: KitStack[] = [];
+  for (const stack of stacks) {
+    if (!stack || !isKnownItemId(stack.itemId) || !Number.isInteger(stack.count) || stack.count < 1) continue;
+    const durability = Number.isInteger(stack.durability) && (stack.durability as number) > 0
+      ? stack.durability
+      : undefined;
+    mergeKitStack(items, {
+      itemId: stack.itemId,
+      count: Math.min(KIT_MAX_ITEM_COUNT, stack.count),
+      ...(durability !== undefined ? { durability } : {}),
+    });
+  }
+  return items;
+}
+
+function mergeKitStack(items: KitStack[], stack: KitStack): void {
+  const existing = items.find((item) => item.itemId === stack.itemId && item.durability === stack.durability);
+  if (!existing) {
+    items.push({ ...stack });
+    return;
+  }
+  existing.count = Math.min(KIT_MAX_ITEM_COUNT, existing.count + stack.count);
 }
 
 const NAME_PATTERN = new RegExp(`^[a-z0-9_]{1,${KIT_NAME_MAX}}$`);
@@ -68,14 +103,15 @@ function parseKit(raw: unknown): KitDefinition | undefined {
   const items: KitStack[] = [];
   for (const entry of value.items) {
     if (!entry || typeof entry !== 'object') continue;
-    const stack = entry as { itemId?: unknown; count?: unknown };
+    const stack = entry as { itemId?: unknown; count?: unknown; durability?: unknown };
     if (typeof stack.itemId !== 'string' || !isKnownItemId(stack.itemId)) continue;
     if (!Number.isInteger(stack.count) || (stack.count as number) < 1 || (stack.count as number) > KIT_MAX_ITEM_COUNT) {
       continue;
     }
-    const existing = items.find((item) => item.itemId === stack.itemId);
-    if (existing) existing.count = Math.min(KIT_MAX_ITEM_COUNT, existing.count + (stack.count as number));
-    else items.push({ itemId: stack.itemId, count: stack.count as number });
+    const durability = Number.isInteger(stack.durability) && (stack.durability as number) > 0
+      ? stack.durability as number
+      : undefined;
+    mergeKitStack(items, { itemId: stack.itemId, count: stack.count as number, ...(durability !== undefined ? { durability } : {}) });
   }
   return { name, items };
 }
@@ -134,67 +170,25 @@ export class KitService {
     return firstJoin || this.isPendingStart(playerId);
   }
 
-  create(name: string): KitMutation {
+  /** Copies the supplied stacks. The caller keeps the inventory. */
+  createFromStacks(name: string, stacks: readonly KitInventoryStack[]): KitMutation {
     if (parseKitName(name) !== name) return { ok: false, error: `Некорректное имя набора '${name}'.` };
+    if (KIT_RESERVED_NAMES.has(name)) return { ok: false, error: `Имя '${name}' занято командой.` };
     if (this.store.kits.some((kit) => kit.name === name)) {
       return { ok: false, error: `Набор '${name}' уже существует.` };
     }
-    const kit: KitDefinition = { name, items: [] };
+    const kit: KitDefinition = { name, items: snapshotKitItems(stacks) };
     this.store.kits.push(kit);
     this.persist();
     return { ok: true, kit: cloneKit(kit) };
   }
 
   remove(name: string): { ok: true } | { ok: false; error: string } {
-    if (name === KIT_START_NAME) {
-      return { ok: false, error: 'Стартовый набор нельзя удалить. Очистите его: /kit edit start clear.' };
-    }
     const next = this.store.kits.filter((kit) => kit.name !== name);
     if (next.length === this.store.kits.length) return { ok: false, error: `Набор '${name}' не найден.` };
     this.store.kits = next;
     this.persist();
     return { ok: true };
-  }
-
-  addItem(name: string, itemId: string, count: number): KitMutation {
-    if (!isKnownItemId(itemId)) return { ok: false, error: `Неизвестный предмет '${itemId}'.` };
-    if (!Number.isInteger(count) || count < 1 || count > KIT_MAX_ITEM_COUNT) {
-      return { ok: false, error: `Количество должно быть целым от 1 до ${KIT_MAX_ITEM_COUNT}.` };
-    }
-    const kit = this.ensure(name);
-    if (!kit) return { ok: false, error: `Набор '${name}' не найден.` };
-    const existing = kit.items.find((item) => item.itemId === itemId);
-    if (existing) {
-      const next = existing.count + count;
-      if (next > KIT_MAX_ITEM_COUNT) {
-        return { ok: false, error: `В наборе не может быть больше ${KIT_MAX_ITEM_COUNT} предметов одного вида.` };
-      }
-      existing.count = next;
-    } else {
-      kit.items.push({ itemId, count });
-    }
-    this.persist();
-    return { ok: true, kit: cloneKit(kit) };
-  }
-
-  removeItem(name: string, itemId: string): KitMutation {
-    const kit = this.store.kits.find((entry) => entry.name === name);
-    if (!kit) return { ok: false, error: `Набор '${name}' не найден.` };
-    const next = kit.items.filter((item) => item.itemId !== itemId);
-    if (next.length === kit.items.length) return { ok: false, error: `В наборе '${name}' нет '${itemId}'.` };
-    kit.items = next;
-    this.persist();
-    return { ok: true, kit: cloneKit(kit) };
-  }
-
-  clear(name: string): KitMutation {
-    const kit = name === KIT_START_NAME
-      ? this.ensure(name)
-      : this.store.kits.find((entry) => entry.name === name);
-    if (!kit) return { ok: false, error: `Набор '${name}' не найден.` };
-    kit.items = [];
-    this.persist();
-    return { ok: true, kit: cloneKit(kit) };
   }
 
   /**
@@ -225,15 +219,6 @@ export class KitService {
     }
   }
 
-  private ensure(name: string): KitDefinition | undefined {
-    const found = this.store.kits.find((kit) => kit.name === name);
-    if (found) return found;
-    if (name !== KIT_START_NAME) return undefined;
-    const kit: KitDefinition = { name, items: [] };
-    this.store.kits.push(kit);
-    return kit;
-  }
-
   private markReceived(playerId: string): void {
     if (!this.store.receivedStart.includes(playerId)) this.store.receivedStart.push(playerId);
     this.store.pendingStart = this.store.pendingStart.filter((id) => id !== playerId);
@@ -261,7 +246,7 @@ export function deliverKit(player: KitPlayer, kit: KitDefinition | undefined): b
     let remaining = item.count;
     while (remaining > 0) {
       const batch = Math.min(remaining, maxStack);
-      player.give(item.itemId, batch);
+      player.give(item.itemId, batch, item.durability !== undefined ? { durability: item.durability } : undefined);
       remaining -= batch;
     }
   }
@@ -271,6 +256,10 @@ export function deliverKit(player: KitPlayer, kit: KitDefinition | undefined): b
 function cloneKit(kit: KitDefinition): KitDefinition {
   return {
     name: kit.name,
-    items: kit.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+    items: kit.items.map((item) => ({
+      itemId: item.itemId,
+      count: item.count,
+      ...(item.durability !== undefined ? { durability: item.durability } : {}),
+    })),
   };
 }

@@ -6,7 +6,8 @@
 - [x] Automine logs are halved; stone is 45%; iron ore matches coal at 5%. Weights still sum to 10 000.
 - [x] An automine reset finishes on its own light token. A full region-light queue no longer holds `RESETTING`.
 - [x] Player Q throws travel about twice as far horizontally. The vertical hop is unchanged.
-- [x] Builtin `/kit` stores kits in plugin-data and gives `start` once on the first join.
+- [x] Builtin `/kit` copies the creator inventory and gives `start` once.
+- [x] `/holograms automine` counts down to that mine's real `nextResetAt`.
 - [x] Mega Zombie ignores attack knockback. Other mobs do not.
 - [ ] Not merged. Wait for an explicit merge command.
 

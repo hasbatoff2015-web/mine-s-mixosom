@@ -1134,6 +1134,11 @@ export interface NetworkHologram {
   readonly kind: HologramKind;
   readonly timerDuration: number;
   readonly timerStartedAt: number;
+  /**
+   * AutoMine deadline in server milliseconds. Null means the linked mine has no schedule.
+   * Absent on ordinary looping timers.
+   */
+  readonly timerEndsAt?: number | null;
   readonly backgroundEnabled: boolean;
   readonly backgroundWidth: number;
   readonly backgroundHeight: number;
@@ -1937,6 +1942,9 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
   const appearance = parseHologramAppearanceLenient(raw);
   const timerStartedAt = finite(raw.timerStartedAt) ? raw.timerStartedAt : 0;
   const yaw = finite(raw.yaw) ? raw.yaw : 0;
+  const timerEndsAt = raw.timerEndsAt === null
+    ? null
+    : finite(raw.timerEndsAt) ? raw.timerEndsAt : undefined;
   return {
     name: raw.name.slice(0, HOLOGRAM_MAX_NAME),
     x: raw.x,
@@ -1951,6 +1959,7 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     kind: appearance.kind,
     timerDuration: appearance.timerDuration,
     timerStartedAt,
+    ...(timerEndsAt !== undefined ? { timerEndsAt } : {}),
     backgroundEnabled: appearance.backgroundEnabled,
     backgroundWidth: appearance.backgroundWidth,
     backgroundHeight: appearance.backgroundHeight,

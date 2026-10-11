@@ -963,6 +963,11 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.holograms.setAutomineSchedule((name) => {
+      const mine = this.autoMine.get(name);
+      if (!mine || mine.worldId !== this.worldId) return undefined;
+      return mine.nextResetAt;
+    });
     this.duels = new DuelService({
       worldId: config.worldId,
       store: {
@@ -3997,6 +4002,7 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
+    this.holograms.noteAutomineSchedule();
     this.worldEvents.tick();
     this.duels.tick();
     this.megaZombie.tick(dt);
@@ -5325,15 +5331,37 @@ export class WorldInstance {
           kind: 'system',
         });
       },
-      give: (itemId: string, count: number) => {
+      give: (itemId: string, count: number, options?: { readonly durability?: number }) => {
         if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
-        const leftover = player.inventory.addItem(itemId, count);
+        const durability = options?.durability;
+        const addOptions = durability !== undefined ? { durability } : {};
+        const leftover = player.inventory.addItem(itemId, count, addOptions);
         const given = count - leftover;
         player.inventoryDirty = true;
-        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, addOptions));
         instance.flushPlayerInventory(player);
         instance.flushBlockChanges();
         return { given, leftover };
+      },
+      contents: () => {
+        const stacks = [
+          ...player.inventory.slots,
+          player.inventory.armor.head,
+          player.inventory.armor.chest,
+          player.inventory.armor.legs,
+          player.inventory.armor.feet,
+          player.inventory.offhand,
+        ];
+        const items: { itemId: string; count: number; durability?: number }[] = [];
+        for (const stack of stacks) {
+          if (!stack || stack.count < 1 || !isKnownItemId(stack.itemId)) continue;
+          items.push({
+            itemId: stack.itemId,
+            count: stack.count,
+            ...(stack.durability !== undefined ? { durability: stack.durability } : {}),
+          });
+        }
+        return items;
       },
       removeItem: (itemId: string, count: number) => {
         const removed = player.inventory.remove(itemId, count);

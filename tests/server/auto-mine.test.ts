@@ -211,10 +211,7 @@ describe('AutoMine plugin commands', () => {
     drain(world, 'tiny');
     expect(AUTOMINE_ALLOWED_BLOCKS.has(world.world.getBlock(8, 25, 8))).toBe(true);
     expect(chat(world, op, '/automine delete tiny').some((line) => line.includes('удаляется'))).toBe(true);
-    for (let i = 0; i < 40; i += 1) {
-      if (!world.autoMine.get('tiny')) break;
-      world.tick();
-    }
+    drain(world, 'tiny');
     expect(world.autoMine.get('tiny')).toBeUndefined();
     expect(world.world.getBlock(8, 25, 8)).toBe(BlockId.Bricks);
   });

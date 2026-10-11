@@ -7,7 +7,7 @@ import { ItemId } from '../../src/items';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
-import { KitService, parseKitName, parseKitStore } from '../../server/services/kit';
+import { KitService, parseKitName, parseKitStore, snapshotKitItems } from '../../server/services/kit';
 
 function memoryService(initial?: unknown): { service: KitService; saved: { value: unknown } } {
   const saved = { value: initial };
@@ -20,36 +20,51 @@ function memoryService(initial?: unknown): { service: KitService; saved: { value
 }
 
 describe('kit definitions', () => {
-  it('rejects bad names, unknown items, and bad counts', () => {
+  it('copies inventory stacks and rejects bad or duplicate names', () => {
     expect(parseKitName('Start')).toBe('start');
-    expect(parseKitName('donor_1')).toBe('donor_1');
     expect(parseKitName('bad name')).toBeUndefined();
-    expect(parseKitName('../kit')).toBeUndefined();
-    expect(parseKitName('a'.repeat(25))).toBeUndefined();
+    const copied = snapshotKitItems([
+      { itemId: 'stone', count: 32 },
+      null as unknown as { itemId: string; count: number },
+      { itemId: 'stone', count: 16 },
+      { itemId: 'not_a_real_item', count: 4 },
+      { itemId: ItemId.IronSword, count: 1, durability: 40 },
+      { itemId: 'torch', count: 0 },
+    ]);
+    expect(copied).toEqual([
+      { itemId: 'stone', count: 48 },
+      { itemId: ItemId.IronSword, count: 1, durability: 40 },
+    ]);
     const { service } = memoryService();
-    expect(service.create('nope name').ok).toBe(false);
-    expect(service.create('donor').ok).toBe(true);
-    expect(service.create('donor').ok).toBe(false);
-    expect(service.addItem('donor', 'not_a_real_item', 1).ok).toBe(false);
-    expect(service.addItem('donor', ItemId.Diamond, 0).ok).toBe(false);
-    expect(service.addItem('donor', ItemId.Diamond, 1.5).ok).toBe(false);
-    expect(service.addItem('donor', ItemId.Diamond, 10_000).ok).toBe(false);
-    expect(service.addItem('missing', ItemId.Diamond, 1).ok).toBe(false);
-    expect(service.remove('start').ok).toBe(false);
+    expect(service.createFromStacks('nope name', copied).ok).toBe(false);
+    expect(service.createFromStacks('help', copied).ok).toBe(false);
+    expect(service.createFromStacks('a'.repeat(25), copied).ok).toBe(false);
+    const created = service.createFromStacks('tools', copied);
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    expect(created.kit.items).toEqual(copied);
+    expect(service.createFromStacks('tools', copied).ok).toBe(false);
+    const empty = service.createFromStacks('empty', []);
+    expect(empty.ok).toBe(true);
+    if (!empty.ok) return;
+    expect(empty.kit.items).toEqual([]);
+    expect(service.remove('missing').ok).toBe(false);
+    expect(service.remove('tools').ok).toBe(true);
+    expect(service.get('tools')).toBeUndefined();
   });
 
-  it('saves stacked counts and reloads them', () => {
+  it('saves a copied kit and reloads it', () => {
     const { service, saved } = memoryService();
-    expect(service.addItem('start', ItemId.Diamond, 64).ok).toBe(true);
-    expect(service.addItem('start', ItemId.Diamond, 64).ok).toBe(true);
-    expect(service.addItem('start', ItemId.IronIngot, 3).ok).toBe(true);
+    expect(service.createFromStacks('start', [
+      { itemId: ItemId.Diamond, count: 64 },
+      { itemId: ItemId.Diamond, count: 64 },
+      { itemId: ItemId.IronIngot, count: 3 },
+    ]).ok).toBe(true);
     const reloaded = memoryService(saved.value).service;
     expect(reloaded.get('start')?.items).toEqual([
       { itemId: ItemId.Diamond, count: 128 },
       { itemId: ItemId.IronIngot, count: 3 },
     ]);
-    expect(reloaded.clear('start').ok).toBe(true);
-    expect(reloaded.get('start')?.items).toEqual([]);
   });
 
   it('drops malformed store entries', () => {
@@ -69,7 +84,7 @@ describe('kit definitions', () => {
 
   it('grants the start kit once, retries a failed give, and ignores a nested call', () => {
     const { service } = memoryService();
-    service.addItem('start', ItemId.Diamond, 2);
+    expect(service.createFromStacks('start', [{ itemId: ItemId.Diamond, count: 2 }]).ok).toBe(true);
     const given: number[] = [];
     const nested = service.grantStart('ada', () => {
       given.push(1);
@@ -191,75 +206,75 @@ describe('kit commands', () => {
     return resultLines(player.sink);
   }
 
-  it('gives start once, persists it, and gates other kits by permission', async () => {
+  function fill(player: ServerPlayer, stacks: readonly { itemId: string; count: number; durability?: number }[]): void {
+    player.inventory.clear();
+    stacks.forEach((stack, index) => {
+      player.inventory.setSlot(index, createItemStack(stack.itemId, stack.count, stack.durability !== undefined
+        ? { durability: stack.durability }
+        : {}));
+    });
+  }
+
+  it('copies the creator inventory and gives start only once', async () => {
     const first = await boot();
     const world = first.world;
     const op = join(world, 'Op');
-    expect(countItem(op.player, ItemId.Diamond)).toBe(0);
-    expect(chat(world, op, '/kit edit start add diamond 2').some((line) => line.includes('diamond × 2'))).toBe(true);
-    expect(chat(world, op, '/kit edit start add diamond 1').some((line) => line.includes('diamond × 3'))).toBe(true);
-    expect(countItem(op.player, ItemId.Diamond)).toBe(0);
+    expect(chat(world, op, '/kit help').some((line) => line.includes('/kit create'))).toBe(true);
+    fill(op.player, [
+      { itemId: 'stone', count: 32 },
+      { itemId: 'dirt', count: 16 },
+      { itemId: ItemId.IronSword, count: 1 },
+    ]);
+    expect(chat(world, op, '/kit create tools').join('\n')).toContain('stone × 32');
+    expect(countItem(op.player, 'stone')).toBe(32);
+    expect(countItem(op.player, 'dirt')).toBe(16);
+    expect(countItem(op.player, ItemId.IronSword)).toBe(1);
+    expect(chat(world, op, '/kit create tools').some((line) => line.includes('уже существует'))).toBe(true);
+    expect(chat(world, op, `/kit create ${'a'.repeat(25)}`).some((line) => line.includes('Некорректное имя'))).toBe(true);
+    fill(op.player, []);
+    expect(chat(world, op, '/kit create bare').some((line) => line.includes('пуст'))).toBe(true);
 
     const ada = join(world, 'Ada');
-    expect(countItem(ada.player, ItemId.Diamond)).toBe(3);
-    expect(chat(world, ada, '/kit start').some((line) => line.includes('уже получен'))).toBe(true);
-    expect(countItem(ada.player, ItemId.Diamond)).toBe(3);
-    world.events.emit('entityDeath', {
-      entityId: ada.player.id,
-      cause: 'melee',
-      playerId: ada.player.id,
-    });
-    expect(world.respawn(ada.player)).toBe(false);
-    expect(countItem(ada.player, ItemId.Diamond)).toBe(3);
+    expect(chat(world, ada, '/kit create tools').some((line) => line.includes('permission'))).toBe(true);
+    const adaStone = countItem(ada.player, 'stone');
+    expect(chat(world, ada, '/kit tools').some((line) => line.includes('Выдан набор'))).toBe(true);
+    expect(countItem(ada.player, 'stone')).toBe(adaStone + 32);
+    expect(chat(world, ada, '/kit tools').some((line) => line.includes('Выдан набор'))).toBe(true);
+    expect(countItem(ada.player, 'stone')).toBe(adaStone + 64);
+    expect(chat(world, op, '/kit give Nobody tools').some((line) => line.includes('не найден'))).toBe(true);
 
-    const token = ada.player.sessionToken;
-    world.disconnect(ada.player.id);
-    const adaAgain = join(world, 'Ada', token);
-    expect(adaAgain.resumed).toBe(true);
-    expect(countItem(adaAgain.player, ItemId.Diamond)).toBe(3);
+    fill(op.player, [{ itemId: ItemId.Diamond, count: 3 }]);
+    expect(chat(world, op, '/kit create start').join('\n')).toContain('diamond × 3');
+    const bob = join(world, 'Bob');
+    expect(countItem(bob.player, ItemId.Diamond)).toBe(3);
+    expect(chat(world, bob, '/kit start').some((line) => line.includes('уже получен'))).toBe(true);
+    world.events.emit('entityDeath', { entityId: bob.player.id, cause: 'melee', playerId: bob.player.id });
+    expect(world.respawn(bob.player)).toBe(false);
+    expect(countItem(bob.player, ItemId.Diamond)).toBe(3);
+    const token = bob.player.sessionToken;
+    world.disconnect(bob.player.id);
+    const bobAgain = join(world, 'Bob', token);
+    expect(bobAgain.resumed).toBe(true);
+    expect(countItem(bobAgain.player, ItemId.Diamond)).toBe(3);
 
-    expect(chat(world, adaAgain, '/kit create donor').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, op, '/kit create donor').some((line) => line.includes('создан'))).toBe(true);
-    expect(chat(world, op, '/kit edit donor add iron_ingot 5').some((line) => line.includes('iron_ingot × 5'))).toBe(true);
-    expect(chat(world, op, '/kit edit donor add cobblestone 100').some((line) => line.includes('cobblestone × 100'))).toBe(true);
-    expect(chat(world, op, '/kit info donor').join('\n')).toContain('cobblestone × 100');
-    expect(chat(world, op, `/kit create ${'a'.repeat(25)}`).some((line) => line.includes('Некорректное имя'))).toBe(true);
-    expect(chat(world, op, '/kit edit donor add not_a_real_item 1').some((line) => line.includes('Неизвестный предмет'))).toBe(true);
-    expect(chat(world, op, '/kit edit donor add diamond 0').some((line) => line.includes('Количество'))).toBe(true);
-    expect(chat(world, op, '/kit give Nobody donor').some((line) => line.includes('не найден'))).toBe(true);
-    expect(chat(world, adaAgain, '/kit claim donor').some((line) => line.includes('permission'))).toBe(true);
-    expect(countItem(adaAgain.player, ItemId.IronIngot)).toBe(0);
-
-    world.permissions.grant(adaAgain.player.name, 'kit.claim.donor');
-    expect(chat(world, adaAgain, '/kit claim donor').some((line) => line.includes('Выдан набор'))).toBe(true);
-    expect(countItem(adaAgain.player, ItemId.IronIngot)).toBe(5);
-    expect(chat(world, adaAgain, '/kit claim donor').some((line) => line.includes('Выдан набор'))).toBe(true);
-    expect(countItem(adaAgain.player, ItemId.IronIngot)).toBe(10);
-
-    for (let slot = 0; slot < adaAgain.player.inventory.slots.length; slot += 1) {
-      adaAgain.player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    for (let slot = 0; slot < ada.player.inventory.slots.length; slot += 1) {
+      ada.player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
     }
-    expect(chat(world, op, '/kit give Ada donor').some((line) => line.includes('выдан'))).toBe(true);
-    expect(countItem(adaAgain.player, 'cobblestone')).toBe(adaAgain.player.inventory.slots.length * 64);
-    expect(countItem(adaAgain.player, ItemId.IronIngot)).toBe(0);
-    const spilledIron = world.gameplay.drops.entities
-      .filter((drop) => drop.stack.itemId === ItemId.IronIngot)
+    expect(chat(world, op, '/kit give Ada tools').some((line) => line.includes('выдан'))).toBe(true);
+    expect(countItem(ada.player, 'cobblestone')).toBe(ada.player.inventory.slots.length * 64);
+    const spilled = (itemId: string) => world.gameplay.drops.entities
+      .filter((drop) => drop.stack.itemId === itemId)
       .reduce((sum, drop) => sum + drop.stack.count, 0);
-    const spilledCobble = world.gameplay.drops.entities
-      .filter((drop) => drop.stack.itemId === 'cobblestone')
-      .reduce((sum, drop) => sum + drop.stack.count, 0);
-    expect(spilledIron).toBe(5);
-    expect(spilledCobble).toBe(100);
+    expect(spilled('stone')).toBe(32);
+    expect(spilled('dirt')).toBe(16);
+    expect(spilled(ItemId.IronSword)).toBe(1);
 
-    const diamondsBeforeRestart = countItem(adaAgain.player, ItemId.Diamond);
-    world.disconnect(adaAgain.player.id);
+    world.disconnect(bobAgain.player.id);
     await world.stop();
     worlds.splice(worlds.indexOf(world), 1);
     const restarted = await boot(first.dir);
-    const adaRestarted = join(restarted.world, 'Ada', token);
-    expect(adaRestarted.resumed).toBe(true);
-    expect(countItem(adaRestarted.player, ItemId.Diamond)).toBe(diamondsBeforeRestart);
-    expect(chat(restarted.world, adaRestarted, '/kit start').some((line) => line.includes('уже получен'))).toBe(true);
-    expect(countItem(adaRestarted.player, ItemId.Diamond)).toBe(diamondsBeforeRestart);
+    const bobRestarted = join(restarted.world, 'Bob', token);
+    expect(countItem(bobRestarted.player, ItemId.Diamond)).toBe(3);
+    expect(chat(restarted.world, bobRestarted, '/kit start').some((line) => line.includes('уже получен'))).toBe(true);
   });
 });

@@ -50,11 +50,15 @@ The fix stores the token returned by `queueLight` and finishes when that token's
 
 ### /kit
 
-Commands: `/kit help`, `/kit start`, `/kit claim <name>`, `/kit create <name>`, `/kit info <name>`, `/kit delete <name>`, `/kit edit <name> add|remove|clear`, `/kit give <player> <name>`.
+Commands: `/kit help`, `/kit start`, `/kit <name>`, `/kit create <name>`, `/kit delete <name>`, `/kit give <player> <name>`.
 
-`start` cannot be deleted. `/kit edit start add <item> <count>` creates it. The same item sums. Counts are integers from 1 to 9999. Data file: `plugin-data/kit/store` (`kits`, `receivedStart`, `pendingStart`).
+`/kit create` copies the creator's main inventory, armor, and offhand. Empty slots and unknown items are skipped. The creator keeps every stack. An empty inventory creates an empty kit. Duplicate and illegal names are rejected. `help`, `create`, `delete`, and `give` are reserved. Data file: `plugin-data/kit/store`.
 
-`PlayerJoinEvent.firstJoin` is true only when `join()` creates a new id. Resume passes false. Death and respawn do not emit `playerJoin`. `grantStart` marks the player only after delivery returns true. A nested call returns `busy` and does not give a second copy. A false or thrown delivery stores `pendingStart` and the next join retries. `/kit start` works only for that pending case. Other kits require `kit.claim.<name>`. Create, edit, delete, and give require operator, `kit.admin`, or `server.admin`. The admin role catalog includes `kit.*`. `deliverKit` gives in `maxStack` batches so a full inventory uses `PlayerView.give`'s leftover drop.
+`/kit <name>` gives that kit to any player. `/kit start` is separate: the first join grants it when the kit has items, and `/kit start` grants it once if it was not received yet. Reconnect, death, and respawn do not grant it again. A failed delivery stays pending and is retried. Create, delete, and give require operator, `kit.admin`, or `server.admin`. `deliverKit` gives in `maxStack` batches so a full inventory uses `PlayerView.give`'s leftover drop.
+
+### AutoMine hologram
+
+`/holograms automine <hologram> <mine>` stores the mine name on the existing hologram and marks it as a timer. The network snapshot carries `timerEndsAt` from that mine's `nextResetAt`. The client renders `Обновление шахты через: MM:SS` and holds `00:00` after the deadline instead of starting its own loop. `noteAutomineSchedule` runs from the existing world tick and broadcasts only when `nextResetAt` changes. `/holograms automine <hologram> clear` unlinks it. A missing schedule shows `Обновление шахты: нет расписания`. Ordinary timers omit `timerEndsAt`.
 
 ### Mega Zombie
 
