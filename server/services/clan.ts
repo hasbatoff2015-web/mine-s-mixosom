@@ -70,6 +70,7 @@ import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import { BlockId } from '../../src/blocks';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
+import { clientMoneyRequest, isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 import type { JsonFileStore } from './jsonStore';
 import { overlappingClaims } from './claimAnchors';
 import type { Claim, ClaimStore } from './claims';
@@ -717,6 +718,9 @@ export class ClanService {
       for (const clan of this.clans.values()) {
         if (clan.nameKey === key) return { ok: false, error: CLAN_NAME_TAKEN_ERROR };
       }
+      if (this.economy.backend === 'postgres' && !isClientMoneyRequestId(request?.requestId)) {
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
+      }
       const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request);
       return thenResult(paid, (result) => {
         if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
@@ -1356,14 +1360,12 @@ export class ClanService {
       return;
     }
     if (action === 'confirm_create') {
-      const request = message.clientRequestId
-        ? {
-          requestId: message.clientRequestId,
-          operation: 'economy.clan_create',
-          actorId: playerId,
-          payload: { name: session.nameText ?? '', icon: session.selectedIcon ?? '' },
-        }
-        : undefined;
+      const request = clientMoneyRequest(
+        message.clientRequestId,
+        'economy.clan_create',
+        playerId,
+        { name: session.nameText ?? '', icon: session.selectedIcon ?? '' },
+      );
       const result = this.createClan(playerId, session.nameText, session.selectedIcon, request);
       const apply = (created: ClanResult): void => {
         if (!created.ok) {

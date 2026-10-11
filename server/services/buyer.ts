@@ -32,6 +32,7 @@ import {
 import { isKnownItemId, tryGetItemDefinition } from '../../src/items';
 import { formatMegacoins } from './economy';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
+import { clientMoneyRequest, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 import { createHologramRecord, type HologramNetwork } from './holograms';
 import type { JsonFileStore } from './jsonStore';
 
@@ -731,6 +732,10 @@ export class BuyerService {
         session.message = BUYER_PRICE_EMPTY_ERROR;
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
+      if (this.economy.backend === 'postgres' && !request) {
+        session.message = MONEY_REQUEST_REQUIRED;
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
+      }
       const held = cloneStack(slot)!;
       const paid = this.economy.deposit(playerId, total, 'TRADER_SELL', undefined, undefined, request);
       return thenResult(paid, (result) => {
@@ -822,11 +827,10 @@ export class BuyerService {
 }
 
 function saleRequest(playerId: string, message: ClientBuyerActionMessage): EconomyCommandRequest | undefined {
-  if (!message.clientRequestId) return undefined;
-  return {
-    requestId: message.clientRequestId,
-    operation: 'economy.trader_sell',
-    actorId: playerId,
-    payload: { action: 'sell', buyerId: message.buyerId ?? null, slot: message.slot ?? null, amount: message.amount ?? null },
-  };
+  return clientMoneyRequest(
+    message.clientRequestId,
+    'economy.trader_sell',
+    playerId,
+    { action: 'sell', buyerId: message.buyerId ?? null, slot: message.slot ?? null, amount: message.amount ?? null },
+  );
 }

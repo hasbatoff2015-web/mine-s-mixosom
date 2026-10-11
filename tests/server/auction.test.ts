@@ -455,6 +455,47 @@ describe('AuctionService', () => {
     expect(network.status).toBe('CANCELLED');
   });
 
+  it('keeps a server settlement uuid across save, load, upgrade, and relist', async () => {
+    const { store, economy, auction } = await setup();
+    const inventory = new Inventory();
+    fill(inventory, 'diamond', 1);
+    const listed = auction.createListing('ada', 'Ada', inventory, 0, 1, 10);
+    expect(listed.ok).toBe(true);
+    const settlement = listed.listing!.economySettlementId;
+    expect(settlement).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    const reloaded = new AuctionService(store, economy);
+    expect(reloaded.getListing(listed.listing!.listingId)?.economySettlementId).toBe(settlement);
+    const raw = store.load<{ nextId: number; listings: Array<Record<string, unknown>> }>('auction/listings', {
+      nextId: 1,
+      listings: [],
+    });
+    delete raw.listings[0]?.economySettlementId;
+    store.save('auction/listings', raw);
+    const upgraded = new AuctionService(store, economy);
+    const upgradedId = upgraded.getListing('ah-1')?.economySettlementId;
+    expect(upgradedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(upgradedId).not.toBe(settlement);
+    const restarted = new AuctionService(store, economy);
+    expect(restarted.getListing('ah-1')?.economySettlementId).toBe(upgradedId);
+    const relisted = restarted.relist('ada', 'ah-1', 20);
+    expect(relisted.ok).toBe(true);
+    expect(relisted.listing?.economySettlementId).not.toBe(upgradedId);
+  });
+
+  it('does not share ah-1 settlement identity across listing stores', async () => {
+    const left = await setup();
+    const right = await setup();
+    const leftInventory = new Inventory();
+    const rightInventory = new Inventory();
+    fill(leftInventory, 'diamond', 1);
+    fill(rightInventory, 'diamond', 1);
+    const a = left.auction.createListing('ada', 'Ada', leftInventory, 0, 1, 10);
+    const b = right.auction.createListing('bea', 'Bea', rightInventory, 0, 1, 10);
+    expect(a.listing?.listingId).toBe('ah-1');
+    expect(b.listing?.listingId).toBe('ah-1');
+    expect(a.listing?.economySettlementId).not.toBe(b.listing?.economySettlementId);
+  });
+
   it('parses auction protocol intents', () => {
     expect(parseClientMessage({ type: 'auction_action', action: 'buy', listingId: 'ah-1' })).toMatchObject({
       type: 'auction_action',

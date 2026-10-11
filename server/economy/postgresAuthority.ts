@@ -127,7 +127,8 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     sourceId?: string,
   ): Promise<EconomyResult> {
     const id = sourceId ?? pairId;
-    const source = id ? { type: 'AUCTION', id } : undefined;
+    const sourceType = debitReason === 'AUCTION_REFUND' ? 'AUCTION_REFUND' : 'AUCTION_PURCHASE';
+    const source = id ? { type: sourceType, id } : undefined;
     return this.move(fromPlayerId, toPlayerId, amount, debitReason, creditReason, request, source);
   }
 
@@ -312,8 +313,14 @@ export class PostgresGameplayEconomy implements CurrencyPort {
   }
 
   track(work: Promise<unknown>): void {
+    const settled = work.then(
+      () => undefined,
+      () => {
+        serverLog('background economy work failed', 'error');
+      },
+    );
     if (this.closed) return;
-    const tracked = work.finally(() => {
+    const tracked = settled.finally(() => {
       this.pending.delete(tracked);
     });
     this.pending.add(tracked);
@@ -420,7 +427,7 @@ export class PostgresGameplayEconomy implements CurrencyPort {
         payload: request.payload,
       }, async (tx) => run(tx));
       await this.warm(playerIds);
-      return detailed.value;
+      return { ...detailed.value, replayed: detailed.replayed || Boolean(detailed.value.replayed) };
     });
   }
 

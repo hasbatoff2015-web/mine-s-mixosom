@@ -26,6 +26,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { inventoryCanAccept } from './auction';
 import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
+import { isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 
 export { TRADE_PLUGIN_NAME, TRADE_SLOT_COUNT };
 
@@ -256,7 +257,7 @@ export class TradeService {
     return { ok: true, affected: [session.playerA, session.playerB] };
   }
 
-  accept(playerId: string): TradeResult {
+  accept(playerId: string, clientRequestId?: string): TradeResult {
     const session = this.sessionFor(playerId);
     if (!session) return { ok: false, error: TRADE_STALE_ERROR };
     const other = partnerOf(session, playerId);
@@ -266,7 +267,7 @@ export class TradeService {
     if (!self.ready || !partner.ready) return { ok: false, error: TRADE_NOT_READY_ERROR };
     self.accepted = true;
     if (!partner.accepted) return { ok: true, affected: [session.playerA, session.playerB] };
-    return this.complete(session) as TradeResult;
+    return this.complete(session, clientRequestId) as TradeResult;
   }
 
   cancel(playerId: string): TradeResult {
@@ -314,7 +315,7 @@ export class TradeService {
     return { ok: true, affected: [session.playerA, session.playerB] };
   }
 
-  private complete(session: TradeSession): TradeResult | Promise<TradeResult> {
+  private complete(session: TradeSession, clientRequestId?: string): TradeResult | Promise<TradeResult> {
     return this.withLocks([session.playerA, session.playerB], () => {
       if (!this.runtime.isOnline(session.playerA) || !this.runtime.isOnline(session.playerB)) {
         return this.closeSession(session, TRADE_OFFLINE_ERROR);
@@ -341,6 +342,12 @@ export class TradeService {
           return { ok: false, error: tradeInventoryFullError(this.runtime.displayName(session.playerB)) };
         }
       }
+      if ((offerA.money > 0 || offerB.money > 0) && this.economy.backend === 'postgres' && !isClientMoneyRequestId(clientRequestId)) {
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
+      }
+      // The request UUID is a boundary check. Money identity stays
+      // `session.settlementId` (`:a`, `:b`, `:a:undo`). One request id cannot
+      // wrap both legs in IdempotencyService, and this settlement is not crash-atomic.
       const moved = this.payTrade(session, offerA.money, offerB.money);
       return thenResult(moved, (paid) => {
         if (!paid.ok) return { ok: false as const, error: paid.error ?? TRADE_MONEY_ERROR };

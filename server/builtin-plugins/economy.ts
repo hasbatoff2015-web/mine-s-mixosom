@@ -1,5 +1,6 @@
 import type { Plugin } from '../PluginManager';
 import { fail, isConsoleSender, ok, type CommandResult, type CommandSender } from '../commands';
+import { clientMoneyRequest, MONEY_REQUEST_REQUIRED, serverMoneyRequest } from '../economy/moneyRequest';
 import {
   ECONOMY_BALT0P_DEFAULT_LIMIT,
   ECONOMY_COMMAND_HISTORY_LIMIT,
@@ -167,10 +168,11 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
           const target = lookup(name);
           if (!target) return fail(`Игрок '${name}' не найден.`);
           if (target.id === sender.playerId) return fail('Нельзя перевести Мегакоины самому себе.');
-          const request = commandRequest(sender, 'economy.player_transfer', {
+          const request = moneyCommandRequest(economy.backend, sender, 'economy.player_transfer', {
             to: target.id,
             amount,
           });
+          if (isCommandResult(request)) return request;
           const named = economy.rememberName(sender.playerId, sender.name);
           const pay = () => {
             const also = economy.rememberName(target.id, target.name);
@@ -250,7 +252,8 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
                   : 'Сумма должна быть целым положительным числом.',
               );
             }
-            const request = commandRequest(sender, `economy.admin_${sub}`, { playerId: target.id, amount });
+            const request = moneyCommandRequest(economy.backend, sender, `economy.admin_${sub}`, { playerId: target.id, amount });
+            if (isCommandResult(request)) return request;
             const result = sub === 'give'
               ? economy.deposit(target.id, amount, 'ADMIN_GIVE', undefined, undefined, request)
               : sub === 'take'
@@ -275,7 +278,8 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'reset') {
             const target = requireTarget(args[1], '/eco reset <player>');
             if (!isIdentity(target)) return target;
-            const request = commandRequest(sender, 'economy.admin_reset', { playerId: target.id });
+            const request = moneyCommandRequest(economy.backend, sender, 'economy.admin_reset', { playerId: target.id });
+            if (isCommandResult(request)) return request;
             const result = economy.resetBalance(target.id, 'ADMIN_RESET', request);
             return afterMoney(result, (paid) => {
               if (!paid.ok) return fail(paid.error ?? 'Сброс не выполнен.');
@@ -310,18 +314,27 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
   };
 }
 
-function commandRequest(
-  sender: { playerId: string; clientRequestId?: string },
+function isCommandResult(value: EconomyCommandRequest | undefined | CommandResult): value is CommandResult {
+  return Boolean(value) && typeof value === 'object' && 'lines' in value;
+}
+
+/**
+ * Postgres money commands require a client UUID. Console work gets a new
+ * server-owned id. Legacy JSON keeps the previous optional behavior.
+ */
+function moneyCommandRequest(
+  backend: 'legacy_json' | 'postgres' | undefined,
+  sender: CommandSender,
   operation: string,
   payload: unknown,
-): EconomyCommandRequest | undefined {
-  if (!sender.clientRequestId) return undefined;
-  return {
-    requestId: sender.clientRequestId,
-    operation,
-    actorId: sender.playerId,
-    payload,
-  };
+): EconomyCommandRequest | undefined | CommandResult {
+  if (isConsoleSender(sender)) {
+    if (backend !== 'postgres') return undefined;
+    return serverMoneyRequest(operation, sender.playerId, payload);
+  }
+  const request = clientMoneyRequest(sender.clientRequestId, operation, sender.playerId, payload);
+  if (backend === 'postgres' && !request) return fail(MONEY_REQUEST_REQUIRED);
+  return request;
 }
 
 function afterName(

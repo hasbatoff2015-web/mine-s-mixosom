@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { displayNameFor } from '../../src/i18n/displayNames';
 import {
   Inventory,
@@ -19,7 +20,8 @@ import {
 } from '../../shared/auctionHistory';
 import type { NotificationCategory } from '../../shared/notifications';
 import { formatMegacoins } from './economy';
-import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
+import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
+import { isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 import type { JsonFileStore } from './jsonStore';
 
 export const AUCTION_PLUGIN_NAME = 'auction';
@@ -52,6 +54,11 @@ export type AuctionScreen =
 
 export interface AuctionListing {
   listingId: string;
+  /**
+   * Server-owned sale identity. One listing settlement, independent of buyer.
+   * Not derived from `listingId` and not accepted from the client.
+   */
+  economySettlementId: string;
   sellerPlayerId: string;
   sellerName: string;
   item: ItemStack;
@@ -209,7 +216,7 @@ export function listingTooltip(listing: AuctionListing, now: number): string {
   return lines.join('\n');
 }
 
-function parseListing(value: unknown): AuctionListing | undefined {
+function parseListing(value: unknown): { listing: AuctionListing; upgraded: boolean } | undefined {
   if (!isRecord(value) || typeof value.listingId !== 'string') return undefined;
   if (typeof value.sellerPlayerId !== 'string' || typeof value.sellerName !== 'string') return undefined;
   let item: ItemStack;
@@ -230,19 +237,29 @@ function parseListing(value: unknown): AuctionListing | undefined {
     status !== 'ACTIVE' && status !== 'SOLD' && status !== 'CANCELLED'
     && status !== 'EXPIRED' && status !== 'RELISTED' && status !== 'CLAIMED'
   ) return undefined;
+  const settlement = readSettlementId(value.economySettlementId);
   return {
-    listingId: value.listingId,
-    sellerPlayerId: value.sellerPlayerId,
-    sellerName: value.sellerName,
-    item,
-    price,
-    createdAt,
-    expiresAt,
-    updatedAt,
-    status,
-    ...(typeof value.soldToPlayerId === 'string' ? { soldToPlayerId: value.soldToPlayerId } : {}),
-    ...(typeof value.salePairId === 'string' ? { salePairId: value.salePairId } : {}),
+    upgraded: settlement.upgraded,
+    listing: {
+      listingId: value.listingId,
+      economySettlementId: settlement.id,
+      sellerPlayerId: value.sellerPlayerId,
+      sellerName: value.sellerName,
+      item,
+      price,
+      createdAt,
+      expiresAt,
+      updatedAt,
+      status,
+      ...(typeof value.soldToPlayerId === 'string' ? { soldToPlayerId: value.soldToPlayerId } : {}),
+      ...(typeof value.salePairId === 'string' ? { salePairId: value.salePairId } : {}),
+    },
   };
+}
+
+function readSettlementId(value: unknown): { id: string; upgraded: boolean } {
+  if (typeof value === 'string' && isClientMoneyRequestId(value)) return { id: value.toLowerCase(), upgraded: false };
+  return { id: randomUUID(), upgraded: true };
 }
 
 export class AuctionService {
@@ -271,10 +288,14 @@ export class AuctionService {
     const file = this.store.load<AuctionFile>('auction/listings', { nextId: 1, listings: [] });
     this.nextId = Number.isInteger(file.nextId) && file.nextId > 0 ? file.nextId : 1;
     this.listings.clear();
+    let upgraded = false;
     for (const entry of Array.isArray(file.listings) ? file.listings : []) {
-      const listing = parseListing(entry);
-      if (listing) this.listings.set(listing.listingId, listing);
+      const parsed = parseListing(entry);
+      if (!parsed) continue;
+      if (parsed.upgraded) upgraded = true;
+      this.listings.set(parsed.listing.listingId, parsed.listing);
     }
+    if (upgraded) this.persistListings();
     this.loadHistory();
     this.expireDue();
   }
@@ -451,6 +472,7 @@ export class AuctionService {
       const now = this.now();
       const listing: AuctionListing = {
         listingId: `ah-${this.nextId++}`,
+        economySettlementId: randomUUID(),
         sellerPlayerId: playerId,
         sellerName,
         item: taken,
@@ -466,7 +488,13 @@ export class AuctionService {
     });
   }
 
-  buyListing(buyerId: string, buyerName: string, inventory: Inventory, listingId: string): AuctionResult {
+  buyListing(
+    buyerId: string,
+    buyerName: string,
+    inventory: Inventory,
+    listingId: string,
+    request?: EconomyCommandRequest,
+  ): AuctionResult {
     return this.withLocks(buyerId, listingId, () => {
       this.expireDue();
       const listing = this.listings.get(listingId);
@@ -488,6 +516,13 @@ export class AuctionService {
       if (!inventoryCanAccept(inventory, listing.item)) {
         return { ok: false, error: 'Недостаточно места в инвентаре.' };
       }
+      if (this.economy.backend === 'postgres' && !isClientMoneyRequestId(request?.requestId)) {
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
+      }
+      if (!isClientMoneyRequestId(listing.economySettlementId)) {
+        listing.economySettlementId = randomUUID();
+        this.persistListings();
+      }
       const moved = this.economy.settle(
         buyerId,
         listing.sellerPlayerId,
@@ -495,22 +530,24 @@ export class AuctionService {
         'AUCTION_PURCHASE',
         'AUCTION_SALE',
         listing.listingId,
-        undefined,
-        `${listing.listingId}:${buyerId}`,
+        request,
+        listing.economySettlementId,
       );
       return thenResult(moved, (result) => {
-        if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
+        if (!result.ok || result.replayed) {
+          return { ok: false as const, error: result.ok ? 'conflict' : (result.error ?? 'Недостаточно Мегакоинов.') };
+        }
         const leftover = inventory.add(cloneStack(listing.item)!);
         if (leftover) {
           const refund = this.economy.settle(
             listing.sellerPlayerId,
             buyerId,
             listing.price,
-            'AUCTION_SALE',
-            'AUCTION_PURCHASE',
-            `${listing.listingId}-rollback`,
+            'AUCTION_REFUND',
+            'AUCTION_REFUND',
+            listing.listingId,
             undefined,
-            `${listing.listingId}:${buyerId}:rollback`,
+            listing.economySettlementId,
           );
           const fail = { ok: false as const, error: 'Недостаточно места в инвентаре.' };
           return thenResult(refund, () => fail);
@@ -561,6 +598,7 @@ export class AuctionService {
       const now = this.now();
       const created: AuctionListing = {
         listingId: `ah-${this.nextId++}`,
+        economySettlementId: randomUUID(),
         sellerPlayerId: old.sellerPlayerId,
         sellerName: old.sellerName,
         item: cloneStack(old.item)!,

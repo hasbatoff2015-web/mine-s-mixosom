@@ -71,7 +71,7 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     await database.start();
     store = new JsonFileStore(mkdtempSync(join(tmpdir(), 'fc-eco-')));
     const placed = new EconomyService(store);
-    megacoin = new MegacoinService(database, 'dev');
+    megacoin = new MegacoinService(database, 'dev', 'anarchy');
     money = new PostgresGameplayEconomy(
       megacoin,
       new IdempotencyService(database, 'dev'),
@@ -230,7 +230,16 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     buyer.openTrade(ada, 'aabbccdd', inventory);
     await buyer.handleAction(ada, inventory, { type: 'buyer_action', action: 'select_slot', slot: 0 }, { edit: false, delete: false, use: true });
     const held = buyer.session(ada)?.tradeSlot?.count;
-    const failed = await buyer.handleAction(ada, inventory, { type: 'buyer_action', action: 'sell' }, { edit: false, delete: false, use: true });
+    const missing = await buyer.handleAction(ada, inventory, { type: 'buyer_action', action: 'sell' }, { edit: false, delete: false, use: true });
+    expect(missing.ok).toBe(false);
+    expect(missing.error).toBe('Нужен идентификатор запроса.');
+    expect(buyer.session(ada)?.tradeSlot?.count).toBe(held);
+    expect(money.getBalance(ada)).toBe(ECONOMY_MAX_BALANCE);
+    const failed = await buyer.handleAction(ada, inventory, {
+      type: 'buyer_action',
+      action: 'sell',
+      clientRequestId: randomUUID(),
+    }, { edit: false, delete: false, use: true });
     expect(failed.ok).toBe(false);
     expect(buyer.session(ada)?.tradeSlot?.count).toBe(held);
     expect(money.getBalance(ada)).toBe(ECONOMY_MAX_BALANCE);
@@ -246,7 +255,13 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     expect(listed.ok).toBe(true);
     const listingId = listed.listing!.listingId;
     const buyerInventory = new Inventory();
-    const bought = await auction.buyListing(bea, 'Bea', buyerInventory, listingId);
+    const request = {
+      requestId: randomUUID(),
+      operation: 'economy.auction_purchase',
+      actorId: bea,
+      payload: { listingId },
+    };
+    const bought = await auction.buyListing(bea, 'Bea', buyerInventory, listingId, request);
     expect(bought.ok).toBe(true);
     expect(buyerInventory.count('diamond')).toBe(1);
     const sellerAfter = money.getBalance(ada);
@@ -255,9 +270,38 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     expect(replay.ok).toBe(false);
     expect(money.getBalance(ada)).toBe(sellerAfter);
     expect(money.getBalance(bea)).toBe(buyerAfter);
-    const operation = await megacoin.findBySource('AUCTION', `${listingId}:${bea}`);
+    const operation = await megacoin.findBySource('AUCTION_PURCHASE', listed.listing!.economySettlementId);
     expect(operation?.kind).toBe('TRANSFER');
     expect(operation?.legs).toHaveLength(2);
+    const listing = auction.getListing(listingId)!;
+    listing.status = 'ACTIVE';
+    const sameBuyer = new Inventory();
+    const retried = await auction.buyListing(bea, 'Bea', sameBuyer, listingId, {
+      requestId: randomUUID(),
+      operation: 'economy.auction_purchase',
+      actorId: bea,
+      payload: { listingId },
+    });
+    expect(retried.ok).toBe(false);
+    expect(retried.error).toBe('conflict');
+    expect(sameBuyer.count('diamond')).toBe(0);
+    expect(money.getBalance(ada)).toBe(sellerAfter);
+    expect(money.getBalance(bea)).toBe(buyerAfter);
+    const eve = randomUUID();
+    await money.preparePlayer(eve, 'Eve');
+    await money.deposit(eve, 500, 'ADMIN_GIVE');
+    const eveInventory = new Inventory();
+    const stolen = await auction.buyListing(eve, 'Eve', eveInventory, listingId, {
+      requestId: randomUUID(),
+      operation: 'economy.auction_purchase',
+      actorId: eve,
+      payload: { listingId },
+    });
+    expect(stolen.ok).toBe(false);
+    expect(stolen.error).toBe('conflict');
+    expect(eveInventory.count('diamond')).toBe(0);
+    expect(money.getBalance(ada)).toBe(sellerAfter);
+    expect(money.getBalance(eve)).toBe(600);
   });
 
   it('charges a clan fee once and does not create a clan when debit fails', async () => {
@@ -296,8 +340,13 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
       players: Array<{ balance: number }>;
     };
     expect(raw.players[0]?.balance).toBe(999_999);
+    const survival = new MegacoinService(database, 'dev', 'survival');
+    const survivalAccount = await survival.ensureAccount({ playerId: jsonPlayer, displayName: 'Json' });
+    expect(survivalAccount.balance).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(money.getBalance(jsonPlayer)).toBe(105);
     const top = await money.getTopBalances(10);
     expect(top.some((entry) => entry.playerId === jsonPlayer && entry.balance === 105)).toBe(true);
+    expect(top.some((entry) => entry.balance === ECONOMY_INITIAL_BALANCE && entry.playerId === jsonPlayer)).toBe(false);
     const history = await money.getTransactionHistory(jsonPlayer, 10);
     expect(history.some((entry) => entry.reason === 'ADMIN_GIVE')).toBe(true);
     expect(history.some((entry) => entry.reason === 'INITIAL')).toBe(true);
