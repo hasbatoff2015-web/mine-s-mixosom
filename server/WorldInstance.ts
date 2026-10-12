@@ -686,6 +686,9 @@ export class WorldInstance {
   private dirty = false;
   private readonly identityIncidents = new IdentityIncidentLog();
   private identityLogLoaded = false;
+  /** A failed incident write stays pending until the next allowed checkpoint. */
+  private identityPersistPending = false;
+  private unresolvedIdentitySources = 0;
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
@@ -5983,6 +5986,7 @@ export class WorldInstance {
     readonly findings: IdentityReport['findings'];
     readonly incidents: ReturnType<IdentityIncidentLog['list']>;
     readonly skippedMalformed: number;
+    readonly unresolvedSources: number;
   } {
     const report = this.observeIdentity('recheck');
     return {
@@ -5991,6 +5995,7 @@ export class WorldInstance {
       findings: report.findings,
       incidents: this.identityIncidents.list(),
       skippedMalformed: report.skippedMalformed,
+      unresolvedSources: this.unresolvedIdentitySources,
     };
   }
 
@@ -5998,19 +6003,25 @@ export class WorldInstance {
     this.ensureIdentityLog();
     try {
       const report = scanIdentity(this.identitySources());
-      if (this.identityIncidents.observe(report, checkpoint, Date.now())) {
-        try {
-          this.pluginStore.save('identity-incidents', this.identityIncidents.serialize());
-        } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          serverLog(`identity incident save failed: ${detail}`, 'warn');
-        }
+      if (this.identityIncidents.observe(report, checkpoint, Date.now()) || this.identityPersistPending) {
+        this.persistIdentityIncidents();
       }
       return report;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       serverLog(`identity scan failed: ${detail}`, 'warn');
       return { worldId: this.worldId, locations: [], findings: [], skippedMalformed: 0 };
+    }
+  }
+
+  private persistIdentityIncidents(): void {
+    try {
+      this.pluginStore.save('identity-incidents', this.identityIncidents.serialize());
+      this.identityPersistPending = false;
+    } catch (error) {
+      this.identityPersistPending = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity incident save failed: ${detail}`, 'warn');
     }
   }
 
@@ -6092,24 +6103,37 @@ export class WorldInstance {
       });
     }
     const chests = [];
+    let unresolvedSources = 0;
+    const knownBlock = (x: number, y: number, z: number) => {
+      const block = this.world.knownBlockId(x, y, z);
+      if (block === 'unknown') unresolvedSources += 1;
+      return block;
+    };
     for (const [key, chest] of this.world.chests) {
       const cell = identityCell(key);
-      if (!cell || !isSharedWorldChestBlock(this.world.getBlock(cell.x, cell.y, cell.z, false))) continue;
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || !isSharedWorldChestBlock(block)) continue;
       chests.push({ ...cell, slots: chest.slots });
     }
     const furnaces = [];
     for (const [key, furnace] of this.world.furnaces) {
       const cell = identityCell(key);
-      if (!cell || this.world.getBlock(cell.x, cell.y, cell.z, false) !== BlockId.Furnace) continue;
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || block !== BlockId.Furnace) continue;
       furnaces.push({ ...cell, slots: furnace.slots });
     }
     const paintings = [];
     for (const [key, state] of this.world.blockStates) {
       const cell = identityCell(key);
-      if (!cell || this.world.getBlock(cell.x, cell.y, cell.z, false) !== BlockId.CollectiblePainting) continue;
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || block !== BlockId.CollectiblePainting) continue;
       if (!state.paintingItemId || !state.paintingInstanceId) continue;
       paintings.push({ ...cell, itemId: state.paintingItemId, instanceId: state.paintingInstanceId });
     }
+    this.unresolvedIdentitySources = unresolvedSources;
     const buyer = this.buyer.physicalHolders();
     return {
       worldId: this.worldId,

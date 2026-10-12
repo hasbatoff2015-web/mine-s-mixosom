@@ -799,6 +799,23 @@ export class VoxelWorld {
     return (chunk?.get(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE)) ?? BlockId.Air) as BlockId;
   }
 
+  /**
+   * Block id for a sparse saved cell. Does not generate or load a chunk.
+   * A loaded chunk wins. Otherwise a saved modification is used, including Air.
+   * `unknown` means neither source can say what the block is.
+   */
+  knownBlockId(x: number, y: number, z: number): BlockId | 'unknown' {
+    if (y < 0 || y >= WORLD_HEIGHT) return y < 0 ? BlockId.Bedrock : BlockId.Air;
+    const chunkX = floorDiv(x, CHUNK_SIZE);
+    const chunkZ = floorDiv(z, CHUNK_SIZE);
+    const localX = positiveMod(x, CHUNK_SIZE);
+    const localZ = positiveMod(z, CHUNK_SIZE);
+    const loaded = this.chunks.get(chunkKey(chunkX, chunkZ));
+    if (loaded) return loaded.get(localX, y, localZ) as BlockId;
+    const saved = this.modifications.get(chunkKey(chunkX, chunkZ))?.get(Chunk.index(localX, y, localZ));
+    return saved === undefined ? 'unknown' : saved;
+  }
+
   setBlock(x: number, y: number, z: number, block: BlockId, record = true): boolean {
     const result = this.applyBlockBatch([{ x, y, z, block }], {
       record,

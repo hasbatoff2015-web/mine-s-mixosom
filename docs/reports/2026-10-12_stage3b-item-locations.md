@@ -2,6 +2,12 @@
 
 Date: 2026-10-12
 
+## Follow-up: unloaded chunks and incident retry
+
+`VoxelWorld.knownBlockId` reads a loaded chunk, otherwise the saved modification, including Air. If neither exists the result is `unknown`. The identity scan uses that for chests, furnaces, and placed paintings and does not generate chunks. A failed write of `identity-incidents.json` stays pending and is retried on the next startup, save, inspection, or transfer recheck. An unchanged scan does not rewrite the file after a successful write.
+
+Follow-up tests: `tests/server/stage3b-unloaded-and-incidents.test.ts`, 4 passed, together with the existing Stage 3B file. Related Stage 3A, Stage 2C, auction, trade, buyer, painting, portal chest, and world-store files: 147 passed in one run. Full Vitest without PostgreSQL: 27 failed, 3508 passed, 51 skipped, 391 files. `auto-mine` “restores original blocks” failed in this full run. `tick-load-flight` did not. The other failed files match the previous branch set. PostgreSQL integration: 56 passed, migrations `0001`–`0006`. Typechecks, boundaries, client build (`assets/index-CTZFK7__.js`), server build, and production smoke passed. `typecheck:sim`, manual QA, and GitHub Actions were not run.
+
 ## Goal
 
 Know where each collectible painting and God Sword physically is, notice when the same UUID is in two independent places, and keep evidence. Do not delete items, do not scan every tick, and do not add a database table.
