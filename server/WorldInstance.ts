@@ -304,6 +304,8 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   readonly settlementReceipts = new Set<string>();
+  /** Stacks removed from a trade or buyer window that did not fit back into inventory. */
+  heldReturns: ItemStack[] = [];
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
@@ -5834,6 +5836,7 @@ export class WorldInstance {
         player.settlementReceipts.add(receipt);
       }
     }
+    this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -5881,14 +5884,52 @@ export class WorldInstance {
   }
 
   private durablePlayerRecord(player: ServerPlayer): SerializedPersistedPlayer {
+    this.absorbHeldReturns(player, player.heldReturns);
     const stored = this.toStored(player);
+    const pending = [
+      ...player.heldReturns.map((stack) => cloneStack(stack)!),
+      ...this.unsavedWindowStacks(player),
+    ];
+    if (pending.length === 0) return stored;
     const copy = Inventory.deserialize(stored.inventory);
-    const buyerSlot = this.buyer.unsavedTradeSlot(player.id);
-    if (buyerSlot) copy.add(cloneStack(buyerSlot)!);
-    for (const stack of this.trade.unsavedOfferStacks(player.id, player.settlementReceipts)) {
-      copy.add(cloneStack(stack)!);
+    for (const stack of pending) {
+      if (copy.add(cloneStack(stack)!) !== null) {
+        return { ...stored, heldReturns: pending };
+      }
     }
+    player.heldReturns = [];
     return { ...stored, inventory: copy.serialize() };
+  }
+
+  /** Offer and buyer-window stacks that are not yet covered by a durable receipt. */
+  private unsavedWindowStacks(player: ServerPlayer): ItemStack[] {
+    const stacks: ItemStack[] = [];
+    const buyerSlot = this.buyer.unsavedTradeSlot(player.id);
+    if (buyerSlot) stacks.push(cloneStack(buyerSlot)!);
+    for (const stack of this.trade.unsavedOfferStacks(player.id, player.settlementReceipts)) {
+      stacks.push(cloneStack(stack)!);
+    }
+    return stacks;
+  }
+
+  /**
+   * Moves every carried stack into the live inventory, or leaves both sides
+   * unchanged when any stack does not fit. Never keeps a partial merge.
+   */
+  private absorbHeldReturns(player: ServerPlayer, stacks: readonly ItemStack[]): void {
+    if (stacks.length === 0) {
+      player.heldReturns = [];
+      return;
+    }
+    const copy = player.inventory.clone();
+    for (const stack of stacks) {
+      if (copy.add(cloneStack(stack)!) !== null) {
+        player.heldReturns = stacks.map((stack) => cloneStack(stack)!);
+        return;
+      }
+    }
+    player.inventory.restore(copy.serialize());
+    player.heldReturns = [];
   }
 
   private async savePlayersCritical(): Promise<void> {
@@ -6291,6 +6332,24 @@ export class WorldInstance {
       },
     });
   }
+}
+
+function parseHeldReturns(value: unknown): ItemStack[] {
+  if (!Array.isArray(value)) return [];
+  const stacks: ItemStack[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Partial<ItemStack>;
+    if (typeof row.itemId !== 'string' || !Number.isInteger(row.count) || row.count === undefined || row.count < 1) continue;
+    const stack = cloneStack({
+      itemId: row.itemId,
+      count: row.count,
+      ...(typeof row.durability === 'number' ? { durability: row.durability } : {}),
+      ...(row.metadata !== undefined ? { metadata: row.metadata } : {}),
+    });
+    if (stack) stacks.push(stack);
+  }
+  return stacks;
 }
 
 export function createStarterInventory(): Inventory {

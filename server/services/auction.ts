@@ -206,6 +206,42 @@ export function isReturnableStatus(status: AuctionListingStatus): boolean {
   return status === 'CANCELLED' || status === 'EXPIRED';
 }
 
+function samePurchasePayload(
+  stored: Readonly<Record<string, unknown>>,
+  next: { buyerId: string; sellerId: string; price: number; listingId: string; item: Record<string, unknown> },
+): boolean {
+  return stored.buyerId === next.buyerId
+    && stored.sellerId === next.sellerId
+    && stored.listingId === next.listingId
+    && stored.price === next.price
+    && sameStackRecord(stored.item, next.item);
+}
+
+function sameStackRecord(stored: unknown, next: Record<string, unknown>): boolean {
+  if (!stored || typeof stored !== 'object') return false;
+  const row = stored as Record<string, unknown>;
+  return row.itemId === next.itemId
+    && row.count === next.count
+    && row.durability === next.durability
+    && jsonSame(row.metadata ?? null, next.metadata ?? null);
+}
+
+function jsonSame(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') return false;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
+    return left.every((value, index) => jsonSame(value, right[index]));
+  }
+  const a = left as Record<string, unknown>;
+  const b = right as Record<string, unknown>;
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  for (const key of keys) {
+    if (!jsonSame(a[key], b[key])) return false;
+  }
+  return true;
+}
+
 export function listingTooltip(listing: AuctionListing, now: number): string {
   const name = getItemDefinition(listing.item.itemId).name;
   const remaining = listing.expiresAt - now;
@@ -480,6 +516,7 @@ export class AuctionService {
       if (!Number.isInteger(amount) || amount < 1 || amount > current.count) {
         return { ok: false, error: 'Предмет больше недоступен для продажи.' };
       }
+      const original = cloneStack(current)!;
       const { taken, remainder } = splitItemStack(current, amount);
       inventory.setSlot(slot, remainder);
       const now = this.now();
@@ -497,20 +534,65 @@ export class AuctionService {
       };
       listing.status = this.durability ? 'PENDING_ESCROW' : 'ACTIVE';
       this.listings.set(listing.listingId, listing);
-      this.persist();
+      try {
+        this.persist();
+      } catch (error) {
+        this.listings.delete(listing.listingId);
+        inventory.setSlot(slot, original);
+        throw error;
+      }
       if (!this.durability) return { ok: true, listing };
       if (this.haltAfter === 'listing-pending') return { ok: false, error: 'halt:listing-pending' };
       const durability = this.durability;
       const receipt = auctionListingReceipt(listing.economySettlementId);
       const saved = durability.escrow(playerId, receipt);
-      return thenResult(saved, () => {
-        if (this.haltAfter === 'listing-removed') return { ok: false, error: 'halt:listing-removed' };
+      return Promise.resolve(saved).then(() => {
+        if (this.haltAfter === 'listing-removed') return { ok: false as const, error: 'halt:listing-removed' };
         listing.status = 'ACTIVE';
         listing.updatedAt = this.now();
         this.persistListings();
         return { ok: true as const, listing };
+      }).catch((error: unknown) => {
+        if (!durability.hasReceipt(playerId, receipt)) {
+          this.restoreUnlistedItem(inventory, slot, remainder, original, taken);
+          this.listings.delete(listing.listingId);
+          try {
+            this.persistListings();
+          } catch {
+            // The pending row may still be on disk. Recovery drops it when the receipt is absent
+            // and the seller inventory save never committed the removal.
+          }
+        }
+        throw error;
       });
     });
+  }
+
+  /**
+   * Puts the extracted stack back when the listing file or the seller receipt
+   * did not become durable. Does not overwrite a slot that changed during the await.
+   */
+  private restoreUnlistedItem(
+    inventory: Inventory,
+    slot: number,
+    remainder: ItemStack | null,
+    original: ItemStack,
+    taken: ItemStack,
+  ): void {
+    const now = inventory.getSlot(slot);
+    const unchanged = remainder === null
+      ? now === null
+      : now !== null
+        && now.itemId === remainder.itemId
+        && now.count === remainder.count
+        && now.durability === remainder.durability;
+    if (unchanged) {
+      inventory.setSlot(slot, original);
+      return;
+    }
+    const copy = inventory.clone();
+    if (copy.add(cloneStack(taken)!) !== null) return;
+    inventory.restore(copy.serialize());
   }
 
   /**
@@ -686,22 +768,28 @@ export class AuctionService {
         return { ok: true, listing };
       }
       if (this.haltAfter === 'claim-started') return { ok: false, error: 'halt:claim-started' };
-      const leftover = inventory.add(cloneStack(listing.item)!);
-      if (leftover) return { ok: false, error: 'Недостаточно места в инвентаре.' };
       if (!this.durability) {
+        const leftover = inventory.add(cloneStack(listing.item)!);
+        if (leftover) return { ok: false, error: 'Недостаточно места в инвентаре.' };
         listing.status = 'CLAIMED';
         listing.updatedAt = this.now();
         this.persist();
         return { ok: true, listing };
       }
       const durability = this.durability;
-      const saved = durability.escrow(playerId, auctionClaimReceipt(listing.economySettlementId));
-      return thenResult(saved, () => {
-        if (this.haltAfter === 'claim-delivered') return { ok: false, error: 'halt:claim-delivered' };
+      const receipt = auctionClaimReceipt(listing.economySettlementId);
+      const saved = durability.deliver(playerId, receipt, listing.item);
+      return Promise.resolve(saved).then((delivered) => {
+        if (delivered === 'full' || delivered === 'missing') {
+          return { ok: false as const, error: 'Недостаточно места в инвентаре.' };
+        }
+        if (this.haltAfter === 'claim-delivered') return { ok: false as const, error: 'halt:claim-delivered' };
         listing.status = 'CLAIMED';
         listing.updatedAt = this.now();
         this.persist();
         return { ok: true as const, listing };
+      }).catch(() => {
+        return { ok: false as const, error: SETTLEMENT_RECOVERING };
       });
     }) as unknown as AuctionResult;
   }
@@ -740,6 +828,33 @@ export class AuctionService {
     }
   }
 
+  /**
+   * A PREPARED row belongs to its original buyer. A different buyer is rejected
+   * and is not charged. A CANCELLED row is already terminal, so the listing
+   * receives a new settlement id before any later purchase.
+   * The seller listing receipt stays on the id that escrowed the item.
+   */
+  private async bindPurchaseBuyer(
+    listing: AuctionListing,
+    payload: { buyerId: string; sellerId: string; price: number; listingId: string; item: Record<string, unknown> },
+  ): Promise<'ok' | 'conflict'> {
+    const settlements = this.settlements;
+    if (!settlements) return 'conflict';
+    const existing = await settlements.get(listing.economySettlementId);
+    if (!existing) return 'ok';
+    if (existing.phase === 'RECOVERY_REQUIRED') return 'conflict';
+    const same = samePurchasePayload(existing.payload, payload);
+    if (existing.phase === 'PREPARED') return same ? 'ok' : 'conflict';
+    if (existing.phase === 'CANCELLED') {
+      listing.economySettlementId = randomUUID();
+      listing.updatedAt = this.now();
+      this.persistListings();
+      return 'ok';
+    }
+    if (!same) return 'conflict';
+    return 'ok';
+  }
+
   private buyDurable(
     buyerId: string,
     buyerName: string,
@@ -758,17 +873,27 @@ export class AuctionService {
       item: stackRecord(listing.item),
     };
     const started = (async () => {
+      const bound = await this.bindPurchaseBuyer(listing, payload);
+      if (bound === 'conflict') return { ok: false as const, error: 'conflict' };
       if (this.haltAfter === 'purchase-prepared') {
-        await settlements.begin({
-          settlementId: listing.economySettlementId,
-          kind: 'AUCTION_PURCHASE',
-          payload,
-          ...(request ? { requestId: request.requestId } : {}),
-        });
+        const prepared = await settlements.get(listing.economySettlementId);
+        if (!prepared) {
+          await settlements.begin({
+            settlementId: listing.economySettlementId,
+            kind: 'AUCTION_PURCHASE',
+            payload,
+            ...(request ? { requestId: request.requestId } : {}),
+          });
+        }
         return { ok: false as const, error: 'halt:purchase-prepared' };
       }
       const existing = await settlements.get(listing.economySettlementId);
-      if (existing?.phase === 'RECOVERY_REQUIRED') return { ok: false as const, error: 'conflict' };
+      if (existing?.phase === 'RECOVERY_REQUIRED' || existing?.phase === 'CANCELLED') {
+        return { ok: false as const, error: 'conflict' };
+      }
+      if (existing && String(existing.payload.buyerId ?? '') !== buyerId) {
+        return { ok: false as const, error: 'conflict' };
+      }
       if (!existing || existing.phase === 'PREPARED') {
         const moved = await this.economy.settle(
           buyerId,
