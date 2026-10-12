@@ -125,4 +125,4 @@ Stage 3B: ownership and location, duplicate detection, and any response to a dup
 
 ## Git
 
-Branch `cursor/admin-antidupe-postgres-foundation-26a8`. Parent `738517a`. Stage 3A commit `d99a167` (`Give collectible paintings and the God Sword stable instance ids`). `origin/main` remains `2dd09ee`. The branch is 31 commits ahead and 0 behind. Draft PR #129. Not merged.
+Branch `cursor/admin-antidupe-postgres-foundation-26a8`. Parent `738517a`. Stage 3A implementation `d99a167`. `origin/main` remains `2dd09ee`. Draft PR #129. Not merged.
