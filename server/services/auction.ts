@@ -22,6 +22,10 @@ import type { NotificationCategory } from '../../shared/notifications';
 import { formatMegacoins } from './economy';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import { isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { SettlementService } from '../settlements/service';
+import { auctionClaimReceipt, auctionDeliveryReceipt, auctionListingReceipt, stackRecord } from '../settlements/receipts';
+import type { ItemDurability } from '../settlements/durability';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 import type { JsonFileStore } from './jsonStore';
 
 export const AUCTION_PLUGIN_NAME = 'auction';
@@ -34,6 +38,7 @@ export const AUCTION_PAGE_SIZE = 27;
 export type AuctionView = 'browse' | 'sell' | 'list';
 
 export type AuctionListingStatus =
+  | 'PENDING_ESCROW'
   | 'ACTIVE'
   | 'SOLD'
   | 'CANCELLED'
@@ -234,7 +239,7 @@ function parseListing(value: unknown): { listing: AuctionListing; upgraded: bool
   const status = value.status;
   if (!Number.isInteger(price) || !Number.isFinite(createdAt) || !Number.isFinite(expiresAt)) return undefined;
   if (
-    status !== 'ACTIVE' && status !== 'SOLD' && status !== 'CANCELLED'
+    status !== 'PENDING_ESCROW' && status !== 'ACTIVE' && status !== 'SOLD' && status !== 'CANCELLED'
     && status !== 'EXPIRED' && status !== 'RELISTED' && status !== 'CLAIMED'
   ) return undefined;
   const settlement = readSettlementId(value.economySettlementId);
@@ -271,6 +276,14 @@ export class AuctionService {
   private readonly listingLocks = new Set<string>();
   private readonly playerLocks = new Set<string>();
   private runtime: AuctionRuntime = {};
+  private durability?: ItemDurability;
+  private settlements?: SettlementService;
+  haltAfter?: string;
+
+  setStage2C(input: { durability?: ItemDurability; settlements?: SettlementService }): void {
+    this.durability = input.durability;
+    this.settlements = input.settlements;
+  }
 
   constructor(
     private readonly store: JsonFileStore,
@@ -482,10 +495,44 @@ export class AuctionService {
         updatedAt: now,
         status: 'ACTIVE',
       };
+      listing.status = this.durability ? 'PENDING_ESCROW' : 'ACTIVE';
       this.listings.set(listing.listingId, listing);
       this.persist();
-      return { ok: true, listing };
+      if (!this.durability) return { ok: true, listing };
+      if (this.haltAfter === 'listing-pending') return { ok: false, error: 'halt:listing-pending' };
+      const durability = this.durability;
+      const receipt = auctionListingReceipt(listing.economySettlementId);
+      const saved = durability.escrow(playerId, receipt);
+      return thenResult(saved, () => {
+        if (this.haltAfter === 'listing-removed') return { ok: false, error: 'halt:listing-removed' };
+        listing.status = 'ACTIVE';
+        listing.updatedAt = this.now();
+        this.persistListings();
+        return { ok: true as const, listing };
+      });
     });
+  }
+
+  /**
+   * Pending listings are not for sale. A receipt means the seller inventory
+   * write already dropped the item, so the listing becomes ACTIVE. Without a
+   * receipt the pending row is discarded and the seller keeps the item.
+   */
+  recoverPendingListings(): number {
+    let changed = 0;
+    for (const listing of [...this.listings.values()]) {
+      if (listing.status !== 'PENDING_ESCROW') continue;
+      const receipt = auctionListingReceipt(listing.economySettlementId);
+      if (this.durability?.hasReceipt(listing.sellerPlayerId, receipt)) {
+        listing.status = 'ACTIVE';
+        listing.updatedAt = this.now();
+      } else {
+        this.listings.delete(listing.listingId);
+      }
+      changed += 1;
+    }
+    if (changed) this.persistListings();
+    return changed;
   }
 
   buyListing(
@@ -522,6 +569,9 @@ export class AuctionService {
       if (!isClientMoneyRequestId(listing.economySettlementId)) {
         listing.economySettlementId = randomUUID();
         this.persistListings();
+      }
+      if (this.settlements && this.durability) {
+        return this.buyDurable(buyerId, buyerName, inventory, listing, request);
       }
       const moved = this.economy.settle(
         buyerId,
@@ -629,13 +679,31 @@ export class AuctionService {
       if (!inventoryCanAccept(inventory, listing.item)) {
         return { ok: false, error: 'Недостаточно места в инвентаре.' };
       }
+      if (this.durability?.hasReceipt(playerId, auctionClaimReceipt(listing.economySettlementId))) {
+        listing.status = 'CLAIMED';
+        listing.updatedAt = this.now();
+        this.persist();
+        return { ok: true, listing };
+      }
+      if (this.haltAfter === 'claim-started') return { ok: false, error: 'halt:claim-started' };
       const leftover = inventory.add(cloneStack(listing.item)!);
       if (leftover) return { ok: false, error: 'Недостаточно места в инвентаре.' };
-      listing.status = 'CLAIMED';
-      listing.updatedAt = this.now();
-      this.persist();
-      return { ok: true, listing };
-    });
+      if (!this.durability) {
+        listing.status = 'CLAIMED';
+        listing.updatedAt = this.now();
+        this.persist();
+        return { ok: true, listing };
+      }
+      const durability = this.durability;
+      const saved = durability.escrow(playerId, auctionClaimReceipt(listing.economySettlementId));
+      return thenResult(saved, () => {
+        if (this.haltAfter === 'claim-delivered') return { ok: false, error: 'halt:claim-delivered' };
+        listing.status = 'CLAIMED';
+        listing.updatedAt = this.now();
+        this.persist();
+        return { ok: true as const, listing };
+      });
+    }) as unknown as AuctionResult;
   }
 
   selectSellSlot(playerId: string, inventory: Inventory, slot: number): AuctionResult {
@@ -654,14 +722,160 @@ export class AuctionService {
     return { ok: true };
   }
 
-  private withPlayerLock(playerId: string, fn: () => AuctionResult): AuctionResult {
+  private withPlayerLock(playerId: string, fn: () => AuctionResult | Promise<AuctionResult>): AuctionResult {
     if (this.playerLocks.has(playerId)) return { ok: false, error: 'Предмет больше недоступен для продажи.' };
     this.playerLocks.add(playerId);
+    let asyncResult = false;
     try {
-      return fn();
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(() => {
+          this.playerLocks.delete(playerId);
+        }) as unknown as AuctionResult;
+      }
+      return result;
     } finally {
-      this.playerLocks.delete(playerId);
+      if (!asyncResult) this.playerLocks.delete(playerId);
     }
+  }
+
+  private buyDurable(
+    buyerId: string,
+    buyerName: string,
+    inventory: Inventory,
+    listing: AuctionListing,
+    request?: EconomyCommandRequest,
+  ): AuctionResult | Promise<AuctionResult> {
+    const settlements = this.settlements;
+    const durability = this.durability;
+    if (!settlements || !durability) return { ok: false, error: SETTLEMENT_RECOVERING };
+    const payload = {
+      buyerId,
+      sellerId: listing.sellerPlayerId,
+      price: listing.price,
+      listingId: listing.listingId,
+      item: stackRecord(listing.item),
+    };
+    const started = (async () => {
+      if (this.haltAfter === 'purchase-prepared') {
+        await settlements.begin({
+          settlementId: listing.economySettlementId,
+          kind: 'AUCTION_PURCHASE',
+          payload,
+          ...(request ? { requestId: request.requestId } : {}),
+        });
+        return { ok: false as const, error: 'halt:purchase-prepared' };
+      }
+      const existing = await settlements.get(listing.economySettlementId);
+      if (existing?.phase === 'RECOVERY_REQUIRED') return { ok: false as const, error: 'conflict' };
+      if (!existing || existing.phase === 'PREPARED') {
+        const moved = await this.economy.settle(
+          buyerId,
+          listing.sellerPlayerId,
+          listing.price,
+          'AUCTION_PURCHASE',
+          'AUCTION_SALE',
+          listing.listingId,
+          request,
+          listing.economySettlementId,
+        );
+        if (!moved.ok) return { ok: false as const, error: moved.error ?? 'Недостаточно Мегакоинов.' };
+        const row = existing ?? await settlements.begin({
+          settlementId: listing.economySettlementId,
+          kind: 'AUCTION_PURCHASE',
+          payload,
+          ...(request ? { requestId: request.requestId } : {}),
+        });
+        if (row.phase === 'PREPARED') {
+          await settlements.advance(listing.economySettlementId, 'PREPARED', 'MONEY_COMMITTED');
+        }
+      } else if (existing.payload.buyerId !== buyerId) {
+        return { ok: false as const, error: 'conflict' };
+      }
+      if (durability.hasReceipt(buyerId, auctionDeliveryReceipt(listing.economySettlementId))
+        && (await settlements.get(listing.economySettlementId))?.phase === 'COMPLETE') {
+        return { ok: true as const, listing };
+      }
+      if (this.haltAfter === 'purchase-money') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      listing.status = 'SOLD';
+      listing.updatedAt = this.now();
+      listing.soldToPlayerId = buyerId;
+      listing.salePairId = listing.listingId;
+      this.persistListings();
+      await settlements.advance(listing.economySettlementId, 'MONEY_COMMITTED', 'DOMAIN_DURABLE');
+      if (this.haltAfter === 'purchase-sold') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      const delivered = await durability.deliver(buyerId, auctionDeliveryReceipt(listing.economySettlementId), listing.item);
+      if (delivered === 'full') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      if (delivered === 'missing') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      if (this.haltAfter === 'purchase-delivered') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      await settlements.advance(listing.economySettlementId, 'DOMAIN_DURABLE', 'COMPLETE');
+      this.economy.rememberName(buyerId, buyerName);
+      this.recordCompletedSale(listing, buyerId);
+      this.runtime.notifyUnread?.(listing.sellerPlayerId, 'auction');
+      return { ok: true as const, listing };
+    })();
+    return started;
+  }
+
+  async recoverPurchases(findBuyer: (settlementId: string) => Promise<string | null>): Promise<number> {
+    if (!this.settlements || !this.durability) return 0;
+    let changed = 0;
+    for (const listing of [...this.listings.values()]) {
+      if (listing.status === 'CANCELLED' || listing.status === 'CLAIMED' || listing.status === 'RELISTED') continue;
+      const buyerId = await findBuyer(listing.economySettlementId);
+      const row = await this.settlements.get(listing.economySettlementId);
+      if (!buyerId) {
+        if (row?.phase === 'PREPARED') await this.settlements.transition(listing.economySettlementId, 'PREPARED', 'CANCELLED');
+        continue;
+      }
+      if (row && row.payload.buyerId !== buyerId) {
+        if (row.phase !== 'RECOVERY_REQUIRED') {
+          await this.settlements.transition(listing.economySettlementId, row.phase, 'RECOVERY_REQUIRED');
+        }
+        continue;
+      }
+      listing.status = 'SOLD';
+      listing.soldToPlayerId = buyerId;
+      listing.updatedAt = this.now();
+      this.persistListings();
+      if (!row) {
+        await this.settlements.begin({
+          settlementId: listing.economySettlementId,
+          kind: 'AUCTION_PURCHASE',
+          payload: {
+            buyerId,
+            sellerId: listing.sellerPlayerId,
+            price: listing.price,
+            listingId: listing.listingId,
+            item: stackRecord(listing.item),
+          },
+        });
+        await this.settlements.advance(listing.economySettlementId, 'PREPARED', 'MONEY_COMMITTED');
+      }
+      await this.durability.deliver(buyerId, auctionDeliveryReceipt(listing.economySettlementId), listing.item);
+      const current = await this.settlements.get(listing.economySettlementId);
+      if (current && current.phase !== 'COMPLETE' && current.phase !== 'RECOVERY_REQUIRED' && current.phase !== 'CANCELLED') {
+        await this.settlements.advance(listing.economySettlementId, current.phase, 'COMPLETE');
+      }
+      changed += 1;
+    }
+    return changed;
+  }
+
+  recoverClaims(): number {
+    if (!this.durability) return 0;
+    let changed = 0;
+    for (const listing of this.listings.values()) {
+      if (listing.status === 'CLAIMED') continue;
+      if (!isReturnableStatus(listing.status)) continue;
+      if (!this.durability.hasReceipt(listing.sellerPlayerId, auctionClaimReceipt(listing.economySettlementId))) continue;
+      listing.status = 'CLAIMED';
+      listing.updatedAt = this.now();
+      changed += 1;
+    }
+    if (changed) this.persistListings();
+    return changed;
   }
 
   private withLocks<T extends AuctionResult | Promise<AuctionResult>>(playerId: string, listingId: string, fn: () => T): T {

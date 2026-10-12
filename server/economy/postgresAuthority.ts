@@ -71,6 +71,11 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     return this.preparePlayer(playerId, name);
   }
 
+  async findSourceDebit(sourceType: string, sourceId: string): Promise<string | null> {
+    const operation = await this.megacoin.findBySource(sourceType, sourceId);
+    return operation?.legs.find((leg) => leg.delta < 0)?.playerId ?? null;
+  }
+
   async preparePlayer(playerId: string, displayName: string): Promise<void> {
     const account = await this.megacoin.ensureAccount({ playerId, displayName });
     this.note(account);
@@ -130,6 +135,32 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     const sourceType = debitReason === 'AUCTION_REFUND' ? 'AUCTION_REFUND' : 'AUCTION_PURCHASE';
     const source = id ? { type: sourceType, id } : undefined;
     return this.move(fromPlayerId, toPlayerId, amount, debitReason, creditReason, request, source);
+  }
+
+  /**
+   * One accepted trade is one source. A offers moneyA and B offers moneyB, so
+   * A's delta is moneyB - moneyA. A negative delta pays the other player.
+   * A zero net still consumes TRADE / sourceId and writes no ledger leg.
+   */
+  settleNet(
+    playerA: string,
+    playerB: string,
+    deltaA: number,
+    sourceId: string,
+    request?: EconomyCommandRequest,
+  ): Promise<EconomyResult> {
+    if (deltaA === 0) {
+      return this.megacoin.consumeSource({ type: 'TRADE', id: sourceId }).then((noted) => ({
+        ok: true,
+        amount: 0,
+        replayed: noted.replayed,
+        balance: this.getBalance(playerA),
+        fromBalance: this.getBalance(playerA),
+        toBalance: this.getBalance(playerB),
+      }));
+    }
+    if (deltaA < 0) return this.transfer(playerA, playerB, -deltaA, 'TRADE', request, sourceId);
+    return this.transfer(playerB, playerA, deltaA, 'TRADE', request, sourceId);
   }
 
   setBalance(

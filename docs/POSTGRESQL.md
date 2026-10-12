@@ -89,7 +89,7 @@ Ordinary chat, browse, refresh, pagination, close, selection, and text edits do 
 
 The economic source id is separate. The same mob death still pays once inside one scope if a later request repeats it. The same source id in another scope is a different event.
 
-An auction listing keeps the visible `ah-N` id and a server-owned `economySettlementId` (`crypto.randomUUID()` at create). Relist creates a new listing and a new UUID. An old listing file without the field gets one UUID on load, and that file is saved before a purchase can use it. The purchase source is `AUCTION_PURCHASE` / `economySettlementId`. A refund source is `AUCTION_REFUND` / the same UUID. The buyer id is not part of that source. A second buyer of a listing whose money already committed gets a conflict and does not receive the item. Repairing a listing that is still `ACTIVE` after that commit is Stage 2C.
+An auction listing keeps the visible `ah-N` id and a server-owned `economySettlementId` (`crypto.randomUUID()` at create). Relist creates a new listing and a new UUID. An old listing file without the field gets one UUID on load, and that file is saved before a purchase can use it. The purchase source is `AUCTION_PURCHASE` / `economySettlementId`. A refund source is `AUCTION_REFUND` / the same UUID. The buyer id is not part of that source. A second buyer of a listing whose money already committed gets a conflict and does not receive the item. Startup recovery finishes that sale for the buyer recorded by the ledger.
 
 Postgres join prepares the account before the player is published. `preparePlayer` ensures the account, loads the balance, applies the display name, and fills the cache. `playerJoin`, friend presence, buyer overflow, chunk streaming, and the welcome packet run after that. If PostgreSQL is down for that join, the attempt returns a generic temporary error, the player is not left connected, and the process stays up. Already connected players stay connected. Their later money mutations fail closed. No JSON wallet is consulted.
 
@@ -99,15 +99,13 @@ Changing the nickname updates `economy_accounts.display_name` and `updated_at` o
 
 The simulation tick, movement, and inventory clicks do not query PostgreSQL. Event rewards are tracked promises. `track` consumes a rejection before the promise is stored, so a failed background reward is logged without database text and does not become an unhandled rejection. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool.
 
-Stage 2C is still open. This branch does not make these crash windows atomic:
+PostgreSQL money and the filesystem cannot share one transaction. Stage 2C keeps a mutable `gameplay_settlements` journal (migration `0006`) plus player `settlementReceipts` in `players.json`. Critical player writes use the same save queue as a full snapshot. Startup recovery runs after the world and plugin JSON load and before the world is READY.
 
-- auction money can commit before the listing JSON is marked sold
-- trade money is two transfers plus compensation, then items move
-- buyer money can commit before the held item is consumed
-- the clan fee can commit before the clan JSON is saved
-- a block reward can commit before the world snapshot that removes the block is saved; a new `rewardEventId` after restart can pay again
+Auction listing create persists a pending row, then the seller inventory removal and receipt, then marks the listing active. A pending row without a receipt is discarded. A purchase uses one `AUCTION_PURCHASE` source. Postgres trade money is one net transfer on `TRADE / settlementId`, not two commits. A confirmed buyer sale and a clan fee resume from the journal if money or escrow already committed. Contradictory durable state becomes `RECOVERY_REQUIRED` and is not guessed.
 
-Reconciliation stays on demand and does not repair rows.
+A block reward in postgres mode is credited only after a world save that was started for that break. Several breaks share one save. If the process dies before that save, no reward was committed. If the save succeeded and the process dies before the credit, that reward can be lost. That delivery is at-most-once. Ordinary blocks do not enter the barrier. The tick still does not query PostgreSQL.
+
+Unique item instance ids are not part of this stage. Reconciliation stays on demand and does not repair unrelated rows.
 
 ## Release
 

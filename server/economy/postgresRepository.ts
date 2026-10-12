@@ -455,6 +455,24 @@ export class PostgresEconomyRepository implements EconomyRepository {
     return this.withLegs(tx, row);
   }
 
+  /** Records a zero-net source so a replay cannot pay later. No ledger leg is written. */
+  async consumeSource(tx: Queryable, source: EconomySource): Promise<{ replayed: boolean }> {
+    const existing = await this.findBySource(tx, source.type, source.id);
+    if (existing) {
+      if (existing.legs.length > 0) throw new EconomySourceConflictError();
+      return { replayed: true };
+    }
+    const inserted = await this.insertOperation(tx, {
+      operationId: randomUUID(),
+      kind: 'TRANSFER',
+      actorId: null,
+      source,
+      requestId: null,
+      metadata: { net: 0 },
+    });
+    return { replayed: !inserted };
+  }
+
   async listByRequestId(tx: Queryable, requestId: string): Promise<readonly EconomyOperationView[]> {
     const result = await tx.query<{ operation_id: string }>(READ_REQUEST_SQL, [
       this.deploymentId,

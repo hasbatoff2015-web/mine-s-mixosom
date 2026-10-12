@@ -353,6 +353,44 @@ const IDEMPOTENCY_DROP_PKEY_SQL = `ALTER TABLE idempotency_requests
 const IDEMPOTENCY_ADD_PKEY_SQL = `ALTER TABLE idempotency_requests
   ADD PRIMARY KEY (deployment_id, request_scope, request_id)`;
 
+const GAMEPLAY_SETTLEMENTS_SQL = `CREATE TABLE gameplay_settlements (
+  deployment_id TEXT NOT NULL,
+  economy_scope TEXT NOT NULL,
+  world_id TEXT NOT NULL,
+  settlement_id UUID NOT NULL,
+  kind TEXT NOT NULL,
+  phase TEXT NOT NULL,
+  request_id UUID NULL,
+  payload JSONB NOT NULL,
+  payload_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  completed_at TIMESTAMPTZ NULL,
+  last_error_code TEXT NULL,
+  PRIMARY KEY (deployment_id, economy_scope, settlement_id),
+  CONSTRAINT gameplay_settlements_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT gameplay_settlements_scope_check CHECK (economy_scope IN ('anarchy', 'survival', 'peaceful')),
+  CONSTRAINT gameplay_settlements_world_nonempty CHECK (length(btrim(world_id)) > 0),
+  CONSTRAINT gameplay_settlements_world_len CHECK (char_length(world_id) <= 128),
+  CONSTRAINT gameplay_settlements_kind_check CHECK (kind IN (
+    'AUCTION_PURCHASE', 'AUCTION_CLAIM', 'BUYER_SALE', 'TRADE_SETTLEMENT', 'CLAN_CREATE'
+  )),
+  CONSTRAINT gameplay_settlements_phase_check CHECK (phase IN (
+    'PREPARED', 'ESCROW_DURABLE', 'MONEY_COMMITTED', 'DOMAIN_DURABLE',
+    'DELIVERY_DURABLE', 'COMPLETE', 'CANCELLED', 'RECOVERY_REQUIRED'
+  )),
+  CONSTRAINT gameplay_settlements_hash_sha256 CHECK (payload_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT gameplay_settlements_error_len CHECK (last_error_code IS NULL OR char_length(last_error_code) <= 64),
+  CONSTRAINT gameplay_settlements_terminal_time CHECK (
+    (phase IN ('COMPLETE', 'CANCELLED') AND completed_at IS NOT NULL)
+    OR (phase NOT IN ('COMPLETE', 'CANCELLED') AND completed_at IS NULL)
+  )
+)`;
+
+const GAMEPLAY_SETTLEMENTS_OPEN_INDEX_SQL = `CREATE INDEX gameplay_settlements_open_idx
+  ON gameplay_settlements (deployment_id, economy_scope, world_id, created_at, settlement_id)
+  WHERE phase NOT IN ('COMPLETE', 'CANCELLED')`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -432,6 +470,14 @@ export const MIGRATIONS: readonly Migration[] = [
       IDEMPOTENCY_SCOPE_CHECK_SQL,
       IDEMPOTENCY_DROP_PKEY_SQL,
       IDEMPOTENCY_ADD_PKEY_SQL,
+    ],
+  },
+  {
+    version: '0006',
+    name: 'gameplay_settlements',
+    statements: [
+      GAMEPLAY_SETTLEMENTS_SQL,
+      GAMEPLAY_SETTLEMENTS_OPEN_INDEX_SQL,
     ],
   },
 ];

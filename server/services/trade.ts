@@ -27,6 +27,10 @@ import { randomUUID } from 'node:crypto';
 import { inventoryCanAccept } from './auction';
 import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
 import { isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { ItemDurability } from '../settlements/durability';
+import { tradeDeliveryReceipt, tradeEscrowReceipt } from '../settlements/receipts';
+import type { SettlementService } from '../settlements/service';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 
 export { TRADE_PLUGIN_NAME, TRADE_SLOT_COUNT };
 
@@ -122,6 +126,24 @@ export class TradeService {
 
   outgoingRequests(playerId: string): TradeRequest[] {
     return this.requests.filter((request) => request.fromPlayerId === playerId);
+  }
+
+  private durability?: ItemDurability;
+  private settlements?: SettlementService;
+  haltAfter?: string;
+
+  setStage2C(input: { durability?: ItemDurability; settlements?: SettlementService }): void {
+    this.durability = input.durability;
+    this.settlements = input.settlements;
+  }
+
+  unsavedOfferStacks(playerId: string, receipts: ReadonlySet<string>): ItemStack[] {
+    const session = this.sessionFor(playerId);
+    if (!session) return [];
+    if (receipts.has(tradeEscrowReceipt(session.settlementId))) return [];
+    const offer = session.offers[playerId];
+    if (!offer) return [];
+    return offer.slots.filter((slot): slot is ItemStack => slot !== null);
   }
 
   sessionFor(playerId: string): TradeSession | undefined {
@@ -345,6 +367,9 @@ export class TradeService {
       if ((offerA.money > 0 || offerB.money > 0) && this.economy.backend === 'postgres' && !isClientMoneyRequestId(clientRequestId)) {
         return { ok: false, error: MONEY_REQUEST_REQUIRED };
       }
+      if (this.durability && this.settlements && this.economy.backend === 'postgres') {
+        return this.completeDurable(session, offerA, offerB, incomingA, incomingB, invA, invB);
+      }
       // The request UUID is a boundary check. Money identity stays
       // `session.settlementId` (`:a`, `:b`, `:a:undo`). One request id cannot
       // wrap both legs in IdempotencyService, and this settlement is not crash-atomic.
@@ -368,7 +393,73 @@ export class TradeService {
     });
   }
 
+  private completeDurable(
+    session: TradeSession,
+    offerA: TradeOffer,
+    offerB: TradeOffer,
+    incomingA: ItemStack[],
+    incomingB: ItemStack[],
+    invA: Inventory,
+    invB: Inventory,
+  ): Promise<TradeResult> {
+    const durability = this.durability;
+    const settlements = this.settlements;
+    if (!durability || !settlements) return Promise.resolve({ ok: false, error: SETTLEMENT_RECOVERING });
+    const receipt = tradeEscrowReceipt(session.settlementId);
+    return (async () => {
+      if (this.haltAfter === 'trade-escrow-a') {
+        await durability.escrow(session.playerA, receipt);
+        return { ok: false as const, error: 'halt:trade-escrow-a' };
+      }
+      if (!durability.hasReceipt(session.playerA, receipt)) await durability.escrow(session.playerA, receipt);
+      if (!durability.hasReceipt(session.playerB, receipt)) await durability.escrow(session.playerB, receipt);
+      await settlements.begin({
+        settlementId: session.settlementId,
+        kind: 'TRADE_SETTLEMENT',
+        payload: {
+          playerA: session.playerA,
+          playerB: session.playerB,
+          moneyA: offerA.money,
+          moneyB: offerB.money,
+          itemsForA: incomingA.map((stack) => ({ itemId: stack.itemId, count: stack.count, durability: stack.durability ?? null })),
+          itemsForB: incomingB.map((stack) => ({ itemId: stack.itemId, count: stack.count, durability: stack.durability ?? null })),
+        },
+      });
+      await settlements.advance(session.settlementId, 'PREPARED', 'ESCROW_DURABLE');
+      const paid = await Promise.resolve(this.payTrade(session, offerA.money, offerB.money));
+      if (!paid.ok) return paid;
+      await settlements.advance(session.settlementId, 'ESCROW_DURABLE', 'MONEY_COMMITTED');
+      if (this.haltAfter === 'trade-money') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      const deliver = async (playerId: string, inventory: Inventory, stacks: ItemStack[]): Promise<void> => {
+        const marker = tradeDeliveryReceipt(session.settlementId, playerId);
+        if (durability.hasReceipt(playerId, marker)) return;
+        for (const stack of stacks) inventory.add(cloneStack(stack)!);
+        await durability.escrow(playerId, marker);
+      };
+      await deliver(session.playerA, invA, incomingA);
+      if (this.haltAfter === 'trade-delivered-a') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      await deliver(session.playerB, invB, incomingB);
+      await settlements.advance(session.settlementId, 'MONEY_COMMITTED', 'COMPLETE');
+      offerA.slots.fill(null);
+      offerB.slots.fill(null);
+      this.dropSession(session);
+      this.runtime.sendMessage(session.playerA, 'Обмен выполнен.');
+      this.runtime.sendMessage(session.playerB, 'Обмен выполнен.');
+      return { ok: true as const, completed: true, closed: true, affected: [session.playerA, session.playerB] };
+    })();
+  }
+
   private payTrade(session: TradeSession, moneyA: number, moneyB: number): TradeResult | Promise<TradeResult> {
+    const net = this.economy as CurrencyPort & {
+      settleNet?(playerA: string, playerB: string, deltaA: number, sourceId: string): Promise<{ ok: boolean; error?: string }>;
+    };
+    if (this.economy.backend === 'postgres' && net.settleNet) {
+      const deltaA = moneyB - moneyA;
+      const settled = net.settleNet(session.playerA, session.playerB, deltaA, session.settlementId);
+      return thenResult(settled, (paid) => (
+        paid.ok ? { ok: true as const } : { ok: false as const, error: paid.error ?? TRADE_MONEY_ERROR }
+      ));
+    }
     const pay = (
       from: string,
       to: string,

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-12: Stage 2C crash consistency
+
+- [x] Migration `0006` gameplay settlement journal. Player receipts share `players.json` and the world save queue.
+- [x] Auction listing escrow, purchase recovery, and claim receipts.
+- [x] Buyer sale and trade escrow. Postgres trade money is one net transfer.
+- [x] Clan creation resumes from a committed fee. Block rewards wait for a durable world save and are at-most-once across a crash.
+- [ ] Unique item UUIDs stay a later stage. Not merged. Draft PR **#129**.
+
 ## 2026-10-11: Stage 2B follow-up — request ids, auction settlement, economy scope
 
 - [x] Client money mutations in postgres mode require a UUID. A missing or invalid id is rejected before money moves. Console commands get a server-owned id.

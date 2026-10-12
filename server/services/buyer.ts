@@ -33,6 +33,10 @@ import { isKnownItemId, tryGetItemDefinition } from '../../src/items';
 import { formatMegacoins } from './economy';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import { clientMoneyRequest, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { ItemDurability } from '../settlements/durability';
+import { buyerConsumedReceipt, stackRecord } from '../settlements/receipts';
+import type { SettlementService } from '../settlements/service';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 import { createHologramRecord, type HologramNetwork } from './holograms';
 import type { JsonFileStore } from './jsonStore';
 
@@ -111,6 +115,18 @@ export function isBuyerConfigured(buyer: BuyerRecord): buyer is BuyerRecord & { 
 export class BuyerService {
   private buyers = new Map<string, BuyerRecord>();
   private sessions = new Map<string, BuyerSession>();
+  private settlements?: SettlementService;
+  private durability?: ItemDurability;
+  haltAfter?: string;
+
+  setStage2C(input: { settlements?: SettlementService; durability?: ItemDurability }): void {
+    this.settlements = input.settlements;
+    this.durability = input.durability;
+  }
+
+  unsavedTradeSlot(playerId: string): ItemStack | null {
+    return this.sessions.get(playerId)?.tradeSlot ?? null;
+  }
   private returns = new Map<string, ItemStack[]>();
   private readonly locks = new Set<string>();
   private affectedPlayers = new Set<string>();
@@ -736,6 +752,9 @@ export class BuyerService {
         session.message = MONEY_REQUEST_REQUIRED;
         return { ok: false, error: MONEY_REQUEST_REQUIRED };
       }
+      if (this.settlements && this.durability && request) {
+        return this.sellDurable(playerId, session, slot, total, request);
+      }
       const held = cloneStack(slot)!;
       const paid = this.economy.deposit(playerId, total, 'TRADER_SELL', undefined, undefined, request);
       return thenResult(paid, (result) => {
@@ -801,6 +820,70 @@ export class BuyerService {
       hologramText,
       createdAt: typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
     };
+  }
+
+  private sellDurable(
+    playerId: string,
+    session: BuyerSession,
+    slot: ItemStack,
+    total: number,
+    request: EconomyCommandRequest,
+  ): BuyerResult {
+    const settlements = this.settlements;
+    const durability = this.durability;
+    if (!settlements || !durability) return { ok: false, error: SETTLEMENT_RECOVERING };
+    const payload = {
+      playerId,
+      total,
+      item: stackRecord(slot),
+      buyerId: session.buyerId,
+    };
+    const run = (async () => {
+      if (this.haltAfter === 'sale-prepared') {
+        await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'BUYER_SALE',
+          payload,
+          requestId: request.requestId,
+        });
+        return { ok: false as const, error: 'halt:sale-prepared' };
+      }
+      const existing = await settlements.get(request.requestId);
+      if (!existing || existing.phase === 'PREPARED') {
+        const receipt = buyerConsumedReceipt(request.requestId);
+        if (!durability.hasReceipt(playerId, receipt)) {
+          if (this.haltAfter === 'sale-removal') return { ok: false as const, error: 'halt:sale-removal' };
+          session.tradeSlot = null;
+          await durability.escrow(playerId, receipt);
+        }
+        if (this.haltAfter === 'sale-escrowed') return { ok: false as const, error: 'halt:sale-escrowed' };
+        const begun = existing ?? await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'BUYER_SALE',
+          payload,
+          requestId: request.requestId,
+        });
+        const paid = await this.economy.deposit(playerId, total, 'BUYER_SALE', undefined, undefined, request);
+        if (!paid.ok) {
+          session.tradeSlot = cloneStack(slot);
+          await durability.restore(playerId, receipt, slot);
+          if (begun.phase === 'PREPARED') await settlements.transition(request.requestId, 'PREPARED', 'CANCELLED');
+          return { ok: false as const, error: paid.error ?? 'Не удалось начислить Мегакоины.' };
+        }
+        if (begun.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
+      }
+      if (existing?.phase === 'CANCELLED') {
+        return { ok: false as const, error: 'Не удалось начислить Мегакоины.' };
+      }
+      if (this.haltAfter === 'sale-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      const current = await settlements.get(request.requestId);
+      if (current && current.phase !== 'COMPLETE') {
+        await settlements.advance(request.requestId, current.phase === 'PREPARED' ? 'MONEY_COMMITTED' : current.phase, 'COMPLETE');
+      }
+      const name = itemName(slot.itemId) ?? slot.itemId;
+      return { ok: true as const, chat: `Вы продали ${slot.count} × ${name} за ${formatMegacoins(total)}.`, inventoryDirty: true };
+    })();
+    return run as unknown as BuyerResult;
   }
 
   private withLocks<T extends BuyerResult | Promise<BuyerResult>>(keys: readonly string[], fn: () => T): T {

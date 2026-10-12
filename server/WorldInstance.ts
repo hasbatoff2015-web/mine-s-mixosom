@@ -7,6 +7,7 @@ import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStan
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
+  cloneStack,
   createItemStack,
   createPortalChestInventory,
   normalizePortalChestSlots,
@@ -131,6 +132,9 @@ import { EconomyService, formatMegacoinAmount, formatMegacoins } from './service
 import { createGameplayEconomy } from './economy/createGameplayEconomy';
 import { isPromise } from './economy/currencyPort';
 import { clientMoneyRequest } from './economy/moneyRequest';
+import type { ItemDurability } from './settlements/durability';
+import { BlockRewardBarrier } from './settlements/blockRewardBarrier';
+import { SettlementService } from './settlements/service';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { DirectMessageService } from './services/directMessages';
@@ -299,6 +303,7 @@ function skippedCommandFields(queue: PlayerCommandQueue): {
 export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
+  readonly settlementReceipts = new Set<string>();
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
@@ -674,6 +679,13 @@ export class WorldInstance {
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private saveGeneration = 0;
   private saveQueue: Promise<void> = Promise.resolve();
+  private settlements?: SettlementService;
+  private rewardBarrier?: BlockRewardBarrier<{
+    playerId: string;
+    blockId: number;
+    placed: boolean;
+    rewardEventId?: string;
+  }>;
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
   private tickAccumulator = 0;
@@ -1172,6 +1184,30 @@ export class WorldInstance {
       });
     };
     this.buyer = new BuyerService(this.pluginStore, this.money, this.holograms, () => this.worldId);
+    if (config.economy.backend === 'postgres' && this.database.enabled && config.database.enabled) {
+      this.settlements = SettlementService.postgres(
+        this.database,
+        config.database.deploymentId,
+        config.serverMode,
+        config.worldId,
+      );
+      const durability = this.itemDurability();
+      this.auction.setStage2C({ durability, settlements: this.settlements });
+      this.buyer.setStage2C({ durability, settlements: this.settlements });
+      this.trade.setStage2C({ durability, settlements: this.settlements });
+      this.clan.setStage2C(this.settlements);
+    }
+    this.rewardBarrier = new BlockRewardBarrier(async () => {
+      try {
+        await this.save();
+        return true;
+      } catch {
+        return false;
+      }
+    }, async (reward) => {
+      const paid = this.money.rewardBlockBreak(reward.playerId, reward.blockId, { placed: reward.placed, source: 'player' }, reward.rewardEventId);
+      if (isPromise(paid)) await paid;
+    });
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
@@ -1281,9 +1317,10 @@ export class WorldInstance {
       this.directMessages.load();
       this.notifications.load();
       this.buyer.load();
+      this.canonicalWorldLoaded = true;
+      await this.recoverSettlements();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
-      this.canonicalWorldLoaded = true;
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
       return;
     }
@@ -1362,6 +1399,7 @@ export class WorldInstance {
         world: this.world,
         worldId: () => this.worldId,
         markDirty: () => { this.dirty = true; },
+        scheduleRewardedBreak: (reward) => this.scheduleRewardedBreak(reward),
         holograms: this.holograms,
         claimBoundaries: this.claimBoundaries,
       });
@@ -1479,7 +1517,7 @@ export class WorldInstance {
   private async flushWorldSnapshot(generation: number): Promise<void> {
     const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
     for (const player of this.players.values()) {
-      players[player.id] = this.toStored(player);
+      players[player.id] = this.durablePlayerRecord(player);
     }
     this.storedPlayers = players;
     const entities = this.gameplay.persistEntities();
@@ -5791,6 +5829,11 @@ export class WorldInstance {
       }
     }
     player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
+    for (const receipt of stored.settlementReceipts ?? []) {
+      if (typeof receipt === 'string' && receipt.length > 0 && receipt.length <= 200) {
+        player.settlementReceipts.add(receipt);
+      }
+    }
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -5833,7 +5876,125 @@ export class WorldInstance {
       cursor: player.cursor,
       portalChest: player.portalChest.slots,
       appearance: toNetworkAppearance(player.appearance),
+      ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
     };
+  }
+
+  private durablePlayerRecord(player: ServerPlayer): SerializedPersistedPlayer {
+    const stored = this.toStored(player);
+    const copy = Inventory.deserialize(stored.inventory);
+    const buyerSlot = this.buyer.unsavedTradeSlot(player.id);
+    if (buyerSlot) copy.add(cloneStack(buyerSlot)!);
+    for (const stack of this.trade.unsavedOfferStacks(player.id, player.settlementReceipts)) {
+      copy.add(cloneStack(stack)!);
+    }
+    return { ...stored, inventory: copy.serialize() };
+  }
+
+  private async savePlayersCritical(): Promise<void> {
+    if (!this.canonicalWorldLoaded) return;
+    const run = this.saveQueue.then(async () => {
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      for (const player of this.players.values()) players[player.id] = this.durablePlayerRecord(player);
+      this.storedPlayers = players;
+      await this.worldStore.savePlayers(this.worldId, players);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  scheduleRewardedBreak(reward: { playerId: string; blockId: number; placed: boolean; rewardEventId?: string }): void {
+    this.rewardBarrier?.submit(reward);
+  }
+
+  private itemDurability(): ItemDurability {
+    const self = this;
+    return {
+      hasReceipt(playerId, receipt) {
+        return self.receiptsFor(playerId)?.has(receipt) ?? false;
+      },
+      async escrow(playerId, receipt) {
+        self.receiptsFor(playerId)?.add(receipt);
+        self.writeDurability(playerId);
+        await self.savePlayersCritical();
+      },
+      async deliver(playerId, receipt, stack) {
+        if (self.receiptsFor(playerId)?.has(receipt)) return 'already';
+        const inventory = self.inventoryFor(playerId);
+        if (!inventory) return 'missing';
+        if (inventory.add(cloneStack(stack)!) !== null) return 'full';
+        self.receiptsFor(playerId)?.add(receipt);
+        self.writeDurability(playerId);
+        await self.savePlayersCritical();
+        return 'delivered';
+      },
+      async restore(playerId, receipt, stack) {
+        const inventory = self.inventoryFor(playerId);
+        inventory?.add(cloneStack(stack)!);
+        self.receiptsFor(playerId)?.delete(receipt);
+        self.writeDurability(playerId);
+        await self.savePlayersCritical();
+      },
+      async dropReceipt(playerId, receipt) {
+        self.receiptsFor(playerId)?.delete(receipt);
+        self.writeDurability(playerId);
+        await self.savePlayersCritical();
+      },
+    };
+  }
+
+  private readonly offlineInventories = new Map<string, Inventory>();
+  private readonly offlineReceipts = new Map<string, Set<string>>();
+
+  private receiptsFor(playerId: string): Set<string> | undefined {
+    const online = this.players.get(playerId);
+    if (online) return online.settlementReceipts;
+    const cached = this.offlineReceipts.get(playerId);
+    if (cached) return cached;
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return undefined;
+    const receipts = new Set((stored.settlementReceipts ?? []).filter((receipt) => typeof receipt === 'string'));
+    this.offlineReceipts.set(playerId, receipts);
+    return receipts;
+  }
+
+  private inventoryFor(playerId: string): Inventory | undefined {
+    const online = this.players.get(playerId);
+    if (online) return online.inventory;
+    const cached = this.offlineInventories.get(playerId);
+    if (cached) return cached;
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return undefined;
+    const inventory = this.restoreInventory(stored.inventory);
+    this.offlineInventories.set(playerId, inventory);
+    return inventory;
+  }
+
+  private writeDurability(playerId: string): void {
+    const online = this.players.get(playerId);
+    if (online) return;
+    const stored = this.storedPlayers[playerId];
+    const inventory = this.inventoryFor(playerId);
+    const receipts = this.receiptsFor(playerId);
+    if (!stored || !inventory || !receipts) return;
+    this.storedPlayers[playerId] = {
+      ...stored,
+      inventory: inventory.serialize(),
+      settlementReceipts: [...receipts],
+    };
+  }
+
+  private async recoverSettlements(): Promise<void> {
+    if (!this.settlements) return;
+    const durability = this.itemDurability();
+    this.auction.setStage2C({ durability, settlements: this.settlements });
+    this.auction.recoverPendingListings();
+    this.auction.recoverClaims();
+    const finder = this.money as { findSourceDebit?: (type: string, id: string) => Promise<string | null> };
+    if (finder.findSourceDebit) {
+      await this.auction.recoverPurchases((id) => finder.findSourceDebit!('AUCTION_PURCHASE', id));
+    }
+    await this.savePlayersCritical();
   }
 
   setAppearance(

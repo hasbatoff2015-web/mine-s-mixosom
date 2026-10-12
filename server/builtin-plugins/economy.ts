@@ -7,6 +7,7 @@ import {
   ECONOMY_INITIAL_BALANCE,
   ECONOMY_MAX_BALANCE,
   ECONOMY_PVP_KILL_COOLDOWN_MS,
+  blockReward,
   formatMegacoinAmount,
   formatMegacoins,
   formatTransactionLine,
@@ -87,6 +88,18 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         const placed = economy.isPlacedBlock(event.x, event.y, event.z);
         economy.clearPlacedBlock(event.x, event.y, event.z);
         if (!event.playerId) return;
+        if (economy.backend === 'postgres' && ctx.scheduleRewardedBreak && event.rewardEventId) {
+          const amount = blockReward(event.blockId);
+          if (!placed && amount > 0) {
+            ctx.scheduleRewardedBreak({
+              playerId: event.playerId,
+              blockId: event.blockId,
+              placed,
+              rewardEventId: event.rewardEventId,
+            });
+            return;
+          }
+        }
         const reward = economy.rewardBlockBreak(
           event.playerId,
           event.blockId,

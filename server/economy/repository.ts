@@ -31,6 +31,7 @@ export interface EconomyRepository {
   history(tx: Queryable, query: EconomyHistoryQuery): Promise<EconomyHistoryPage>;
   getOperation(tx: Queryable, operationId: string): Promise<EconomyOperationView | null>;
   findBySource(tx: Queryable, sourceType: string, sourceId: string): Promise<EconomyOperationView | null>;
+  consumeSource?(tx: Queryable, source: import('./types').EconomySource): Promise<{ replayed: boolean }>;
   listByRequestId(tx: Queryable, requestId: string): Promise<readonly EconomyOperationView[]>;
   reconcile(tx: Queryable, playerId: string): Promise<EconomyReconciliation>;
 }

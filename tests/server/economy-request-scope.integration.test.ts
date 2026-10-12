@@ -271,11 +271,11 @@ describe.skipIf(databaseUrl === '')('idempotency request scope', () => {
         [requestId, hash],
       );
       const second = await runMigrations(queryable, MIGRATIONS);
-      expect(second.applied).toEqual(['0005']);
+      expect(second.applied).toEqual(['0005', '0006']);
       const after = await client.query<{ version: string; checksum: string }>(
         'SELECT version, checksum FROM schema_migrations ORDER BY version',
       );
-      expect(after.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005']);
+      expect(after.rows.map((row) => row.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006']);
       expect(after.rows.filter((row) => row.version <= '0004').map((row) => row.checksum)).toEqual(
         checksums.rows.map((row) => row.checksum),
       );

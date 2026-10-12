@@ -190,6 +190,13 @@ export class MegacoinService {
     return this.run(tx, (db) => this.repository.getOperation(db, id));
   }
 
+  async consumeSource(source: EconomySource, tx?: Queryable): Promise<{ replayed: boolean }> {
+    const parsed = parseSource(source);
+    if (!this.repository.consumeSource) throw new EconomyValidationError('source consume is unavailable');
+    const consume = this.repository.consumeSource.bind(this.repository);
+    return this.run(tx, (db) => consume(db, parsed));
+  }
+
   async findBySource(sourceType: string, sourceId: string, tx?: Queryable): Promise<EconomyOperationView | null> {
     const source = parseSource({ type: sourceType, id: sourceId });
     return this.run(tx, (db) => this.repository.findBySource(db, source.type, source.id));

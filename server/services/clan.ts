@@ -71,6 +71,8 @@ import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../s
 import { BlockId } from '../../src/blocks';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import { clientMoneyRequest, isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { SettlementService } from '../settlements/service';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 import type { JsonFileStore } from './jsonStore';
 import { overlappingClaims } from './claimAnchors';
 import type { Claim, ClaimStore } from './claims';
@@ -166,6 +168,7 @@ export interface ClanRecord {
   memberIds: string[];
   roles: Record<string, ClanRole>;
   createdAt: number;
+  creationSettlementId?: string;
   announcementCooldownUntil?: number;
   base?: ClanBase;
   baseCooldownUntil?: number;
@@ -349,6 +352,12 @@ export class ClanService {
   private invitations = new Map<string, ClanInvitation>();
   private requests = new Map<string, ClanJoinRequest>();
   private nextClanId = 1;
+  private settlements?: SettlementService;
+  haltAfter?: string;
+
+  setStage2C(settlements: SettlementService): void {
+    this.settlements = settlements;
+  }
   private nextInvitationId = 1;
   private nextRequestId = 1;
   private readonly sessions = new Map<string, ClanSession>();
@@ -721,6 +730,9 @@ export class ClanService {
       if (this.economy.backend === 'postgres' && !isClientMoneyRequestId(request?.requestId)) {
         return { ok: false, error: MONEY_REQUEST_REQUIRED };
       }
+      if (this.settlements && request && this.economy.backend === 'postgres') {
+        return this.createDurable(playerId, parsed.name, key, icon, request);
+      }
       const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request);
       return thenResult(paid, (result) => {
         if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
@@ -729,9 +741,74 @@ export class ClanService {
     }) as ClanResult;
   }
 
-  private finishCreate(playerId: string, name: string, key: string, icon: ClanIconId): ClanResult {
+  private createDurable(
+    playerId: string,
+    name: string,
+    key: string,
+    icon: ClanIconId,
+    request: EconomyCommandRequest,
+  ): ClanResult {
+    const settlements = this.settlements;
+    if (!settlements) return { ok: false, error: SETTLEMENT_RECOVERING };
+    const clanId = `clan-${this.nextClanId}`;
+    const payload = {
+      playerId,
+      name,
+      nameKey: key,
+      icon,
+      clanId,
+    };
+    const run = (async () => {
+      if (this.haltAfter === 'clan-prepared') {
+        await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'CLAN_CREATE',
+          payload,
+          requestId: request.requestId,
+        });
+        return { ok: false as const, error: 'halt:clan-prepared' };
+      }
+      const existing = await settlements.get(request.requestId);
+      if (existing?.phase === 'RECOVERY_REQUIRED') return { ok: false as const, error: 'conflict' };
+      if (!existing || existing.phase === 'PREPARED') {
+        const paid = await Promise.resolve(this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request));
+        if (!paid.ok) return { ok: false as const, error: paid.error ?? 'Недостаточно Мегакоинов.' };
+        const row = existing ?? await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'CLAN_CREATE',
+          payload,
+          requestId: request.requestId,
+        });
+        if (row.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
+        if (this.haltAfter === 'clan-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      }
+      const reserved = String((existing ?? await settlements.get(request.requestId))?.payload.clanId ?? clanId);
+      if ([...this.clans.values()].some((clan) => clan.creationSettlementId === request.requestId)) {
+        await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
+        return { ok: true as const, clan: [...this.clans.values()].find((clan) => clan.creationSettlementId === request.requestId) };
+      }
+      const created = this.finishCreate(playerId, name, key, icon, reserved, request.requestId);
+      if (created.ok) await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
+      return created;
+    })();
+    return run as unknown as ClanResult;
+  }
+
+  private finishCreate(
+    playerId: string,
+    name: string,
+    key: string,
+    icon: ClanIconId,
+    reservedId?: string,
+    creationSettlementId?: string,
+  ): ClanResult {
+      const clanId = reservedId ?? `clan-${this.nextClanId++}`;
+      if (reservedId) {
+        const number = Number(reservedId.replace('clan-', ''));
+        if (Number.isInteger(number) && number >= this.nextClanId) this.nextClanId = number + 1;
+      }
       const clan: ClanRecord = {
-        clanId: `clan-${this.nextClanId++}`,
+        clanId,
         name,
         nameKey: key,
         icon,
@@ -739,6 +816,7 @@ export class ClanService {
         memberIds: [playerId],
         roles: { [playerId]: 'leader' },
         createdAt: this.now(),
+        ...(creationSettlementId ? { creationSettlementId } : {}),
       };
       this.clans.set(clan.clanId, clan);
       this.clearPlayerPending(playerId);

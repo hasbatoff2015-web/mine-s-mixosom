@@ -54,6 +54,12 @@ export interface BuiltinPluginContext {
   readonly world: VoxelWorld;
   readonly worldId: () => string;
   readonly markDirty: () => void;
+  readonly scheduleRewardedBreak?: (reward: {
+    playerId: string;
+    blockId: number;
+    placed: boolean;
+    rewardEventId?: string;
+  }) => void;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
 }
