@@ -88,6 +88,8 @@ export interface AuctionHistoryEntry {
 
 export interface AuctionRuntime {
   notifyUnread?(playerId: string, category: NotificationCategory): void;
+  /** Keeps an extracted stack when it cannot return to the seller inventory. */
+  retainStack?(playerId: string, stack: ItemStack): boolean;
 }
 
 export interface AuctionResult {
@@ -204,6 +206,11 @@ export function formatRemaining(ms: number): string {
 
 export function isReturnableStatus(status: AuctionListingStatus): boolean {
   return status === 'CANCELLED' || status === 'EXPIRED';
+}
+
+function sameReturnedStack(left: ItemStack | null, right: ItemStack | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.count === right.count && canStacksMerge(left, right);
 }
 
 function samePurchasePayload(
@@ -554,13 +561,14 @@ export class AuctionService {
         return { ok: true as const, listing };
       }).catch((error: unknown) => {
         if (!durability.hasReceipt(playerId, receipt)) {
-          this.restoreUnlistedItem(inventory, slot, remainder, original, taken);
-          this.listings.delete(listing.listingId);
-          try {
-            this.persistListings();
-          } catch {
-            // The pending row may still be on disk. Recovery drops it when the receipt is absent
-            // and the seller inventory save never committed the removal.
+          const restored = this.restoreUnlistedItem(playerId, inventory, slot, remainder, original, taken);
+          if (restored) {
+            this.listings.delete(listing.listingId);
+            try {
+              this.persistListings();
+            } catch {
+              // The pending row may still be on disk. Recovery drops it when the receipt is absent.
+            }
           }
         }
         throw error;
@@ -573,26 +581,24 @@ export class AuctionService {
    * did not become durable. Does not overwrite a slot that changed during the await.
    */
   private restoreUnlistedItem(
+    playerId: string,
     inventory: Inventory,
     slot: number,
     remainder: ItemStack | null,
     original: ItemStack,
     taken: ItemStack,
-  ): void {
+  ): boolean {
     const now = inventory.getSlot(slot);
-    const unchanged = remainder === null
-      ? now === null
-      : now !== null
-        && now.itemId === remainder.itemId
-        && now.count === remainder.count
-        && now.durability === remainder.durability;
-    if (unchanged) {
-      inventory.setSlot(slot, original);
-      return;
+    if (sameReturnedStack(now, remainder)) {
+      inventory.setSlot(slot, cloneStack(original)!);
+      return true;
     }
     const copy = inventory.clone();
-    if (copy.add(cloneStack(taken)!) !== null) return;
-    inventory.restore(copy.serialize());
+    if (copy.add(cloneStack(taken)!) === null) {
+      inventory.restore(copy.serialize());
+      return true;
+    }
+    return this.runtime.retainStack?.(playerId, taken) === true;
   }
 
   /**

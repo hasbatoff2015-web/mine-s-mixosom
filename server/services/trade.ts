@@ -75,6 +75,8 @@ export interface TradeRuntime {
   balance(playerId: string): number;
   sendMessage(playerId: string, text: string): void;
   notifyUnread?(playerId: string, category: 'trade'): void;
+  /** Accepts a stack that does not fit in the live inventory. Returns false if it was not retained. */
+  retainStack?(playerId: string, stack: ItemStack): boolean;
 }
 
 function emptyOffer(): TradeOffer {
@@ -559,25 +561,46 @@ export class TradeService {
   }
 
   private closeSession(session: TradeSession, message: string): TradeResult {
-    this.returnOffers(session);
+    if (!this.returnOffers(session)) {
+      return {
+        ok: false,
+        error: 'Не удалось вернуть предметы обмена.',
+        affected: [session.playerA, session.playerB],
+      };
+    }
     this.dropSession(session);
     this.runtime.sendMessage(session.playerA, message);
     this.runtime.sendMessage(session.playerB, message);
     return { ok: true, closed: true, affected: [session.playerA, session.playerB] };
   }
 
-  private returnOffers(session: TradeSession): void {
+  /** Places every offer into inventory or heldReturns. A slot stays occupied until that handoff succeeds. */
+  private returnOffers(session: TradeSession): boolean {
+    let complete = true;
     for (const playerId of [session.playerA, session.playerB]) {
       const inventory = this.runtime.inventory(playerId);
       const offer = session.offers[playerId];
-      if (!inventory || !offer) continue;
+      if (!offer) continue;
       for (let index = 0; index < offer.slots.length; index += 1) {
         const stack = offer.slots[index];
         if (!stack) continue;
-        inventory.add(cloneStack(stack)!);
-        offer.slots[index] = null;
+        const placed = inventory
+          ? this.placeOfferStack(playerId, inventory, stack)
+          : this.runtime.retainStack?.(playerId, stack) === true;
+        if (placed) offer.slots[index] = null;
+        else complete = false;
       }
     }
+    return complete;
+  }
+
+  private placeOfferStack(playerId: string, inventory: Inventory, stack: ItemStack): boolean {
+    const copy = inventory.clone();
+    if (copy.add(cloneStack(stack)!) === null) {
+      inventory.restore(copy.serialize());
+      return true;
+    }
+    return this.runtime.retainStack?.(playerId, stack) === true;
   }
 
   private dropSession(session: TradeSession): void {

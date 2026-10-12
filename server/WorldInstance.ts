@@ -801,7 +801,10 @@ export class WorldInstance {
     const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
       this.notifyUnread(playerId, category);
     };
-    this.auction.setRuntime({ notifyUnread });
+    this.auction.setRuntime({
+      notifyUnread,
+      retainStack: (playerId, stack) => this.retainHeldReturn(playerId, stack),
+    });
     this.clan.setRuntime({
       onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -887,6 +890,7 @@ export class WorldInstance {
         });
       },
       notifyUnread,
+      retainStack: (playerId, stack) => this.retainHeldReturn(playerId, stack),
     });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
@@ -1687,7 +1691,8 @@ export class WorldInstance {
           },
         };
       }
-      const stored = existingId ? this.storedPlayers[existingId] : undefined;
+      const stored = (existingId ? this.storedPlayers[existingId] : undefined)
+        ?? this.storedPlayerByToken(options.sessionToken);
       if (stored) {
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name, false);
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
@@ -5880,6 +5885,9 @@ export class WorldInstance {
       portalChest: player.portalChest.slots,
       appearance: toNetworkAppearance(player.appearance),
       ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
+      ...(player.heldReturns.length > 0
+        ? { heldReturns: player.heldReturns.map((stack) => cloneStack(stack)!) }
+        : {}),
     };
   }
 
@@ -5898,7 +5906,8 @@ export class WorldInstance {
       }
     }
     player.heldReturns = [];
-    return { ...stored, inventory: copy.serialize() };
+    const { heldReturns: _returned, ...withoutPending } = stored;
+    return { ...withoutPending, inventory: copy.serialize() };
   }
 
   /** Offer and buyer-window stacks that are not yet covered by a durable receipt. */
@@ -5916,6 +5925,30 @@ export class WorldInstance {
    * Moves every carried stack into the live inventory, or leaves both sides
    * unchanged when any stack does not fit. Never keeps a partial merge.
    */
+  private storedPlayerByToken(token: string): SerializedPersistedPlayer | undefined {
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (stored.sessionToken === token) return stored;
+    }
+    return undefined;
+  }
+
+  private retainHeldReturn(playerId: string, stack: ItemStack): boolean {
+    const copy = cloneStack(stack);
+    if (!copy) return false;
+    const player = this.players.get(playerId);
+    if (player) {
+      player.heldReturns.push(copy);
+      return true;
+    }
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return false;
+    const held = parseHeldReturns(stored.heldReturns);
+    held.push(copy);
+    this.storedPlayers[playerId] = { ...stored, heldReturns: held };
+    this.dirty = true;
+    return true;
+  }
+
   private absorbHeldReturns(player: ServerPlayer, stacks: readonly ItemStack[]): void {
     if (stacks.length === 0) {
       player.heldReturns = [];
