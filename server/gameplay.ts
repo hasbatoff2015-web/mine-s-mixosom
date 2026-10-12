@@ -258,6 +258,12 @@ export class ServerGameplay {
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
   onPersistentStateChanged?: () => void;
+  /** Accepted survival harvest drop. Scanning must not call this again. */
+  onAcceptedBlockDrop?: (itemId: string, count: number, sourceId: string) => void;
+  /** A new monitored stack from boss loot or a detached block. Not a moved stack. */
+  onProducedResource?: (itemId: string, count: number) => void;
+  onCraftedResource?: (recipeId: string) => void;
+  onCreativeResource?: (previous: ItemStack | null, next: ItemStack | null) => void;
   /** After survival death loot is spawned once. Duels bind these exact entity ids. */
   onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
   /** Reject every manual world drop before the inventory mutates. */
@@ -601,15 +607,16 @@ export class ServerGameplay {
     position: Vec3,
     playerId?: string,
     options: { readonly merge?: boolean } = {},
-  ): void {
+  ): boolean {
     const stamped = ensureItemInstanceId(stack, () => globalThis.crypto.randomUUID());
     const event = this.events.createItemDrop(stamped.itemId, stamped.count, position.x, position.y, position.z, playerId);
     this.events.emit('itemDrop', event);
-    if (event.cancelled) return;
+    if (event.cancelled) return false;
     this.drops.spawn(stamped, position, {
       velocity: new Vec3(...dropScatterVelocity(this.random)),
       ...(options.merge === false ? { merge: false } : {}),
     });
+    return true;
   }
 
   /**
@@ -796,6 +803,7 @@ export class ServerGameplay {
         lockMerge: true,
         pickupDelaySeconds: 0.8,
       }).id);
+      this.onProducedResource?.(stack.itemId, stack.count);
     }
     return ids;
   }
@@ -859,6 +867,8 @@ export class ServerGameplay {
     if (isManualDropAction(action) && this.blocksManualItemDrop?.(player.id)) {
       return { ok: false, dropped: [] };
     }
+    const creativeGrant = action.action === 'click' && typeof action.key === 'string' && action.key.startsWith('creative-');
+    const cursorBefore = creativeGrant ? player.cursor : null;
     const chest = this.chestForOpenWindow(player);
     const furnace = this.furnaceForOpenWindow(player);
     const state = {
@@ -891,10 +901,12 @@ export class ServerGameplay {
     if (action.action === 'select' && action.slot !== undefined) player.selectedSlot = action.slot;
     for (const stack of dropped) this.dropFromPlayer(player, stack);
     if (result.crafted) {
+    if (result.crafted?.recipeId) this.onCraftedResource?.(result.crafted.recipeId);
       this.events.emit('craft', this.events.createCraft(
         player.id, result.crafted.itemId, result.crafted.count, result.crafted.recipeId,
       ));
     }
+    if (creativeGrant && result.ok) this.onCreativeResource?.(cursorBefore, player.cursor);
     return { ...result, dropped };
   }
 
@@ -920,13 +932,20 @@ export class ServerGameplay {
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (block === BlockId.WhiteBed) clearBedBlocks(this.world, x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
+    const rewardEventId = globalThis.crypto.randomUUID();
     this.events.emit('blockBroken', {
       playerId: player.id,
       x, y, z,
       blockId: block,
-      rewardEventId: globalThis.crypto.randomUUID(),
+      rewardEventId,
     });
     if (player.gamemode === 'survival' && harvestable) {
+      const produced = new Map<string, number>();
+      const spawnHarvest = (itemId: string, count: number): void => {
+        if (count <= 0) return;
+        produced.set(itemId, (produced.get(itemId) ?? 0) + count);
+        this.spawnDroppedStack(createItemStack(itemId, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+      };
       const paintingItemId = collectiblePaintingDropItemId(block, blockState);
       if (paintingItemId) {
         const paintingDrop = collectiblePaintingDroppedStack(block, blockState);
@@ -934,19 +953,16 @@ export class ServerGameplay {
       } else {
         const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
         if (farmingDrops !== undefined) {
-          for (const drop of farmingDrops) if (drop.count > 0) {
-            this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-          }
+          for (const drop of farmingDrops) spawnHarvest(drop.item, drop.count);
         } else if (definition.drop) {
           const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
           for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
             const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
-            if (count > 0) {
-              this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-            }
+            spawnHarvest(rolled.item, count);
           }
         }
       }
+      for (const [itemId, count] of produced) this.onAcceptedBlockDrop?.(itemId, count, rewardEventId);
       this.dropLeafApple(player, block, x, y, z);
     }
     if (player.gamemode === 'survival') {
@@ -1830,7 +1846,9 @@ export class ServerGameplay {
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) {
-          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+          if (this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5))) {
+            this.onProducedResource?.(drop.item, drop.count);
+          }
         }
         continue;
       }
@@ -1838,7 +1856,9 @@ export class ServerGameplay {
       if (!drop) continue;
       for (const rolled of rollBrokenBlockDrops(drop, this.random)) {
         if (rolled.count > 0) {
-          this.spawnDroppedStack(createItemStack(rolled.item, rolled.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+          if (this.spawnDroppedStack(createItemStack(rolled.item, rolled.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5))) {
+            this.onProducedResource?.(rolled.item, rolled.count);
+          }
         }
       }
     }

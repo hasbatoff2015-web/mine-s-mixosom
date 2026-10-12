@@ -1966,6 +1966,9 @@ export class VoxelWorld {
     this.schedule(x, y, z, 20);
   }
 
+  /** Fired once when a furnace recipe actually moves items. Not once per burn tick. */
+  onFurnaceCompleted?: (inputItemId: string, outputItemId: string, outputCount: number) => void;
+
   private tickFurnaces(): void {
     for (const [key, furnace] of this.furnaces) {
       const slotsBefore = furnaceSlotSignature(furnace);
@@ -2008,6 +2011,7 @@ export class VoxelWorld {
               : { itemId: outputId, count: outputCount };
             furnace.cookTime = 0;
             furnace.cookInputId = furnace.slots[0]?.itemId;
+            this.onFurnaceCompleted?.(input.itemId, outputId, outputCount);
           }
         }
       } else furnace.cookTime = 0;

@@ -124,6 +124,8 @@ import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityVi
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
 import { IdentityIncidentLog } from './identity/incidents';
+import { countMonitoredResources, ResourceLedger } from './resources/accounting';
+import { isMonitoredResource } from './resources/monitored';
 import {
   IDENTITY_TRANSFER_BLOCKED,
   scanIdentity,
@@ -689,6 +691,9 @@ export class WorldInstance {
   /** A failed incident write stays pending until the next allowed checkpoint. */
   private identityPersistPending = false;
   private unresolvedIdentitySources = 0;
+  private readonly resources = new ResourceLedger();
+  private resourceLogLoaded = false;
+  private resourcePersistPending = false;
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
@@ -800,6 +805,13 @@ export class WorldInstance {
     });
     this.gameplay.serverMode = config.serverMode;
     this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
+    this.gameplay.onAcceptedBlockDrop = (itemId, count, sourceId) => this.resources.noteMine(itemId, count, sourceId);
+    this.gameplay.onProducedResource = (itemId, count) => this.resources.noteReward(itemId, count);
+    this.gameplay.onCraftedResource = (recipeId) => this.resources.noteCraft(recipeId);
+    this.gameplay.onCreativeResource = (previous, next) => this.resources.noteCreative(previous, next);
+    this.world.onFurnaceCompleted = (inputItemId, outputItemId, outputCount) => {
+      this.resources.noteSmelt(inputItemId, outputItemId, outputCount);
+    };
     this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
@@ -1065,6 +1077,8 @@ export class WorldInstance {
         });
       },
       log: (message) => serverLog(`plugin world-events ${message}`),
+      noteResourceStacks: (stacks, sourceId) => this.noteMonitoredStacks(stacks, sourceId, false),
+      noteResourceRemoval: (stacks, sourceId) => this.noteMonitoredStacks(stacks, sourceId, true),
       loadedWorldgenVersion: () => this.loadedWorldgenVersion,
       acknowledgeWorldgenMigration: () => {
         this.loadedWorldgenVersion = WORLDGEN_VERSION;
@@ -1342,6 +1356,7 @@ export class WorldInstance {
       this.canonicalWorldLoaded = true;
       await this.recoverSettlements();
       this.observeIdentity('startup');
+      this.observeResources('startup');
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1364,6 +1379,7 @@ export class WorldInstance {
     // false until the write resolves, so a failed create is not saved again from stop().
     await this.writeCanonicalSnapshot();
     this.observeIdentity('startup');
+    this.observeResources('startup');
     this.readyState = 'READY';
     this.canonicalWorldLoaded = true;
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1583,6 +1599,7 @@ export class WorldInstance {
     this.buyer.persist();
     this.dirty = false;
     this.observeIdentity('save');
+    this.observeResources('save');
   }
 
   onlineCount(): number {
@@ -2280,8 +2297,12 @@ export class WorldInstance {
       this.flushBuyer(player);
       return;
     }
+    const sold = message.action === 'sell' ? this.buyer.unsavedTradeSlot(player.id) : null;
     const result = this.buyer.handleAction(player.id, player.inventory, message, can);
     const finishBuyer = (done: Awaited<typeof result>): void => {
+    if (sold && done.ok !== false && !this.buyer.unsavedTradeSlot(player.id)) {
+      this.resources.noteSink(sold.itemId, sold.count, 'buyer-sale');
+    }
     if (done.inventoryDirty) this.flushPlayerInventory(player);
     if (done.broadcast) this.broadcastBuyers();
     if (done.chat) {
@@ -6025,6 +6046,69 @@ export class WorldInstance {
     }
   }
 
+  private noteMonitoredStacks(
+    stacks: readonly (ItemStack | null | undefined)[],
+    sourceId: string,
+    sink: boolean,
+  ): void {
+    const totals = new Map<string, number>();
+    for (const stack of stacks) {
+      if (!stack || stack.count <= 0 || !isMonitoredResource(stack.itemId)) continue;
+      totals.set(stack.itemId, (totals.get(stack.itemId) ?? 0) + stack.count);
+    }
+    for (const [itemId, quantity] of totals) {
+      if (sink) this.resources.noteSink(itemId, quantity, 'event-chest', sourceId);
+      else this.resources.noteReward(itemId, quantity, sourceId);
+    }
+  }
+
+  inspectValuableResources() {
+    this.observeResources('recheck');
+    const snap = this.resourceSnapshot();
+    return this.resources.inspect(this.worldId, snap.counts, snap.unresolved);
+  }
+
+  private observeResources(checkpoint: 'startup' | 'save' | 'recheck'): void {
+    this.ensureResourceLog();
+    try {
+      const snap = this.resourceSnapshot();
+      const changed = this.resources.observe(this.worldId, snap.counts, snap.unresolved, Date.now());
+      if (changed || this.resources.isDirty() || this.resourcePersistPending) this.persistResources();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting failed: ${detail}`, 'warn');
+    }
+    void checkpoint;
+  }
+
+  private resourceSnapshot() {
+    const counts = countMonitoredResources(this.identitySources());
+    return { counts, unresolved: this.unresolvedIdentitySources };
+  }
+
+  private ensureResourceLog(): void {
+    if (this.resourceLogLoaded) return;
+    this.resourceLogLoaded = true;
+    try {
+      this.resources.load(this.pluginStore.load('resource-accounting', { version: 1 }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting load failed: ${detail}`, 'warn');
+    }
+  }
+
+  private persistResources(): void {
+    try {
+      this.pluginStore.save('resource-accounting', this.resources.serialize());
+      this.resourcePersistPending = false;
+      this.resources.markPersisted();
+    } catch (error) {
+      this.resourcePersistPending = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting save failed: ${detail}`, 'warn');
+    }
+  }
+
   private ensureIdentityLog(): void {
     if (this.identityLogLoaded) return;
     this.identityLogLoaded = true;
@@ -6177,6 +6261,7 @@ export class WorldInstance {
       given = count - leftover;
     }
     if (given > 0 || leftover > 0) this.dirty = true;
+    if (isMonitoredResource(itemId)) this.resources.noteGrant(itemId, count);
     return { given, leftover };
   }
 

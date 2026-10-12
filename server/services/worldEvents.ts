@@ -245,6 +245,10 @@ export interface WorldEventsHost {
   log(message: string): void;
   loadedWorldgenVersion?(): number | undefined;
   acknowledgeWorldgenMigration?(): void;
+  /** Newly placed event-chest loot. The same event id is credited once. */
+  noteResourceStacks?(stacks: readonly (ItemStack | null | undefined)[], sourceId: string): void;
+  /** Stacks still in the chest when the event is removed. */
+  noteResourceRemoval?(stacks: readonly (ItemStack | null | undefined)[], sourceId: string): void;
 }
 
 export type ForceSpawnResult =
@@ -1149,6 +1153,7 @@ export class WorldEventsManager {
     this.store.journal = { phase: 'placing', event: cloneEvent(event) };
     this.persist();
     this.applyPlacement(event);
+    this.host.noteResourceStacks?.(event.chestSlots ?? [], event.id);
     this.store.active = event;
     if (countsAsDaily) this.store.lastSpawnDayKey = day;
     this.persist();
@@ -1202,6 +1207,7 @@ export class WorldEventsManager {
       this.persist();
     }
     if (active?.chest) this.host.closeChestWindow(active.chest.x, active.chest.y, active.chest.z);
+    if (active) this.sinkRemainingChest(active);
     if (active?.snapshot) restoreSnapshot(this.host.world, active.snapshot);
     else if (active?.chest) {
       this.host.world.removeChestState(active.chest.x, active.chest.y, active.chest.z);
@@ -1258,12 +1264,20 @@ export class WorldEventsManager {
 
   private finishJournalCleanup(event: ActiveWorldEvent): void {
     if (event.chest) this.host.closeChestWindow(event.chest.x, event.chest.y, event.chest.z);
+    this.sinkRemainingChest(event);
     if (event.snapshot) restoreSnapshot(this.host.world, event.snapshot);
     this.store.active = undefined;
     this.persist();
     this.host.markDirty();
     this.host.flush();
     this.host.persistWorld?.();
+  }
+
+  private sinkRemainingChest(event: ActiveWorldEvent): void {
+    if (!event.chest) return;
+    const chest = this.host.world.chests.get(blockKey(event.chest.x, event.chest.y, event.chest.z));
+    if (!chest) return;
+    this.host.noteResourceRemoval?.(chest.slots, event.id);
   }
 
   private reapplyStored(event: ActiveWorldEvent): void {

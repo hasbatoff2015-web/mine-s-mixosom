@@ -1,12 +1,19 @@
 # Roadmap
 
+## 2026-10-12: Stage 3C valuable resource quantities
+
+- [x] Diamond, gold ingot, ruby ingot, titanium ingot, and iron ingot quantities are counted from the same physical holders as Stage 3B.
+- [x] The first observation is a baseline. Mining, grants, Creative, boss loot, event-chest loot, smelting, and crafting explain later changes.
+- [x] Transfers, auction delivery, trade, and settlement return do not mint. An unexplained increase is stored and does not delete items.
+- [ ] Admin login and the admin panel stay later. Not merged. Draft PR **#129**.
+
 ## 2026-10-12: Stage 3B unique item locations
 
 - [x] One WorldInstance index of current physical holders for collectible paintings and the God Sword.
 - [x] Confirmed duplicates and item-type conflicts are recorded. Save mirrors and settlement payloads are not second owners.
 - [x] A fresh conflict blocks a new auction listing, purchase, trade accept, or buyer sale. Items and balances stay put.
 - [x] A saved block override is visible when its chunk is not loaded. A failed incident write is retried at the next checkpoint.
-- [ ] Quantity monitoring stays Stage 3C. Admin tools stay later. Not merged. Draft PR **#129**.
+- [x] Quantity monitoring is Stage 3C, in the section above. Admin tools stay later. Not merged. Draft PR **#129**.
 
 ## 2026-10-12: Stage 3A unique item identity
 
