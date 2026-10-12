@@ -52,7 +52,7 @@ The fix stores the token returned by `queueLight` and finishes when that token's
 
 Commands: `/kit help`, `/kit start`, `/kit <name>`, `/kit create <name>`, `/kit delete <name>`, `/kit give <player> <name>`.
 
-`/kit create` copies the creator's main inventory, armor, and offhand. Empty slots and unknown items are skipped. The creator keeps every stack. An empty inventory creates an empty kit. Duplicate and illegal names are rejected. `help`, `create`, `delete`, and `give` are reserved. Data file: `plugin-data/kit/store`.
+A new server player gets an empty inventory from `createStarterInventory`. The old automatic stacks (dirt, cobblestone, oak planks, stone, oak logs, apples) are not inserted. A valid saved inventory is still restored as stored. `/kit create` copies the creator's main inventory, armor, and offhand. Empty slots and unknown items are skipped. The creator keeps every stack. An empty inventory creates an empty kit. Duplicate and illegal names are rejected. `help`, `create`, `delete`, and `give` are reserved. Data file: `plugin-data/kit/store`.
 
 `/kit <name>` gives that kit to any player. `/kit start` is separate: the first join grants it when the kit has items, and `/kit start` grants it once if it was not received yet. Reconnect, death, and respawn do not grant it again. A failed delivery stays pending and is retried. Create, delete, and give require operator, `kit.admin`, or `server.admin`. `deliverKit` gives in `maxStack` batches so a full inventory uses `PlayerView.give`'s leftover drop.
 

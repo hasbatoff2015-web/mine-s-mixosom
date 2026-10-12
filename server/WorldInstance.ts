@@ -5477,7 +5477,7 @@ export class WorldInstance {
     try {
       if (raw) return Inventory.deserialize(raw);
     } catch {
-      serverLog('player inventory save was invalid; using starter kit', 'warn');
+      serverLog('player inventory save was invalid; using an empty inventory', 'warn');
     }
     return createStarterInventory();
   }
@@ -5755,15 +5755,9 @@ export class WorldInstance {
   }
 }
 
+/** New online players start with an empty inventory. The one-time grant is `/kit start`. */
 export function createStarterInventory(): Inventory {
-  const inventory = new Inventory();
-  inventory.addItem('dirt', 64);
-  inventory.addItem('cobblestone', 64);
-  inventory.addItem('oak_planks', 64);
-  inventory.addItem('stone', 64);
-  inventory.addItem('oak_log', 32);
-  inventory.addItem('apple', 8);
-  return inventory;
+  return new Inventory();
 }
 
 export { ANARCHY_WORLD_ID, TICK_RATE };

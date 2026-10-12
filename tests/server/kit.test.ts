@@ -6,7 +6,7 @@ import { createItemStack } from '../../src/inventory';
 import { ItemId } from '../../src/items';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
-import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import { WorldInstance, createStarterInventory, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import { KitService, parseKitName, parseKitStore, snapshotKitItems } from '../../server/services/kit';
 
 function memoryService(initial?: unknown): { service: KitService; saved: { value: unknown } } {
@@ -219,6 +219,11 @@ describe('kit commands', () => {
     const first = await boot();
     const world = first.world;
     const op = join(world, 'Op');
+    const fresh = createStarterInventory();
+    for (const itemId of ['dirt', 'cobblestone', 'oak_planks', 'stone', 'oak_log', 'apple'] as const) {
+      expect(fresh.count(itemId)).toBe(0);
+      expect(countItem(op.player, itemId)).toBe(0);
+    }
     expect(chat(world, op, '/kit help').some((line) => line.includes('/kit create'))).toBe(true);
     fill(op.player, [
       { itemId: 'stone', count: 32 },
