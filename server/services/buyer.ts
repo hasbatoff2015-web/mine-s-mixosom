@@ -127,6 +127,44 @@ export class BuyerService {
   unsavedTradeSlot(playerId: string): ItemStack | null {
     return this.sessions.get(playerId)?.tradeSlot ?? null;
   }
+
+  async recoverSales(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
+    if (!this.settlements || !this.durability) return 0;
+    let changed = 0;
+    for (const row of await this.settlements.listOpen()) {
+      if (row.kind !== 'BUYER_SALE') continue;
+      const playerId = String(row.payload.playerId ?? '');
+      const receipt = buyerConsumedReceipt(row.settlementId);
+      const hasItem = this.durability.hasReceipt(playerId, receipt);
+      const money = await paid(row.settlementId);
+      if (!money && !hasItem) {
+        if (row.phase === 'PREPARED') await this.settlements.transition(row.settlementId, 'PREPARED', 'CANCELLED');
+        changed += 1;
+        continue;
+      }
+      if (money) {
+        if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+          await this.settlements.advance(row.settlementId, row.phase, 'MONEY_COMMITTED');
+        }
+        const current = await this.settlements.get(row.settlementId);
+        if (current && (current.phase === 'MONEY_COMMITTED' || current.phase === 'DOMAIN_DURABLE' || current.phase === 'DELIVERY_DURABLE')) {
+          await this.settlements.advance(row.settlementId, current.phase, 'COMPLETE');
+        }
+        changed += 1;
+        continue;
+      }
+      const item = row.payload.item;
+      if (item && typeof item === 'object') {
+        const stack = item as ItemStack;
+        await this.durability.restore(playerId, receipt, { itemId: stack.itemId, count: stack.count, ...(stack.durability !== undefined ? { durability: stack.durability } : {}) });
+      }
+      if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+        await this.settlements.transition(row.settlementId, row.phase, 'CANCELLED');
+      }
+      changed += 1;
+    }
+    return changed;
+  }
   private returns = new Map<string, ItemStack[]>();
   private readonly locks = new Set<string>();
   private affectedPlayers = new Set<string>();
@@ -849,6 +887,12 @@ export class BuyerService {
         return { ok: false as const, error: 'halt:sale-prepared' };
       }
       const existing = await settlements.get(request.requestId);
+      const begun = existing ?? await settlements.begin({
+        settlementId: request.requestId,
+        kind: 'BUYER_SALE',
+        payload,
+        requestId: request.requestId,
+      });
       if (!existing || existing.phase === 'PREPARED') {
         const receipt = buyerConsumedReceipt(request.requestId);
         if (!durability.hasReceipt(playerId, receipt)) {
@@ -857,12 +901,6 @@ export class BuyerService {
           await durability.escrow(playerId, receipt);
         }
         if (this.haltAfter === 'sale-escrowed') return { ok: false as const, error: 'halt:sale-escrowed' };
-        const begun = existing ?? await settlements.begin({
-          settlementId: request.requestId,
-          kind: 'BUYER_SALE',
-          payload,
-          requestId: request.requestId,
-        });
         const paid = await this.economy.deposit(playerId, total, 'BUYER_SALE', undefined, undefined, request);
         if (!paid.ok) {
           session.tradeSlot = cloneStack(slot);

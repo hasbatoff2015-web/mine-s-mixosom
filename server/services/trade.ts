@@ -137,6 +137,58 @@ export class TradeService {
     this.settlements = input.settlements;
   }
 
+  async recoverTrades(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
+    if (!this.settlements || !this.durability) return 0;
+    let changed = 0;
+    for (const row of await this.settlements.listOpen()) {
+      if (row.kind !== 'TRADE_SETTLEMENT') continue;
+      const playerA = String(row.payload.playerA ?? '');
+      const playerB = String(row.payload.playerB ?? '');
+      const escrow = tradeEscrowReceipt(row.settlementId);
+      const money = await paid(row.settlementId);
+      if (!money) {
+        for (const playerId of [playerA, playerB]) {
+          if (!this.durability.hasReceipt(playerId, escrow)) continue;
+          const key = playerId === playerA ? 'itemsForB' : 'itemsForA';
+          const stacks = Array.isArray(row.payload[key]) ? row.payload[key] as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
+          for (const stack of stacks) {
+            const inventory = this.runtime.inventory(playerId);
+            inventory?.add(cloneStack({ itemId: stack.itemId, count: stack.count, ...(stack.durability ? { durability: stack.durability } : {}) })!);
+          }
+          await this.durability.dropReceipt(playerId, escrow);
+        }
+        if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+          await this.settlements.transition(row.settlementId, row.phase, 'CANCELLED');
+        }
+        changed += 1;
+        continue;
+      }
+      const give = async (playerId: string, stacks: Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }>): Promise<void> => {
+        const marker = tradeDeliveryReceipt(row.settlementId, playerId);
+        if (this.durability?.hasReceipt(playerId, marker)) return;
+        const inventory = this.runtime.inventory(playerId);
+        if (!inventory) return;
+        for (const stack of stacks) {
+          inventory.add(cloneStack({ itemId: stack.itemId, count: stack.count, ...(stack.durability ? { durability: stack.durability } : {}) })!);
+        }
+        await this.durability?.escrow(playerId, marker);
+      };
+      const forA = Array.isArray(row.payload.itemsForA) ? row.payload.itemsForA as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
+      const forB = Array.isArray(row.payload.itemsForB) ? row.payload.itemsForB as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
+      await give(playerA, forA);
+      await give(playerB, forB);
+      if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+        await this.settlements.advance(row.settlementId, row.phase, 'MONEY_COMMITTED');
+      }
+      const current = await this.settlements.get(row.settlementId);
+      if (current && (current.phase === 'MONEY_COMMITTED' || current.phase === 'DOMAIN_DURABLE' || current.phase === 'DELIVERY_DURABLE')) {
+        await this.settlements.advance(row.settlementId, current.phase, 'COMPLETE');
+      }
+      changed += 1;
+    }
+    return changed;
+  }
+
   unsavedOfferStacks(playerId: string, receipts: ReadonlySet<string>): ItemStack[] {
     const session = this.sessionFor(playerId);
     if (!session) return [];

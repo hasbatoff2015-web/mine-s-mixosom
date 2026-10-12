@@ -5994,6 +5994,12 @@ export class WorldInstance {
     if (finder.findSourceDebit) {
       await this.auction.recoverPurchases((id) => finder.findSourceDebit!('AUCTION_PURCHASE', id));
     }
+    const sources = this.money as { hasEconomicSource?: (type: string, id: string) => Promise<boolean> };
+    if (sources.hasEconomicSource) {
+      await this.buyer.recoverSales((id) => sources.hasEconomicSource!('BUYER_SALE', id));
+      await this.trade.recoverTrades((id) => sources.hasEconomicSource!('TRADE', id));
+      await this.clan.recoverCreates((id) => sources.hasEconomicSource!('CLAN_CREATE', id));
+    }
     await this.savePlayersCritical();
   }
 

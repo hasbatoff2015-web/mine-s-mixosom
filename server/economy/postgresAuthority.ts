@@ -71,6 +71,11 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     return this.preparePlayer(playerId, name);
   }
 
+  async hasEconomicSource(sourceType: string, sourceId: string): Promise<boolean> {
+    const operation = await this.megacoin.findBySource(sourceType, sourceId);
+    return Boolean(operation);
+  }
+
   async findSourceDebit(sourceType: string, sourceId: string): Promise<string | null> {
     const operation = await this.megacoin.findBySource(sourceType, sourceId);
     return operation?.legs.find((leg) => leg.delta < 0)?.playerId ?? null;

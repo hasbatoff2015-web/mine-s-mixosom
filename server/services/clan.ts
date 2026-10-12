@@ -358,6 +358,46 @@ export class ClanService {
   setStage2C(settlements: SettlementService): void {
     this.settlements = settlements;
   }
+
+  async recoverCreates(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
+    if (!this.settlements) return 0;
+    let changed = 0;
+    for (const row of await this.settlements.listOpen()) {
+      if (row.kind !== 'CLAN_CREATE') continue;
+      const money = await paid(row.settlementId);
+      const owned = [...this.clans.values()].find((clan) => clan.creationSettlementId === row.settlementId);
+      if (!money) {
+        if (row.phase === 'PREPARED') await this.settlements.transition(row.settlementId, 'PREPARED', 'CANCELLED');
+        changed += 1;
+        continue;
+      }
+      if (owned) {
+        if (row.phase === 'MONEY_COMMITTED' || row.phase === 'DOMAIN_DURABLE') {
+          await this.settlements.advance(row.settlementId, row.phase, 'COMPLETE');
+        }
+        changed += 1;
+        continue;
+      }
+      const nameKey = String(row.payload.nameKey ?? '');
+      const conflict = [...this.clans.values()].some((clan) => clan.nameKey === nameKey || clan.clanId === row.payload.clanId);
+      if (conflict) {
+        if (row.phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, row.phase, 'RECOVERY_REQUIRED');
+        changed += 1;
+        continue;
+      }
+      this.finishCreate(
+        String(row.payload.playerId ?? ''),
+        String(row.payload.name ?? ''),
+        nameKey,
+        row.payload.icon as ClanIconId,
+        String(row.payload.clanId ?? ''),
+        row.settlementId,
+      );
+      await this.settlements.advance(row.settlementId, 'MONEY_COMMITTED', 'COMPLETE');
+      changed += 1;
+    }
+    return changed;
+  }
   private nextInvitationId = 1;
   private nextRequestId = 1;
   private readonly sessions = new Map<string, ClanSession>();
@@ -770,15 +810,18 @@ export class ClanService {
       }
       const existing = await settlements.get(request.requestId);
       if (existing?.phase === 'RECOVERY_REQUIRED') return { ok: false as const, error: 'conflict' };
+      const row = existing ?? await settlements.begin({
+        settlementId: request.requestId,
+        kind: 'CLAN_CREATE',
+        payload,
+        requestId: request.requestId,
+      });
       if (!existing || existing.phase === 'PREPARED') {
         const paid = await Promise.resolve(this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request));
-        if (!paid.ok) return { ok: false as const, error: paid.error ?? 'Недостаточно Мегакоинов.' };
-        const row = existing ?? await settlements.begin({
-          settlementId: request.requestId,
-          kind: 'CLAN_CREATE',
-          payload,
-          requestId: request.requestId,
-        });
+        if (!paid.ok) {
+          if (row.phase === 'PREPARED') await settlements.transition(request.requestId, 'PREPARED', 'CANCELLED');
+          return { ok: false as const, error: paid.error ?? 'Недостаточно Мегакоинов.' };
+        }
         if (row.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
         if (this.haltAfter === 'clan-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
       }
