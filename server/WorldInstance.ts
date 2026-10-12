@@ -807,7 +807,7 @@ export class WorldInstance {
     this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
     this.gameplay.onAcceptedBlockDrop = (itemId, count, sourceId) => this.resources.noteMine(itemId, count, sourceId);
     this.gameplay.onProducedResource = (itemId, count) => this.resources.noteReward(itemId, count);
-    this.gameplay.onCraftedResource = (recipeId) => this.resources.noteCraft(recipeId);
+    this.gameplay.onCraftedResource = (commit) => this.resources.noteCraft(commit);
     this.gameplay.onCreativeResource = (previous, next) => this.resources.noteCreative(previous, next);
     this.world.onFurnaceCompleted = (inputItemId, outputItemId, outputCount) => {
       this.resources.noteSmelt(inputItemId, outputItemId, outputCount);
@@ -1220,6 +1220,9 @@ export class WorldInstance {
       });
     };
     this.buyer = new BuyerService(this.pluginStore, this.money, this.holograms, () => this.worldId);
+    this.buyer.onDurableConsumption = (itemId, count, settlementId) => {
+      this.resources.noteSink(itemId, count, 'buyer-sale', settlementId);
+    };
     if (config.economy.backend === 'postgres' && this.database.enabled && config.database.enabled) {
       this.settlements = SettlementService.postgres(
         this.database,
@@ -1354,6 +1357,7 @@ export class WorldInstance {
       this.notifications.load();
       this.buyer.load();
       this.canonicalWorldLoaded = true;
+      this.ensureResourceLog();
       await this.recoverSettlements();
       this.observeIdentity('startup');
       this.observeResources('startup');
@@ -2301,7 +2305,7 @@ export class WorldInstance {
     const result = this.buyer.handleAction(player.id, player.inventory, message, can);
     const finishBuyer = (done: Awaited<typeof result>): void => {
     if (sold && done.ok !== false && !this.buyer.unsavedTradeSlot(player.id)) {
-      this.resources.noteSink(sold.itemId, sold.count, 'buyer-sale');
+      this.resources.noteSink(sold.itemId, sold.count, 'buyer-sale', done.consumedSettlementId);
     }
     if (done.inventoryDirty) this.flushPlayerInventory(player);
     if (done.broadcast) this.broadcastBuyers();

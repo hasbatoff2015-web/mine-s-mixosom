@@ -2,12 +2,25 @@
 
 Date: 2026-10-12
 
+## Follow-up: committed crafts, accepted drops, buyer recovery
+
+A crafting result is recorded only when `takeCraftOutput` or `craftOnceByRecipeId` changes the grid or inventory. The record carries the completed count and the item ids that were actually consumed. A Shift-click that finishes two ruby crafts out of five possible ingredients records two crafts. A cursor that cannot take the result records none.
+
+`spawnHarvest` adds a mining credit only when `spawnDroppedStack` returns true. A cancelled `itemDrop` leaves the mine total unchanged.
+
+A durable buyer sale notes the sink with the settlement id when the payout has landed and the escrow receipt exists. `recoverSales` notes the same id if the process stopped before completion. The resource file is loaded before settlement recovery, so that note is not replaced by the old file. A cancelled unpaid escrow restores the stack and does not sink it. The 500-key dedupe cache is still the bound on exactly-once memory; it is not an infinite history.
+
+The disposable PostgreSQL test sold 16 diamonds (one sink, one payout), restored an unpaid escrow of 8, then recovered a paid sale of those 8 after the accounting file had been rewound to the pre-crash sink of 16. The retried write stored sink 24 once. A second restart left the sink, the balance, and the empty inventory unchanged.
+
+Follow-up validation: `tsc` for the repo, client, and server passed, as did import boundaries and `git diff --check`. Client build `dist/assets/index-C_duKjOB.js`, server build, and production smoke passed. Full Vitest with `FC_TEST_DATABASE_URL` unset: 26 failed, 3523 passed, 52 skipped, 393 files. The 26 names match the previous Stage 3C run. The extra skip is the buyer-recovery file, which runs only with the disposable database. That database run passed 58 tests and skipped 1, including the new recovery test, with migrations `0001`–`0006`. `typecheck:sim`, manual QA, and GitHub Actions were not run.
+
 ## A. Git
 
 - `origin/main`: `2dd09ee7e555896b652789408b4ae93a094cef3b`
-- Feature HEAD before this stage: `7f9cec3c89bffa485202389431c62e2c044d0f6e` (36 ahead, 0 behind)
-- Implementation commit: `264451a72043daf816a5541dd6f6b3430039c536`
-- After this report names that commit, the branch is 38 ahead of `origin/main` and 0 behind
+- Feature HEAD before Stage 3C: `7f9cec3c89bffa485202389431c62e2c044d0f6e` (36 ahead, 0 behind)
+- Stage 3C implementation: `264451a72043daf816a5541dd6f6b3430039c536`
+- Follow-up parent: `dca42c38a03747a7793b84384e22adc64d6508a6` (38 ahead, 0 behind)
+- After the committed-craft follow-up, the branch is 39 ahead of `origin/main` and 0 behind
 - `origin/main` did not move during this stage
 - Draft PR **#129**. Not merged
 
@@ -29,7 +42,7 @@ Stage 3A ids exist only for the 20 collectible paintings and `god_sword`. Diamon
 
 Status is `balanced`, `explained-change`, `unexplained-increase`, or `incomplete-coverage` when unresolved holders are present and the gap is positive. A closed gap drops that item's anomaly. Nothing is deleted, banned, or charged.
 
-Minted sources: accepted survival harvest (`mine:<rewardEventId>:<itemId>`, so a later scan does not credit it again), `/give` and plugin `grantItems`, Creative cursor replacement, boss loot that actually spawned, a detached-block drop that actually spawned, and an event chest's placed slots keyed by the event id. Smelting and `craft_recipe` / crafting-grid result clicks record inputs and outputs. Buyer sale and the stacks still in an event chest at cleanup are sinks. Ordinary slot, chest, drop, death, trade, and auction moves are not events. The snapshot already sees both sides.
+Minted sources: accepted survival harvest (`mine:<rewardEventId>:<itemId>`, so a later scan does not credit it again), and only after the drop entity is spawned. `/give` and plugin `grantItems`, Creative cursor replacement, boss loot that actually spawned, a detached-block drop that actually spawned, and an event chest's placed slots keyed by the event id are the other mints. Smelting records one completion. Crafting records the committed input and output counts, including every successful Shift-craft. A durable buyer sale sinks with its settlement id. Ordinary slot, chest, drop, death, trade, and auction moves are not events. The snapshot already sees both sides.
 
 Checkpoints are startup after world restore, world save, and `inspectValuableResources()`. The 20 TPS tick does not scan. Persistence is `plugin-data/resource-accounting.json`. A failed write stays pending and retries at the next checkpoint. An unchanged ledger does not rewrite the file. Caps: 200 anomalies, 100 recent events, 500 source keys.
 

@@ -67,6 +67,8 @@ export interface BuyerResult {
   readonly broadcast?: boolean;
   readonly affectedPlayerIds?: readonly string[];
   readonly openHologramEditor?: boolean;
+  /** Set when a durable sale has permanently consumed the trade stack. */
+  readonly consumedSettlementId?: string;
 }
 
 interface BuyerSession {
@@ -118,6 +120,8 @@ export class BuyerService {
   private settlements?: SettlementService;
   private durability?: ItemDurability;
   haltAfter?: string;
+  /** Paid durable sale. Settlement id dedupes a later recovery of the same sale. */
+  onDurableConsumption?: (itemId: string, count: number, settlementId: string) => void;
 
   setStage2C(input: { settlements?: SettlementService; durability?: ItemDurability }): void {
     this.settlements = input.settlements;
@@ -154,12 +158,23 @@ export class BuyerService {
       const receipt = buyerConsumedReceipt(row.settlementId);
       const hasItem = this.durability.hasReceipt(playerId, receipt);
       const money = await paid(row.settlementId);
+      const item = row.payload.item;
       if (!money && !hasItem) {
         if (row.phase === 'PREPARED') await this.settlements.transition(row.settlementId, 'PREPARED', 'CANCELLED');
         changed += 1;
         continue;
       }
       if (money) {
+        if (hasItem && item && typeof item === 'object') {
+          const stack = item as ItemStack;
+          if (typeof stack.itemId === 'string' && stack.count > 0) {
+            try {
+              this.onDurableConsumption?.(stack.itemId, stack.count, row.settlementId);
+            } catch {
+              // Diagnostics must not stop a paid settlement.
+            }
+          }
+        }
         if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
           await this.settlements.advance(row.settlementId, row.phase, 'MONEY_COMMITTED');
         }
@@ -170,7 +185,6 @@ export class BuyerService {
         changed += 1;
         continue;
       }
-      const item = row.payload.item;
       let restored: 'restored' | 'already' | 'full' | 'missing' | 'delivered' = 'already';
       if (item && typeof item === 'object') {
         const stack = item as ItemStack;
@@ -945,6 +959,11 @@ export class BuyerService {
           return { ok: false as const, error: paid.error ?? 'Не удалось начислить Мегакоины.' };
         }
         if (begun.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
+        try {
+          this.onDurableConsumption?.(slot.itemId, slot.count, request.requestId);
+        } catch {
+          // The payout already landed. Accounting retries from the open settlement.
+        }
       }
       if (existing?.phase === 'CANCELLED') {
         return { ok: false as const, error: 'Не удалось начислить Мегакоины.' };
@@ -955,7 +974,12 @@ export class BuyerService {
         await settlements.advance(request.requestId, current.phase === 'PREPARED' ? 'MONEY_COMMITTED' : current.phase, 'COMPLETE');
       }
       const name = itemName(slot.itemId) ?? slot.itemId;
-      return { ok: true as const, chat: `Вы продали ${slot.count} × ${name} за ${formatMegacoins(total)}.`, inventoryDirty: true };
+      return {
+        ok: true as const,
+        chat: `Вы продали ${slot.count} × ${name} за ${formatMegacoins(total)}.`,
+        inventoryDirty: true,
+        consumedSettlementId: request.requestId,
+      };
     })();
     return run as unknown as BuyerResult;
   }

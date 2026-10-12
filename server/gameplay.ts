@@ -1,3 +1,4 @@
+import type { CommittedCraft } from '../src/crafting/types';
 import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src/entities/megaZombie';
 import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
@@ -262,7 +263,7 @@ export class ServerGameplay {
   onAcceptedBlockDrop?: (itemId: string, count: number, sourceId: string) => void;
   /** A new monitored stack from boss loot or a detached block. Not a moved stack. */
   onProducedResource?: (itemId: string, count: number) => void;
-  onCraftedResource?: (recipeId: string) => void;
+  onCraftedResource?: (commit: CommittedCraft) => void;
   onCreativeResource?: (previous: ItemStack | null, next: ItemStack | null) => void;
   /** After survival death loot is spawned once. Duels bind these exact entity ids. */
   onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
@@ -900,8 +901,8 @@ export class ServerGameplay {
     player.inventoryDirty = true;
     if (action.action === 'select' && action.slot !== undefined) player.selectedSlot = action.slot;
     for (const stack of dropped) this.dropFromPlayer(player, stack);
+    for (const commit of result.committedCrafts ?? []) this.onCraftedResource?.(commit);
     if (result.crafted) {
-    if (result.crafted?.recipeId) this.onCraftedResource?.(result.crafted.recipeId);
       this.events.emit('craft', this.events.createCraft(
         player.id, result.crafted.itemId, result.crafted.count, result.crafted.recipeId,
       ));
@@ -943,8 +944,9 @@ export class ServerGameplay {
       const produced = new Map<string, number>();
       const spawnHarvest = (itemId: string, count: number): void => {
         if (count <= 0) return;
+        const spawned = this.spawnDroppedStack(createItemStack(itemId, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        if (!spawned) return;
         produced.set(itemId, (produced.get(itemId) ?? 0) + count);
-        this.spawnDroppedStack(createItemStack(itemId, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
       };
       const paintingItemId = collectiblePaintingDropItemId(block, blockState);
       if (paintingItemId) {

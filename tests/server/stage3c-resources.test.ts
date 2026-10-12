@@ -171,6 +171,235 @@ describe('stage 3C valuable resources', () => {
     expect(player.inventory.getSlot(0)?.metadata?.itemInstanceId).toBeUndefined();
   });
 
+  it('does not account a craft the cursor or a full inventory refused', async () => {
+    const { world } = await start('craft-fail');
+    const player = addPlayer(world, 'Ada');
+    world.handleChat(player, '/give diamond 1');
+    world.handleChat(player, '/give gold_ingot 3');
+    world.handleChat(player, '/give iron_ingot 3');
+    player.window = { kind: 'crafting-table' };
+    player.craftSlots = Array.from({ length: 9 }, () => null);
+    player.craftSlots[0] = player.inventory.getSlot(0) ?? null;
+    player.craftSlots[1] = player.inventory.getSlot(1) ?? null;
+    player.craftSlots[2] = player.inventory.getSlot(2) ?? null;
+    player.inventory.setSlot(0, null);
+    player.inventory.setSlot(1, null);
+    player.inventory.setSlot(2, null);
+    player.cursor = createItemStack('cobblestone', 1);
+    const before = world.inspectValuableResources().recentSources.filter((source) => source.kind === 'craft').length;
+    const refused = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left',
+    });
+    expect(refused.committedCrafts ?? []).toEqual([]);
+    expect(player.inventory.count(ItemId.RubyIngot)).toBe(0);
+    expect(player.craftSlots[0]?.count).toBe(1);
+    expect(player.craftSlots[1]?.count).toBe(3);
+    expect(player.craftSlots[2]?.count).toBe(3);
+    expect(world.inspectValuableResources().recentSources.filter((source) => source.kind === 'craft')).toHaveLength(before);
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 1, unexplained: 0 });
+    expect(row(world, ItemId.RubyIngot)).toMatchObject({ current: 0, unexplained: 0 });
+
+    player.cursor = createItemStack(ItemId.RubyIngot, 64);
+    const stacked = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left',
+    });
+    expect(stacked.committedCrafts ?? []).toEqual([]);
+    expect(player.craftSlots[0]?.count).toBe(1);
+    expect(player.inventory.count(ItemId.RubyIngot)).toBe(0);
+
+    player.cursor = null;
+    player.craftSlots = Array.from({ length: 9 }, () => null);
+    for (let slot = 0; slot < 36; slot += 1) player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    const missing = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'craft_recipe', recipeId: 'ruby_ingot',
+    });
+    expect(missing.ok).toBe(false);
+    expect(missing.committedCrafts ?? []).toEqual([]);
+    expect(world.inspectValuableResources().recentSources.filter((source) => source.kind === 'craft')).toHaveLength(before);
+  });
+
+  it('accounts every successful shift craft and the items actually consumed', async () => {
+    const { world } = await start('shift-craft');
+    const player = addPlayer(world, 'Ada');
+    world.handleChat(player, '/give diamond 5');
+    world.handleChat(player, '/give gold_ingot 15');
+    world.handleChat(player, '/give iron_ingot 15');
+    world.handleChat(player, '/give ruby_ingot 62');
+    player.window = { kind: 'crafting-table' };
+    player.craftSlots = Array.from({ length: 9 }, () => null);
+    player.craftSlots[0] = player.inventory.getSlot(0) ?? null;
+    player.craftSlots[1] = player.inventory.getSlot(1) ?? null;
+    player.craftSlots[2] = player.inventory.getSlot(2) ?? null;
+    player.inventory.setSlot(0, null);
+    player.inventory.setSlot(1, null);
+    player.inventory.setSlot(2, null);
+    for (let slot = 0; slot < 36; slot += 1) {
+      if (!player.inventory.getSlot(slot)) player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    }
+    const shifted = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left', shift: true,
+    });
+    expect(shifted.committedCrafts).toEqual([
+      expect.objectContaining({
+        recipeId: 'ruby_ingot',
+        completed: 2,
+        producedItemId: ItemId.RubyIngot,
+        producedCount: 2,
+      }),
+    ]);
+    expect(shifted.committedCrafts?.[0]?.consumed).toEqual(expect.arrayContaining([
+      { itemId: ItemId.Diamond, count: 2 },
+      { itemId: ItemId.GoldIngot, count: 6 },
+      { itemId: ItemId.IronIngot, count: 6 },
+    ]));
+    expect(player.inventory.count(ItemId.RubyIngot)).toBe(64);
+    expect(player.craftSlots[0]?.count).toBe(3);
+    expect(player.craftSlots[1]?.count).toBe(9);
+    expect(player.craftSlots[2]?.count).toBe(9);
+    expect(row(world, ItemId.RubyIngot)).toMatchObject({ current: 64, unexplained: 0 });
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 3, unexplained: 0 });
+    expect(row(world, ItemId.GoldIngot)).toMatchObject({ current: 9, unexplained: 0 });
+    expect(row(world, ItemId.IronIngot)).toMatchObject({ current: 9, unexplained: 0 });
+
+    player.inventory.clear();
+    player.cursor = null;
+    player.craftSlots = Array.from({ length: 9 }, () => null);
+    world.handleChat(player, '/give diamond 3');
+    world.handleChat(player, '/give gold_ingot 9');
+    world.handleChat(player, '/give iron_ingot 9');
+    player.craftSlots[0] = player.inventory.getSlot(0) ?? null;
+    player.craftSlots[1] = player.inventory.getSlot(1) ?? null;
+    player.craftSlots[2] = player.inventory.getSlot(2) ?? null;
+    player.inventory.setSlot(0, null);
+    player.inventory.setSlot(1, null);
+    player.inventory.setSlot(2, null);
+    const three = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left', shift: true,
+    });
+    expect(three.committedCrafts?.[0]).toMatchObject({ completed: 3, producedCount: 3 });
+    expect(player.inventory.count(ItemId.RubyIngot)).toBe(3);
+    expect(row(world, ItemId.RubyIngot)).toMatchObject({ current: 3, unexplained: 0 });
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 0, unexplained: 0 });
+
+    player.cursor = createItemStack('cobblestone', 1);
+    for (let slot = 0; slot < 36; slot += 1) player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    player.craftSlots[0] = createItemStack(ItemId.Diamond, 1);
+    player.craftSlots[1] = createItemStack(ItemId.GoldIngot, 3);
+    player.craftSlots[2] = createItemStack(ItemId.IronIngot, 3);
+    const blocked = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left', shift: true,
+    });
+    expect(blocked.committedCrafts ?? []).toEqual([]);
+    expect(player.craftSlots[0]?.count).toBe(1);
+
+    player.inventory.clear();
+    player.cursor = null;
+    player.window = { kind: 'inventory' };
+    player.craftSlots = [null, null, null, null];
+    for (let slot = 0; slot < 36; slot += 1) player.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    player.inventory.setSlot(0, createItemStack('oak_planks', 63));
+    player.craftSlots[0] = createItemStack('oak_log', 1);
+    const partial = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left', shift: true,
+    });
+    expect(partial.committedCrafts).toEqual([
+      expect.objectContaining({ recipeId: 'oak_planks_from_log', completed: 1, producedItemId: 'oak_planks', producedCount: 4 }),
+    ]);
+    expect(player.cursor).toMatchObject({ itemId: 'oak_planks', count: 3 });
+    expect(player.inventory.count('oak_planks')).toBe(64);
+
+    player.inventory.clear();
+    player.cursor = null;
+    player.craftSlots = [null, null, null, null];
+    world.handleChat(player, '/give charcoal 1');
+    world.handleChat(player, '/give stick 1');
+    const torch = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'craft_recipe', recipeId: 'torch',
+    });
+    expect(torch.committedCrafts?.[0]?.consumed).toEqual(expect.arrayContaining([
+      { itemId: ItemId.Charcoal, count: 1 },
+      { itemId: ItemId.Stick, count: 1 },
+    ]));
+    expect(torch.committedCrafts?.[0]?.consumed.some((row) => row.itemId === ItemId.Coal)).toBe(false);
+    expect(player.inventory.count('torch')).toBe(4);
+    expect(player.inventory.count(ItemId.Charcoal)).toBe(0);
+
+    player.inventory.clear();
+    player.window = { kind: 'crafting-table' };
+    player.craftSlots = Array.from({ length: 9 }, () => null);
+    world.handleChat(player, '/give diamond 18');
+    player.inventory.setSlot(0, null);
+    for (let index = 0; index < 9; index += 1) player.craftSlots[index] = createItemStack(ItemId.Diamond, 2);
+    const blocks = world.gameplay.applyInventory(player, {
+      type: 'inventory_action', action: 'click', key: 'result', button: 'left', shift: true,
+    });
+    expect(blocks.committedCrafts?.[0]).toMatchObject({
+      recipeId: 'diamond_block', completed: 2, producedItemId: 'diamond_block', producedCount: 2,
+    });
+    expect(blocks.committedCrafts?.[0]?.consumed).toEqual([{ itemId: ItemId.Diamond, count: 18 }]);
+    expect(player.inventory.count('diamond_block')).toBe(2);
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 0, unexplained: 0 });
+    expect(row(world, ItemId.RubyIngot).unexplained).toBe(0);
+  });
+
+  it('credits a mining drop only after the item entity spawns', async () => {
+    const { world } = await start('drop-cancel');
+    const player = addPlayer(world, 'Ada');
+    const x = Math.floor(player.controller.position.x);
+    const y = Math.floor(player.controller.position.y);
+    const z = Math.floor(player.controller.position.z) + 1;
+    player.selectedSlot = 0;
+    player.inventory.setSlot(0, createItemStack(ItemId.IronPickaxe));
+    let cancelDiamond = true;
+    world.events.on('itemDrop', (event) => {
+      if (cancelDiamond && event.itemId === ItemId.Diamond) event.cancelled = true;
+    });
+    world.world.setBlock(x, y, z, BlockId.DiamondOre);
+    player.miningTarget = { x, y, z };
+    player.miningProgress = 1;
+    expect(world.gameplay.breakBlock(player, x, y, z).ok).toBe(true);
+    expect(world.gameplay.drops.entities.some((entity) => entity.stack.itemId === ItemId.Diamond)).toBe(false);
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 0, unexplained: 0 });
+    expect(world.inspectValuableResources().recentSources.filter((source) => source.kind === 'mine')).toEqual([]);
+
+    const cancelBreak = world.events.on('blockBreak', (event) => { event.cancelled = true; });
+    world.world.setBlock(x, y, z, BlockId.DiamondOre);
+    player.miningTarget = { x, y, z };
+    player.miningProgress = 1;
+    expect(world.gameplay.breakBlock(player, x, y, z).ok).toBe(false);
+    expect(world.world.getBlock(x, y, z)).toBe(BlockId.DiamondOre);
+    expect(row(world, ItemId.Diamond).current).toBe(0);
+    cancelBreak();
+
+    (world.gameplay as { random: () => number }).random = () => 0;
+    const seen: string[] = [];
+    world.events.on('itemDrop', (event) => {
+      seen.push(event.itemId);
+      if (event.itemId === 'oak_sapling') event.cancelled = true;
+    });
+    world.world.setBlock(x, y + 1, z, BlockId.OakLeaves);
+    player.miningTarget = { x, y: y + 1, z };
+    player.miningProgress = 1;
+    expect(world.gameplay.breakBlock(player, x, y + 1, z).ok).toBe(true);
+    expect(seen).toEqual(expect.arrayContaining(['oak_leaves', 'oak_sapling']));
+    expect(world.gameplay.drops.entities.map((entity) => entity.stack.itemId)).toEqual(['oak_leaves']);
+    expect(world.inspectValuableResources().recentSources.filter((source) => source.kind === 'mine')).toEqual([]);
+
+    cancelDiamond = false;
+    world.world.setBlock(x, y, z, BlockId.DiamondOre);
+    player.miningTarget = { x, y, z };
+    player.miningProgress = 1;
+    expect(world.gameplay.breakBlock(player, x, y, z).ok).toBe(true);
+    const dropped = world.gameplay.drops.entities.reduce((sum, entity) => (
+      entity.stack.itemId === ItemId.Diamond ? sum + entity.stack.count : sum
+    ), 0);
+    expect(dropped).toBe(1);
+    expect(row(world, ItemId.Diamond)).toMatchObject({ current: 1, unexplained: 0 });
+    expect(world.inspectValuableResources().recentSources.filter((source) => source.kind === 'mine')).toEqual([
+      expect.objectContaining({ itemId: ItemId.Diamond, quantity: 1 }),
+    ]);
+  });
+
   it('attributes give, plugin give, and Creative without resource uuids', async () => {
     const { world } = await start('grant');
     const player = addPlayer(world, 'Ada');

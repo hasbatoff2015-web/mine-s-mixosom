@@ -5,6 +5,7 @@
 - [x] Diamond, gold ingot, ruby ingot, titanium ingot, and iron ingot quantities are counted from the same physical holders as Stage 3B.
 - [x] The first observation is a baseline. Mining, grants, Creative, boss loot, event-chest loot, smelting, and crafting explain later changes.
 - [x] Transfers, auction delivery, trade, and settlement return do not mint. An unexplained increase is stored and does not delete items.
+- [x] A refused craft, a partial Shift-craft, a cancelled block drop, and a recovered buyer sale match the committed quantities.
 - [ ] Admin login and the admin panel stay later. Not merged. Draft PR **#129**.
 
 ## 2026-10-12: Stage 3B unique item locations

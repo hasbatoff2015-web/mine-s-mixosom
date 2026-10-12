@@ -1,5 +1,4 @@
-import { findCraftingRecipeById } from '../../src/crafting/craftOnce';
-import { craftingNeedCounts } from '../../src/crafting/needs';
+import type { CommittedCraft } from '../../src/crafting/types';
 import type { ItemStack } from '../../src/inventory/types';
 import type { IdentityScanInput } from '../identity/locationScan';
 import {
@@ -183,19 +182,17 @@ export class ResourceLedger {
     }
   }
 
-  noteCraft(recipeId: string): void {
-    const recipe = findCraftingRecipeById(recipeId);
-    if (!recipe) return;
-    const needs = craftingNeedCounts(recipe, new Map());
-    for (const [itemId, quantity] of needs) {
-      if (!isMonitoredResource(itemId) || quantity <= 0) continue;
-      this.transformedIn[itemId] += quantity;
-      this.pushRecent({ kind: 'craft', itemId, quantity, at: Date.now(), detail: `in:${recipeId}` });
+  noteCraft(commit: CommittedCraft): void {
+    if (commit.completed <= 0) return;
+    for (const row of commit.consumed) {
+      if (!isMonitoredResource(row.itemId) || row.count <= 0) continue;
+      this.transformedIn[row.itemId] += row.count;
+      this.pushRecent({ kind: 'craft', itemId: row.itemId, quantity: row.count, at: Date.now(), detail: `in:${commit.recipeId}` });
       this.dirty = true;
     }
-    if (isMonitoredResource(recipe.output.item) && recipe.output.count > 0) {
-      this.transformedOut[recipe.output.item] += recipe.output.count;
-      this.pushRecent({ kind: 'craft', itemId: recipe.output.item, quantity: recipe.output.count, at: Date.now(), detail: `out:${recipeId}` });
+    if (isMonitoredResource(commit.producedItemId) && commit.producedCount > 0) {
+      this.transformedOut[commit.producedItemId] += commit.producedCount;
+      this.pushRecent({ kind: 'craft', itemId: commit.producedItemId, quantity: commit.producedCount, at: Date.now(), detail: `out:${commit.recipeId}` });
       this.dirty = true;
     }
   }
