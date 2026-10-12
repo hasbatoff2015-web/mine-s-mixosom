@@ -1,5 +1,74 @@
 # Roadmap
 
+## 2026-10-12: Stage 3C valuable resource quantities
+
+- [x] Diamond, gold ingot, ruby ingot, titanium ingot, and iron ingot quantities are counted from the same physical holders as Stage 3B.
+- [x] The first observation is a baseline. Mining, grants, Creative, boss loot, event-chest loot, smelting, and crafting explain later changes.
+- [x] Transfers, auction delivery, trade, and settlement return do not mint. An unexplained increase is stored and does not delete items.
+- [x] A refused craft, a partial Shift-craft, a cancelled block drop, and a recovered buyer sale match the committed quantities.
+- [ ] Admin login and the admin panel stay later. Not merged. Draft PR **#129**.
+
+## 2026-10-12: Stage 3B unique item locations
+
+- [x] One WorldInstance index of current physical holders for collectible paintings and the God Sword.
+- [x] Confirmed duplicates and item-type conflicts are recorded. Save mirrors and settlement payloads are not second owners.
+- [x] A fresh conflict blocks a new auction listing, purchase, trade accept, or buyer sale. Items and balances stay put.
+- [x] A saved block override is visible when its chunk is not loaded. A failed incident write is retried at the next checkpoint.
+- [x] Quantity monitoring is Stage 3C, in the section above. Admin tools stay later. Not merged. Draft PR **#129**.
+
+## 2026-10-12: Stage 3A unique item identity
+
+- [x] Collectible paintings and the God Sword carry `metadata.itemInstanceId`. Other items do not.
+- [x] Creative grants, `/give`, and Creative painting placement mint a server UUID. Moves, trades, auctions, drops, and Survival placement keep the same UUID.
+- [x] A placed painting stores `paintingInstanceId` in the existing block state. Old saves still load.
+- [ ] Ownership, location, and duplicate detection stay Stage 3B. Quantity ledgers stay Stage 3C. Not merged. Draft PR **#129**.
+
+## 2026-10-12: Stage 2C crash consistency
+
+- [x] Migration `0006` gameplay settlement journal. Player receipts share `players.json` and the world save queue.
+- [x] Auction listing escrow, purchase recovery, and claim receipts.
+- [x] Buyer sale and trade escrow. Postgres trade money is one net transfer.
+- [x] Clan creation resumes from a committed fee. Block rewards wait for a durable world save and are at-most-once across a crash.
+- [x] Follow-up: trade journal before escrow, offline delivery that can stay unresolved, frozen final trade, one owner on a failed buyer credit, all-or-nothing delivery, clan id reserved before the first await.
+- [x] Stage 3A now assigns instance ids to collectible paintings and the God Sword. See the section above. Stage 3B is not started. Not merged. Draft PR **#129**.
+
+## 2026-10-11: Stage 2B follow-up — request ids, auction settlement, economy scope
+
+- [x] Client money mutations in postgres mode require a UUID. A missing or invalid id is rejected before money moves. Console commands get a server-owned id.
+- [x] Each auction listing has a persistent `economySettlementId`. Purchase source is that UUID, not `ah-N` and not the buyer.
+- [x] Migration `0004` scopes accounts, operations, and ledger by `anarchy` / `survival` / `peaceful`. Older rows stay `legacy_global`.
+- [x] Join prepares the PostgreSQL account before the player is online. Tracked background work consumes rejections.
+- [x] Idempotency namespace is `global` or `economy:<serverMode>`. A committed money transaction stays a success without a later required read.
+- [ ] Item-plus-money and world-reward crash recovery stay Stage 2C. Not merged. Draft PR **#129**.
+
+## 2026-10-11: Gameplay Megacoins on PostgreSQL when configured
+
+- [x] `FC_ECONOMY_BACKEND=legacy_json|postgres`. Postgres mode has no JSON currency writes and no fallback.
+- [x] Durable sources: mob `economyInstanceId`, player `deathEventId`, block `rewardEventId`. Runtime `mob-N` is not a source.
+- [x] Rewards, `/pay`, `/eco`, buyer, auction, trade money, and clan fee use `CurrencyPort`. PvP share is one transfer.
+- [x] Display name updates do not append ledger rows. `npm run economy:import` is explicit and idempotent per batch.
+- [ ] Item-plus-money crash recovery stays Stage 2C. Not merged. Draft PR **#129**.
+
+## 2026-10-11: Megacoin ledger foundation (Stage 2A historical pass)
+
+- [x] One inventory-intent stamp. `GameUI` owns revisions. `Game.sendInventoryAction` does not stamp again.
+- [x] Migration `0003`: integer `economy_accounts`, append-only `economy_operations`, append-only `economy_ledger`.
+- [x] `MegacoinService` posts initial 100, credit, debit, transfer, and adjustment in one transaction. Source identity pays once. Reconciliation does not repair.
+- [x] Gameplay cutover is the following section. This section is the ledger-only pass.
+- [ ] Not merged. Draft PR **#129**.
+
+## 2026-10-11: PostgreSQL audit and idempotency foundation
+
+- [x] Optional `pg` pool. Missing `FC_DATABASE_URL` keeps filesystem persistence and opens no connection.
+- [x] `FC_DEPLOYMENT_ID` is required with the URL. A configured connection or migration failure aborts startup and releases the world lock.
+- [x] Checksummed migrations under one session advisory lock. First migration: append-only `admin_audit_log` and `idempotency_requests`.
+- [x] The release copies the `ws` and `pg` runtime closure. The VPS still does not `npm install`.
+- [x] A startup failure before the canonical world load does not write `meta.json`, `world.json`, or `players.json`.
+- [x] Exactly two equal admin ids. `AdminActionService` is internal. Audit attempts for one request id are immutable and can repeat after `0002`.
+- [x] In-memory inventory and container revisions plus per-connection request replay. No auto-ban. No PostgreSQL economy cutover. No item UUID.
+- [ ] Admin HTTP, Passkey, Tailscale, the gameplay economy cutover, and unique-item ids stay future work. The ledger schema is the following Stage 2A section.
+- [ ] Not merged. Draft PR **#129**.
+
 ## 2026-10-08: Mega Zombie boss
 
 - [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.
@@ -306,7 +375,7 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 
 ## 2026-09-23: production release tooling
 
-- [x] Pack a release with `dist/server/index.mjs` and external `ws`. No world files, no `npm install` on the VPS.
+- [x] Pack a release with `dist/server/index.mjs` and the external runtime closure (`ws`, and `pg` plus its production dependencies). No world files, no `npm install` on the VPS.
 - [x] `deploy-release.sh` installs, atomically switches `current`, restarts the three systemd units, and requires all three `/status` checks.
 - [x] Failed deploy restores the previous `current`. `rollback-release.sh` and dry-run cleanup never delete world data.
 

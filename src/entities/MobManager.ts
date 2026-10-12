@@ -152,6 +152,11 @@ export interface MobSpawnOptions {
   readonly angry?: boolean;
   readonly tameProgress?: number;
   readonly tameProgressPlayerId?: string;
+  /**
+   * Stable economic identity. Not the visual `mob-N` id.
+   * Restored from a save. Generated once when missing.
+   */
+  readonly economyInstanceId?: string;
   /** Arena for a mega zombie. Ignored by every other kind. */
   readonly bossArena?: ArenaAabb;
   /** Configured `/boss setspawn` point. HP-bar range uses this. */
@@ -297,6 +302,7 @@ export interface SerializedMob {
   readonly angry?: boolean;
   readonly tameProgress?: number;
   readonly tameProgressPlayerId?: string;
+  readonly economyInstanceId?: string;
 }
 
 interface MobProjectile {
@@ -427,6 +433,8 @@ export class MobEntity {
   poseEpoch = 0;
   petHomeX?: number;
   petHomeZ?: number;
+  /** Server-owned reward identity. Never derived from `mob-N`. */
+  economyInstanceId = '';
 
   constructor(
     readonly id: string,
@@ -772,6 +780,9 @@ export class MobManager {
       mob.velocity.x = 0;
       mob.velocity.z = 0;
     }
+    mob.economyInstanceId = isEconomyInstanceId(spawnOptions.economyInstanceId)
+      ? spawnOptions.economyInstanceId
+      : globalThis.crypto.randomUUID();
     if (kind === 'mega_zombie') {
       mob.boss = createMegaZombieRuntime(spawnOptions.bossArena ?? null, spawnOptions.bossSpawn ?? null);
       if (mob.boss.arena) {
@@ -1251,6 +1262,7 @@ export class MobManager {
       ...(mob.angry ? { angry: true } : {}),
       ...(!mob.ownerId && mob.tameProgress > 0 ? { tameProgress: mob.tameProgress } : {}),
       ...(!mob.ownerId && mob.tameProgressPlayerId ? { tameProgressPlayerId: mob.tameProgressPlayerId } : {}),
+      ...(mob.economyInstanceId ? { economyInstanceId: mob.economyInstanceId } : {}),
     }));
   }
 
@@ -1292,6 +1304,7 @@ export class MobManager {
       angry: entry.angry === true,
       tameProgress: entry.tameProgress,
       tameProgressPlayerId: entry.tameProgressPlayerId,
+      economyInstanceId: entry.economyInstanceId,
     });
     if (!mob) return false;
     mob.fuseSeconds = clamp(entry.fuseSeconds ?? 0, 0, 1.5);
@@ -2591,4 +2604,10 @@ export class MobManager {
   private assertActive(): void {
     if (this.disposed) throw new Error('MobManager has been disposed');
   }
+}
+
+const ECONOMY_INSTANCE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function isEconomyInstanceId(value: string | undefined): value is string {
+  return typeof value === 'string' && ECONOMY_INSTANCE_ID.test(value);
 }

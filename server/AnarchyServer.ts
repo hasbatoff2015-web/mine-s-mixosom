@@ -17,7 +17,8 @@ import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerA
 import type { ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
-import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
+import { isPromise } from './economy/currencyPort';
+import { WorldInstance, type ConnectedSink, type ServerPlayer, type WorldInstanceOptions } from './WorldInstance';
 
 interface SocketBinding {
   playerId: string;
@@ -47,8 +48,8 @@ export class AnarchyServer {
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
 
-  constructor(readonly config: ServerConfig) {
-    this.world = new WorldInstance(config);
+  constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
+    this.world = new WorldInstance(config, options);
   }
 
   get port(): number {
@@ -253,15 +254,34 @@ export class AnarchyServer {
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     const sink = new WsSink(socket);
-    const result = this.world.join({
+    const pending = this.world.join({
       sink,
       name: message.name,
       sessionToken: message.sessionToken,
       appearance: message.appearance,
     });
+    if (isPromise(pending)) {
+      pending.then(
+        (result) => this.finishJoin(socket, result, onJoin),
+        () => this.finishJoin(socket, { error: 'Сервер временно недоступен.' }, onJoin),
+      );
+      return;
+    }
+    this.finishJoin(socket, pending, onJoin);
+  }
+
+  private finishJoin(
+    socket: WebSocket,
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string },
+    onJoin: (playerId: string, connectionId: string) => void,
+  ): void {
     if ('error' in result) {
       this.send(socket, { type: 'error', code: 'join_failed', message: result.error });
       socket.close();
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.world.disconnect(result.player.id, true, result.player.connectionId);
       return;
     }
     const { player, resumed, previousConnectionId } = result;
@@ -430,7 +450,7 @@ export class AnarchyServer {
         return;
       }
       case 'chat':
-        this.world.handleChat(player, message.text, message.channel ?? 'global');
+        this.world.handleChat(player, message.text, message.channel ?? 'global', message.clientRequestId);
         return;
       case 'view':
         this.world.setView(player, message.cx, message.cz, message.radius);
@@ -440,14 +460,6 @@ export class AnarchyServer {
         return;
       case 'inventory_action':
         this.world.applyInventoryAction(player, message);
-        return;
-      case 'craft':
-        this.world.applyInventoryAction(player, {
-          type: 'inventory_action',
-          action: 'click',
-          key: 'result',
-          shift: message.shift === true,
-        });
         return;
       case 'interact': {
         const intent = blockIntentFromFields(message);

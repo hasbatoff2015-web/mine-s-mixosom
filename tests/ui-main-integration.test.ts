@@ -73,8 +73,8 @@ describe('UI visual pass on the authoritative main contracts', () => {
   it('keeps authoritative cursor and inventory action routing alongside Creative UI', () => {
     expect(gameUiSource).toContain('submitAction?: (message: ClientInventoryActionMessage) => void');
     expect(gameUiSource).toContain('applyAuthoritativeCursor(cursor: ItemStack | null');
-    expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'recipe'");
-    expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'craft_recipe'");
+    expect(gameUiSource).toContain("stampInventorySubmission({ type: 'inventory_action', action: 'recipe'");
+    expect(gameUiSource).toContain("stampInventorySubmission({ type: 'inventory_action', action: 'craft_recipe'");
     expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'click'");
     expect(gameUiSource).toContain('role="tablist" aria-label="Разделы творческого инвентаря"');
   });

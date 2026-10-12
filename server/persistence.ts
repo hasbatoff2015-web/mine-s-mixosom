@@ -114,6 +114,11 @@ export class WorldPersistence {
     return { meta, world, players: playersFile };
   }
 
+  async savePlayers(players: FsPlayersFile): Promise<void> {
+    await mkdir(this.directory, { recursive: true });
+    await writeJsonAtomic(this.playersPath, players);
+  }
+
   async saveRecords(records: FsWorldRecords): Promise<void> {
     await mkdir(this.directory, { recursive: true });
     const now = Date.now();

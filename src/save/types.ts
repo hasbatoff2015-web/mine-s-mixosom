@@ -61,6 +61,13 @@ export interface SerializedPersistedPlayer {
   readonly portalChest?: unknown;
   /** Authoritative online skin metadata. Missing on old saves uses the default explorer. */
   readonly appearance?: unknown;
+  /** Idempotency markers for item effects. Missing on old saves means none. */
+  readonly settlementReceipts?: readonly string[];
+  /**
+   * Player-owned stacks that did not fit in `inventory` at save time.
+   * Missing on old saves means none. Not a second copy of inventory stacks.
+   */
+  readonly heldReturns?: readonly unknown[];
 }
 
 export interface SerializedServerWorld {

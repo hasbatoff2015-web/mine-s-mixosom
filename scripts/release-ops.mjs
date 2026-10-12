@@ -3,12 +3,17 @@
  * The shell deploy scripts own systemd restart and the atomic symlink swap.
  */
 import { execFileSync } from 'node:child_process';
-import { access, cp, lstat, mkdir, readdir, rm, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
+import { access, cp, lstat, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const WORLD_DATA_ROOT = '/var/lib/frontier-cubes';
 export const BUNDLE_RELATIVE = 'dist/server/index.mjs';
+
+/** Always packed, even when a fixture bundle does not import them. */
+const REQUIRED_RUNTIME_PACKAGES = ['ws', 'pg'];
 
 const RELEASE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,80}$/;
 
@@ -71,13 +76,142 @@ export async function resolveReleaseSource(source) {
   throw new Error(`release source has no ${BUNDLE_RELATIVE}: ${source}`);
 }
 
+const PACKAGE_NAME = /^(?:@[A-Za-z0-9][A-Za-z0-9._-]*\/)?[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+export function packageNameFromSpecifier(spec) {
+  if (typeof spec !== 'string' || spec === '') return null;
+  if (spec.startsWith('.') || spec.startsWith('/') || spec.startsWith('node:') || spec.startsWith('file:')) return null;
+  let name;
+  if (spec.startsWith('@')) {
+    const [scope, pkg] = spec.split('/');
+    if (!scope || !pkg) return null;
+    name = `${scope}/${pkg}`;
+  } else {
+    name = spec.split('/')[0] ?? '';
+  }
+  // Template text such as `from '${name}'` is not an import specifier.
+  if (!PACKAGE_NAME.test(name)) return null;
+  return name;
+}
+
+export function externalPackageNames(source) {
+  const names = new Set();
+  const patterns = [
+    /\bfrom\s*["']([^"']+)["']/g,
+    /\bimport\s*\(\s*["']([^"']+)["']\s*\)/g,
+    /\brequire\s*\(\s*["']([^"']+)["']\s*\)/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of source.matchAll(pattern)) {
+      const name = packageNameFromSpecifier(match[1]);
+      if (name) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+export function runtimePackageRoots(bundleSource) {
+  return [...new Set([...REQUIRED_RUNTIME_PACKAGES, ...externalPackageNames(bundleSource)])].sort();
+}
+
+/**
+ * Production dependencies only. devDependencies, optionalDependencies, and
+ * peerDependencies are not runtime requirements of `ws` or `pg`.
+ */
+/**
+ * `require.resolve(name + '/package.json')` fails when the package exports
+ * map does not expose that subpath. Fall back to the entry file and walk up
+ * to the manifest whose `name` matches.
+ */
+function resolvePackageRoot(require, root, name) {
+  try {
+    const manifestPath = require.resolve(`${name}/package.json`);
+    return { manifestPath, dir: dirname(manifestPath) };
+  } catch {
+    // The exports map hid ./package.json. Resolve the entry instead.
+  }
+  let entry;
+  try {
+    entry = require.resolve(name);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`missing runtime package ${name} from ${root}: ${detail}`);
+  }
+  let dir = dirname(entry);
+  while (true) {
+    const manifestPath = join(dir, 'package.json');
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest.name === name) return { manifestPath, dir };
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  throw new Error(`missing runtime package ${name} from ${root}: no package.json above ${entry}`);
+}
+
+export function runtimeDependencyClosure(root, entryNames) {
+  const require = createRequire(join(root, 'package.json'));
+  const seen = new Set();
+  const ordered = [];
+  const queue = [...entryNames];
+  while (queue.length > 0) {
+    const name = queue.shift();
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    const located = resolvePackageRoot(require, root, name);
+    const manifest = JSON.parse(readFileSync(located.manifestPath, 'utf8'));
+    const dependencies = Object.keys(manifest.dependencies ?? {}).sort();
+    ordered.push({ name, dir: located.dir, dependencies });
+    for (const dep of dependencies) queue.push(dep);
+  }
+  return ordered;
+}
+
+export async function copyRuntimePackages(sourceRoot, destRoot, entryNames) {
+  const closure = runtimeDependencyClosure(sourceRoot, entryNames);
+  for (const pkg of closure) {
+    const dest = join(destRoot, 'node_modules', ...pkg.name.split('/'));
+    await mkdir(dirname(dest), { recursive: true });
+    const packageRoot = normalize(pkg.dir);
+    await cp(pkg.dir, dest, {
+      recursive: true,
+      dereference: true,
+      filter(sourcePath) {
+        const normalized = normalize(sourcePath);
+        if (normalized === packageRoot) return true;
+        if (!normalized.startsWith(`${packageRoot}/`)) return true;
+        return !normalized.slice(packageRoot.length + 1).split('/').includes('node_modules');
+      },
+    });
+  }
+  return closure.map((pkg) => pkg.name);
+}
+
+async function assertPackageClosure(root, name, seen) {
+  if (seen.has(name)) return;
+  seen.add(name);
+  const manifestPath = join(root, 'node_modules', ...name.split('/'), 'package.json');
+  if (!await exists(manifestPath)) {
+    throw new Error(
+      `missing ${manifestPath}. The server bundle keeps npm packages external; copy the runtime dependency closure into the release.`,
+    );
+  }
+  const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+  for (const dep of Object.keys(manifest.dependencies ?? {}).sort()) {
+    await assertPackageClosure(root, dep, seen);
+  }
+}
+
 export async function assertReleaseBundle(source) {
   const root = await resolveReleaseSource(source);
-  const bundle = join(root, BUNDLE_RELATIVE);
-  const wsPackage = join(root, 'node_modules/ws/package.json');
-  if (!await exists(bundle)) throw new Error(`missing ${bundle}`);
-  if (!await exists(wsPackage)) {
-    throw new Error(`missing ${wsPackage}. The server bundle keeps ws external; copy node_modules/ws into the release.`);
+  const bundlePath = join(root, BUNDLE_RELATIVE);
+  if (!await exists(bundlePath)) throw new Error(`missing ${bundlePath}`);
+  const bundle = await readFile(bundlePath, 'utf8');
+  const seen = new Set();
+  for (const name of runtimePackageRoots(bundle)) {
+    await assertPackageClosure(root, name, seen);
   }
   return root;
 }
@@ -86,10 +220,8 @@ async function copyAllowlist(source, dest, releaseId) {
   await mkdir(join(dest, 'dist/server'), { recursive: true });
   await mkdir(join(dest, 'node_modules'), { recursive: true });
   await cp(join(source, BUNDLE_RELATIVE), join(dest, BUNDLE_RELATIVE));
-  await cp(join(source, 'node_modules/ws'), join(dest, 'node_modules/ws'), {
-    recursive: true,
-    dereference: true,
-  });
+  const bundle = await readFile(join(source, BUNDLE_RELATIVE), 'utf8');
+  await copyRuntimePackages(source, dest, runtimePackageRoots(bundle));
   const manifest = {
     name: 'frontier-cubes-server',
     private: true,

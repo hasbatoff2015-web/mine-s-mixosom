@@ -251,11 +251,23 @@ export interface LightOriginHudCounts {
   readonly other: number;
 }
 
+function containerRevisionKey(kind: 'chest' | 'furnace', x: number, y: number, z: number): string {
+  return `${kind}:${blockKey(x, y, z)}`;
+}
+
+function furnaceSlotSignature(furnace: FurnaceState): string {
+  return furnace.slots.map((stack) => (
+    stack ? `${stack.itemId}:${stack.count}:${stack.durability ?? ''}` : ''
+  )).join('|');
+}
+
 export class VoxelWorld {
   readonly chunks = new Map<string, Chunk>();
   readonly modifications = new Map<string, Map<number, BlockId>>();
   readonly chests = new Map<string, ChestState>();
   readonly furnaces = new Map<string, FurnaceState>();
+  /** Runtime container generations. Not part of the world snapshot. */
+  private readonly containerRevisions = new Map<string, number>();
   readonly signs = new Map<string, SignLines>();
   signVersion = 0;
   /** Bumped only when a painting cell or its state changes. Fluids do not touch it. */
@@ -785,6 +797,23 @@ export class VoxelWorld {
     if (y < 0 || y >= WORLD_HEIGHT) return y < 0 ? BlockId.Bedrock : BlockId.Air;
     const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE), generate);
     return (chunk?.get(positiveMod(x, CHUNK_SIZE), y, positiveMod(z, CHUNK_SIZE)) ?? BlockId.Air) as BlockId;
+  }
+
+  /**
+   * Block id for a sparse saved cell. Does not generate or load a chunk.
+   * A loaded chunk wins. Otherwise a saved modification is used, including Air.
+   * `unknown` means neither source can say what the block is.
+   */
+  knownBlockId(x: number, y: number, z: number): BlockId | 'unknown' {
+    if (y < 0 || y >= WORLD_HEIGHT) return y < 0 ? BlockId.Bedrock : BlockId.Air;
+    const chunkX = floorDiv(x, CHUNK_SIZE);
+    const chunkZ = floorDiv(z, CHUNK_SIZE);
+    const localX = positiveMod(x, CHUNK_SIZE);
+    const localZ = positiveMod(z, CHUNK_SIZE);
+    const loaded = this.chunks.get(chunkKey(chunkX, chunkZ));
+    if (loaded) return loaded.get(localX, y, localZ) as BlockId;
+    const saved = this.modifications.get(chunkKey(chunkX, chunkZ))?.get(Chunk.index(localX, y, localZ));
+    return saved === undefined ? 'unknown' : saved;
   }
 
   setBlock(x: number, y: number, z: number, block: BlockId, record = true): boolean {
@@ -1669,6 +1698,35 @@ export class VoxelWorld {
     return this.fluidScheduled.length;
   }
 
+  containerRevision(kind: 'chest' | 'furnace', x: number, y: number, z: number): number {
+    return this.containerRevisions.get(containerRevisionKey(kind, x, y, z)) ?? 0;
+  }
+
+  bumpContainerRevision(kind: 'chest' | 'furnace', x: number, y: number, z: number): number {
+    const key = containerRevisionKey(kind, x, y, z);
+    const next = (this.containerRevisions.get(key) ?? 0) + 1;
+    this.containerRevisions.set(key, next);
+    return next;
+  }
+
+  /**
+   * Runtime removal. The generation moves forward so a later container at the
+   * same coordinates does not accept the previous lifetime's revision.
+   * Loading code that never had a connected viewer can still delete the map entry
+   * only when a record existed; an absent record does not invent a generation.
+   */
+  removeChestState(x: number, y: number, z: number): boolean {
+    const removed = this.chests.delete(blockKey(x, y, z));
+    if (removed) this.bumpContainerRevision('chest', x, y, z);
+    return removed;
+  }
+
+  removeFurnaceState(x: number, y: number, z: number): boolean {
+    const removed = this.furnaces.delete(blockKey(x, y, z));
+    if (removed) this.bumpContainerRevision('furnace', x, y, z);
+    return removed;
+  }
+
   getChest(x: number, y: number, z: number): ChestState {
     const key = blockKey(x, y, z);
     let chest = this.chests.get(key);
@@ -1737,7 +1795,7 @@ export class VoxelWorld {
       existing.burnTime = 0;
       existing.burnTotal = 0;
       if (existing.cookTime === 0 && !existing.cookInputId && existing.slots.every((slot) => !slot)) {
-        this.furnaces.delete(key);
+        this.removeFurnaceState(x, y, z);
       }
     }
     this.syncFurnaceLitVisual(x, y, z, wasBurning);
@@ -1780,7 +1838,10 @@ export class VoxelWorld {
         changed.push({ ...pos, wasBurning: true });
       }
     }
-    for (const key of remove) this.furnaces.delete(key);
+    for (const key of remove) {
+      const pos = parseBlockKey(key);
+      this.removeFurnaceState(pos.x, pos.y, pos.z);
+    }
     for (const key of wanted) {
       const pos = parseBlockKey(key);
       this.furnaces.set(key, {
@@ -1905,8 +1966,12 @@ export class VoxelWorld {
     this.schedule(x, y, z, 20);
   }
 
+  /** Fired once when a furnace recipe actually moves items. Not once per burn tick. */
+  onFurnaceCompleted?: (inputItemId: string, outputItemId: string, outputCount: number) => void;
+
   private tickFurnaces(): void {
     for (const [key, furnace] of this.furnaces) {
+      const slotsBefore = furnaceSlotSignature(furnace);
       const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
       const inputId = input?.itemId;
@@ -1946,11 +2011,16 @@ export class VoxelWorld {
               : { itemId: outputId, count: outputCount };
             furnace.cookTime = 0;
             furnace.cookInputId = furnace.slots[0]?.itemId;
+            this.onFurnaceCompleted?.(input.itemId, outputId, outputCount);
           }
         }
       } else furnace.cookTime = 0;
 
       if (furnace.burnTime > 0) furnace.burnTime -= 1;
+      if (furnaceSlotSignature(furnace) !== slotsBefore) {
+        const parsed = parseBlockKey(key);
+        this.bumpContainerRevision('furnace', parsed.x, parsed.y, parsed.z);
+      }
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);

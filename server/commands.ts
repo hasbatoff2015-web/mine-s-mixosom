@@ -19,6 +19,8 @@ export interface CommandSender {
   readonly gamemode: GameMode;
   /** True when PermissionService (or FC_OPERATORS) treats the sender as OP. */
   readonly operator?: boolean;
+  /** One chat or UI send. A replay of the same id must not move money twice. */
+  readonly clientRequestId?: string;
   /** Console always returns true. Players omit this and use PermissionService. */
   hasPermission?(permission: CommandPermission): boolean;
 }
@@ -60,7 +62,7 @@ export interface CommandHandler {
   readonly usage: string;
   readonly description: string;
   readonly permission?: CommandPermission;
-  execute(args: readonly string[], sender: CommandSender): CommandResult;
+  execute(args: readonly string[], sender: CommandSender): CommandResult | Promise<CommandResult>;
 }
 
 export class CommandRegistry {
@@ -115,7 +117,7 @@ export class CommandRegistry {
 
   dispatch(raw: string, sender: CommandSender): {
     readonly parsed: ReturnType<typeof parseChatLine>;
-    readonly result?: CommandResult;
+    readonly result?: CommandResult | Promise<CommandResult>;
   } {
     const parsed = parseChatLine(raw);
     if (parsed.kind !== 'command') return { parsed };

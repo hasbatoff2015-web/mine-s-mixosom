@@ -36,6 +36,111 @@ export interface ServerConfig {
   readonly loadExamplePlugin: boolean;
   /** Core plugins (permissions, TPA, home, …). Default on for every server mode. */
   readonly loadBuiltinPlugins: boolean;
+  /**
+   * Optional PostgreSQL for audit and idempotency.
+   * Voxel world snapshots stay on the filesystem either way.
+   */
+  readonly database: DatabaseConfig;
+  /**
+   * `legacy_json` keeps the synchronous JSON wallet.
+   * `postgres` makes PostgreSQL the only currency authority.
+   * It is not a fallback when a query fails.
+   */
+  readonly economy: EconomyBackendConfig;
+  /** Exactly two equal admin ids, or disabled when FC_ADMIN_IDS is blank. */
+  readonly adminIdentity: AdminIdentityConfig;
+}
+
+export type EconomyBackendConfig =
+  | { readonly backend: 'legacy_json' }
+  | { readonly backend: 'postgres' };
+
+/**
+ * Missing or blank stays on the JSON wallet so existing processes keep working.
+ * `postgres` requires FC_DATABASE_URL. A failed database does not fall back.
+ */
+export function loadEconomyBackendConfig(env: NodeJS.ProcessEnv, database: DatabaseConfig): EconomyBackendConfig {
+  const raw = env.FC_ECONOMY_BACKEND;
+  if (raw === undefined || raw.trim() === '' || raw.trim() === 'legacy_json') return { backend: 'legacy_json' };
+  if (raw.trim() !== 'postgres') {
+    throw new Error('FC_ECONOMY_BACKEND must be legacy_json or postgres.');
+  }
+  if (!database.enabled) {
+    throw new Error('FC_ECONOMY_BACKEND=postgres requires FC_DATABASE_URL and FC_DEPLOYMENT_ID.');
+  }
+  return { backend: 'postgres' };
+}
+
+/** One process default. Three game servers can run on one machine. */
+export const DB_POOL_DEFAULT = 4;
+export const DB_POOL_MIN = 1;
+export const DB_POOL_MAX_LIMIT = 8;
+
+const DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ADMIN_ID = DEPLOYMENT_ID;
+
+export type AdminIdentityConfig =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly ids: readonly [string, string] };
+
+/**
+ * Blank disables admin writes. A present value must be exactly two distinct ids.
+ * These ids are not passwords and they are not game-operator names.
+ */
+export function loadAdminIdentityConfig(env: NodeJS.ProcessEnv): AdminIdentityConfig {
+  const raw = env.FC_ADMIN_IDS;
+  if (raw === undefined || raw.trim() === '') return { enabled: false };
+  const parts = raw.split(',').map((part) => part.trim());
+  if (parts.length !== 2 || parts.some((part) => !ADMIN_ID.test(part))) {
+    throw new Error('FC_ADMIN_IDS must be exactly two ids: letters, digits, ".", "_" or "-", 1-64 characters, comma-separated.');
+  }
+  if (parts[0] === parts[1]) throw new Error('FC_ADMIN_IDS must be two different ids.');
+  return { enabled: true, ids: [parts[0]!, parts[1]!] };
+}
+
+export type DatabaseConfig =
+  | { readonly enabled: false }
+  | {
+    readonly enabled: true;
+    readonly url: string;
+    readonly deploymentId: string;
+    readonly poolMax: number;
+  };
+
+/**
+ * Missing URL disables PostgreSQL with no connection attempt.
+ * A present URL without a deployment id is rejected. Dev and prod are never inferred.
+ */
+export function loadDatabaseConfig(env: NodeJS.ProcessEnv): DatabaseConfig {
+  const rawUrl = env.FC_DATABASE_URL;
+  if (rawUrl === undefined || rawUrl.trim() === '') return { enabled: false };
+  const url = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('FC_DATABASE_URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+    throw new Error('FC_DATABASE_URL must use the postgres: or postgresql: scheme.');
+  }
+  const deploymentId = (env.FC_DEPLOYMENT_ID ?? '').trim();
+  if (!deploymentId) throw new Error('FC_DEPLOYMENT_ID is required when FC_DATABASE_URL is set.');
+  if (!DEPLOYMENT_ID.test(deploymentId)) {
+    throw new Error('FC_DEPLOYMENT_ID must be 1-64 characters: letters, digits, ".", "_" or "-".');
+  }
+  return {
+    enabled: true,
+    url,
+    deploymentId,
+    poolMax: integerEnv(env, 'FC_DB_POOL_MAX', DB_POOL_DEFAULT, DB_POOL_MIN, DB_POOL_MAX_LIMIT),
+  };
+}
+
+/** Log-safe description. Never includes the URL, username, or password. */
+export function databaseLogLabel(database: DatabaseConfig): string {
+  if (!database.enabled) return 'database: disabled';
+  return `database: enabled deployment=${database.deploymentId} poolMax=${database.poolMax}`;
 }
 
 /**
@@ -94,6 +199,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
+    database: loadDatabaseConfig(env),
+    economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
+    adminIdentity: loadAdminIdentityConfig(env),
   };
 }
 

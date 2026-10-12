@@ -1,6 +1,6 @@
 import type { GameMode, PlayerSnapshot } from '../shared/protocol';
 import type { EventBus, ServerEventName, EventHandler } from './events';
-import { CONSOLE_SENDER_ID, type CommandHandler, type CommandRegistry } from './commands';
+import { CONSOLE_SENDER_ID, type CommandHandler, type CommandRegistry, type CommandResult } from './commands';
 import { bundledExampleDir, discoverPluginModules } from './pluginLoader';
 import { serverLog } from './log';
 import type { PermissionService } from './services/permissions';
@@ -408,7 +408,14 @@ export class PluginManager {
           ...handler,
           execute: (args, sender) => {
             try {
-              return handler.execute(args, sender);
+              const result = handler.execute(args, sender);
+              if (result && typeof (result as Promise<CommandResult>).then === 'function') {
+                return (result as Promise<CommandResult>).catch((error: unknown) => {
+                  serverLog(`plugin ${pluginName} command /${handler.name} threw: ${errorMessage(error)}`, 'error');
+                  return { ok: false, lines: ['Command failed.'] };
+                });
+              }
+              return result;
             } catch (error) {
               serverLog(`plugin ${pluginName} command /${handler.name} threw: ${errorMessage(error)}`, 'error');
               return { ok: false, lines: ['Command failed.'] };

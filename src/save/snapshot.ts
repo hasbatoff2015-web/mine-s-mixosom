@@ -106,6 +106,10 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
     ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
     ...(value.appearance !== undefined ? { appearance: value.appearance } : {}),
+    ...(Array.isArray(value.settlementReceipts)
+      ? { settlementReceipts: value.settlementReceipts.filter((receipt): receipt is string => typeof receipt === 'string') }
+      : {}),
+    ...(Array.isArray(value.heldReturns) ? { heldReturns: value.heldReturns } : {}),
   };
 }
 
