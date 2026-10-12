@@ -2,6 +2,10 @@
 
 Date: 2026-10-12
 
+## Follow-up: grant persistence
+
+`grantItems` sets `player.inventoryDirty` so the client inventory updates, and `this.dirty` when the grant inserts a stack or drops overflow. The periodic save is still `if (this.dirty) void this.save()`. The grant does not call `save()` itself. A rejected `/give` or plugin give that inserts nothing does not set `this.dirty`.
+
 ## Goal
 
 Give each new physical copy of a collectible painting or the God Sword a server-generated UUID, and keep that UUID through ordinary movement. Do not add an ownership ledger, a quantity ledger, or a PostgreSQL migration.

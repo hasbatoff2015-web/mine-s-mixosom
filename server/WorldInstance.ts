@@ -5940,19 +5940,23 @@ export class WorldInstance {
   private grantItems(player: ServerPlayer, itemId: string, count: number): { given: number; leftover: number } {
     const minted = createTrackedItemInstances(itemId, count, () => crypto.randomUUID());
     player.inventoryDirty = true;
-    if (!minted) {
-      const leftover = player.inventory.addItem(itemId, count);
-      if (leftover > 0) this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
-      return { given: count - leftover, leftover };
-    }
+    let given = 0;
     let leftover = 0;
-    for (const stack of minted) {
-      const rest = player.inventory.add(stack);
-      if (!rest) continue;
-      leftover += rest.count;
-      this.gameplay.dropFromPlayer(player, rest);
+    if (!minted) {
+      leftover = player.inventory.addItem(itemId, count);
+      given = count - leftover;
+      if (leftover > 0) this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+    } else {
+      for (const stack of minted) {
+        const rest = player.inventory.add(stack);
+        if (!rest) continue;
+        leftover += rest.count;
+        this.gameplay.dropFromPlayer(player, rest);
+      }
+      given = count - leftover;
     }
-    return { given: count - leftover, leftover };
+    if (given > 0 || leftover > 0) this.dirty = true;
+    return { given, leftover };
   }
 
   /** One-time identity for tracked stacks loaded from older saves. */

@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -36,6 +36,7 @@ import { sanitizeBlockRenderState } from '../../src/world/painting';
 import { EventBus } from '../../server/events';
 import { ServerGameplay, type GameplayPlayer } from '../../server/gameplay';
 import { loadServerConfig } from '../../server/config';
+import type { Plugin } from '../../server/PluginManager';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 import { AuctionService } from '../../server/services/auction';
 import { EconomyService } from '../../server/services/economy';
@@ -175,6 +176,30 @@ describe('stage 3A item identity', () => {
   async function start(worldId: string): Promise<WorldInstance> {
     const dataDir = await mkdtemp(join(tmpdir(), 'fc-id-'));
     dirs.push(dataDir);
+    const world = new WorldInstance({
+      ...loadServerConfig({
+        HOST: '127.0.0.1',
+        PORT: '0',
+        WORLD: worldId,
+        MAX_PLAYERS: '4',
+        CHUNK_VIEW_RADIUS: '1',
+        TICK_RATE: '20',
+        PERSIST_INTERVAL_MS: '60000',
+        FC_NO_BUILTIN_PLUGINS: '1',
+        FC_ADMIN_IDS: '',
+      }),
+      dataDir,
+      port: 0,
+      chunkViewRadius: 1,
+      loadBuiltinPlugins: false,
+      pluginDir: join(dataDir, 'plugins'),
+    });
+    worlds.push(world);
+    await world.initialize();
+    return world;
+  }
+
+  async function openSaved(dataDir: string, worldId: string): Promise<WorldInstance> {
     const world = new WorldInstance({
       ...loadServerConfig({
         HOST: '127.0.0.1',
@@ -733,5 +758,81 @@ describe('stage 3A item identity', () => {
     expect(world.getBlockState(6, 40, 5)?.paintingItemId).toBe(PAINT);
     expect(world.getBlockState(6, 40, 5)?.facing).toBe('east');
     expect(player.inventory.getSlot(0)?.count).toBe(1);
+  });
+
+  it('marks a /give and a plugin give dirty and keeps the minted id across save', async () => {
+    const worldId = 'grant-dirty';
+    const first = await start(worldId);
+    const dataDir = dirs.at(-1)!;
+    const player = addPlayer(first, 'Keeper');
+    player.inventory.clear();
+    const flag = first as unknown as { dirty: boolean };
+    flag.dirty = false;
+    first.handleChat(player, '/give not_a_real_item 1');
+    expect(flag.dirty).toBe(false);
+
+    first.handleChat(player, `/give ${PAINT} 1`);
+    expect(player.inventory.count(PAINT)).toBe(1);
+    const minted = readItemInstanceId(player.inventory.slots.find((stack) => stack?.itemId === PAINT) ?? null);
+    expect(minted).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(flag.dirty).toBe(true);
+    await first.save();
+    const saved = JSON.parse(await readFile(join(dataDir, worldId, 'players.json'), 'utf8')) as {
+      players: Record<string, { inventory: { slots: Array<{ itemId?: string; count?: number; metadata?: { itemInstanceId?: string } } | null> } }>;
+    };
+    const savedStack = saved.players[player.id]?.inventory.slots.find((stack) => stack?.itemId === PAINT);
+    expect(savedStack?.count).toBe(1);
+    expect(savedStack?.metadata?.itemInstanceId).toBe(minted);
+    const token = player.sessionToken;
+    await first.stop();
+    worlds.pop();
+
+    const second = await openSaved(dataDir, worldId);
+    const returned = addPlayer(second, 'Keeper', token);
+    expect(returned.inventory.count(PAINT)).toBe(1);
+    expect(readItemInstanceId(returned.inventory.slots.find((stack) => stack?.itemId === PAINT) ?? null)).toBe(minted);
+
+    const again = second as unknown as { dirty: boolean };
+    again.dirty = false;
+    second.handleChat(returned, '/give diamond 4');
+    expect(again.dirty).toBe(true);
+    const diamonds = returned.inventory.slots.find((stack) => stack?.itemId === 'diamond');
+    expect(diamonds?.count).toBe(4);
+    expect(diamonds?.metadata).toBeUndefined();
+    expect(readItemInstanceId(diamonds ?? null)).toBeUndefined();
+
+    again.dirty = false;
+    second.plugins.register({
+      name: 'grant-probe',
+      onEnable(api) {
+        const view = api.getPlayer('Keeper');
+        if (!view) throw new Error('plugin player missing');
+        const rejected = view.give('not_a_real_item', 1);
+        if (rejected.given !== 0) throw new Error('unknown item was granted');
+        if (again.dirty) throw new Error('rejected plugin give marked the world dirty');
+        const granted = view.give(ItemId.GodSword, 1);
+        if (granted.given !== 1) throw new Error('plugin give did not insert the sword');
+      },
+    } satisfies Plugin);
+    await second.plugins.enableAll();
+    expect(again.dirty).toBe(true);
+    const sword = returned.inventory.slots.find((stack) => stack?.itemId === ItemId.GodSword);
+    const swordId = readItemInstanceId(sword ?? null);
+    expect(sword?.count).toBe(1);
+    expect(swordId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(swordId).not.toBe(minted);
+
+    for (let slot = 0; slot < Inventory.SLOT_COUNT; slot += 1) {
+      returned.inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    }
+    again.dirty = false;
+    second.handleChat(returned, `/give ${OTHER} 1`);
+    expect(again.dirty).toBe(true);
+    expect(returned.inventory.count(OTHER)).toBe(0);
+    expect(second.gameplay.drops.entities).toHaveLength(1);
+    const droppedId = readItemInstanceId(second.gameplay.drops.entities[0]?.stack);
+    expect(droppedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(second.gameplay.drops.entities[0]?.stack.itemId).toBe(OTHER);
+    expect(second.gameplay.drops.entities[0]?.stack.count).toBe(1);
   });
 });
