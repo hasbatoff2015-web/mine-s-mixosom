@@ -252,7 +252,7 @@ function tradeHarness(options: { moneyOk?: boolean; adaMoney?: number; bobMoney?
     },
     getBalance: () => 1000,
     transfer: async () => ({ ok: true }),
-  } as CurrencyPort;
+  } as unknown as CurrencyPort;
   const trade = new TradeService(economy);
   const online = new Set(['ada', 'bob']);
   trade.setRuntime({
@@ -307,7 +307,7 @@ function bootTrade(raw: string, memory: MemorySettlements): { trade: TradeServic
       return { ok: true, amount: Math.abs(delta) };
     },
     getBalance: () => 1000,
-  } as CurrencyPort;
+  } as unknown as CurrencyPort;
   const trade = new TradeService(economy);
   const online = new Set<string>();
   trade.setRuntime({
@@ -468,9 +468,9 @@ describe('stage 2C trade crash boundaries', () => {
     const { trade, disk } = tradeHarness({ adaMoney: 10 });
     let release: () => void = () => {};
     let entered = false;
-    const economy = (trade as unknown as { economy: { settleNet: typeof Function } }).economy as {
-      settleNet: (a: string, b: string, delta: number) => Promise<{ ok: boolean }>;
-    };
+    const economy = (trade as unknown as {
+      economy: { settleNet: (a: string, b: string, delta: number) => Promise<{ ok: boolean }> };
+    }).economy;
     economy.settleNet = (_a, _b, delta) => {
       entered = true;
       expect(delta).toBe(-10);
@@ -517,7 +517,7 @@ describe('stage 2C buyer sale failure', () => {
     inventory.setSlot(0, { itemId: 'diamond', count: 2, metadata: { origin: 'sale' } });
     const disk = new Disk({ ada: inventory });
     const { service, memory } = settlementService();
-    const economy = { backend: 'postgres' as const, deposit } as CurrencyPort;
+    const economy = { backend: 'postgres' as const, deposit } as unknown as CurrencyPort;
     const buyer = new BuyerService(store, economy, new HologramNetwork(() => undefined), () => 'anarchy', () => 1, () => 'aabbccdd');
     buyer.setStage2C({ durability: disk, settlements: service });
     buyer.create({ name: 'Фермер', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
@@ -570,7 +570,7 @@ describe('stage 2C buyer sale failure', () => {
     expect(env.disk.total('ada', 'diamond')).toBe(0);
     expect(env.disk.hasReceipt('ada', buyerConsumedReceipt(requestId))).toBe(true);
     const disk = env.disk.reload();
-    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { throw new Error('no'); } } as CurrencyPort, new HologramNetwork(() => undefined));
+    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { throw new Error('no'); } } as unknown as CurrencyPort, new HologramNetwork(() => undefined));
     const { service } = settlementService(env.memory);
     buyer.setStage2C({ durability: disk, settlements: service });
     expect(await buyer.recoverSales(async () => false)).toBe(1);
@@ -589,7 +589,7 @@ describe('stage 2C buyer sale failure', () => {
     expect(env.disk.total('ada', 'diamond')).toBe(0);
     expect(env.disk.hasReceipt('ada', buyerConsumedReceipt(requestId))).toBe(true);
     const disk = env.disk.reload();
-    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { throw new Error('no'); } } as CurrencyPort, new HologramNetwork(() => undefined));
+    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { throw new Error('no'); } } as unknown as CurrencyPort, new HologramNetwork(() => undefined));
     buyer.setStage2C({ durability: disk, settlements: settlementService(env.memory).service });
     expect(await buyer.recoverSales(async () => false)).toBe(1);
     expect(disk.total('ada', 'diamond')).toBe(2);
@@ -610,7 +610,7 @@ describe('stage 2C buyer sale failure', () => {
     expect(credits).toBe(1);
     expect(env.disk.total('ada', 'diamond')).toBe(0);
     const disk = env.disk.reload();
-    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { credits += 1; return { ok: true }; } } as CurrencyPort, new HologramNetwork(() => undefined));
+    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => { credits += 1; return { ok: true }; } } as unknown as CurrencyPort, new HologramNetwork(() => undefined));
     buyer.setStage2C({ durability: disk, settlements: settlementService(env.memory).service });
     expect(await buyer.recoverSales(async () => true)).toBe(1);
     expect(phaseOf(env.memory, 'BUYER_SALE')).toBe('COMPLETE');
@@ -632,7 +632,7 @@ describe('stage 2C buyer sale failure', () => {
     expect(phaseOf(env.memory, 'BUYER_SALE')).toBe('PREPARED');
     env.disk.persist('ada');
     const disk = env.disk.reload();
-    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => ({ ok: false, error: 'no' }) } as CurrencyPort, new HologramNetwork(() => undefined));
+    const buyer = new BuyerService(env.store, { backend: 'postgres', deposit: async () => ({ ok: false, error: 'no' }) } as unknown as CurrencyPort, new HologramNetwork(() => undefined));
     buyer.setStage2C({ durability: disk, settlements: settlementService(env.memory).service });
     expect(await buyer.recoverSales(async () => false)).toBe(0);
     expect(disk.total('ada', 'diamond')).toBe(0);
@@ -660,7 +660,7 @@ describe('stage 2C clan id reservation', () => {
         return gate.then(() => ({ ok: true }));
       },
       getBalance: () => 100_000,
-    } as CurrencyPort;
+    } as unknown as CurrencyPort;
     const clans = new ClanService(new JsonFileStore(dir), economy);
     clans.setStage2C(service);
     const first = clans.createClan('ada', 'North', 'crown', moneyRequest('ada', 'economy.clan_create', { name: 'North', icon: 'crown' }));
@@ -695,7 +695,7 @@ describe('stage 2C clan id reservation', () => {
         return { ok: true };
       },
       getBalance: () => 100_000,
-    } as CurrencyPort;
+    } as unknown as CurrencyPort;
     const clans = new ClanService(store, economy);
     clans.setStage2C(service);
     clans.haltAfter = 'clan-paid';
@@ -712,7 +712,7 @@ describe('stage 2C clan id reservation', () => {
         return { ok: true };
       },
       getBalance: () => 100_000,
-    } as CurrencyPort);
+    } as unknown as CurrencyPort);
     reloaded.setStage2C(service);
     expect(await reloaded.recoverCreates(async () => true)).toBe(1);
     expect(reloaded['clans'].get(reserved)?.ownerId).toBe('ada');
@@ -734,7 +734,7 @@ describe('stage 2C clan id reservation', () => {
       backend: 'legacy_json',
       withdraw: () => ({ ok: true }),
       getBalance: () => 100_000,
-    } as CurrencyPort);
+    } as unknown as CurrencyPort);
     const first = clans.createClan('ada', 'North', 'crown');
     expect(first.ok && first.clan?.clanId).toBe('clan-1');
     const { service, memory } = settlementService();
@@ -780,7 +780,7 @@ describe('stage 2C auction delivery', () => {
         return settle(...args);
       },
       rememberName: () => undefined,
-    } as CurrencyPort;
+    } as unknown as CurrencyPort;
     const auction = new AuctionService(env.store, port, () => 1_000);
     auction.setStage2C({ durability: disk, settlements: env.service });
     return { auction, calls: () => calls };
@@ -801,7 +801,7 @@ describe('stage 2C auction delivery', () => {
     expect(phaseOf(env.memory, 'AUCTION_PURCHASE')).not.toBe('COMPLETE');
     disk.persist('bea');
     const reloadedDisk = disk.reload();
-    const reloaded = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); }, rememberName: () => undefined } as CurrencyPort, () => 1_000);
+    const reloaded = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); }, rememberName: () => undefined } as unknown as CurrencyPort, () => 1_000);
     reloaded.setStage2C({ durability: reloadedDisk, settlements: settlementService(env.memory).service });
     expect(await reloaded.recoverPurchases(async () => 'bea')).toBe(0);
     expect(reloadedDisk.total('bea', 'diamond')).toBe(63);
@@ -835,7 +835,7 @@ describe('stage 2C auction delivery', () => {
     const again = await auction.buyListing('cara', 'Cara', new Inventory(), env.listingId, moneyRequest('cara', 'economy.auction_purchase', { listingId: env.listingId }));
     expect(again.ok).toBe(false);
     expect(calls()).toBe(1);
-    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as CurrencyPort, () => 1_000);
+    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as unknown as CurrencyPort, () => 1_000);
     const reloaded = disk.reload();
     restarted.setStage2C({ durability: reloaded, settlements: settlementService(env.memory).service });
     expect(await restarted.recoverPurchases(async () => 'bea')).toBe(1);
@@ -855,7 +855,7 @@ describe('stage 2C auction delivery', () => {
     const rival = await auction.buyListing('cara', 'Cara', new Inventory(), env.listingId, moneyRequest('cara', 'economy.auction_purchase', { listingId: env.listingId }));
     expect(rival.ok).toBe(false);
     expect(calls()).toBe(1);
-    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as CurrencyPort, () => 1_000);
+    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as unknown as CurrencyPort, () => 1_000);
     const reloaded = disk.reload();
     restarted.setStage2C({ durability: reloaded, settlements: env.service });
     expect(await restarted.recoverPurchases(async () => 'bea')).toBe(1);
@@ -876,7 +876,7 @@ describe('stage 2C auction delivery', () => {
     expect(disk.total('bea', 'diamond')).toBe(2);
     expect(phaseOf(env.memory, 'AUCTION_PURCHASE')).toBe('DOMAIN_DURABLE');
     const reloaded = disk.reload();
-    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as CurrencyPort, () => 1_000);
+    const restarted = new AuctionService(env.store, { backend: 'postgres', settle: async () => { throw new Error('second charge'); } } as unknown as CurrencyPort, () => 1_000);
     restarted.setStage2C({ durability: reloaded, settlements: settlementService(env.memory).service });
     expect(await restarted.recoverPurchases(async () => 'bea')).toBe(1);
     expect(phaseOf(env.memory, 'AUCTION_PURCHASE')).toBe('COMPLETE');
