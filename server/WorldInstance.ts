@@ -13,6 +13,7 @@ import {
   createTrackedItemInstances,
   ensureInventoryInstanceIds,
   ensureItemInstanceId,
+  readItemInstanceId,
   normalizePortalChestSlots,
   playerEquipmentFromInventory,
   type ItemStack,
@@ -122,6 +123,13 @@ import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
+import { IdentityIncidentLog } from './identity/incidents';
+import {
+  IDENTITY_TRANSFER_BLOCKED,
+  scanIdentity,
+  type IdentityPlayerStacks,
+  type IdentityReport,
+} from './identity/locationScan';
 import { PermissionService } from './services/permissions';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
@@ -676,6 +684,8 @@ export class WorldInstance {
   lastTickMs = 0;
   maxTickMs = 0;
   private dirty = false;
+  private readonly identityIncidents = new IdentityIncidentLog();
+  private identityLogLoaded = false;
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private createdAt = Date.now();
@@ -1328,6 +1338,7 @@ export class WorldInstance {
       this.buyer.load();
       this.canonicalWorldLoaded = true;
       await this.recoverSettlements();
+      this.observeIdentity('startup');
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1349,6 +1360,7 @@ export class WorldInstance {
     // The in-memory create is complete. This write commits it. The flag stays
     // false until the write resolves, so a failed create is not saved again from stop().
     await this.writeCanonicalSnapshot();
+    this.observeIdentity('startup');
     this.readyState = 'READY';
     this.canonicalWorldLoaded = true;
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1567,6 +1579,7 @@ export class WorldInstance {
     this.notifications.persist();
     this.buyer.persist();
     this.dirty = false;
+    this.observeIdentity('save');
   }
 
   onlineCount(): number {
@@ -1899,6 +1912,12 @@ export class WorldInstance {
     }
     if (action === 'buy' && (message.listingId || session.listingId)) {
       const listingId = message.listingId ?? session.listingId!;
+      const existing = this.auction.getListing(listingId);
+      if (this.trackedTransferBlocked(readItemInstanceId(existing?.item))) {
+        session.message = IDENTITY_TRANSFER_BLOCKED;
+        this.flushAuction(player);
+        return;
+      }
       const purchaseRequest = clientMoneyRequest(
         message.clientRequestId,
         'economy.auction_purchase',
@@ -1976,6 +1995,12 @@ export class WorldInstance {
         return;
       }
       const parsedPrice = parseAuctionPrice(priceRaw)!;
+      const held = slot !== undefined ? player.inventory.getSlot(slot) : undefined;
+      if (this.trackedTransferBlocked(readItemInstanceId(held))) {
+        session.message = IDENTITY_TRANSFER_BLOCKED;
+        this.flushAuction(player);
+        return;
+      }
       const result = this.auction.createListing(
         player.id,
         player.name,
@@ -2246,6 +2271,12 @@ export class WorldInstance {
       });
       return;
     }
+    if (message.action === 'sell' && this.buyerSaleBlocked(player.id)) {
+      const session = this.buyer.session(player.id);
+      if (session) session.message = IDENTITY_TRANSFER_BLOCKED;
+      this.flushBuyer(player);
+      return;
+    }
     const result = this.buyer.handleAction(player.id, player.inventory, message, can);
     const finishBuyer = (done: Awaited<typeof result>): void => {
     if (done.inventoryDirty) this.flushPlayerInventory(player);
@@ -2323,6 +2354,14 @@ export class WorldInstance {
     if (message.action === 'close' || message.action === 'cancel') {
       const result = this.trade.cancel(player.id);
       this.flushTradeResult(result);
+      return;
+    }
+    if (message.action === 'accept' && this.tradeAcceptBlocked(player.id)) {
+      const session = this.trade.sessionFor(player.id);
+      this.flushTradeResult(
+        { affected: session ? [session.playerA, session.playerB] : [player.id] },
+        IDENTITY_TRANSFER_BLOCKED,
+      );
       return;
     }
     const result = message.action === 'put_item'
@@ -5934,6 +5973,164 @@ export class WorldInstance {
   }
 
   /**
+   * Current physical holders of tracked items in this world only.
+   * A live player replaces that player's stored row. Settlement payloads
+   * and historical auction rows are not holders.
+   */
+  inspectUniqueItems(): {
+    readonly worldId: string;
+    readonly locations: IdentityReport['locations'];
+    readonly findings: IdentityReport['findings'];
+    readonly incidents: ReturnType<IdentityIncidentLog['list']>;
+    readonly skippedMalformed: number;
+  } {
+    const report = this.observeIdentity('recheck');
+    return {
+      worldId: this.worldId,
+      locations: report.locations,
+      findings: report.findings,
+      incidents: this.identityIncidents.list(),
+      skippedMalformed: report.skippedMalformed,
+    };
+  }
+
+  private observeIdentity(checkpoint: 'startup' | 'save' | 'recheck'): IdentityReport {
+    this.ensureIdentityLog();
+    try {
+      const report = scanIdentity(this.identitySources());
+      if (this.identityIncidents.observe(report, checkpoint, Date.now())) {
+        try {
+          this.pluginStore.save('identity-incidents', this.identityIncidents.serialize());
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          serverLog(`identity incident save failed: ${detail}`, 'warn');
+        }
+      }
+      return report;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity scan failed: ${detail}`, 'warn');
+      return { worldId: this.worldId, locations: [], findings: [], skippedMalformed: 0 };
+    }
+  }
+
+  private ensureIdentityLog(): void {
+    if (this.identityLogLoaded) return;
+    this.identityLogLoaded = true;
+    try {
+      this.identityIncidents.load(this.pluginStore.load('identity-incidents', { version: 1, incidents: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity incident load failed: ${detail}`, 'warn');
+    }
+  }
+
+  private trackedTransferBlocked(instanceId: string | undefined): boolean {
+    if (!instanceId) return false;
+    const finding = this.observeIdentity('recheck').findings.find((row) => row.itemInstanceId === instanceId);
+    return finding?.status === 'confirmed-duplicate' || finding?.status === 'identity-type-conflict';
+  }
+
+  private tradeAcceptBlocked(playerId: string): boolean {
+    const session = this.trade.sessionFor(playerId);
+    if (!session) return false;
+    const ids: string[] = [];
+    for (const offer of Object.values(session.offers)) {
+      for (const stack of offer.slots) {
+        const id = readItemInstanceId(stack);
+        if (id) ids.push(id);
+      }
+    }
+    if (ids.length === 0) return false;
+    const findings = this.observeIdentity('recheck').findings;
+    return ids.some((id) => findings.some((row) =>
+      row.itemInstanceId === id && (row.status === 'confirmed-duplicate' || row.status === 'identity-type-conflict')));
+  }
+
+  private buyerSaleBlocked(playerId: string): boolean {
+    return this.trackedTransferBlocked(readItemInstanceId(this.buyer.unsavedTradeSlot(playerId)));
+  }
+
+  private identitySources() {
+    const players: IdentityPlayerStacks[] = [];
+    const live = new Set<string>();
+    for (const player of this.players.values()) {
+      live.add(player.id);
+      players.push({
+        playerId: player.id,
+        inventory: player.inventory.slots,
+        armor: player.inventory.armor,
+        offhand: player.inventory.offhand,
+        cursor: player.cursor,
+        craft: player.craftSlots,
+        portal: player.portalChest.slots,
+        heldReturns: player.heldReturns,
+      });
+    }
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (live.has(stored.id)) continue;
+      const cached = this.offlineInventories.get(stored.id);
+      let inventory: Inventory;
+      if (cached) inventory = cached;
+      else {
+        try {
+          inventory = Inventory.deserialize(stored.inventory);
+        } catch {
+          inventory = new Inventory();
+        }
+      }
+      const cursor = stored.cursor && typeof stored.cursor === 'object' ? stored.cursor as ItemStack : null;
+      players.push({
+        playerId: stored.id,
+        inventory: inventory.slots,
+        armor: inventory.armor,
+        offhand: inventory.offhand,
+        cursor,
+        craft: [],
+        portal: normalizePortalChestSlots(stored.portalChest),
+        heldReturns: parseHeldReturns(stored.heldReturns),
+      });
+    }
+    const chests = [];
+    for (const [key, chest] of this.world.chests) {
+      const cell = identityCell(key);
+      if (!cell || !isSharedWorldChestBlock(this.world.getBlock(cell.x, cell.y, cell.z, false))) continue;
+      chests.push({ ...cell, slots: chest.slots });
+    }
+    const furnaces = [];
+    for (const [key, furnace] of this.world.furnaces) {
+      const cell = identityCell(key);
+      if (!cell || this.world.getBlock(cell.x, cell.y, cell.z, false) !== BlockId.Furnace) continue;
+      furnaces.push({ ...cell, slots: furnace.slots });
+    }
+    const paintings = [];
+    for (const [key, state] of this.world.blockStates) {
+      const cell = identityCell(key);
+      if (!cell || this.world.getBlock(cell.x, cell.y, cell.z, false) !== BlockId.CollectiblePainting) continue;
+      if (!state.paintingItemId || !state.paintingInstanceId) continue;
+      paintings.push({ ...cell, itemId: state.paintingItemId, instanceId: state.paintingInstanceId });
+    }
+    const buyer = this.buyer.physicalHolders();
+    return {
+      worldId: this.worldId,
+      players,
+      chests,
+      furnaces,
+      drops: this.gameplay.drops.entities.map((entity) => ({ entityId: entity.id, stack: entity.stack })),
+      paintings,
+      auctions: this.auction.holdingListings().map((listing) => ({
+        listingId: listing.listingId,
+        status: listing.status,
+        sellerPlayerId: listing.sellerPlayerId,
+        item: listing.item,
+      })),
+      trades: this.trade.physicalOffers(),
+      buyerWindows: buyer.filter((row) => row.kind === 'window'),
+      buyerReturns: buyer.filter((row) => row.kind === 'return'),
+    };
+  }
+
+  /**
    * Ordinary resources stay on the bulk add path. Tracked items are minted
    * one instance at a time so each copy has its own id, including overflow drops.
    */
@@ -6425,6 +6622,16 @@ export class WorldInstance {
       },
     });
   }
+}
+
+function identityCell(key: string): { x: number; y: number; z: number } | undefined {
+  const parts = key.split(',');
+  if (parts.length !== 3) return undefined;
+  const x = Number(parts[0]);
+  const y = Number(parts[1]);
+  const z = Number(parts[2]);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return undefined;
+  return { x, y, z };
 }
 
 function parseHeldReturns(value: unknown): ItemStack[] {

@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-12: Stage 3B unique item locations
+
+- [x] One WorldInstance index of current physical holders for collectible paintings and the God Sword.
+- [x] Confirmed duplicates and item-type conflicts are recorded. Save mirrors and settlement payloads are not second owners.
+- [x] A fresh conflict blocks a new auction listing, purchase, trade accept, or buyer sale. Items and balances stay put.
+- [ ] Quantity monitoring stays Stage 3C. Admin tools stay later. Not merged. Draft PR **#129**.
+
 ## 2026-10-12: Stage 3A unique item identity
 
 - [x] Collectible paintings and the God Sword carry `metadata.itemInstanceId`. Other items do not.

@@ -191,6 +191,37 @@ export class TradeService {
     return id ? this.sessions.get(id) : undefined;
   }
 
+  /** Offer slots currently holding items. Settlement payloads are not included. */
+  physicalOffers(): Array<{
+    readonly tradeId: string;
+    readonly settling: boolean;
+    readonly playerId: string;
+    readonly slot: number;
+    readonly stack: ItemStack;
+  }> {
+    const rows: Array<{
+      tradeId: string;
+      settling: boolean;
+      playerId: string;
+      slot: number;
+      stack: ItemStack;
+    }> = [];
+    for (const session of this.sessions.values()) {
+      for (const [playerId, offer] of Object.entries(session.offers)) {
+        offer.slots.forEach((stack, slot) => {
+          if (stack) rows.push({
+            tradeId: session.tradeId,
+            settling: session.settling === true,
+            playerId,
+            slot,
+            stack,
+          });
+        });
+      }
+    }
+    return rows;
+  }
+
   request(fromPlayerId: string, targetRaw: string): TradeResult {
     const name = targetRaw.trim();
     if (!name) return { ok: false, error: TRADE_EMPTY_NAME_ERROR };

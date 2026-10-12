@@ -128,6 +128,23 @@ export class BuyerService {
     return this.sessions.get(playerId)?.tradeSlot ?? null;
   }
 
+  /** The open window and stacks waiting to return. Not the crash-save mirror. */
+  physicalHolders(): Array<{
+    readonly kind: 'window' | 'return';
+    readonly playerId: string;
+    readonly index: number;
+    readonly stack: ItemStack;
+  }> {
+    const rows: Array<{ kind: 'window' | 'return'; playerId: string; index: number; stack: ItemStack }> = [];
+    for (const [playerId, session] of this.sessions) {
+      if (session.tradeSlot) rows.push({ kind: 'window', playerId, index: 0, stack: session.tradeSlot });
+    }
+    for (const [playerId, stacks] of this.returns) {
+      stacks.forEach((stack, index) => rows.push({ kind: 'return', playerId, index, stack }));
+    }
+    return rows;
+  }
+
   async recoverSales(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
     if (!this.settlements || !this.durability) return 0;
     let changed = 0;

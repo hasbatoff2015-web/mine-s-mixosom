@@ -459,6 +459,12 @@ export class AuctionService {
     return this.listings.get(listingId);
   }
 
+  /** Listings that still hold the item. Sold, claimed, and relisted rows are history. */
+  holdingListings(): readonly AuctionListing[] {
+    const holding = new Set(['ACTIVE', 'PENDING_ESCROW', 'CANCELLED', 'EXPIRED']);
+    return [...this.listings.values()].filter((listing) => holding.has(listing.status));
+  }
+
   activeCount(playerId: string): number {
     this.expireDue();
     let count = 0;
