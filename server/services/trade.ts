@@ -27,8 +27,8 @@ import { randomUUID } from 'node:crypto';
 import { inventoryCanAccept } from './auction';
 import { isPromise, thenResult, type CurrencyPort } from '../economy/currencyPort';
 import { isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
-import type { ItemDurability } from '../settlements/durability';
-import { tradeDeliveryReceipt, tradeEscrowReceipt } from '../settlements/receipts';
+import type { ItemDurability, ItemEffectResult } from '../settlements/durability';
+import { stackRecord, tradeDeliveryReceipt, tradeEscrowReceipt } from '../settlements/receipts';
 import type { SettlementService } from '../settlements/service';
 import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 
@@ -48,6 +48,8 @@ export interface TradeSession {
   readonly playerA: string;
   readonly playerB: string;
   offers: Record<string, TradeOffer>;
+  /** Set synchronously when final settlement starts. Offer mutations must stop. */
+  settling?: boolean;
 }
 
 export interface TradeRequest {
@@ -147,36 +149,20 @@ export class TradeService {
       const escrow = tradeEscrowReceipt(row.settlementId);
       const money = await paid(row.settlementId);
       if (!money) {
-        for (const playerId of [playerA, playerB]) {
-          if (!this.durability.hasReceipt(playerId, escrow)) continue;
-          const key = playerId === playerA ? 'itemsForB' : 'itemsForA';
-          const stacks = Array.isArray(row.payload[key]) ? row.payload[key] as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
-          for (const stack of stacks) {
-            const inventory = this.runtime.inventory(playerId);
-            inventory?.add(cloneStack({ itemId: stack.itemId, count: stack.count, ...(stack.durability ? { durability: stack.durability } : {}) })!);
-          }
-          await this.durability.dropReceipt(playerId, escrow);
-        }
+        const restoredA = await this.durability.restoreAll(playerA, escrow, payloadStacks(row.payload.offersA));
+        const restoredB = await this.durability.restoreAll(playerB, escrow, payloadStacks(row.payload.offersB));
+        if (restoredA === 'full' || restoredB === 'full' || restoredA === 'missing' || restoredB === 'missing') continue;
         if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
           await this.settlements.transition(row.settlementId, row.phase, 'CANCELLED');
         }
         changed += 1;
         continue;
       }
-      const give = async (playerId: string, stacks: Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }>): Promise<void> => {
-        const marker = tradeDeliveryReceipt(row.settlementId, playerId);
-        if (this.durability?.hasReceipt(playerId, marker)) return;
-        const inventory = this.runtime.inventory(playerId);
-        if (!inventory) return;
-        for (const stack of stacks) {
-          inventory.add(cloneStack({ itemId: stack.itemId, count: stack.count, ...(stack.durability ? { durability: stack.durability } : {}) })!);
-        }
-        await this.durability?.escrow(playerId, marker);
-      };
-      const forA = Array.isArray(row.payload.itemsForA) ? row.payload.itemsForA as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
-      const forB = Array.isArray(row.payload.itemsForB) ? row.payload.itemsForB as Array<{ itemId: ItemStack['itemId']; count: number; durability?: number | null }> : [];
-      await give(playerA, forA);
-      await give(playerB, forB);
+      const forA = payloadStacks(row.payload.itemsForA);
+      const forB = payloadStacks(row.payload.itemsForB);
+      const deliveredA = await this.durability.deliverAll(playerA, tradeDeliveryReceipt(row.settlementId, playerA), forA);
+      const deliveredB = await this.durability.deliverAll(playerB, tradeDeliveryReceipt(row.settlementId, playerB), forB);
+      if (deliveredA === 'full' || deliveredA === 'missing' || deliveredB === 'full' || deliveredB === 'missing') continue;
       if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
         await this.settlements.advance(row.settlementId, row.phase, 'MONEY_COMMITTED');
       }
@@ -323,6 +309,7 @@ export class TradeService {
   ready(playerId: string): TradeResult {
     const session = this.sessionFor(playerId);
     if (!session) return { ok: false, error: TRADE_STALE_ERROR };
+    if (session.settling) return { ok: false, error: 'Обмен уже выполняется.' };
     const offer = offerOf(session, playerId);
     offer.ready = true;
     offer.accepted = false;
@@ -334,6 +321,7 @@ export class TradeService {
   accept(playerId: string, clientRequestId?: string): TradeResult {
     const session = this.sessionFor(playerId);
     if (!session) return { ok: false, error: TRADE_STALE_ERROR };
+    if (session.settling) return { ok: false, error: 'Обмен уже выполняется.' };
     const other = partnerOf(session, playerId);
     if (!other) return { ok: false, error: TRADE_STALE_ERROR };
     const self = offerOf(session, playerId);
@@ -350,6 +338,7 @@ export class TradeService {
       this.dropRequestsInvolving(playerId);
       return { ok: true, closed: true, affected: [playerId] };
     }
+    if (session.settling) return { ok: false, error: 'Обмен уже выполняется.' };
     return this.closeSession(session, 'Обмен отклонён.');
   }
 
@@ -357,6 +346,7 @@ export class TradeService {
     const session = this.sessionFor(playerId);
     this.dropRequestsInvolving(playerId);
     if (!session) return { ok: true, closed: true, affected: [playerId] };
+    if (session.settling) return { ok: false, error: 'Обмен уже выполняется.', affected: [playerId] };
     return this.closeSession(session, 'Обмен отменён: игрок отключился.');
   }
 
@@ -373,6 +363,7 @@ export class TradeService {
   ): TradeResult {
     const session = this.sessionFor(playerId);
     if (!session) return { ok: false, error: TRADE_STALE_ERROR };
+    if (session.settling) return { ok: false, error: 'Обмен уже выполняется.' };
     const inventory = this.runtime.inventory(playerId);
     if (!inventory) return { ok: false, error: TRADE_STALE_ERROR };
     const offer = offerOf(session, playerId);
@@ -458,13 +449,10 @@ export class TradeService {
     const settlements = this.settlements;
     if (!durability || !settlements) return Promise.resolve({ ok: false, error: SETTLEMENT_RECOVERING });
     const receipt = tradeEscrowReceipt(session.settlementId);
+    session.settling = true;
+    const offersA = incomingB.map((stack) => stackRecord(stack));
+    const offersB = incomingA.map((stack) => stackRecord(stack));
     return (async () => {
-      if (this.haltAfter === 'trade-escrow-a') {
-        await durability.escrow(session.playerA, receipt);
-        return { ok: false as const, error: 'halt:trade-escrow-a' };
-      }
-      if (!durability.hasReceipt(session.playerA, receipt)) await durability.escrow(session.playerA, receipt);
-      if (!durability.hasReceipt(session.playerB, receipt)) await durability.escrow(session.playerB, receipt);
       await settlements.begin({
         settlementId: session.settlementId,
         kind: 'TRADE_SETTLEMENT',
@@ -473,24 +461,41 @@ export class TradeService {
           playerB: session.playerB,
           moneyA: offerA.money,
           moneyB: offerB.money,
-          itemsForA: incomingA.map((stack) => ({ itemId: stack.itemId, count: stack.count, durability: stack.durability ?? null })),
-          itemsForB: incomingB.map((stack) => ({ itemId: stack.itemId, count: stack.count, durability: stack.durability ?? null })),
+          offersA,
+          offersB,
+          itemsForA: incomingA.map((stack) => stackRecord(stack)),
+          itemsForB: incomingB.map((stack) => stackRecord(stack)),
         },
       });
+      if (this.haltAfter === 'trade-prepared') return { ok: false as const, error: 'halt:trade-prepared' };
+      if (!durability.hasReceipt(session.playerA, receipt)) await durability.escrow(session.playerA, receipt);
+      if (this.haltAfter === 'trade-escrow-a') return { ok: false as const, error: 'halt:trade-escrow-a' };
+      if (!durability.hasReceipt(session.playerB, receipt)) await durability.escrow(session.playerB, receipt);
       await settlements.advance(session.settlementId, 'PREPARED', 'ESCROW_DURABLE');
+      if (this.haltAfter === 'trade-escrowed') return { ok: false as const, error: 'halt:trade-escrowed' };
       const paid = await Promise.resolve(this.payTrade(session, offerA.money, offerB.money));
-      if (!paid.ok) return paid;
+      if (!paid.ok) {
+        const backA = await this.returnEscrow(durability, session.playerA, offerA, receipt, payloadStacks(offersA));
+        const backB = await this.returnEscrow(durability, session.playerB, offerB, receipt, payloadStacks(offersB));
+        const blocked = backA === 'full' || backA === 'missing' || backB === 'full' || backB === 'missing';
+        if (!blocked) {
+          const phase = (await settlements.get(session.settlementId))?.phase;
+          if (phase === 'PREPARED' || phase === 'ESCROW_DURABLE') {
+            await settlements.transition(session.settlementId, phase, 'CANCELLED');
+          }
+          this.returnOffers(session);
+          this.dropSession(session);
+        }
+        return paid;
+      }
+      if (this.haltAfter === 'trade-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
       await settlements.advance(session.settlementId, 'ESCROW_DURABLE', 'MONEY_COMMITTED');
       if (this.haltAfter === 'trade-money') return { ok: false as const, error: SETTLEMENT_RECOVERING };
-      const deliver = async (playerId: string, inventory: Inventory, stacks: ItemStack[]): Promise<void> => {
-        const marker = tradeDeliveryReceipt(session.settlementId, playerId);
-        if (durability.hasReceipt(playerId, marker)) return;
-        for (const stack of stacks) inventory.add(cloneStack(stack)!);
-        await durability.escrow(playerId, marker);
-      };
-      await deliver(session.playerA, invA, incomingA);
+      const deliveredA = await durability.deliverAll(session.playerA, tradeDeliveryReceipt(session.settlementId, session.playerA), incomingA);
+      if (deliveredA === 'full' || deliveredA === 'missing') return { ok: false as const, error: SETTLEMENT_RECOVERING };
       if (this.haltAfter === 'trade-delivered-a') return { ok: false as const, error: SETTLEMENT_RECOVERING };
-      await deliver(session.playerB, invB, incomingB);
+      const deliveredB = await durability.deliverAll(session.playerB, tradeDeliveryReceipt(session.settlementId, session.playerB), incomingB);
+      if (deliveredB === 'full' || deliveredB === 'missing') return { ok: false as const, error: SETTLEMENT_RECOVERING };
       await settlements.advance(session.settlementId, 'MONEY_COMMITTED', 'COMPLETE');
       offerA.slots.fill(null);
       offerB.slots.fill(null);
@@ -539,6 +544,18 @@ export class TradeService {
         return thenResult(undo, () => ({ ok: false as const, error: paidB.error ?? TRADE_MONEY_ERROR }));
       });
     });
+  }
+
+  private async returnEscrow(
+    durability: ItemDurability,
+    playerId: string,
+    offer: TradeOffer,
+    receipt: string,
+    stacks: readonly ItemStack[],
+  ): Promise<ItemEffectResult> {
+    if (!durability.hasReceipt(playerId, receipt)) return 'already';
+    offer.slots.fill(null);
+    return durability.restoreAll(playerId, receipt, stacks);
   }
 
   private closeSession(session: TradeSession, message: string): TradeResult {
@@ -595,4 +612,21 @@ export class TradeService {
       if (!asyncResult) release();
     }
   }
+}
+
+function payloadStacks(value: unknown): ItemStack[] {
+  if (!Array.isArray(value)) return [];
+  const stacks: ItemStack[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as { itemId?: ItemStack['itemId']; count?: number; durability?: number | null; metadata?: ItemStack['metadata'] };
+    if (!row.itemId || !Number.isInteger(row.count)) continue;
+    stacks.push({
+      itemId: row.itemId,
+      count: row.count as number,
+      ...(typeof row.durability === 'number' ? { durability: row.durability } : {}),
+      ...(row.metadata !== undefined ? { metadata: row.metadata } : {}),
+    });
+  }
+  return stacks;
 }

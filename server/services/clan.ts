@@ -364,6 +364,8 @@ export class ClanService {
     let changed = 0;
     for (const row of await this.settlements.listOpen()) {
       if (row.kind !== 'CLAN_CREATE') continue;
+      const reservedNumber = Number(String(row.payload.clanId ?? '').replace('clan-', ''));
+      if (Number.isInteger(reservedNumber) && reservedNumber >= this.nextClanId) this.nextClanId = reservedNumber + 1;
       const money = await paid(row.settlementId);
       const owned = [...this.clans.values()].find((clan) => clan.creationSettlementId === row.settlementId);
       if (!money) {
@@ -371,9 +373,13 @@ export class ClanService {
         changed += 1;
         continue;
       }
+      let phase = row.phase;
+      if (phase === 'PREPARED' || phase === 'ESCROW_DURABLE') {
+        phase = (await this.settlements.advance(row.settlementId, phase, 'MONEY_COMMITTED')).phase;
+      }
       if (owned) {
-        if (row.phase === 'MONEY_COMMITTED' || row.phase === 'DOMAIN_DURABLE') {
-          await this.settlements.advance(row.settlementId, row.phase, 'COMPLETE');
+        if (phase === 'MONEY_COMMITTED' || phase === 'DOMAIN_DURABLE') {
+          await this.settlements.advance(row.settlementId, phase, 'COMPLETE');
         }
         changed += 1;
         continue;
@@ -381,11 +387,11 @@ export class ClanService {
       const nameKey = String(row.payload.nameKey ?? '');
       const conflict = [...this.clans.values()].some((clan) => clan.nameKey === nameKey || clan.clanId === row.payload.clanId);
       if (conflict) {
-        if (row.phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, row.phase, 'RECOVERY_REQUIRED');
+        if (phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, phase, 'RECOVERY_REQUIRED');
         changed += 1;
         continue;
       }
-      this.finishCreate(
+      const created = this.finishCreate(
         String(row.payload.playerId ?? ''),
         String(row.payload.name ?? ''),
         nameKey,
@@ -393,6 +399,11 @@ export class ClanService {
         String(row.payload.clanId ?? ''),
         row.settlementId,
       );
+      if (!created.ok) {
+        if (phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, phase, 'RECOVERY_REQUIRED');
+        changed += 1;
+        continue;
+      }
       await this.settlements.advance(row.settlementId, 'MONEY_COMMITTED', 'COMPLETE');
       changed += 1;
     }
@@ -790,13 +801,15 @@ export class ClanService {
   ): ClanResult {
     const settlements = this.settlements;
     if (!settlements) return { ok: false, error: SETTLEMENT_RECOVERING };
-    const clanId = `clan-${this.nextClanId}`;
+    const reservedNow = `clan-${this.nextClanId}`;
+    this.nextClanId += 1;
+    this.persist();
     const payload = {
       playerId,
       name,
       nameKey: key,
       icon,
-      clanId,
+      clanId: reservedNow,
     };
     const run = (async () => {
       if (this.haltAfter === 'clan-prepared') {
@@ -825,13 +838,20 @@ export class ClanService {
         if (row.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
         if (this.haltAfter === 'clan-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
       }
-      const reserved = String((existing ?? await settlements.get(request.requestId))?.payload.clanId ?? clanId);
+      const reserved = String((existing ?? await settlements.get(request.requestId))?.payload.clanId ?? reservedNow);
       if ([...this.clans.values()].some((clan) => clan.creationSettlementId === request.requestId)) {
         await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
         return { ok: true as const, clan: [...this.clans.values()].find((clan) => clan.creationSettlementId === request.requestId) };
       }
       const created = this.finishCreate(playerId, name, key, icon, reserved, request.requestId);
-      if (created.ok) await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
+      if (!created.ok) {
+        const phase = (await settlements.get(request.requestId))?.phase;
+        if (phase && phase !== 'RECOVERY_REQUIRED' && phase !== 'COMPLETE' && phase !== 'CANCELLED') {
+          await settlements.transition(request.requestId, phase, 'RECOVERY_REQUIRED');
+        }
+        return created;
+      }
+      await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
       return created;
     })();
     return run as unknown as ClanResult;
@@ -849,6 +869,10 @@ export class ClanService {
       if (reservedId) {
         const number = Number(reservedId.replace('clan-', ''));
         if (Number.isInteger(number) && number >= this.nextClanId) this.nextClanId = number + 1;
+      }
+      const previous = this.clans.get(clanId);
+      if (previous && previous.creationSettlementId !== creationSettlementId) {
+        return { ok: false, error: 'conflict' };
       }
       const clan: ClanRecord = {
         clanId,

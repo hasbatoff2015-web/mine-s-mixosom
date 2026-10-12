@@ -154,10 +154,17 @@ export class BuyerService {
         continue;
       }
       const item = row.payload.item;
+      let restored: 'restored' | 'already' | 'full' | 'missing' | 'delivered' = 'already';
       if (item && typeof item === 'object') {
         const stack = item as ItemStack;
-        await this.durability.restore(playerId, receipt, { itemId: stack.itemId, count: stack.count, ...(stack.durability !== undefined ? { durability: stack.durability } : {}) });
+        restored = await this.durability.restore(playerId, receipt, {
+          itemId: stack.itemId,
+          count: stack.count,
+          ...(stack.durability !== undefined ? { durability: stack.durability } : {}),
+          ...(stack.metadata !== undefined ? { metadata: stack.metadata } : {}),
+        });
       }
+      if (restored === 'full' || restored === 'missing') continue;
       if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
         await this.settlements.transition(row.settlementId, row.phase, 'CANCELLED');
       }
@@ -897,15 +904,27 @@ export class BuyerService {
         const receipt = buyerConsumedReceipt(request.requestId);
         if (!durability.hasReceipt(playerId, receipt)) {
           if (this.haltAfter === 'sale-removal') return { ok: false as const, error: 'halt:sale-removal' };
+          const held = cloneStack(session.tradeSlot);
           session.tradeSlot = null;
-          await durability.escrow(playerId, receipt);
+          try {
+            await durability.escrow(playerId, receipt);
+          } catch (error) {
+            if (!durability.hasReceipt(playerId, receipt)) session.tradeSlot = held;
+            throw error;
+          }
         }
         if (this.haltAfter === 'sale-escrowed') return { ok: false as const, error: 'halt:sale-escrowed' };
         const paid = await this.economy.deposit(playerId, total, 'BUYER_SALE', undefined, undefined, request);
         if (!paid.ok) {
-          session.tradeSlot = cloneStack(slot);
-          await durability.restore(playerId, receipt, slot);
-          if (begun.phase === 'PREPARED') await settlements.transition(request.requestId, 'PREPARED', 'CANCELLED');
+          const restored = await durability.restore(playerId, receipt, slot);
+          if (restored === 'already') session.tradeSlot = cloneStack(slot);
+          else session.tradeSlot = null;
+          if (restored === 'restored' || restored === 'already') {
+            const phase = (await settlements.get(request.requestId))?.phase;
+            if (phase === 'PREPARED' || phase === 'ESCROW_DURABLE') {
+              await settlements.transition(request.requestId, phase, 'CANCELLED');
+            }
+          }
           return { ok: false as const, error: paid.error ?? 'Не удалось начислить Мегакоины.' };
         }
         if (begun.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');

@@ -101,7 +101,11 @@ The simulation tick, movement, and inventory clicks do not query PostgreSQL. Eve
 
 PostgreSQL money and the filesystem cannot share one transaction. Stage 2C keeps a mutable `gameplay_settlements` journal (migration `0006`) plus player `settlementReceipts` in `players.json`. Critical player writes use the same save queue as a full snapshot. Startup recovery runs after the world and plugin JSON load and before the world is READY.
 
-Auction listing create persists a pending row, then the seller inventory removal and receipt, then marks the listing active. A pending row without a receipt is discarded. A purchase uses one `AUCTION_PURCHASE` source. Postgres trade money is one net transfer on `TRADE / settlementId`, not two commits. A confirmed buyer sale and a clan fee resume from the journal if money or escrow already committed. Contradictory durable state becomes `RECOVERY_REQUIRED` and is not guessed.
+Auction listing create persists a pending row, then the seller inventory removal and receipt, then marks the listing active. A pending row without a receipt is discarded. A purchase uses one `AUCTION_PURCHASE` source. After that source commits, the listing is marked sold before the journal row is inserted, so a second buyer does not take it. Item delivery is all-or-nothing: `full` or `missing` leaves the settlement open and does not insert a partial stack.
+
+Postgres trade writes the `TRADE_SETTLEMENT` payload before either escrow receipt, then one net transfer on `TRADE / settlementId`. Recovery reads stored inventories, including offline players. A missing escrow receipt is not a second copy of that offer. A paid trade is not marked `COMPLETE` until both deliveries are `delivered` or `already`. Once final settlement starts, cancel and disconnect do not return the escrowed items.
+
+A failed buyer credit restores the stack through the inventory receipt only. The trade slot does not keep a second copy. A clan id is reserved and the clan file's counter is saved before the fee debit. Recovery uses that id and does not overwrite a different clan. Contradictory durable state becomes `RECOVERY_REQUIRED` and is not guessed.
 
 A block reward in postgres mode is credited only after a world save that was started for that break. Several breaks share one save. If the process dies before that save, no reward was committed. If the save succeeded and the process dies before the credit, that reward can be lost. That delivery is at-most-once. Ordinary blocks do not enter the barrier. The tick still does not query PostgreSQL.
 

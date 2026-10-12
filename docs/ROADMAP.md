@@ -6,6 +6,7 @@
 - [x] Auction listing escrow, purchase recovery, and claim receipts.
 - [x] Buyer sale and trade escrow. Postgres trade money is one net transfer.
 - [x] Clan creation resumes from a committed fee. Block rewards wait for a durable world save and are at-most-once across a crash.
+- [x] Follow-up: trade journal before escrow, offline delivery that can stay unresolved, frozen final trade, one owner on a failed buyer credit, all-or-nothing delivery, clan id reserved before the first await.
 - [ ] Unique item UUIDs stay a later stage. Not merged. Draft PR **#129**.
 
 ## 2026-10-11: Stage 2B follow-up — request ids, auction settlement, economy scope

@@ -21,7 +21,9 @@ class Bag implements ItemDurability {
     return this.receipts.has(receipt);
   }
   async deliver(): Promise<'delivered'> { return 'delivered'; }
-  async restore(): Promise<void> {}
+  async deliverAll(): Promise<'delivered'> { return 'delivered'; }
+  async restore(): Promise<'restored'> { return 'restored'; }
+  async restoreAll(): Promise<'restored'> { return 'restored'; }
   async dropReceipt(_playerId: string, receipt: string): Promise<void> {
     this.receipts.delete(receipt);
   }

@@ -781,6 +781,12 @@ export class AuctionService {
           listing.economySettlementId,
         );
         if (!moved.ok) return { ok: false as const, error: moved.error ?? 'Недостаточно Мегакоинов.' };
+        listing.status = 'SOLD';
+        listing.updatedAt = this.now();
+        listing.soldToPlayerId = buyerId;
+        listing.salePairId = listing.listingId;
+        this.persistListings();
+        if (this.haltAfter === 'purchase-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
         const row = existing ?? await settlements.begin({
           settlementId: listing.economySettlementId,
           kind: 'AUCTION_PURCHASE',
@@ -853,14 +859,30 @@ export class AuctionService {
         });
         await this.settlements.advance(listing.economySettlementId, 'PREPARED', 'MONEY_COMMITTED');
       }
-      await this.durability.deliver(buyerId, auctionDeliveryReceipt(listing.economySettlementId), listing.item);
-      const current = await this.settlements.get(listing.economySettlementId);
-      if (current && current.phase !== 'COMPLETE' && current.phase !== 'RECOVERY_REQUIRED' && current.phase !== 'CANCELLED') {
-        await this.settlements.advance(listing.economySettlementId, current.phase, 'COMPLETE');
-      }
+      const delivered = await this.durability.deliver(buyerId, auctionDeliveryReceipt(listing.economySettlementId), listing.item);
+      if (delivered !== 'delivered' && delivered !== 'already') continue;
+      await this.completePurchase(listing.economySettlementId);
       changed += 1;
     }
     return changed;
+  }
+
+  /** Walk a paid purchase to COMPLETE. Illegal jumps are not attempted. */
+  private async completePurchase(settlementId: string): Promise<void> {
+    const settlements = this.settlements;
+    if (!settlements) return;
+    let current = await settlements.get(settlementId);
+    const steps = [
+      ['PREPARED', 'MONEY_COMMITTED'],
+      ['ESCROW_DURABLE', 'MONEY_COMMITTED'],
+      ['MONEY_COMMITTED', 'DOMAIN_DURABLE'],
+      ['DOMAIN_DURABLE', 'COMPLETE'],
+      ['DELIVERY_DURABLE', 'COMPLETE'],
+    ] as const;
+    for (const [from, to] of steps) {
+      if (current?.phase !== from) continue;
+      current = await settlements.advance(settlementId, from, to);
+    }
   }
 
   recoverClaims(): number {

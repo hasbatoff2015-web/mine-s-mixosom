@@ -5914,26 +5914,67 @@ export class WorldInstance {
         return self.receiptsFor(playerId)?.has(receipt) ?? false;
       },
       async escrow(playerId, receipt) {
-        self.receiptsFor(playerId)?.add(receipt);
+        const receipts = self.receiptsFor(playerId);
+        if (!receipts || receipts.has(receipt)) return;
+        receipts.add(receipt);
         self.writeDurability(playerId);
-        await self.savePlayersCritical();
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          receipts.delete(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
       },
-      async deliver(playerId, receipt, stack) {
+      deliver(playerId, receipt, stack) {
+        return this.deliverAll(playerId, receipt, [stack]);
+      },
+      async deliverAll(playerId, receipt, stacks) {
         if (self.receiptsFor(playerId)?.has(receipt)) return 'already';
         const inventory = self.inventoryFor(playerId);
         if (!inventory) return 'missing';
-        if (inventory.add(cloneStack(stack)!) !== null) return 'full';
+        const before = inventory.serialize();
+        const copy = inventory.clone();
+        for (const stack of stacks) {
+          if (copy.add(cloneStack(stack)!) !== null) return 'full';
+        }
+        inventory.restore(copy.serialize());
         self.receiptsFor(playerId)?.add(receipt);
         self.writeDurability(playerId);
-        await self.savePlayersCritical();
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          inventory.restore(before);
+          self.receiptsFor(playerId)?.delete(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
         return 'delivered';
       },
-      async restore(playerId, receipt, stack) {
+      restore(playerId, receipt, stack) {
+        return this.restoreAll(playerId, receipt, [stack]);
+      },
+      async restoreAll(playerId, receipt, stacks) {
+        if (!self.receiptsFor(playerId)?.has(receipt)) return 'already';
         const inventory = self.inventoryFor(playerId);
-        inventory?.add(cloneStack(stack)!);
+        if (!inventory) return 'missing';
+        const before = inventory.serialize();
+        const copy = inventory.clone();
+        for (const stack of stacks) {
+          if (copy.add(cloneStack(stack)!) !== null) return 'full';
+        }
+        inventory.restore(copy.serialize());
         self.receiptsFor(playerId)?.delete(receipt);
         self.writeDurability(playerId);
-        await self.savePlayersCritical();
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          inventory.restore(before);
+          self.receiptsFor(playerId)?.add(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
+        return 'restored';
       },
       async dropReceipt(playerId, receipt) {
         self.receiptsFor(playerId)?.delete(receipt);
