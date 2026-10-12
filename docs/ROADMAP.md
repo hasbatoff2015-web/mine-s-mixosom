@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-10-12: Stage 3A unique item identity
+
+- [x] Collectible paintings and the God Sword carry `metadata.itemInstanceId`. Other items do not.
+- [x] Creative grants, `/give`, and Creative painting placement mint a server UUID. Moves, trades, auctions, drops, and Survival placement keep the same UUID.
+- [x] A placed painting stores `paintingInstanceId` in the existing block state. Old saves still load.
+- [ ] Ownership, location, and duplicate detection stay Stage 3B. Quantity ledgers stay Stage 3C. Not merged. Draft PR **#129**.
+
 ## 2026-10-12: Stage 2C crash consistency
 
 - [x] Migration `0006` gameplay settlement journal. Player receipts share `players.json` and the world save queue.
@@ -7,7 +14,7 @@
 - [x] Buyer sale and trade escrow. Postgres trade money is one net transfer.
 - [x] Clan creation resumes from a committed fee. Block rewards wait for a durable world save and are at-most-once across a crash.
 - [x] Follow-up: trade journal before escrow, offline delivery that can stay unresolved, frozen final trade, one owner on a failed buyer credit, all-or-nothing delivery, clan id reserved before the first await.
-- [ ] Unique item UUIDs stay a later stage. Not merged. Draft PR **#129**.
+- [x] Stage 3A now assigns instance ids to collectible paintings and the God Sword. See the section above. Stage 3B is not started. Not merged. Draft PR **#129**.
 
 ## 2026-10-11: Stage 2B follow-up — request ids, auction settlement, economy scope
 

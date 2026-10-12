@@ -10,6 +10,9 @@ import {
   cloneStack,
   createItemStack,
   createPortalChestInventory,
+  createTrackedItemInstances,
+  ensureInventoryInstanceIds,
+  ensureItemInstanceId,
   normalizePortalChestSlots,
   playerEquipmentFromInventory,
   type ItemStack,
@@ -5725,13 +5728,10 @@ export class WorldInstance {
       },
       give: (itemId: string, count: number) => {
         if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
-        const leftover = player.inventory.addItem(itemId, count);
-        const given = count - leftover;
-        player.inventoryDirty = true;
-        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        const result = instance.grantItems(player, itemId, count);
         instance.flushPlayerInventory(player);
         instance.flushBlockChanges();
-        return { given, leftover };
+        return result;
       },
       removeItem: (itemId: string, count: number) => {
         const removed = player.inventory.remove(itemId, count);
@@ -5842,6 +5842,7 @@ export class WorldInstance {
       }
     }
     this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
+    this.assignMissingItemIdentities(player);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -5932,12 +5933,72 @@ export class WorldInstance {
     return undefined;
   }
 
+  /**
+   * Ordinary resources stay on the bulk add path. Tracked items are minted
+   * one instance at a time so each copy has its own id, including overflow drops.
+   */
+  private grantItems(player: ServerPlayer, itemId: string, count: number): { given: number; leftover: number } {
+    const minted = createTrackedItemInstances(itemId, count, () => crypto.randomUUID());
+    player.inventoryDirty = true;
+    if (!minted) {
+      const leftover = player.inventory.addItem(itemId, count);
+      if (leftover > 0) this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+      return { given: count - leftover, leftover };
+    }
+    let leftover = 0;
+    for (const stack of minted) {
+      const rest = player.inventory.add(stack);
+      if (!rest) continue;
+      leftover += rest.count;
+      this.gameplay.dropFromPlayer(player, rest);
+    }
+    return { given: count - leftover, leftover };
+  }
+
+  /** One-time identity for tracked stacks loaded from older saves. */
+  private assignMissingItemIdentities(player: ServerPlayer): void {
+    const mint = () => crypto.randomUUID();
+    let changed = ensureInventoryInstanceIds(player.inventory, mint);
+    if (player.cursor) {
+      const next = ensureItemInstanceId(player.cursor, mint);
+      if (next !== player.cursor) {
+        loadCarryState(player, next);
+        changed = true;
+      }
+    }
+    for (let index = 0; index < player.craftSlots.length; index += 1) {
+      const stack = player.craftSlots[index];
+      if (!stack) continue;
+      const next = ensureItemInstanceId(stack, mint);
+      if (next === stack) continue;
+      player.craftSlots[index] = next;
+      changed = true;
+    }
+    for (let index = 0; index < player.portalChest.slots.length; index += 1) {
+      const stack = player.portalChest.slots[index];
+      if (!stack) continue;
+      const next = ensureItemInstanceId(stack, mint);
+      if (next === stack) continue;
+      player.portalChest.slots[index] = next;
+      changed = true;
+    }
+    let heldChanged = false;
+    const nextHeld = player.heldReturns.map((stack) => {
+      const next = ensureItemInstanceId(stack, mint);
+      if (next !== stack) heldChanged = true;
+      return next;
+    });
+    if (heldChanged) player.heldReturns = nextHeld;
+    if (changed || heldChanged) this.dirty = true;
+  }
+
   private retainHeldReturn(playerId: string, stack: ItemStack): boolean {
     const copy = cloneStack(stack);
     if (!copy) return false;
     const player = this.players.get(playerId);
     if (player) {
       player.heldReturns.push(copy);
+      this.dirty = true;
       return true;
     }
     const stored = this.storedPlayers[playerId];
@@ -6238,12 +6299,7 @@ export class WorldInstance {
         if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 2304) {
           return fail('Count must be an integer from 1 to 2304.');
         }
-        const leftover = player.inventory.addItem(itemId, rawCount);
-        const given = rawCount - leftover;
-        player.inventoryDirty = true;
-        if (leftover > 0) {
-          this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
-        }
+        const { given, leftover } = this.grantItems(player, itemId, rawCount);
         this.flushPlayerInventory(player);
         if (given <= 0) return fail('Could not give item: inventory is full.');
         if (leftover > 0) return ok(`Gave ${given} ${itemId} (${leftover} dropped, inventory full)`);

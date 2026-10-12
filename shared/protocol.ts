@@ -1,3 +1,4 @@
+import { isItemInstanceId } from '../src/inventory/itemInstance';
 import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
@@ -301,6 +302,8 @@ export interface NetworkBlockState {
   readonly bedPart?: 'foot' | 'head';
   readonly signRotation?: number;
   readonly paintingItemId?: string;
+  /** Server-minted physical instance. Clients cannot choose this value. */
+  readonly paintingInstanceId?: string;
 }
 
 export interface BlockChange {
@@ -2042,6 +2045,7 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
     bedPart?: 'foot' | 'head';
     signRotation?: number;
     paintingItemId?: string;
+    paintingInstanceId?: string;
   } = {};
   if (typeof raw.powered === 'boolean') state.powered = raw.powered;
   if (Number.isInteger(raw.power) && finite(raw.power)) {
@@ -2075,6 +2079,7 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
   }
   const paintingItemId = typeof raw.paintingItemId === 'string' ? raw.paintingItemId : undefined;
   if (isCollectiblePaintingItemId(paintingItemId)) state.paintingItemId = paintingItemId;
+  if (isItemInstanceId(raw.paintingInstanceId)) state.paintingInstanceId = raw.paintingInstanceId.toLowerCase();
   return Object.keys(state).length > 0 ? state : undefined;
 }
 
