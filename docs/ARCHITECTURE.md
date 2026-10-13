@@ -1,5 +1,15 @@
 # Архитектура
 
+## Donate ranks — 2026-10-13
+
+`DonationRankService` is the only timed rank store (`plugin-data/donation/ranks.json`). A player has one grant: rank, `grantedAt`, `expiresAt`, optional source, and a short history. `effectiveRank` is `default` when `expiresAt` is in the past, including for an offline player after restart. `PermissionService.setExtraNodes` adds that rank's nodes on every `has()` call. The nodes are cumulative and do not include `server.*`, `plugins.manage`, or `*`. OP still returns true before those nodes are read, so a donate rank cannot become OP.
+
+Limits are `DonationRankService.limit(player, 'homes' | 'claims' | 'auction')`. `resolveHomeLimit` still honors an older manual `home.multiple` / `home.limit.premium` role and takes the higher number. Claim creation in `/claim create` and block anchors uses the same limit and does not delete extras. `AuctionService.createListing` takes `maxActive` inside the existing player lock. The live server passes the rank limit. Callers that omit it keep `AUCTION_MAX_ACTIVE` (30), which is also the operator floor.
+
+`/ec` sets the player's window to `portal-chest` and flushes the same `player.portalChest`. `/invsee` and `/invseeop` are different window kinds. Read-only actions never call the inventory mutator. OP edits run `applyInventoryUiAction` against a copy of the target slots and write them back with `writeInvseeSlots`. A client `open` of `invsee-op` is ignored. `/tpa x y z` goes through `attemptCoordinateTeleport`; `/tpa <player>` is unchanged. `/back` applies the daily death counter only when the saved reason is `death`.
+
+Chat `nameStyle` and the nameplate read server-built prefix and color ids. The client keeps a prefix only if it is one of `[VIP]`, `[PREMIUM]`, `[BOSS]`, `[TITAN]`, `[ADMIN]`. Announcement text is sanitized before the server inserts the real name. `status()` is the future menu payload: rank, expiry, limits, commands, kit cooldowns, and nick colors. It does not grant anything.
+
 ## Water, automine reset, item throw, kits, Mega Zombie knockback — 2026-10-11
 
 `PlayerController.updateHorizontalVelocity` is still the only walk/swim cap. Water uses `WATER_MOVE_SPEED` (`PLAYER_MOVE_SPEED * 0.8`). Lava still uses `WATER_SPEED * 0.55`. `updateFluidVerticalVelocity` keeps the 0.8 water Y drag and the 0.5 lava drag. Water no longer applies that 0.8 factor to XZ, because the blend target and the per-tick drag were stacking and the settled speed was about half the cap.

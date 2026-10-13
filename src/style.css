@@ -1104,8 +1104,21 @@ textarea,
   background: #b56bff;
 }
 
+.chat-line-prefix,
 .chat-line-name {
   color: #ffe9a8;
+  font-weight: 700;
+}
+
+.chat-line-prefix {
+  margin-right: 0.25em;
+}
+
+.chat-prefix-black {
+  text-shadow: 1px 0 0 #f2f2f2, -1px 0 0 #f2f2f2, 0 1px 0 #f2f2f2, 0 -1px 0 #f2f2f2;
+}
+
+.chat-name-bold {
   font-weight: 700;
 }
 

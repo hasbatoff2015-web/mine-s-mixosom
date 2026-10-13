@@ -1,6 +1,8 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
+import { formatDurationMs } from '../../shared/donationRanks';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
+import { attemptCoordinateTeleport } from '../services/coordinateTeleport';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
@@ -10,6 +12,7 @@ const HELP = {
   commands: [
     { usage: '/tpa help', description: 'Show this help' },
     { usage: '/tpa <player>', description: 'Request to teleport to a player', permission: 'tpa.use' },
+    { usage: '/tpa <x> <y> <z>', description: 'Teleport to coordinates (TITAN, once per 24h)', permission: 'tpa.coords' },
     { usage: '/tpahere <player>', description: 'Request a player to teleport to you', permission: 'tpa.use' },
     { usage: '/tpaccept', description: 'Accept a teleport request', permission: 'tpa.accept' },
     { usage: '/tpdeny', description: 'Deny a teleport request', permission: 'tpa.accept' },
@@ -99,6 +102,33 @@ export function createTpaPlugin(ctx: BuiltinPluginContext): Plugin {
         return ok(here ? `Asked ${target.name} to teleport to you.` : `Asked ${target.name} to accept a teleport.`);
       };
 
+      const isCoordinateRequest = (args: readonly string[]): boolean => (
+        args.length >= 3 && [args[0], args[1], args[2]].every((part) => part !== undefined && /^-?\d+(?:\.\d+)?$/.test(part))
+      );
+
+      const teleportToCoordinates = (args: readonly string[], sender: { playerId: string; name: string }) => {
+        const point = { x: Number(args[0]), y: Number(args[1]), z: Number(args[2]) };
+        let failure = 'Teleport failed.';
+        const result = attemptCoordinateTeleport({
+          hasPermission: (playerId) => api.hasPermission(playerId, 'tpa.coords'),
+          isOperator: (playerId) => api.isOperator(playerId) || api.isOperator(sender.name),
+          teleport: (playerId, dest) => {
+            const moved = api.teleport(playerId, dest.x, dest.y, dest.z, 'coords', { warmupMs: 0 });
+            if (!moved.ok) failure = moved.error ?? failure;
+            return moved;
+          },
+          peekCooldown: (playerId, now) => {
+            const peek = ctx.donation.peekCooldown(playerId, 'coords', 1, now);
+            return { allowed: peek.allowed, remainingMs: peek.remainingMs };
+          },
+          consume: (playerId, now, commit) => ctx.donation.consumeIf(playerId, 'coords', 1, commit, now),
+        }, sender.playerId, point);
+        if (result.ok) return ok(`Teleported to ${point.x.toFixed(1)}, ${point.y.toFixed(1)}, ${point.z.toFixed(1)}`);
+        if (result.remainingMs) return fail(`Телепортация по координатам будет доступна через ${formatDurationMs(result.remainingMs)}.`);
+        if (result.error === 'Не удалось выполнить команду.') return fail(failure);
+        return fail(result.error);
+      };
+
       api.registerCommand({
         name: 'tpa',
         usage: '/tpa <player>',
@@ -120,6 +150,7 @@ export function createTpaPlugin(ctx: BuiltinPluginContext): Plugin {
             }
             return usageError('/tpa config set <key> <value>');
           }
+          if (isCoordinateRequest(args)) return teleportToCoordinates(args, sender);
           return requestTeleport(args, sender, 'tpa');
         },
       });

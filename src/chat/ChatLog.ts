@@ -4,6 +4,7 @@ import {
   type ChatChannel,
   type ChatMessageStyle,
 } from '../../shared/chat';
+import type { PlayerNameStyle } from '../../shared/donationRanks';
 
 export type ChatMessageKind = 'system' | 'player' | 'command' | 'death' | 'error';
 
@@ -15,6 +16,7 @@ export interface ChatMessage {
   readonly channel?: ChatChannel;
   readonly from?: string;
   readonly style?: ChatMessageStyle;
+  readonly nameStyle?: PlayerNameStyle;
 }
 
 export const CHAT_VISIBLE_MS = 8_000;
@@ -57,6 +59,7 @@ export interface ChatPushOptions {
   readonly from?: string;
   readonly id?: string;
   readonly style?: ChatMessageStyle;
+  readonly nameStyle?: PlayerNameStyle;
 }
 
 export function chatMessageMatchesTab(message: ChatMessage, tab: ChatChannel): boolean {
@@ -101,6 +104,7 @@ export class ChatLog {
         ...(options.channel ? { channel: options.channel } : {}),
         ...(options.from ? { from: options.from } : {}),
         ...(options.style ? { style: options.style } : {}),
+        ...(options.nameStyle ? { nameStyle: options.nameStyle } : {}),
       };
     }
     const message: ChatMessage = {
@@ -111,6 +115,7 @@ export class ChatLog {
       ...(options.channel ? { channel: options.channel } : {}),
       ...(options.from ? { from: options.from } : {}),
       ...(options.style ? { style: options.style } : {}),
+      ...(options.nameStyle ? { nameStyle: options.nameStyle } : {}),
     };
     this.seenIds.add(id);
     this.messages.push(message);

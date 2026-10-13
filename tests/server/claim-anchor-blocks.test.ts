@@ -391,6 +391,7 @@ describe('Anarchy claim-anchor blocks', () => {
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
     })]);
 
+    expect(world.donation.grant(ada.player.id, 'vip').ok).toBe(true);
     expect(placeAnchor(world, ada.player, x + 84, y, z + 4, BlockId.IronBlock)).toEqual({ ok: true });
     const store = loadClaims(world);
     expect(store.claims.some((claim) => claim.name === 'garden' && !claim.anchor)).toBe(true);

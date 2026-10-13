@@ -22,6 +22,7 @@ import {
 } from './remotePlayerInterpolation';
 import { PlayerChatBubble } from '../rendering/player/PlayerChatBubble';
 import { PlayerNameplate } from '../rendering/player/PlayerNameplate';
+import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -32,6 +33,16 @@ import {
 } from '../entities/humanoidDeath';
 
 export { REMOTE_INTERP_DELAY_MS };
+
+function nameplateStyleFrom(value: unknown): { prefix?: string; prefixColor?: string; nameColor?: string } | undefined {
+  const style = sanitizePlayerNameStyle(value);
+  if (!style) return undefined;
+  return {
+    ...(style.prefix ? { prefix: style.prefix } : {}),
+    ...(style.prefixColor ? { prefixColor: DONATION_COLORS[style.prefixColor] } : {}),
+    ...(style.nameColor ? { nameColor: DONATION_COLORS[style.nameColor] } : {}),
+  };
+}
 
 export interface RemotePlayerViewOptions {
   readonly visual: PlayerVisual;
@@ -106,7 +117,7 @@ export class RemotePlayerView {
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.seated = Boolean('ridingEntityId' in info && info.ridingEntityId);
-    this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
+    this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health, nameplateStyleFrom(info.nameStyle));
     this.chatBubble.clear();
     if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
@@ -173,10 +184,11 @@ export class RemotePlayerView {
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.seated = !dead && Boolean('ridingEntityId' in snapshot && snapshot.ridingEntityId);
+    const plateStyle = nameplateStyleFrom('nameStyle' in snapshot ? snapshot.nameStyle : undefined);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
-      this.nameplate.setIdentity(snapshot.name, snapshot.health);
-    } else if (snapshot.name !== this.nameplate.name) {
-      this.nameplate.setIdentity(snapshot.name, this.nameplate.health);
+      this.nameplate.setIdentity(snapshot.name, snapshot.health, plateStyle);
+    } else if (snapshot.name !== this.nameplate.name || plateStyle) {
+      this.nameplate.setIdentity(snapshot.name, this.nameplate.health, plateStyle);
     }
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }

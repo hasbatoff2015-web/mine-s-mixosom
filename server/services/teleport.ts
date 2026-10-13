@@ -8,6 +8,7 @@ import type { EventBus } from '../events';
 export type TeleportReason =
   | 'command'
   | 'tpa'
+  | 'coords'
   | 'spawn'
   | 'home'
   | 'rtp'

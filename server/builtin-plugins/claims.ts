@@ -18,7 +18,6 @@ import {
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
-  CLAIM_MAX_OWNED,
   clampClaimPriority,
   claimsAt,
   effectiveFlag,
@@ -201,6 +200,14 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
           return;
         }
         const ownerKey = keyOf({ playerId: player.id, name: player.name });
+        const owned = store.claims.filter((claim) => claim.owner === ownerKey).length;
+        const limit = bypass(player.id, player.name) ? Number.POSITIVE_INFINITY : ctx.donation.limit(player.id, 'claims');
+        if (owned >= limit) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(`You can only create ${limit} claims.`);
+          return;
+        }
         const name = allocateBlockClaimName(store, ownerKey);
         const created: Claim = {
           id: `${ownerKey}:${name}:${Date.now()}`,
@@ -305,9 +312,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
             if (!isVolumeInsidePlayableWorld(volume)) return fail(WORLD_BORDER_CLAIM_ERROR);
             const store = load();
-            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
-              && !bypass(sender.playerId, sender.name)) {
-              return fail('You can only create 4 claims.');
+            const claimLimit = bypass(sender.playerId, sender.name)
+              ? Number.POSITIVE_INFINITY
+              : ctx.donation.limit(sender.playerId, 'claims');
+            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= claimLimit) {
+              return fail(`You can only create ${claimLimit} claims.`);
             }
             if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);

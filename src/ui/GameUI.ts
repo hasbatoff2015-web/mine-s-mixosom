@@ -92,6 +92,7 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
+import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
@@ -309,7 +310,7 @@ export interface HudState {
 export interface InventoryContext {
   inventory: Inventory;
   mode: GameMode;
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
   chest?: ChestState;
   furnace?: FurnaceState;
   containerTitle?: string;
@@ -1446,9 +1447,19 @@ export class GameUI {
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
     if (message.kind === 'player' && message.from) {
+      const style = sanitizePlayerNameStyle(message.nameStyle);
+      if (style?.prefix) {
+        const prefix = document.createElement('span');
+        prefix.className = 'chat-line-prefix';
+        prefix.textContent = style.prefix;
+        if (style.prefixColor) prefix.style.color = DONATION_COLORS[style.prefixColor];
+        if (style.prefixColor === 'black') prefix.classList.add('chat-prefix-black');
+        line.append(prefix, document.createTextNode(' '));
+      }
       const name = document.createElement('span');
-      name.className = 'chat-line-name';
+      name.className = style?.bold ? 'chat-line-name chat-name-bold' : 'chat-line-name';
       name.textContent = message.from;
+      if (style?.nameColor) name.style.color = DONATION_COLORS[style.nameColor];
       const sep = document.createElement('span');
       sep.className = 'chat-line-sep';
       sep.textContent = ': ';
@@ -2532,7 +2543,10 @@ export class GameUI {
     if (isChestWindowKind(context.kind)) {
       const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
       const label = context.containerTitle
-        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest);
+        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest
+          : context.kind === 'invsee' ? 'Инвентарь'
+            : context.kind === 'invsee-op' ? 'Инвентарь (изменение)'
+              : CONTAINER_STRINGS.chest);
       return `<div class="mc-label">${label}</div>
         <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
     }

@@ -3,7 +3,8 @@ import { Inventory } from './inventory';
 import type { InventorySlotRef } from './types';
 
 /** Highest container index the UI can address. Live windows still check their own length. */
-export const MAX_CONTAINER_SLOT_INDEX = 26;
+/** 0..26 is a chest. Invsee uses 0..40 for the target inventory, armor, and offhand. */
+export const MAX_CONTAINER_SLOT_INDEX = 40;
 export const MAX_CRAFT_SLOT_INDEX = 8;
 export const MAX_CREATIVE_SLOT_INDEX = 512;
 

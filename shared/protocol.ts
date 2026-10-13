@@ -1,6 +1,7 @@
 import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
+import type { PlayerNameStyle } from './donationRanks';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
 import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
@@ -36,7 +37,7 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecte
 
 export type Vec3 = readonly [number, number, number];
 
-export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
 
 export type InventoryActionKind =
   | 'click'
@@ -77,6 +78,7 @@ export interface PlayerSnapshot {
   readonly appearance?: PlayerAppearance;
   readonly id: string;
   readonly name: string;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -202,6 +204,7 @@ export interface RemotePlayerInfo {
   readonly onFire?: boolean;
   readonly id: string;
   readonly name: string;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -998,6 +1001,8 @@ export interface ServerChatMessage {
   readonly channel?: ChatChannel;
   readonly style?: ChatMessageStyle;
   readonly messageId?: string;
+  /** Server-built prefix and nick color. Ignored unless it matches the allowlist. */
+  readonly nameStyle?: PlayerNameStyle;
 }
 
 export interface ServerErrorMessage {
@@ -1754,7 +1759,7 @@ const MAX_INVENTORY_KEYS = 80;
 const MAX_INVENTORY_SIGNATURE = 480;
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
-  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
+  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest', 'invsee', 'invsee-op',
 ];
 
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [

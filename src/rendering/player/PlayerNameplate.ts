@@ -121,6 +121,9 @@ export class PlayerNameplate {
   private readonly canvas?: HTMLCanvasElement;
   private nameValue: string;
   private healthValue: number;
+  private prefixValue = '';
+  private prefixColor = '';
+  private nameColor = '';
   private paintedKey = '';
   private invisible = false;
   private layoutWidth = NAMEPLATE_TEXT_LOGICAL_WIDTH;
@@ -170,18 +173,30 @@ export class PlayerNameplate {
   }
 
   get lines(): readonly [string, string] {
-    return nameplateLines(this.nameValue, this.healthValue);
+    const label = this.prefixValue ? `${this.prefixValue} ${this.nameValue}` : this.nameValue;
+    return nameplateLines(label, this.healthValue);
   }
 
   get logicalCanvasWidth(): number {
     return this.layoutWidth;
   }
 
-  setIdentity(name: string, health: number): boolean {
+  setIdentity(
+    name: string,
+    health: number,
+    style?: { readonly prefix?: string; readonly prefixColor?: string; readonly nameColor?: string },
+  ): boolean {
     const nextHealth = Math.max(0, health);
-    const changed = name !== this.nameValue || nextHealth !== this.healthValue;
+    const prefix = style?.prefix ?? '';
+    const prefixColor = style?.prefixColor ?? '';
+    const nameColor = style?.nameColor ?? '';
+    const changed = name !== this.nameValue || nextHealth !== this.healthValue
+      || prefix !== this.prefixValue || prefixColor !== this.prefixColor || nameColor !== this.nameColor;
     this.nameValue = name;
     this.healthValue = nextHealth;
+    this.prefixValue = prefix;
+    this.prefixColor = prefixColor;
+    this.nameColor = nameColor;
     if (changed) this.paint();
     return changed;
   }
@@ -225,7 +240,7 @@ export class PlayerNameplate {
       healthWidth = measuredLineWidth(context, health, NAMEPLATE_HEALTH_FONT_PX);
     }
     const layout = nameplateTextLayout(this.nameValue, this.healthValue, { nameWidth, healthWidth });
-    const key = `${name}|${health}|${scale}|${layout.logicalWidth}`;
+    const key = `${name}|${health}|${this.prefixColor}|${this.nameColor}|${scale}|${layout.logicalWidth}`;
     if (this.paintedKey === key) return;
     this.paintedKey = key;
     this.layoutWidth = layout.logicalWidth;
@@ -244,14 +259,18 @@ export class PlayerNameplate {
     context.textBaseline = 'middle';
     context.lineJoin = 'round';
     const step = NAMEPLATE_TEXT_LOGICAL_HEIGHT / 3;
-    this.strokeFill(
-      context,
-      name,
-      layout.logicalWidth / 2,
-      step,
-      nameFont,
-      NAMEPLATE_NAME_COLOR,
-    );
+    if (this.prefixValue) {
+      this.paintDecoratedName(context, layout.logicalWidth / 2, step, nameFont);
+    } else {
+      this.strokeFill(
+        context,
+        name,
+        layout.logicalWidth / 2,
+        step,
+        nameFont,
+        this.nameColor || NAMEPLATE_NAME_COLOR,
+      );
+    }
     this.strokeFill(
       context,
       health,
@@ -261,6 +280,28 @@ export class PlayerNameplate {
       NAMEPLATE_HEALTH_COLOR,
     );
     this.texture.needsUpdate = true;
+  }
+
+  private paintDecoratedName(
+    context: CanvasRenderingContext2D,
+    centerX: number,
+    y: number,
+    font: string,
+  ): void {
+    const prefix = this.prefixValue;
+    const gap = ' ';
+    const nick = this.nameValue;
+    context.font = font;
+    const prefixWidth = measuredLineWidth(context, prefix, NAMEPLATE_NAME_FONT_PX);
+    const gapWidth = measuredLineWidth(context, gap, NAMEPLATE_NAME_FONT_PX);
+    const nickWidth = measuredLineWidth(context, nick, NAMEPLATE_NAME_FONT_PX);
+    const total = prefixWidth + gapWidth + nickWidth;
+    let x = centerX - total / 2;
+    context.textAlign = 'left';
+    this.strokeFill(context, prefix, x, y, font, this.prefixColor || NAMEPLATE_NAME_COLOR);
+    x += prefixWidth + gapWidth;
+    this.strokeFill(context, nick, x, y, font, this.nameColor || NAMEPLATE_NAME_COLOR);
+    context.textAlign = 'center';
   }
 
   private strokeFill(
