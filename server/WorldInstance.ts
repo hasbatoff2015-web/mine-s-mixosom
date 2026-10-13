@@ -694,6 +694,11 @@ export class WorldInstance {
   private adminBansLoaded = false;
   /** PostgreSQL bans are loaded. JSON mode does not use this gate. */
   private adminBansReady = false;
+  /** Newest applied observation time per canonical player id. Older reads are ignored. */
+  private banStamp = new Map<string, number>();
+  private banFloor = 0;
+  private banInflight = new Map<string, number>();
+  private banUnsynced = new Set<string>();
   private adminRecheckBusy = false;
   private adminRecheckAt = 0;
   private identityLogLoaded = false;
@@ -1372,16 +1377,43 @@ export class WorldInstance {
 
   isPlayerBanned(playerId: string): boolean {
     if (this.database.enabled && !this.adminBansReady) return true;
+    if (this.banBlocked(playerId)) return true;
+    return this.storedBan(playerId);
+  }
+
+  /** Cache only. In-flight reconciliation does not change this answer. */
+  storedBan(playerId: string): boolean {
     this.ensureAdminBans();
     return this.adminBans.has(playerId);
   }
 
   banView(playerId: string): { readonly banned: boolean; readonly reason?: string } {
     if (this.database.enabled && !this.adminBansReady) return { banned: true, reason: 'Состояние банов не загружено.' };
+    if (this.banBlocked(playerId)) return { banned: true, reason: 'Состояние бана обновляется.' };
     this.ensureAdminBans();
-    const row = this.adminBans.list().find((ban) => ban.playerId === playerId);
+    const row = this.adminBans.get(playerId);
     if (!row) return { banned: false };
     return { banned: true, reason: row.reason };
+  }
+
+  beginBanSync(playerId: string): void {
+    const id = canonicalPlayerId(playerId);
+    this.banInflight.set(id, (this.banInflight.get(id) ?? 0) + 1);
+  }
+
+  endBanSync(playerId: string): void {
+    const id = canonicalPlayerId(playerId);
+    const next = (this.banInflight.get(id) ?? 1) - 1;
+    if (next <= 0) this.banInflight.delete(id);
+    else this.banInflight.set(id, next);
+  }
+
+  markBanUnsynced(playerId: string): void {
+    this.banUnsynced.add(canonicalPlayerId(playerId));
+  }
+
+  clearBanUnsynced(playerId: string): void {
+    this.banUnsynced.delete(canonicalPlayerId(playerId));
   }
 
   /**
@@ -1404,25 +1436,50 @@ export class WorldInstance {
   }
 
   /** Replace the in-memory index from a committed database read. */
-  replaceBanCache(rows: readonly AdminBanRecord[]): void {
+  replaceBanCache(rows: readonly AdminBanRecord[], observedAt: Date = new Date(0)): void {
+    const stamp = observedAt.getTime();
+    this.banFloor = stamp;
+    this.banStamp.clear();
     this.adminBans.load({ version: 1, bans: rows });
+    for (const row of this.adminBans.list()) this.banStamp.set(row.playerId, stamp);
     this.adminBansLoaded = true;
     this.adminBansReady = true;
   }
 
-  syncBanCache(playerId: string, row: { banned: boolean; reason: string; adminId: string } | null): void {
+  /**
+   * Apply one player's committed row. A snapshot older than the last applied
+   * observation is ignored, so a delayed read cannot undo a newer result.
+   */
+  syncBanCache(playerId: string, row: {
+    banned: boolean;
+    reason: string;
+    adminId: string;
+    observedAt?: Date;
+  } | null): boolean {
+    const id = canonicalPlayerId(playerId);
+    const observedMs = row?.observedAt?.getTime() ?? Date.now();
+    const prev = Math.max(this.banStamp.get(id) ?? 0, this.banFloor);
+    if (observedMs < prev) return false;
+    this.banStamp.set(id, observedMs);
     this.adminBansLoaded = true;
     this.adminBansReady = true;
     if (!row?.banned) {
-      this.adminBans.remove(playerId);
-      return;
+      this.adminBans.remove(id);
+      return true;
     }
     this.adminBans.add({
-      playerId,
+      playerId: id,
       reason: row.reason,
       adminId: row.adminId,
-      at: Date.now(),
+      at: observedMs,
     });
+    return true;
+  }
+
+  private banBlocked(playerId: string): boolean {
+    if (!isPlayerId(playerId)) return false;
+    const id = canonicalPlayerId(playerId);
+    return this.banInflight.has(id) || this.banUnsynced.has(id);
   }
 
   peekAdminConnection(playerId: string): string | undefined {

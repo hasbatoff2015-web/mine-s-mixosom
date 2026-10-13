@@ -215,6 +215,128 @@ describe.skipIf(databaseUrl === '')('stage 5 moderation durability', () => {
     expect(next.player.connected).toBe(true);
   });
 
+  it('replays a committed kick after the player is offline and leaves a new connection', async () => {
+    const database = open(await makeSchema());
+    const world = await boot(database);
+    const joined = world.join({ sink: new MemorySink(), name: 'Eve' });
+    if ('error' in joined) throw new Error(joined.error);
+    const host = new AdminPanelHost(world, () => undefined, database, 'stage5-mod');
+    const requestId = randomUUID();
+    const first = await host.kick('admin-owner', joined.player.id, 'спам', requestId);
+    expect(first).toMatchObject({ replayed: false, closed: true });
+    expect(joined.player.connected).toBe(false);
+    const replay = await host.kick('admin-owner', joined.player.id, 'спам', requestId);
+    expect(replay).toMatchObject({ ok: true, replayed: true, closed: false });
+    const next = world.join({ sink: new MemorySink(), name: 'Eve', sessionToken: joined.player.sessionToken });
+    if ('error' in next) throw new Error(next.error);
+    const again = await host.kick('admin-owner', joined.player.id, 'спам', requestId);
+    expect(again).toMatchObject({ replayed: true, closed: false });
+    expect(next.player.connected).toBe(true);
+    await expect(host.kick('admin-owner', joined.player.id, 'другая причина', requestId)).rejects.toMatchObject({ status: 409 });
+    const other = world.join({ sink: new MemorySink(), name: 'Other' });
+    if ('error' in other) throw new Error(other.error);
+    await expect(host.kick('admin-owner', other.player.id, 'спам', requestId)).rejects.toMatchObject({ status: 409 });
+    expect(other.player.connected).toBe(true);
+    await expect(host.kick('admin-owner', randomUUID(), 'спам', randomUUID())).rejects.toMatchObject({ code: 'offline' });
+  });
+
+  it('keeps the cache on the newer ban when an older read finishes last', async () => {
+    const database = open(await makeSchema());
+    const world = await boot(database);
+    const joined = world.join({ sink: new MemorySink(), name: 'Fay' });
+    if ('error' in joined) throw new Error(joined.error);
+    const host = new AdminPanelHost(world, () => undefined, database, 'stage5-mod');
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let paused = false;
+    host.syncBarrier = async () => {
+      if (paused) return;
+      paused = true;
+      await gate;
+    };
+    const first = host.ban('admin-owner', joined.player.id, 'первый', randomUUID());
+    for (let i = 0; i < 50 && !paused; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(paused).toBe(true);
+    host.syncBarrier = null;
+    const second = await host.unban('admin-colleague', joined.player.id, 'второй', randomUUID());
+    expect(second).toMatchObject({ banned: false });
+    release?.();
+    const finished = await first;
+    expect(finished.banned).toBe(false);
+    expect(world.isPlayerBanned(joined.player.id)).toBe(false);
+    const row = await readBan(database, 'stage5-mod', 'own', joined.player.id);
+    expect(row?.banned).toBe(false);
+    expect(world.banView(joined.player.id).banned).toBe(false);
+  });
+
+  it('does not let a stale unban clear a newer ban', async () => {
+    const database = open(await makeSchema());
+    const world = await boot(database);
+    const joined = world.join({ sink: new MemorySink(), name: 'Gia' });
+    if ('error' in joined) throw new Error(joined.error);
+    const host = new AdminPanelHost(world, () => undefined, database, 'stage5-mod');
+    await host.ban('admin-owner', joined.player.id, 'держит', randomUUID());
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    host.syncBarrier = async () => { await gate; };
+    let waiting = false;
+    host.syncBarrier = async () => {
+      waiting = true;
+      await gate;
+    };
+    const unban = host.unban('admin-colleague', joined.player.id, 'рано', randomUUID());
+    for (let i = 0; i < 50 && !waiting; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(waiting).toBe(true);
+    host.syncBarrier = null;
+    await host.ban('admin-owner', joined.player.id, 'позже', randomUUID());
+    expect(world.isPlayerBanned(joined.player.id)).toBe(true);
+    release?.();
+    await unban;
+    expect(world.isPlayerBanned(joined.player.id)).toBe(true);
+    expect((await readBan(database, 'stage5-mod', 'own', joined.player.id))?.banned).toBe(true);
+  });
+
+  it('stays closed when the post-commit read fails and a retry restores the cache', async () => {
+    const database = open(await makeSchema());
+    const world = await boot(database);
+    const joined = world.join({ sink: new MemorySink(), name: 'Hua' });
+    if ('error' in joined) throw new Error(joined.error);
+    const host = new AdminPanelHost(world, () => undefined, database, 'stage5-mod');
+    const requestId = randomUUID();
+    host.fetchBan = async () => { throw new Error('read failed'); };
+    await expect(host.ban('admin-owner', joined.player.id, 'закрыть', requestId)).rejects.toMatchObject({ status: 503 });
+    expect(joined.player.connected).toBe(false);
+    world.syncBanCache(joined.player.id, null);
+    expect(world.isPlayerBanned(joined.player.id)).toBe(true);
+    const denied = world.join({ sink: new MemorySink(), name: 'Hua', sessionToken: joined.player.sessionToken });
+    expect(denied).toEqual({ error: 'banned' });
+    host.fetchBan = readBan;
+    const restored = await host.ban('admin-owner', joined.player.id, 'закрыть', requestId);
+    expect(restored).toMatchObject({ replayed: true, banned: true });
+    expect(world.banView(joined.player.id).reason).toBe('закрыть');
+  });
+
+  it('loads more than 500 active bans after restart', async () => {
+    const schema = await makeSchema();
+    const database = open(schema);
+    const dir = await mkdtemp(join(tmpdir(), 'fc-mod-'));
+    const world = await boot(database, dir);
+    const ids = Array.from({ length: 501 }, () => randomUUID());
+    for (const playerId of ids) {
+      await database.query(
+        `INSERT INTO admin_player_bans (
+          deployment_id, world_id, player_id, banned, reason, admin_id
+        ) VALUES ('stage5-mod', 'own', $1, true, 'много', 'admin-owner')`,
+        [playerId],
+      );
+    }
+    await world.stop();
+    const restarted = await boot(open(schema), dir);
+    expect(restarted.isPlayerBanned(ids[0]!)).toBe(true);
+    expect(restarted.isPlayerBanned(ids[500]!)).toBe(true);
+    expect(restarted.banView(ids[250]!).banned).toBe(true);
+  });
+
   it('keeps two admins on the committed ban row', async () => {
     const database = open(await makeSchema());
     const world = await boot(database);

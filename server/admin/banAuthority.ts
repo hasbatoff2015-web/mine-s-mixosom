@@ -4,9 +4,12 @@ export const SELECT_ACTIVE_BANS_SQL = `SELECT player_id, reason, admin_id
 FROM admin_player_bans
 WHERE deployment_id = $1 AND world_id = $2 AND banned = true`;
 
-export const SELECT_BAN_SQL = `SELECT banned, reason, admin_id
-FROM admin_player_bans
-WHERE deployment_id = $1 AND world_id = $2 AND player_id = $3`;
+export const SELECT_BAN_SQL = `SELECT b.banned, b.reason, b.admin_id, clock.observed_at
+FROM (SELECT clock_timestamp() AS observed_at) AS clock
+LEFT JOIN admin_player_bans b
+  ON b.deployment_id = $1 AND b.world_id = $2 AND b.player_id = $3`;
+
+export const SELECT_BAN_CLOCK_SQL = `SELECT clock_timestamp() AS observed_at`;
 
 export const UPSERT_BAN_SQL = `INSERT INTO admin_player_bans (
   deployment_id, world_id, player_id, banned, reason, admin_id, updated_at
@@ -31,6 +34,7 @@ export interface BanRow {
   readonly reason: string;
   readonly adminId: string;
   readonly banned: boolean;
+  readonly observedAt: Date;
 }
 
 export async function listActiveBans(
@@ -47,6 +51,7 @@ export async function listActiveBans(
     reason: row.reason,
     adminId: row.admin_id,
     banned: true,
+    observedAt: new Date(0),
   }));
 }
 
@@ -56,17 +61,24 @@ export async function readBan(
   worldId: string,
   playerId: string,
 ): Promise<BanRow | null> {
-  const found = await db.query<{ banned: boolean; reason: string; admin_id: string }>(
-    SELECT_BAN_SQL,
-    [deploymentId, worldId, playerId],
-  );
+  const found = await db.query<{
+    banned: boolean | null;
+    reason: string | null;
+    admin_id: string | null;
+    observed_at: Date | string;
+  }>(SELECT_BAN_SQL, [deploymentId, worldId, playerId]);
   const row = found.rows[0];
   if (!row) return null;
+  const observedAt = row.observed_at instanceof Date ? row.observed_at : new Date(row.observed_at);
+  if (row.banned == null) {
+    return { playerId, reason: '', adminId: '', banned: false, observedAt };
+  }
   return {
     playerId,
-    reason: row.reason,
-    adminId: row.admin_id,
+    reason: row.reason ?? '',
+    adminId: row.admin_id ?? '',
     banned: row.banned === true,
+    observedAt,
   };
 }
 

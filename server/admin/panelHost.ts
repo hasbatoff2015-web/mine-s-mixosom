@@ -9,7 +9,7 @@ import { PostgresGameplayEconomy } from '../economy/postgresAuthority';
 import { serverLog } from '../log';
 import { ECONOMY_MAX_BALANCE } from '../services/economy';
 import { isPlayerId } from '../services/permissionSubject';
-import { clearBan, readBan, upsertBan } from './banAuthority';
+import { clearBan, readBan, upsertBan, type BanRow } from './banAuthority';
 import type { WorldInstance } from '../WorldInstance';
 
 export interface AdminPanelApi {
@@ -61,6 +61,15 @@ export class AdminPanelHost {
       this.actions = null;
     }
   }
+
+  /** Tests change the connection after it is captured and before commit. */
+  onKickCaptured: ((playerId: string, connectionId: string) => void) | null = null;
+
+  /** Tests pause after the authoritative read and before the cache write. */
+  syncBarrier: ((playerId: string, row: BanRow | null) => Promise<void>) | null = null;
+
+  /** Tests replace the post-commit read. Production uses `readBan`. */
+  fetchBan: typeof readBan = readBan;
 
   overview(): {
     readonly serverMode: string;
@@ -156,13 +165,16 @@ export class AdminPanelHost {
     if (!isPlayerId(playerId)) throw new PanelHttpError(400, 'invalid request');
     const actions = this.actions;
     if (!actions) throw new PanelHttpError(503, 'postgres-required');
-    const connectionId = this.world.peekAdminConnection(playerId);
-    if (!connectionId) throw new PanelHttpError(409, 'offline');
     let committed: { readonly value: { connectionId: string }; readonly replayed: boolean };
     try {
       committed = await actions.commit(
         this.request(adminId, 'player_kick', 'player', playerId, reason, requestId),
-        async () => ({ connectionId }),
+        async () => {
+          const connectionId = this.world.peekAdminConnection(playerId);
+          if (!connectionId) throw new AdminActionValidationError('offline');
+          this.onKickCaptured?.(playerId, connectionId);
+          return { connectionId };
+        },
       );
     } catch (error) {
       throw this.fail(error);
@@ -238,6 +250,8 @@ export class AdminPanelHost {
     const deploymentId = this.auditLog?.deploymentId;
     if (!deploymentId) throw new PanelHttpError(503, 'postgres-required');
     const scope = { deploymentId, worldId: this.world.worldId, playerId, reason, adminId };
+    this.world.beginBanSync(playerId);
+    let committedOk = false;
     let replayed = false;
     try {
       const committed = await actions.commit(this.request(
@@ -253,24 +267,47 @@ export class AdminPanelHost {
         else if (!await clearBan(tx, scope)) throw new AdminActionValidationError('not-banned');
         return { ban };
       });
+      committedOk = true;
       replayed = committed.replayed;
-    } catch (error) {
-      throw this.fail(error);
-    }
-    const current = await readBan(this.world.database, deploymentId, this.world.worldId, playerId);
-    this.world.syncBanCache(playerId, current);
-    let closed = false;
-    if (!replayed && current?.banned) {
-      const connectionId = this.world.peekAdminConnection(playerId);
-      if (connectionId) {
-        const delivery = this.world.disconnectAdminConnection(playerId, connectionId);
-        if (delivery === 'closed') {
-          this.closeConnection(playerId, connectionId);
-          closed = true;
+      const current = await this.fetchBan(this.world.database, deploymentId, this.world.worldId, playerId);
+      if (this.syncBarrier) await this.syncBarrier(playerId, current);
+      const applied = this.world.syncBanCache(playerId, current);
+      this.world.clearBanUnsynced(playerId);
+      this.world.endBanSync(playerId);
+      let closed = false;
+      if (!replayed && applied && current?.banned) {
+        const connectionId = this.world.peekAdminConnection(playerId);
+        if (connectionId) {
+          const delivery = this.world.disconnectAdminConnection(playerId, connectionId);
+          if (delivery === 'closed') {
+            this.closeConnection(playerId, connectionId);
+            closed = true;
+          }
         }
       }
+      return {
+        ok: true as const,
+        replayed,
+        banned: this.world.storedBan(playerId),
+        closed,
+      };
+    } catch (error) {
+      if (!committedOk) this.world.endBanSync(playerId);
+      else {
+        this.world.markBanUnsynced(playerId);
+        this.world.endBanSync(playerId);
+        if (!replayed && ban) this.disconnectOnline(playerId);
+      }
+      throw this.fail(error);
     }
-    return { ok: true as const, replayed, banned: current?.banned === true, closed };
+  }
+
+  private disconnectOnline(playerId: string): void {
+    const connectionId = this.world.peekAdminConnection(playerId);
+    if (!connectionId) return;
+    if (this.world.disconnectAdminConnection(playerId, connectionId) === 'closed') {
+      this.closeConnection(playerId, connectionId);
+    }
   }
 
   private request(
@@ -303,7 +340,9 @@ export class AdminPanelHost {
 
   private fail(error: unknown): PanelHttpError {
     if (error instanceof PanelHttpError) return error;
-    if (error instanceof AdminActionValidationError) return new PanelHttpError(409, 'rejected');
+    if (error instanceof AdminActionValidationError) {
+      return new PanelHttpError(409, error.message === 'offline' ? 'offline' : 'rejected');
+    }
     if (error instanceof EconomyValidationError) return new PanelHttpError(400, 'invalid request');
     if (error instanceof IdempotencyConflictError) return new PanelHttpError(409, 'conflict');
     if (error instanceof DatabaseDisabledError) return new PanelHttpError(503, 'postgres-required');
