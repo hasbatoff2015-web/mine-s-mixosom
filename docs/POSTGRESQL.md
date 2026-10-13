@@ -97,7 +97,7 @@ Changing the nickname updates `economy_accounts.display_name` and `updated_at` o
 
 `npm run economy:import` requires `--scope anarchy|survival|peaceful`. `--dry-run --file balances.json --scope anarchy` prints deployment, scope, player count, total, min, max, invalid rows, duplicates, and the expected total, and writes nothing. `--apply` also requires `--batch <uuid>` and writes only that scope. The same batch does not apply twice inside the scope. It is not invoked on startup. It does not import into `legacy_global`.
 
-The simulation tick, movement, and inventory clicks do not query PostgreSQL. Event rewards are tracked promises. `track` consumes a rejection before the promise is stored, so a failed background reward is logged without database text and does not become an unhandled rejection. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool.
+The simulation tick, movement, and inventory clicks do not query PostgreSQL. Admin login does not query it either. Sessions for the private admin listener stay in process memory. Event rewards are tracked promises. `track` consumes a rejection before the promise is stored, so a failed background reward is logged without database text and does not become an unhandled rejection. `WorldInstance.stop()` waits up to five seconds for those promises before closing the pool.
 
 PostgreSQL money and the filesystem cannot share one transaction. Stage 2C keeps a mutable `gameplay_settlements` journal (migration `0006`) plus player `settlementReceipts` in `players.json`. Critical player writes use the same save queue as a full snapshot. Startup recovery runs after the world and plugin JSON load and before the world is READY.
 

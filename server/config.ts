@@ -1,3 +1,4 @@
+import { parseAdminAuthHashes, type AdminCredential } from './admin/credentials';
 import { ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import {
   DEFAULT_CHUNK_VIEW_RADIUS,
@@ -49,6 +50,11 @@ export interface ServerConfig {
   readonly economy: EconomyBackendConfig;
   /** Exactly two equal admin ids, or disabled when FC_ADMIN_IDS is blank. */
   readonly adminIdentity: AdminIdentityConfig;
+  /**
+   * Private loopback admin HTTP. Disabled when FC_ADMIN_PORT is blank.
+   * The public gameplay listener never serves these routes.
+   */
+  readonly adminHttp: AdminHttpConfig;
 }
 
 export type EconomyBackendConfig =
@@ -82,6 +88,41 @@ const ADMIN_ID = DEPLOYMENT_ID;
 export type AdminIdentityConfig =
   | { readonly enabled: false }
   | { readonly enabled: true; readonly ids: readonly [string, string] };
+
+export type AdminHttpConfig =
+  | { readonly enabled: false }
+  | {
+    readonly enabled: true;
+    readonly port: number;
+    readonly credentials: readonly [AdminCredential, AdminCredential];
+  };
+
+/**
+ * No port means no admin listener. A port requires both admin ids and two
+ * unique SHA-256 credential digests. The listener still binds 127.0.0.1 only.
+ */
+export function loadAdminHttpConfig(env: NodeJS.ProcessEnv, identity: AdminIdentityConfig): AdminHttpConfig {
+  const rawPort = env.FC_ADMIN_PORT;
+  if (rawPort === undefined || rawPort.trim() === '') return { enabled: false };
+  if (!identity.enabled) {
+    throw new Error('FC_ADMIN_PORT requires FC_ADMIN_IDS with exactly two different ids.');
+  }
+  const portText = rawPort.trim();
+  if (!/^[0-9]+$/.test(portText)) throw new Error('FC_ADMIN_PORT must be an integer from 1 to 65535.');
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('FC_ADMIN_PORT must be an integer from 1 to 65535.');
+  }
+  const rawHashes = env.FC_ADMIN_AUTH_HASHES;
+  if (rawHashes === undefined || rawHashes.trim() === '') {
+    throw new Error('FC_ADMIN_PORT requires FC_ADMIN_AUTH_HASHES for both admin ids.');
+  }
+  return {
+    enabled: true,
+    port,
+    credentials: parseAdminAuthHashes(rawHashes.trim(), identity.ids),
+  };
+}
 
 /**
  * Blank disables admin writes. A present value must be exactly two distinct ids.
@@ -180,6 +221,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
   const explicitWorld = env.WORLD || env.FC_WORLD;
   const worldId = (explicitWorld?.trim() || serverMode || DEFAULT_WORLD_ID).trim() || DEFAULT_WORLD_ID;
   const dataDir = env.WORLD_PATH || env.FC_WORLD_PATH || `${cwd}/server/data/worlds`;
+  const adminIdentity = loadAdminIdentityConfig(env);
   return {
     host,
     port: integerEnv(env, 'PORT', integerEnv(env, 'FC_PORT', DEFAULT_SERVER_PORT, 0, 65535), 0, 65535),
@@ -201,7 +243,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
     database: loadDatabaseConfig(env),
     economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
-    adminIdentity: loadAdminIdentityConfig(env),
+    adminIdentity,
+    adminHttp: loadAdminHttpConfig(env, adminIdentity),
   };
 }
 

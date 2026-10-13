@@ -3,8 +3,9 @@ import { AdminControlDisabledError, AdminIdentityError } from './errors';
 
 /**
  * Exactly two equal administrators. This is not PermissionService, `/op`,
- * or FC_OPERATORS. Future authentication maps a credential onto one of these ids.
- * There is no rank, level, or partial permission between them.
+ * or FC_OPERATORS. It checks an id that the private admin HTTP server already
+ * resolved from a credential or a server-owned session. A client-supplied
+ * adminId is not authentication. There is no rank between the two ids.
  */
 export class AdminIdentityPolicy {
   private readonly allowed: ReadonlySet<string>;

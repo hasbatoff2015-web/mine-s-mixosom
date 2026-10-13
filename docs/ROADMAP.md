@@ -1,12 +1,28 @@
 # Roadmap
 
+## 2026-10-13: упрощённый план админки
+
+Дальше только маленький контур для двух равных администраторов. Не делаем IAM, роли модераторов, автобаны, графы расследований, живой межмирный реестр предметов, движок отката и отдельные сервисы.
+
+- [x] Stage 4: закрытый вход двух равных администраторов. Слушатель только на `127.0.0.1`, личные токены, короткие сессии. Панели ещё нет. Draft PR **#129**.
+- [ ] Stage 5: маленькая панель — игроки, экономика, антидюп, важные события, статус сервера.
+- [ ] Stage 6: ежедневные бэкапы VPS, снимок PostgreSQL и мира, 14 последних копий на VPS, ручное скачивание на компьютер владельца, проверка восстановления, производительность, ручной QA игры и админки.
+
+## 2026-10-13: Stage 4 private admin access
+
+- [x] `FC_ADMIN_IDS` stays exactly two equal ids. Each id has its own high-entropy token. The server stores SHA-256 digests.
+- [x] Admin HTTP binds `127.0.0.1` only when `FC_ADMIN_PORT` is set. The public gameplay listener does not grow admin routes.
+- [x] Sessions are memory-only, HttpOnly, SameSite=Strict, idle 30 minutes, absolute 8 hours. Logout requires Origin and a session CSRF token.
+- [x] Read API is login, logout, `/admin/api/me`, and the existing player inspection. No admin writes.
+- [ ] The admin panel is Stage 5. Backups are Stage 6. Not merged. Draft PR **#129**.
+
 ## 2026-10-12: Stage 3C valuable resource quantities
 
 - [x] Diamond, gold ingot, ruby ingot, titanium ingot, and iron ingot quantities are counted from the same physical holders as Stage 3B.
 - [x] The first observation is a baseline. Mining, grants, Creative, boss loot, event-chest loot, smelting, and crafting explain later changes.
 - [x] Transfers, auction delivery, trade, and settlement return do not mint. An unexplained increase is stored and does not delete items.
 - [x] A refused craft, a partial Shift-craft, a cancelled block drop, and a recovered buyer sale match the committed quantities.
-- [ ] Admin login and the admin panel stay later. Not merged. Draft PR **#129**.
+- [x] Admin login is Stage 4, in the section above. The admin panel stays Stage 5. Not merged. Draft PR **#129**.
 
 ## 2026-10-12: Stage 3B unique item locations
 

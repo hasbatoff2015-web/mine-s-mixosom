@@ -14,6 +14,7 @@ import {
   type ServerWelcomeMessage,
 } from '../shared/protocol';
 import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
+import { AdminHttpServer } from './admin/http';
 import type { ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
@@ -45,6 +46,7 @@ export class AnarchyServer {
   readonly world: WorldInstance;
   private http?: HttpServer;
   private wss?: WebSocketServer;
+  private adminHttp?: AdminHttpServer;
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
 
@@ -54,6 +56,11 @@ export class AnarchyServer {
 
   get port(): number {
     return this.listeningPort;
+  }
+
+  /** Loopback admin listener, or 0 when admin HTTP is off or already stopped. */
+  get adminPort(): number {
+    return this.adminHttp?.port ?? 0;
   }
 
   get host(): string {
@@ -69,6 +76,18 @@ export class AnarchyServer {
   }
 
   async start(): Promise<void> {
+    // Bind admin HTTP before the world loads. A failed admin port must not
+    // create a snapshot, and it must not fall back onto the public listener.
+    await this.openAdminHttp();
+    try {
+      await this.startWorld();
+    } catch (error) {
+      await this.closeAdminHttp();
+      throw error;
+    }
+  }
+
+  private async startWorld(): Promise<void> {
     await this.world.initialize();
     await this.world.loadPlugins();
     await this.world.plugins.enableAll();
@@ -117,6 +136,7 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
+    await this.closeAdminHttp();
     this.world.prepareForServerShutdown();
     const seen = new Set<string>();
     for (const [socket, binding] of this.sockets) {
@@ -137,6 +157,35 @@ export class AnarchyServer {
       if (!this.http) resolve();
     });
     serverLog('stopped');
+  }
+
+  private async openAdminHttp(): Promise<void> {
+    const admin = this.config.adminHttp;
+    if (!admin.enabled) return;
+    const listener = new AdminHttpServer({
+      port: admin.port,
+      credentials: admin.credentials,
+      inspect: (adminId, playerId) => this.world.inspectPlayer(adminId, playerId),
+      describe: () => ({
+        serverMode: this.config.serverMode,
+        worldId: this.config.worldId,
+      }),
+    });
+    this.adminHttp = listener;
+    try {
+      await listener.start();
+    } catch (error) {
+      this.adminHttp = undefined;
+      await listener.stop();
+      throw error;
+    }
+    serverLog(`admin http: 127.0.0.1:${listener.port}`);
+  }
+
+  private async closeAdminHttp(): Promise<void> {
+    const listener = this.adminHttp;
+    this.adminHttp = undefined;
+    await listener?.stop();
   }
 
   private handleHttp(req: IncomingMessage, res: ServerResponse): void {
