@@ -40,7 +40,7 @@ export function assignPortalChestSlots(target: PortalChestInventory, raw: unknow
 }
 
 export function isChestWindowKind(kind: ContainerKind | undefined): boolean {
-  return kind === 'chest' || kind === 'portal-chest';
+  return kind === 'chest' || kind === 'portal-chest' || kind === 'invsee' || kind === 'invsee-op';
 }
 
 export function isChestLikeBlock(block: BlockId): boolean {

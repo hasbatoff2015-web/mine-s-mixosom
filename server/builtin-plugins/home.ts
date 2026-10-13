@@ -8,6 +8,7 @@ import {
   HOME_MAX_PREMIUM,
   HOME_MAX_VIP,
   HOME_MISSING_ERROR,
+  resolveHomeLimit,
   validateHomeName,
 } from '../../shared/homes';
 import {
@@ -40,17 +41,20 @@ const SCHEMA = {
   cancelOnDamage: { type: 'boolean' as const, description: 'Cancel on damage' },
 };
 
-export function maxHomesFor(api: ServerAPI, playerId: string): number {
+export function maxHomesFor(api: ServerAPI, playerId: string, donationLimit = HOME_MAX_DEFAULT): number {
   const def = Number(api.getConfig('maxHomesDefault', HOME_MAX_DEFAULT));
   const vip = Number(api.getConfig('maxHomesVip', HOME_MAX_VIP));
   const premium = Number(api.getConfig('maxHomesPremium', HOME_MAX_PREMIUM));
-  if (api.isOperator(playerId) || api.hasPermission(playerId, 'home.*')) {
-    return Math.max(premium, vip, def);
-  }
-  let max = def;
-  if (api.hasPermission(playerId, 'home.multiple')) max = Math.max(max, vip);
-  if (api.hasPermission(playerId, 'home.limit.premium')) max = Math.max(max, premium);
-  return max;
+  return resolveHomeLimit({
+    donation: donationLimit,
+    operator: api.isOperator(playerId),
+    wildcard: api.hasPermission(playerId, 'home.*'),
+    multiple: api.hasPermission(playerId, 'home.multiple'),
+    premiumNode: api.hasPermission(playerId, 'home.limit.premium'),
+    configuredDefault: def,
+    configuredVip: vip,
+    configuredPremium: premium,
+  });
 }
 
 export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
@@ -131,13 +135,13 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
             z: pos.z,
             yaw: pos.yaw,
             pitch: pos.pitch,
-          }, maxHomesFor(api, sender.playerId));
+          }, maxHomesFor(api, sender.playerId, ctx.donation.limit(sender.playerId, 'homes')));
           if (!result.ok) {
+            const max = maxHomesFor(api, sender.playerId, ctx.donation.limit(sender.playerId, 'homes'));
             if (result.error?.startsWith('Можно сохранить')) {
-              const max = maxHomesFor(api, sender.playerId);
               return fail(`You can only set ${max} home(s).`);
             }
-            return fail(result.error ?? HOME_LIMIT_ERROR(maxHomesFor(api, sender.playerId)));
+            return fail(result.error ?? HOME_LIMIT_ERROR(max));
           }
           return ok(`Home '${result.home?.name}' set.`);
         },

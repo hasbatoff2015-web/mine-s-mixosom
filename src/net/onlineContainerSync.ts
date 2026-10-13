@@ -50,12 +50,18 @@ export function applyAuthoritativeContainerSlots(
   window: AuthoritativeWindowPayload | undefined,
   parseStack: (value: unknown) => ItemStack | null = parseNetworkItemStack,
   portalChest?: PortalChestInventory,
+  viewedInventory?: { slots: Array<ItemStack | null> },
 ): boolean {
   if (!window) return false;
   const slots = window.slots;
   if (window.kind === 'portal-chest') {
     if (!portalChest || !Array.isArray(slots)) return false;
     assignPortalChestSlots(portalChest, slots.map((entry) => parseStack(entry)));
+    return true;
+  }
+  if (window.kind === 'invsee' || window.kind === 'invsee-op') {
+    if (!viewedInventory || !Array.isArray(slots)) return false;
+    viewedInventory.slots = slots.slice(0, 41).map((entry) => parseStack(entry));
     return true;
   }
   if (window.kind !== 'chest' && window.kind !== 'furnace') return false;
