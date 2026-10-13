@@ -116,4 +116,4 @@ sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-c
 
 ## Резервная копия
 
-`frontier-cubes-backup.service` и `frontier-cubes-backup.timer` вызывают `/usr/local/sbin/fc-backup`. Таймер по умолчанию срабатывает в 04:00 местного времени VPS. Выкладка релиза эти unit-ы не включает. Установка, скачивание и восстановление: `docs/BACKUPS.md`.
+`frontier-cubes-backup.service` и `frontier-cubes-backup.timer` вызывают `/usr/local/sbin/fc-backup`. Таймер по умолчанию срабатывает в 04:00 местного времени VPS. `Persistent=false`: пропущенное окно само не догоняется. Выкладка релиза эти unit-ы не включает. Установка, скачивание и восстановление: `docs/BACKUPS.md`.

@@ -19,14 +19,32 @@ umask 027
 : "${FC_PG_RESTORE:=pg_restore}"
 : "${FC_KEEP:=3}"
 : "${FC_SERVICES:=frontier-cubes-anarchy.service frontier-cubes-survival.service frontier-cubes-peaceful.service}"
+: "${FC_TAR:=tar}"
+: "${FC_MV:=mv}"
+: "${FC_NODE:=node}"
+: "${FC_HEALTH_TIMEOUT:=60}"
+: "${FC_HEALTH_INTERVAL:=1}"
+: "${FC_STATUS_HOST:=127.0.0.1}"
 
 WORLDS=(anarchy survival peaceful)
 ENV_NAMES=(anarchy survival peaceful)
 
 need_restart=0
 services_restarted=0
+recovery_attempted=0
 published=0
 reported=0
+timing_printed=0
+t_origin=0
+t_stop_begin=0
+timing_stop_ms=0
+timing_copy_ms=0
+timing_dump_ms=0
+timing_start_ms=0
+timing_ready_ms=0
+timing_compress_ms=0
+timing_total_ms=0
+timing_downtime_ms=0
 declare -a was_running=()
 work_dir=""
 
@@ -190,33 +208,166 @@ service_state() {
   "$FC_SYSTEMCTL" is-active "$1" 2>/dev/null || true
 }
 
-recover_services() {
-  local unit state
-  if [[ "$services_restarted" == 1 ]]; then
-    return 0
+now_ms() {
+  awk '{printf "%d", $1 * 1000}' /proc/uptime
+}
+
+mark_phase() {
+  if [[ -n "${FC_PHASE_LOG:-}" ]]; then
+    printf '%s\n' "$1" >> "$FC_PHASE_LOG"
   fi
-  services_restarted=1
-  if [[ "$need_restart" != 1 ]]; then
-    return 0
-  fi
-  if ! "$FC_SYSTEMCTL" start "${was_running[@]}"; then
-    echo "services: restart failed" >&2
-    return 1
-  fi
-  if [[ -n "${FC_HEALTHCHECK:-}" ]]; then
-    if ! bash -c "$FC_HEALTHCHECK"; then
-      echo "services: unhealthy" >&2
-      return 1
-    fi
-  fi
+}
+
+unit_mode() {
+  case "$1" in
+    frontier-cubes-anarchy.service) printf '%s' anarchy ;;
+    frontier-cubes-survival.service) printf '%s' survival ;;
+    frontier-cubes-peaceful.service) printf '%s' peaceful ;;
+    *) return 1 ;;
+  esac
+}
+
+write_status_checker() {
+  cat > "$work_dir/status-check.mjs" <<'EOF'
+const url = process.argv[2];
+const expectMode = process.argv[3];
+const expectWorld = process.argv[4];
+let response;
+try {
+  response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+} catch {
+  console.error('status-unreachable');
+  process.exit(2);
+}
+let body;
+try {
+  body = await response.json();
+} catch {
+  console.error('status-not-json');
+  process.exit(2);
+}
+const ready = body && typeof body === 'object' ? body.ready === true : false;
+const mode = body && typeof body === 'object' && typeof body.mode === 'string' ? body.mode : '';
+const world = body && typeof body === 'object' && typeof body.world === 'string' ? body.world : '';
+if (response.status !== 200 || !ready || mode !== expectMode || world !== expectWorld) {
+  console.error(`status-not-ready http=${response.status} ready=${String(body && body.ready)} mode=${mode} world=${world}`);
+  process.exit(1);
+}
+EOF
+}
+
+check_ready_once() {
+  local unit mode port world server_mode
   for unit in "${was_running[@]}"; do
-    state=$(service_state "$unit")
-    if [[ "$state" != "active" ]]; then
-      echo "services: $unit is $state after start" >&2
+    mode=$(unit_mode "$unit") || {
+      echo "services: no status target for $unit" >&2
+      return 1
+    }
+    port=$(read_env_value "$FC_ENV_DIR/$mode.env" PORT)
+    world=$(read_env_value "$FC_ENV_DIR/$mode.env" WORLD)
+    server_mode=$(read_env_value "$FC_ENV_DIR/$mode.env" SERVER_MODE)
+    [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1 && "$port" -le 65535 ]] || {
+      echo "services: $mode env has no usable PORT" >&2
+      return 1
+    }
+    [[ -n "$world" && -n "$server_mode" ]] || {
+      echo "services: $mode env is missing WORLD or SERVER_MODE" >&2
+      return 1
+    }
+    if ! "$FC_NODE" "$work_dir/status-check.mjs" \
+      "http://${FC_STATUS_HOST}:${port}/status" "$server_mode" "$world"; then
       return 1
     fi
   done
   return 0
+}
+
+wait_until_ready() {
+  local deadline
+  if [[ -n "${FC_HEALTHCHECK:-}" ]]; then
+    bash -c "$FC_HEALTHCHECK"
+    return
+  fi
+  [[ "$FC_STATUS_HOST" =~ ^[A-Za-z0-9._-]+$ ]] || {
+    echo "services: FC_STATUS_HOST is not a plain host name" >&2
+    return 1
+  }
+  command -v "$FC_NODE" >/dev/null 2>&1 || {
+    echo "services: node is required for the readiness check" >&2
+    return 1
+  }
+  write_status_checker
+  deadline=$((SECONDS + FC_HEALTH_TIMEOUT))
+  while true; do
+    if check_ready_once; then
+      return 0
+    fi
+    if (( SECONDS >= deadline )); then
+      echo "services: readiness timed out" >&2
+      return 1
+    fi
+    sleep "$FC_HEALTH_INTERVAL"
+  done
+}
+
+note_downtime() {
+  if [[ "$need_restart" == 1 && "$t_stop_begin" != 0 ]]; then
+    timing_downtime_ms=$(( $(now_ms) - t_stop_begin ))
+  fi
+}
+
+recover_services() {
+  local started
+  if [[ "$services_restarted" == 1 ]]; then
+    return 0
+  fi
+  if [[ "$recovery_attempted" == 1 ]]; then
+    return 1
+  fi
+  recovery_attempted=1
+  if [[ "$need_restart" != 1 ]]; then
+    services_restarted=1
+    return 0
+  fi
+  started=$(now_ms)
+  if ! "$FC_SYSTEMCTL" start "${was_running[@]}"; then
+    timing_start_ms=$(( $(now_ms) - started ))
+    note_downtime
+    echo "services: restart failed" >&2
+    return 1
+  fi
+  timing_start_ms=$(( $(now_ms) - started ))
+  mark_phase start-end
+  started=$(now_ms)
+  if ! wait_until_ready; then
+    timing_ready_ms=$(( $(now_ms) - started ))
+    note_downtime
+    echo "services: unhealthy" >&2
+    return 1
+  fi
+  timing_ready_ms=$(( $(now_ms) - started ))
+  note_downtime
+  mark_phase ready-end
+  services_restarted=1
+  return 0
+}
+
+print_timing() {
+  if [[ "$timing_printed" == 1 ]]; then
+    return 0
+  fi
+  timing_printed=1
+  if [[ "$t_origin" != 0 ]]; then
+    timing_total_ms=$(( $(now_ms) - t_origin ))
+  fi
+  echo "timing: stop_ms=${timing_stop_ms}"
+  echo "timing: copy_ms=${timing_copy_ms}"
+  echo "timing: dump_ms=${timing_dump_ms}"
+  echo "timing: start_ms=${timing_start_ms}"
+  echo "timing: ready_ms=${timing_ready_ms}"
+  echo "timing: compress_ms=${timing_compress_ms}"
+  echo "timing: total_ms=${timing_total_ms}"
+  echo "timing: downtime_ms=${timing_downtime_ms}"
 }
 
 print_service_states() {
@@ -234,6 +385,7 @@ backup_cleanup() {
   if ! recover_services; then
     status=1
   fi
+  print_timing
   if [[ -n "$work_dir" && -d "$work_dir" ]]; then
     rm -rf -- "$work_dir"
   fi
@@ -525,7 +677,7 @@ publish_archive() {
   if [[ -d "$work_dir/staging/postgres" ]]; then
     archive_paths+=(postgres)
   fi
-  tar -C "$work_dir/staging" -czf "$partial" "${archive_paths[@]}"
+  "$FC_TAR" -C "$work_dir/staging" -czf "$partial" "${archive_paths[@]}"
   if ! tar -tzf "$partial" >/dev/null; then
     die "archive is not readable"
   fi
@@ -536,11 +688,34 @@ publish_archive() {
   [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "checksum generation failed"
   sidecar="$work_dir/archive.sha256"
   printf '%s  %s\n' "$hash" "$(basename "$final")" > "$sidecar"
-  mv -T -- "$partial" "$final"
-  mv -T -- "$sidecar" "$final.sha256"
-  chmod 640 "$final" "$final.sha256"
+  # The checksum is published first. The archive rename is the completion mark.
+  if ! "$FC_MV" -T -- "$sidecar" "$final.sha256"; then
+    die "could not publish checksum"
+  fi
+  chmod 640 "$final.sha256" || true
+  if ! "$FC_MV" -T -- "$partial" "$final"; then
+    rm -f -- "$final.sha256"
+    die "could not publish archive"
+  fi
+  chmod 640 "$final" "$final.sha256" || true
+  if ! (cd "$FC_BACKUP_DIR" && sha256sum -c "$(basename "$final.sha256")") >/dev/null; then
+    rm -f -- "$final" "$final.sha256"
+    die "published pair failed verification"
+  fi
   published=1
   published_archive=$final
+}
+
+complete_backup() {
+  local archive=$1 sum base dir
+  [[ -f "$archive" && ! -L "$archive" ]] || return 1
+  sum="$archive.sha256"
+  [[ -f "$sum" && ! -L "$sum" ]] || return 1
+  base=$(basename "$archive")
+  is_backup_name "$base" || return 1
+  dir=$(dirname "$archive")
+  (cd "$dir" && sha256sum -c "$(basename "$sum")" >/dev/null) || return 1
+  tar -tzf "$archive" >/dev/null || return 1
 }
 
 apply_retention() {
@@ -573,6 +748,7 @@ apply_retention() {
         die "refusing to delete world data"
         ;;
     esac
+    complete_backup "$real" || continue
     found+=("$base")
   done < <(find "$FC_BACKUP_DIR" -maxdepth 1 -type f -name 'frontier-cubes-*.tar.gz' -print0)
   if ((${#found[@]} == 0)); then
@@ -613,19 +789,21 @@ stop_running_services() {
   fi
   for unit in "${was_running[@]}"; do
     state=$(service_state "$unit")
-    case "$state" in
-      inactive|failed|unknown|"") ;;
-      *) die "graceful stop failed for $unit" ;;
-    esac
+    if [[ "$state" != "inactive" ]]; then
+      die "graceful stop failed for $unit"
+    fi
   done
 }
 
 cmd_backup() {
-  local stamp
+  local stamp started recover_ok=0 size
   trap backup_cleanup EXIT
+  t_origin=$(now_ms)
   load_services
   [[ "$FC_KEEP" =~ ^[0-9]+$ ]] || die "FC_KEEP must be a positive integer"
   (( FC_KEEP >= 1 )) || die "FC_KEEP must be a positive integer"
+  [[ "$FC_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || die "FC_HEALTH_TIMEOUT must be a whole number of seconds"
+  [[ "$FC_HEALTH_INTERVAL" =~ ^[0-9]+$ ]] || die "FC_HEALTH_INTERVAL must be a whole number of seconds"
   stamp=${FC_BACKUP_STAMP:-$(date +%Y-%m-%d_%H%M%S)}
   [[ "$stamp" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{6}$ ]] || die "invalid backup timestamp"
   acquire_lock
@@ -634,31 +812,50 @@ cmd_backup() {
   chmod 700 "$work_dir"
   require_worlds
   load_database_plan
+  t_stop_begin=$(now_ms)
   stop_running_services
+  timing_stop_ms=$(( $(now_ms) - t_stop_begin ))
+  mark_phase stop-end
+  started=$(now_ms)
   copy_worlds
   copy_plugins
+  timing_copy_ms=$(( $(now_ms) - started ))
+  mark_phase copy-end
   dump_list=()
   plugins_included=0
   if [[ -d "$work_dir/staging/plugins" ]]; then
     plugins_included=1
   fi
+  started=$(now_ms)
   if [[ "$postgres_mode" == configured ]]; then
     dump_postgres
   fi
+  timing_dump_ms=$(( $(now_ms) - started ))
+  mark_phase dump-end
+  if recover_services; then
+    recover_ok=1
+  fi
+  started=$(now_ms)
   write_manifest
   write_tree_checksums
+  mark_phase compress-begin
   publish_archive "$stamp"
-  apply_retention
-  if ! recover_services; then
+  timing_compress_ms=$(( $(now_ms) - started ))
+  mark_phase publish-end
+  if [[ "$recover_ok" != 1 ]]; then
     reported=1
+    print_timing
     echo "backup: prepared" >&2
     echo "archive: $published_archive" >&2
     echo "checksum: $published_archive.sha256" >&2
     print_service_states >&2
     exit 1
   fi
-  local size
+  apply_retention
+  mark_phase retention-end
   size=$(stat -c '%s' "$published_archive")
+  reported=1
+  print_timing
   echo "backup: success"
   echo "archive: $published_archive"
   echo "size: $size"
@@ -672,7 +869,7 @@ cmd_list() {
   while IFS= read -r -d '' path; do
     base=$(basename "$path")
     is_backup_name "$base" || continue
-    [[ -L "$path" ]] && continue
+    complete_backup "$path" || continue
     size=$(stat -c '%s' "$path")
     echo "$base $size"
   done < <(find "$FC_BACKUP_DIR" -maxdepth 1 -type f -name 'frontier-cubes-*.tar.gz' -print0 | sort -z)
