@@ -1,4 +1,5 @@
 import { formatMegacoinAmount } from '../shared/megacoins';
+import { parseAdminBalance } from './balanceInput';
 
 type Screen = 'home' | 'players' | 'player' | 'economy' | 'antidupe' | 'journal' | 'server';
 
@@ -27,6 +28,7 @@ const NAV: Array<{ id: Screen; label: string }> = [
 const requestIds = new Map<string, string>();
 let session: Session | null = null;
 let screen: Screen = 'home';
+let viewGen = 0;
 let selectedId = '';
 let detailGen = 0;
 let busy = false;
@@ -47,6 +49,7 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
   }
 
   function render(): void {
+    viewGen += 1;
     root.replaceChildren();
     const wrap = el('div', 'wrap');
     const panel = el('section', 'panel');
@@ -66,7 +69,7 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
     }
     wrap.append(panel);
     root.append(wrap);
-    schedulePoll();
+    schedulePoll(viewGen);
   }
 
   function loginForm(): HTMLElement {
@@ -136,7 +139,7 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
   }
 
   function view(): HTMLElement {
-    const body = el('div');
+    const body = el('div', 'admin-screen');
     if (screen === 'home') {
       body.append(el('h2', undefined, 'Панель администратора'));
       body.append(el('p', undefined, 'Этот процесс показывает только свой режим. Общей панели на три мира нет.'));
@@ -153,22 +156,33 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
   }
 
   async function loadPlayers(body: HTMLElement): Promise<void> {
-    const data = await readJson<{ players: PlayerRow[]; nextCursor?: string }>('/admin/api/players?limit=20');
-    if (screen !== 'players') return;
+    const gen = viewGen;
     body.replaceChildren();
     body.append(el('h2', undefined, 'Игроки'));
     const search = document.createElement('input');
     search.placeholder = 'Ник или playerId';
     search.maxLength = 64;
     const list = el('div', 'list');
-    const draw = (rows: PlayerRow[]) => {
-      list.replaceChildren();
-      if (rows.length === 0) list.append(el('p', 'muted', 'Записей пока нет'));
-      for (const row of rows) {
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.textContent = 'Показать ещё';
+    more.hidden = true;
+    let query = '';
+    let cursor = '';
+    const seen = new Set<string>();
+    const draw = (rows: PlayerRow[], append: boolean) => {
+      if (!append) {
+        list.replaceChildren();
+        seen.clear();
+      }
+      const fresh = rows.filter((row) => !seen.has(row.playerId));
+      if (!append && fresh.length === 0) list.append(el('p', 'muted', 'Записей пока нет'));
+      for (const row of fresh) {
+        seen.add(row.playerId);
         const line = el('div', 'row');
         const main = el('div');
         main.append(el('strong', undefined, row.name));
-        main.append(el('div', 'muted', `${row.online ? 'в сети' : 'не в сети'} · ${row.gamemode} · ${row.playerId.slice(0, 8)}`));
+        main.append(el('div', 'muted', `${row.online ? 'в сети' : 'не в сети'} · ${row.gamemode} · ${row.playerId}`));
         const open = document.createElement('button');
         open.type = 'button';
         open.textContent = 'Открыть';
@@ -181,27 +195,45 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
         list.append(line);
       }
     };
-    draw(data?.players ?? []);
+    const load = async (append: boolean) => {
+      const params = new URLSearchParams({ limit: '20' });
+      if (query) params.set('q', query);
+      if (append && cursor) params.set('cursor', cursor);
+      const page = await readJson<{ players: PlayerRow[]; nextCursor?: string }>(`/admin/api/players?${params}`);
+      if (gen !== viewGen || screen !== 'players') return;
+      if (!page.ok) {
+        if (!append) list.replaceChildren(el('p', 'bad', page.message));
+        more.hidden = true;
+        return;
+      }
+      draw(page.data.players ?? [], append);
+      cursor = page.data.nextCursor ?? '';
+      more.hidden = cursor === '';
+    };
     search.addEventListener('change', () => {
-      const q = encodeURIComponent(search.value.trim());
-      void readJson<{ players: PlayerRow[] }>(`/admin/api/players?limit=20&q=${q}`).then((page) => {
-        if (screen === 'players') draw(page?.players ?? []);
-      });
+      query = search.value.trim();
+      cursor = '';
+      void load(false);
     });
-    body.append(search, list);
+    more.addEventListener('click', () => { void load(true); });
+    body.append(search, list, more);
+    await load(false);
   }
 
   async function loadPlayer(body: HTMLElement): Promise<void> {
     const gen = ++detailGen;
-    const data = await readJson<Record<string, unknown>>(`/admin/api/player/${encodeURIComponent(selectedId)}`);
+    const loaded = await readJson<Record<string, unknown>>(`/admin/api/player/${encodeURIComponent(selectedId)}`);
     if (gen !== detailGen || screen !== 'player') return;
     body.replaceChildren();
     body.append(backButton());
-    if (!data) {
-      body.append(el('p', 'bad', 'Не удалось получить данные'));
+    if (!loaded.ok) {
+      body.append(el('p', 'bad', loaded.message));
       return;
     }
+    const data = loaded.data;
     body.append(el('h2', undefined, String(data.name ?? '')));
+    const ban = data.ban as { banned?: boolean; reason?: string } | undefined;
+    body.append(el('p', ban?.banned ? 'bad' : 'ok-text', ban?.banned ? `Бан: ${ban.reason ?? 'да'}` : 'Бан: нет'));
     body.append(el('p', undefined, `playerId: ${String(data.playerId ?? '')}`));
     body.append(el('p', undefined, data.online ? 'В сети' : 'Не в сети'));
     body.append(el('p', undefined, `Режим: ${String(data.gamemode ?? '')}`));
@@ -245,44 +277,80 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
     const reason = document.createElement('input');
     reason.placeholder = 'Причина';
     reason.maxLength = 200;
+    const note = el('p', 'bad');
     const out = el('div');
+    let shownId = '';
+    let shownBalance: number | undefined;
     const show = document.createElement('button');
     show.type = 'button';
     show.textContent = 'Показать';
     show.addEventListener('click', () => {
+      const playerId = id.value.trim();
       void readJson<{ balance: number; backend: string; entries: Array<Record<string, unknown>> }>(
-        `/admin/api/economy?playerId=${encodeURIComponent(id.value.trim())}`,
+        `/admin/api/economy?playerId=${encodeURIComponent(playerId)}`,
       ).then((page) => {
         out.replaceChildren();
-        if (!page) {
-          out.append(el('p', 'bad', 'Не удалось получить данные'));
+        if (!page.ok) {
+          shownBalance = undefined;
+          out.append(el('p', 'bad', page.message));
           return;
         }
-        out.append(el('p', undefined, `Баланс: ${formatMegacoinAmount(page.balance)}. Источник: ${page.backend}.`));
-        if (page.entries.length === 0) out.append(el('p', 'muted', 'Записей пока нет'));
-        for (const entry of page.entries) {
-          out.append(el('div', 'meta', `${String(entry.reason ?? '')} ${String(entry.amount ?? '')} → ${String(entry.balanceAfter ?? '')}`));
+        shownId = playerId;
+        shownBalance = page.data.balance;
+        out.append(el('p', undefined, `Баланс: ${formatMegacoinAmount(page.data.balance)}. Источник: ${page.data.backend}. Режим: ${session?.serverMode ?? ''}.`));
+        if (page.data.entries.length === 0) out.append(el('p', 'muted', 'Записей пока нет'));
+        for (const entry of page.data.entries) {
+          const when = typeof entry.timestamp === 'number' ? new Date(entry.timestamp).toISOString() : '';
+          const signed = entry.type === 'withdraw' ? `-${entry.amount}` : `+${entry.amount}`;
+          const related = entry.relatedPlayerId ? ` · ${entry.relatedPlayerId}` : '';
+          const op = entry.transactionId ? ` · ${entry.transactionId}` : '';
+          out.append(el('div', 'meta', `${when} ${String(entry.reason ?? '')} ${signed} → ${String(entry.balanceAfter ?? '')}${related}${op}`));
         }
       });
     });
     const apply = actionButton('Установить баланс', 'ok', 'adjust', async () => {
-      const balance = Number(target.value);
+      note.textContent = '';
       const playerId = id.value.trim();
-      if (!window.confirm(`Установить баланс ${playerId} на ${balance}?`)) return;
-      const result = await api<{ ok?: boolean; balance?: number }>('/admin/api/economy/adjust', {
+      const parsed = parseAdminBalance(target.value);
+      const why = reason.value.trim();
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(playerId)) {
+        note.textContent = 'Укажите playerId.';
+        return;
+      }
+      if (!parsed.ok) {
+        note.textContent = parsed.message;
+        return;
+      }
+      if (why === '' || why.length > 200) {
+        note.textContent = 'Укажите причину.';
+        return;
+      }
+      if (shownId !== playerId || shownBalance === undefined) {
+        note.textContent = 'Сначала покажите текущий баланс.';
+        return;
+      }
+      const delta = parsed.value - shownBalance;
+      const sign = delta > 0 ? `+${delta}` : String(delta);
+      const accepted = window.confirm(
+        `Игрок: ${playerId}\nРежим: ${session?.serverMode ?? ''}\nТекущий баланс: ${shownBalance}\nНовый баланс: ${parsed.value}\nИзменение: ${sign}\nПричина: ${why}`,
+      );
+      if (!accepted) return;
+      const key = `adjust:${playerId}:${parsed.value}:${why}`;
+      const result = await api<{ ok?: boolean; balance?: number }>(`/admin/api/economy/adjust`, {
         method: 'POST',
         body: JSON.stringify({
           playerId,
-          balance,
-          reason: reason.value.trim(),
-          requestId: requestIdFor(`adjust:${playerId}:${balance}:${reason.value.trim()}`),
+          balance: parsed.value,
+          reason: why,
+          requestId: requestIdFor(key),
         }),
       });
-      requestIds.delete(`adjust:${playerId}:${balance}:${reason.value.trim()}`);
-      out.append(el('p', 'ok-text', `Баланс: ${formatMegacoinAmount(Number(result.balance ?? balance))}`));
+      requestIds.delete(key);
+      if (typeof result.balance !== 'number') throw new Error('no-balance');
+      shownBalance = result.balance;
+      out.prepend(el('p', 'ok-text', `Баланс: ${formatMegacoinAmount(result.balance)}`));
     });
-    body.append(id, target, reason, el('div', 'actions', ''), show, apply, out);
-    body.querySelector('.actions')?.append(show, apply);
+    body.append(id, target, reason, note, show, apply, out);
   }
 
   async function loadAntiDupe(body: HTMLElement): Promise<void> {
@@ -296,21 +364,29 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
     if (screen !== 'antidupe') return;
     body.replaceChildren();
     body.append(el('h2', undefined, 'Антидюп'));
+    if (!incidents.ok) {
+      body.append(el('p', 'bad', incidents.message));
+      return;
+    }
+    if (!resources.ok) {
+      body.append(el('p', 'bad', resources.message));
+      return;
+    }
     body.append(el('p', 'muted', 'Это наблюдения, не приговор. Автоматического изъятия и бана нет.'));
-    const gaps = resources?.knownGaps ?? [];
+    const gaps = resources.data.knownGaps ?? [];
     body.append(el('p', undefined, gaps.length ? `Известные пробелы: ${gaps.join(', ')}` : 'Известные пробелы: Нет данных'));
     const list = el('div', 'list');
-    const rows = incidents?.incidents ?? [];
+    const rows = incidents.data.incidents ?? [];
     if (rows.length === 0) list.append(el('p', 'muted', 'Записей пока нет'));
     for (const row of rows) {
       const resolved = row.resolvedAt ? 'решено' : 'открыто';
       list.append(el('div', 'meta', `${String(row.category ?? '')} · ${resolved} · ${String(row.itemInstanceId ?? '')}`));
     }
-    for (const row of resources?.resources ?? []) {
+    for (const row of resources.data.resources ?? []) {
       const current = row.current === null || row.current === undefined ? 'Нет данных' : String(row.current);
       list.append(el('div', 'meta', `${String(row.itemId)} ожидается ${String(row.expected)} сейчас ${current}`));
     }
-    for (const row of resources?.anomalies ?? []) {
+    for (const row of resources.data.anomalies ?? []) {
       list.append(el('div', 'meta', `${String(row.status)} ${String(row.itemId)} +${String(row.unexplained)}`));
     }
     const button = actionButton('Проверить сейчас', '', 'recheck', async () => {
@@ -325,39 +401,61 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
   }
 
   async function loadJournal(body: HTMLElement): Promise<void> {
-    const page = await readJson<{ entries: Array<Record<string, unknown>> }>('/admin/api/audit?limit=20');
-    if (screen !== 'journal') return;
+    const gen = viewGen;
     body.replaceChildren();
     body.append(el('h2', undefined, 'Журнал'));
-    const rows = page?.entries ?? [];
-    if (rows.length === 0) {
-      body.append(el('p', 'muted', 'Записей пока нет'));
-      return;
-    }
-    for (const row of rows) {
-      body.append(el('div', 'meta', `${String(row.createdAt ?? '')} ${String(row.adminId ?? '')} ${String(row.action ?? '')} ${row.success ? 'успех' : 'ошибка'} ${String(row.reason ?? '')}`));
-    }
+    const list = el('div', 'list');
+    const more = document.createElement('button');
+    more.type = 'button';
+    more.textContent = 'Показать ещё';
+    more.hidden = true;
+    let cursor = '';
+    const paint = (rows: Array<Record<string, unknown>>) => {
+      for (const row of rows) {
+        const status = row.success ? 'успех' : 'ошибка';
+        list.append(el('div', 'meta', `${String(row.createdAt ?? '')} · ${String(row.adminId ?? '')} · ${String(row.action ?? '')} · ${String(row.targetId ?? '')} · ${status} · ${String(row.reason ?? '')}`));
+      }
+    };
+    const load = async () => {
+      const params = new URLSearchParams({ limit: '20' });
+      if (cursor) params.set('cursor', cursor);
+      const page = await readJson<{ entries: Array<Record<string, unknown>>; nextCursor?: string }>(`/admin/api/audit?${params}`);
+      if (gen !== viewGen || screen !== 'journal') return;
+      if (!page.ok) {
+        list.replaceChildren(el('p', 'bad', page.message));
+        more.hidden = true;
+        return;
+      }
+      if (page.data.entries.length === 0 && cursor === '') list.append(el('p', 'muted', 'Записей пока нет'));
+      paint(page.data.entries);
+      cursor = page.data.nextCursor ?? '';
+      more.hidden = cursor === '';
+    };
+    more.addEventListener('click', () => { void load(); });
+    body.append(list, more);
+    await load();
   }
 
-  async function loadServer(body: HTMLElement): Promise<void> {
+  async function loadServer(body: HTMLElement, gen = viewGen): Promise<void> {
     const page = await readJson<Record<string, unknown>>('/admin/api/server');
-    if (screen !== 'server') return;
+    if (gen !== viewGen || screen !== 'server') return;
     body.replaceChildren();
     body.append(el('h2', undefined, 'Сервер'));
-    if (!page) {
-      body.append(el('p', 'bad', 'Не удалось получить данные'));
+    if (!page.ok) {
+      body.append(el('p', 'bad', page.message));
       return;
     }
-    const measured = typeof page.measuredTickMs === 'number' ? `${page.measuredTickMs} мс` : 'Нет данных';
+    const data = page.data;
+    const measured = typeof data.measuredTickMs === 'number' ? `${data.measuredTickMs} мс` : 'Нет данных';
     const lines = [
-      `Режим: ${String(page.serverMode)}`,
-      `Мир: ${String(page.worldId)}`,
-      `В сети: ${String(page.online)} / ${String(page.maxPlayers)}`,
-      `Заданный тик: ${String(page.configuredTickRate)}`,
+      `Режим: ${String(data.serverMode)}`,
+      `Мир: ${String(data.worldId)}`,
+      `В сети: ${String(data.online)} / ${String(data.maxPlayers)}`,
+      `Заданный тик: ${String(data.configuredTickRate)}`,
       `Измеренный тик: ${measured}`,
-      `Аптайм, с: ${String(page.uptimeSeconds)}`,
-      `PostgreSQL: ${page.postgres ? 'включена' : 'выключена'}`,
-      `Релиз: ${page.release ? String(page.release) : 'Нет данных'}`,
+      `Аптайм, с: ${String(data.uptimeSeconds)}`,
+      `PostgreSQL: ${data.postgres ? 'включена' : 'выключена'}`,
+      `Релиз: ${data.release ? String(data.release) : 'Нет данных'}`,
       'Последнее предупреждение: Нет данных',
     ];
     for (const line of lines) body.append(el('p', undefined, line));
@@ -384,10 +482,8 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
       busy = true;
       button.disabled = true;
       void run().catch((error: unknown) => {
-        const message = error instanceof SessionEnded
-          ? 'Сессия завершена. Войдите снова.'
-          : 'Не удалось получить данные';
-        button.insertAdjacentElement('afterend', el('p', 'bad', message));
+        const message = actionMessage(error);
+        if (message) button.insertAdjacentElement('afterend', el('p', 'bad', message));
       }).finally(() => {
         busy = false;
         button.disabled = false;
@@ -407,17 +503,15 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
       body: JSON.stringify({ reason: trimmed, requestId: requestIdFor(key) }),
     });
     requestIds.delete(key);
+    if (screen === 'player' && selectedId === playerId) render();
   }
 
-  async function readJson<T>(path: string): Promise<T | null> {
+  async function readJson<T>(path: string): Promise<{ ok: true; data: T } | { ok: false; message: string }> {
     try {
-      return await api<T>(path);
+      return { ok: true, data: await api<T>(path) };
     } catch (error) {
-      if (error instanceof SessionEnded) {
-        session = null;
-        render();
-      }
-      return null;
+      if (error instanceof SessionEnded) return { ok: false, message: 'Сессия завершена. Войдите снова.' };
+      return { ok: false, message: actionMessage(error) };
     }
   }
 
@@ -441,14 +535,25 @@ export function createAdminApp(root: HTMLElement, fetchImpl: typeof fetch = fetc
     return payload;
   }
 
-  function schedulePoll(): void {
+  function schedulePoll(gen: number): void {
     window.clearInterval(pollTimer);
     if (!session || screen !== 'server') return;
     pollTimer = window.setInterval(() => {
-      if (document.hidden || screen !== 'server') return;
-      void loadServer(root.querySelector('.panel > div') ?? root);
+      if (document.hidden || gen !== viewGen || screen !== 'server') return;
+      const box = root.querySelector<HTMLElement>('.admin-screen');
+      if (box) void loadServer(box, gen);
     }, 15_000);
   }
+}
+
+function actionMessage(error: unknown): string {
+  if (error instanceof SessionEnded) return 'Сессия завершена. Войдите снова.';
+  const code = error instanceof Error ? error.message : '';
+  if (code === 'postgres-required') return 'PostgreSQL недоступна.';
+  if (code === 'offline') return 'Игрок уже не в сети.';
+  if (code === 'rejected' || code === 'conflict') return 'Запрос отклонён. Повторите новым действием.';
+  if (!code || code === 'failed') return 'Не удалось получить данные';
+  return 'Не удалось выполнить действие. Повторите тем же запросом.';
 }
 
 class SessionEnded extends Error {}

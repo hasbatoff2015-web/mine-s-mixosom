@@ -7,7 +7,7 @@ import { BlockId } from '../../src/blocks';
 import { FsWorldStore } from '../../server/FsWorldStore';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig, type ServerConfig } from '../../server/config';
-import type { Database, DbQueryResult } from '../../server/db/types';
+import type { Database, DbQueryResult, Queryable } from '../../server/db/types';
 import { WORLD_LOCK_FILE } from '../../server/worldLock';
 import { inventoryWithDiamond, sampleSnapshot } from '../persistFixture';
 
@@ -33,14 +33,22 @@ class FakeDatabase implements Database {
     this.closes += 1;
   }
 
-  async query<T = Record<string, unknown>>(): Promise<DbQueryResult<T>> {
+  async query<T = Record<string, unknown>>(sql?: string): Promise<DbQueryResult<T>> {
     this.queries += 1;
+    if (sql?.includes('admin_player_bans')) return { rows: [], rowCount: 0 };
     throw new Error('unexpected query');
   }
 
-  async transaction(): Promise<never> {
+  async transaction<T>(fn: (tx: Queryable) => Promise<T>): Promise<T> {
     this.queries += 1;
-    throw new Error('unexpected transaction');
+    const tx: Queryable = {
+      query: async <R = Record<string, unknown>>(sql?: string): Promise<DbQueryResult<R>> => {
+        this.queries += 1;
+        if (sql?.includes('admin_player_bans')) return { rows: [] as R[], rowCount: 0 };
+        throw new Error('unexpected transaction');
+      },
+    };
+    return fn(tx);
   }
 }
 
@@ -141,7 +149,7 @@ describe('database lifecycle', () => {
       expect(await exists(join(dataDir, 'db-life', name))).toBe(true);
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
-    expect(fake.queries).toBe(0);
+    expect(fake.queries).toBe(2);
     const response = await fetch(`http://127.0.0.1:${server.port}/status`);
     expect(response.status).toBe(200);
     const body = await response.json() as Record<string, unknown>;

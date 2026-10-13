@@ -391,6 +391,30 @@ const GAMEPLAY_SETTLEMENTS_OPEN_INDEX_SQL = `CREATE INDEX gameplay_settlements_o
   ON gameplay_settlements (deployment_id, economy_scope, world_id, created_at, settlement_id)
   WHERE phase NOT IN ('COMPLETE', 'CANCELLED')`;
 
+const ADMIN_PLAYER_BANS_SQL = `CREATE TABLE admin_player_bans (
+  deployment_id TEXT NOT NULL,
+  world_id TEXT NOT NULL,
+  player_id TEXT NOT NULL,
+  banned BOOLEAN NOT NULL,
+  reason TEXT NOT NULL,
+  admin_id TEXT NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT admin_player_bans_pk PRIMARY KEY (deployment_id, world_id, player_id),
+  CONSTRAINT admin_player_bans_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT admin_player_bans_world_nonempty CHECK (length(btrim(world_id)) > 0),
+  CONSTRAINT admin_player_bans_player_nonempty CHECK (length(btrim(player_id)) > 0),
+  CONSTRAINT admin_player_bans_reason_nonempty CHECK (length(btrim(reason)) > 0),
+  CONSTRAINT admin_player_bans_admin_nonempty CHECK (length(btrim(admin_id)) > 0),
+  CONSTRAINT admin_player_bans_reason_len CHECK (char_length(reason) <= 4000),
+  CONSTRAINT admin_player_bans_player_len CHECK (char_length(player_id) <= 64),
+  CONSTRAINT admin_player_bans_admin_len CHECK (char_length(admin_id) <= 128),
+  CONSTRAINT admin_player_bans_world_len CHECK (char_length(world_id) <= 128)
+)`;
+
+const ADMIN_PLAYER_BANS_ACTIVE_INDEX_SQL = `CREATE INDEX admin_player_bans_active_idx
+  ON admin_player_bans (deployment_id, world_id, player_id)
+  WHERE banned`;
+
 export const MIGRATIONS: readonly Migration[] = [
   {
     version: '0001',
@@ -478,6 +502,14 @@ export const MIGRATIONS: readonly Migration[] = [
     statements: [
       GAMEPLAY_SETTLEMENTS_SQL,
       GAMEPLAY_SETTLEMENTS_OPEN_INDEX_SQL,
+    ],
+  },
+  {
+    version: '0007',
+    name: 'admin_player_bans',
+    statements: [
+      ADMIN_PLAYER_BANS_SQL,
+      ADMIN_PLAYER_BANS_ACTIVE_INDEX_SQL,
     ],
   },
 ];

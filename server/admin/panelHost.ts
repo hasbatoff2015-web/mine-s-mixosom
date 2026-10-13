@@ -9,6 +9,7 @@ import { PostgresGameplayEconomy } from '../economy/postgresAuthority';
 import { serverLog } from '../log';
 import { ECONOMY_MAX_BALANCE } from '../services/economy';
 import { isPlayerId } from '../services/permissionSubject';
+import { clearBan, readBan, upsertBan } from './banAuthority';
 import type { WorldInstance } from '../WorldInstance';
 
 export interface AdminPanelApi {
@@ -21,6 +22,7 @@ export interface AdminPanelApi {
   audit(limit: number, before?: { createdAt: string; eventId: string } | null): Promise<unknown>;
   recheck(adminId: string, requestId: string, reason: string): Promise<unknown>;
   kick(adminId: string, playerId: string, reason: string, requestId: string): Promise<unknown>;
+  banView?(playerId: string): { readonly banned: boolean; readonly reason?: string };
   ban(adminId: string, playerId: string, reason: string, requestId: string): Promise<unknown>;
   unban(adminId: string, playerId: string, reason: string, requestId: string): Promise<unknown>;
   adjust(adminId: string, playerId: string, balance: number, reason: string, requestId: string): Promise<unknown>;
@@ -128,7 +130,11 @@ export class AdminPanelHost {
     if (!this.auditLog) throw new PanelHttpError(503, 'postgres-required');
     try {
       const entries = await this.auditLog.listRecent(limit, before);
-      return { entries: entries.map(redactAudit) };
+      const last = entries[entries.length - 1];
+      return {
+        entries: entries.map(redactAudit),
+        ...(entries.length === limit && last ? { nextCursor: `${last.createdAt}|${last.eventId}` } : {}),
+      };
     } catch (error) {
       throw this.fail(error);
     }
@@ -141,24 +147,30 @@ export class AdminPanelHost {
     return { incidents: result.incidents, resources: result.resources, scanned: true as const };
   }
 
+  banView(playerId: string): { readonly banned: boolean; readonly reason?: string } {
+    return this.world.banView(playerId);
+  }
+
   async kick(adminId: string, playerId: string, reason: string, requestId: string) {
     this.requireWrite(adminId, requestId, reason);
     if (!isPlayerId(playerId)) throw new PanelHttpError(400, 'invalid request');
     const actions = this.actions;
     if (!actions) throw new PanelHttpError(503, 'postgres-required');
-    let connectionId: string | undefined;
+    const connectionId = this.world.peekAdminConnection(playerId);
+    if (!connectionId) throw new PanelHttpError(409, 'offline');
+    let committed: { readonly value: { connectionId: string }; readonly replayed: boolean };
     try {
-      await actions.execute(this.request(adminId, 'player_kick', 'player', playerId, reason, requestId), async () => {
-        const kicked = this.world.adminKick(playerId);
-        if (!kicked.ok) throw new AdminActionValidationError(kicked.error);
-        connectionId = kicked.connectionId;
-        return { connectionId };
-      });
+      committed = await actions.commit(
+        this.request(adminId, 'player_kick', 'player', playerId, reason, requestId),
+        async () => ({ connectionId }),
+      );
     } catch (error) {
       throw this.fail(error);
     }
-    if (connectionId) this.closeConnection(playerId, connectionId);
-    return { ok: true as const };
+    if (committed.replayed) return { ok: true as const, replayed: true, closed: false };
+    const delivery = this.world.disconnectAdminConnection(playerId, committed.value.connectionId);
+    if (delivery === 'closed') this.closeConnection(playerId, committed.value.connectionId);
+    return { ok: true as const, replayed: false, closed: delivery === 'closed', delivery };
   }
 
   async ban(adminId: string, playerId: string, reason: string, requestId: string) {
@@ -222,34 +234,43 @@ export class AdminPanelHost {
     this.requireWrite(adminId, requestId, reason);
     if (!isPlayerId(playerId)) throw new PanelHttpError(400, 'invalid request');
     const actions = this.actions;
-    if (!actions) throw new PanelHttpError(503, 'postgres-required');
-    let changed = false;
-    let connectionId: string | undefined;
+    if (!actions || !this.world.database.enabled) throw new PanelHttpError(503, 'postgres-required');
+    const deploymentId = this.auditLog?.deploymentId;
+    if (!deploymentId) throw new PanelHttpError(503, 'postgres-required');
+    const scope = { deploymentId, worldId: this.world.worldId, playerId, reason, adminId };
+    let replayed = false;
     try {
-      await actions.execute(this.request(
+      const committed = await actions.commit(this.request(
         adminId,
         ban ? 'player_ban' : 'player_unban',
         'player',
         playerId,
         reason,
         requestId,
-      ), async () => {
-        if (ban) {
-          this.world.setPlayerBan({ playerId, reason, adminId, at: Date.now() });
-          changed = true;
-          const kicked = this.world.adminKick(playerId);
-          if (kicked.ok) connectionId = kicked.connectionId;
-        } else if (!this.world.clearPlayerBan(playerId)) {
-          throw new AdminActionValidationError('not-banned');
-        }
+        { ban },
+      ), async (tx) => {
+        if (ban) await upsertBan(tx, scope);
+        else if (!await clearBan(tx, scope)) throw new AdminActionValidationError('not-banned');
         return { ban };
       });
+      replayed = committed.replayed;
     } catch (error) {
-      if (changed) this.world.clearPlayerBan(playerId);
       throw this.fail(error);
     }
-    if (connectionId) this.closeConnection(playerId, connectionId);
-    return { ok: true as const };
+    const current = await readBan(this.world.database, deploymentId, this.world.worldId, playerId);
+    this.world.syncBanCache(playerId, current);
+    let closed = false;
+    if (!replayed && current?.banned) {
+      const connectionId = this.world.peekAdminConnection(playerId);
+      if (connectionId) {
+        const delivery = this.world.disconnectAdminConnection(playerId, connectionId);
+        if (delivery === 'closed') {
+          this.closeConnection(playerId, connectionId);
+          closed = true;
+        }
+      }
+    }
+    return { ok: true as const, replayed, banned: current?.banned === true, closed };
   }
 
   private request(
@@ -259,6 +280,7 @@ export class AdminPanelHost {
     targetId: string,
     reason: string,
     requestId: string,
+    extra: Record<string, unknown> = {},
   ) {
     return {
       requestId,
@@ -269,7 +291,7 @@ export class AdminPanelHost {
       reason,
       serverMode: this.world.serverMode,
       worldId: this.world.worldId,
-      payload: { playerId: targetId },
+      payload: { playerId: targetId, ...extra },
     };
   }
 

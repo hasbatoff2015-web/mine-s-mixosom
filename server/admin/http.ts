@@ -407,7 +407,8 @@ export class AdminHttpServer {
       throw new HttpReply(400, 'invalid request');
     }
     if (!snapshot) throw new HttpReply(404, 'not found');
-    sendJson(res, 200, snapshot);
+    const ban = this.options.panel?.banView?.(playerId);
+    sendJson(res, 200, ban ? { ...snapshot, ban } : snapshot);
   }
 
   private requireSession(req: IncomingMessage): AdminSession {

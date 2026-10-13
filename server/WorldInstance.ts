@@ -134,7 +134,8 @@ import {
 } from './identity/locationScan';
 import { PermissionService } from './services/permissions';
 import { canonicalPlayerId, isPlayerId } from './services/permissionSubject';
-import { AdminBanList } from './admin/bans';
+import { AdminBanList, type AdminBanRecord } from './admin/bans';
+import { importLegacyBan, listActiveBans } from './admin/banAuthority';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
@@ -691,6 +692,8 @@ export class WorldInstance {
   private readonly identityIncidents = new IdentityIncidentLog();
   private readonly adminBans = new AdminBanList();
   private adminBansLoaded = false;
+  /** PostgreSQL bans are loaded. JSON mode does not use this gate. */
+  private adminBansReady = false;
   private adminRecheckBusy = false;
   private adminRecheckAt = 0;
   private identityLogLoaded = false;
@@ -1368,45 +1371,131 @@ export class WorldInstance {
   }
 
   isPlayerBanned(playerId: string): boolean {
+    if (this.database.enabled && !this.adminBansReady) return true;
     this.ensureAdminBans();
     return this.adminBans.has(playerId);
   }
 
+  banView(playerId: string): { readonly banned: boolean; readonly reason?: string } {
+    if (this.database.enabled && !this.adminBansReady) return { banned: true, reason: 'Состояние банов не загружено.' };
+    this.ensureAdminBans();
+    const row = this.adminBans.list().find((ban) => ban.playerId === playerId);
+    if (!row) return { banned: false };
+    return { banned: true, reason: row.reason };
+  }
+
+  /**
+   * JSON bans are only for a process without PostgreSQL.
+   * The file is not the authority once the database is enabled.
+   */
   setPlayerBan(record: { playerId: string; reason: string; adminId: string; at: number }): void {
+    if (this.database.enabled) throw new Error('postgres bans are authoritative');
     this.ensureAdminBans();
     this.adminBans.add(record);
     this.pluginStore.save('admin-bans', this.adminBans.serialize());
   }
 
   clearPlayerBan(playerId: string): boolean {
+    if (this.database.enabled) throw new Error('postgres bans are authoritative');
     this.ensureAdminBans();
     const removed = this.adminBans.remove(playerId);
     if (removed) this.pluginStore.save('admin-bans', this.adminBans.serialize());
     return removed;
   }
 
-  /**
-   * Drops the current connection only. A newer connectionId is left alone.
-   */
-  adminKick(playerId: string): { ok: true; connectionId: string } | { ok: false; error: 'offline' | 'reconnected' } {
+  /** Replace the in-memory index from a committed database read. */
+  replaceBanCache(rows: readonly AdminBanRecord[]): void {
+    this.adminBans.load({ version: 1, bans: rows });
+    this.adminBansLoaded = true;
+    this.adminBansReady = true;
+  }
+
+  syncBanCache(playerId: string, row: { banned: boolean; reason: string; adminId: string } | null): void {
+    this.adminBansLoaded = true;
+    this.adminBansReady = true;
+    if (!row?.banned) {
+      this.adminBans.remove(playerId);
+      return;
+    }
+    this.adminBans.add({
+      playerId,
+      reason: row.reason,
+      adminId: row.adminId,
+      at: Date.now(),
+    });
+  }
+
+  peekAdminConnection(playerId: string): string | undefined {
     const player = this.players.get(playerId);
-    if (!player?.connected) return { ok: false, error: 'offline' };
-    const connectionId = player.connectionId;
+    if (!player?.connected) return undefined;
+    return player.connectionId;
+  }
+
+  /**
+   * Closes only the captured connection. A newer connectionId is left alone.
+   */
+  disconnectAdminConnection(playerId: string, connectionId: string): 'closed' | 'replaced' | 'offline' {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return 'offline';
+    if (player.connectionId !== connectionId) return 'replaced';
     this.disconnect(playerId, true, connectionId);
-    if (player.connectionId !== connectionId) return { ok: false, error: 'reconnected' };
-    if (player.connected) return { ok: false, error: 'offline' };
-    return { ok: true, connectionId };
+    if (player.connectionId !== connectionId) return 'replaced';
+    if (player.connected) return 'offline';
+    return 'closed';
   }
 
   private ensureAdminBans(): void {
-    if (this.adminBansLoaded) return;
+    if (this.adminBansLoaded || this.database.enabled) return;
     this.adminBansLoaded = true;
+    this.adminBansReady = true;
     try {
       this.adminBans.load(this.pluginStore.load('admin-bans', { version: 1, bans: [] }));
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       serverLog(`admin ban load failed: ${detail}`, 'warn');
     }
+  }
+
+  /**
+   * PostgreSQL is the ban authority when it is enabled. A legacy JSON file
+   * is imported once per missing player id and is not deleted. A failed
+   * load aborts startup instead of publishing an empty ban set.
+   */
+  private async loadBanAuthority(): Promise<void> {
+    if (!this.database.enabled) {
+      this.ensureAdminBans();
+      return;
+    }
+    const deploymentId = this.config.database.enabled
+      ? this.config.database.deploymentId
+      : (this.database.deploymentId ?? '');
+    if (!deploymentId) throw new Error('admin bans require a deployment id');
+    const legacy = new AdminBanList();
+    try {
+      legacy.load(this.pluginStore.load('admin-bans', { version: 1, bans: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`legacy admin ban file could not be read: ${detail}`);
+    }
+    await this.database.transaction(async (tx) => {
+      for (const ban of legacy.list()) {
+        if (!isPlayerId(ban.playerId)) continue;
+        await importLegacyBan(tx, {
+          deploymentId,
+          worldId: this.worldId,
+          playerId: ban.playerId,
+          reason: ban.reason.slice(0, 4000) || 'legacy',
+          adminId: ban.adminId.slice(0, 128) || 'legacy',
+        });
+      }
+    });
+    const active = await listActiveBans(this.database, deploymentId, this.worldId);
+    this.replaceBanCache(active.map((row) => ({
+      playerId: row.playerId,
+      reason: row.reason,
+      adminId: row.adminId,
+      at: Date.now(),
+    })));
   }
 
   private containerRevisionFor(player: ServerPlayer): number | undefined {
@@ -1483,6 +1572,7 @@ export class WorldInstance {
       await this.recoverSettlements();
       this.observeIdentity('startup');
       this.observeResources('startup');
+      await this.loadBanAuthority();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1499,6 +1589,7 @@ export class WorldInstance {
     this.directMessages.load();
     this.notifications.load();
     this.buyer.load();
+    await this.loadBanAuthority();
     this.preloadSpawnChunks();
     this.dirty = true;
     // The in-memory create is complete. This write commits it. The flag stays
@@ -1792,6 +1883,7 @@ export class WorldInstance {
 
     const prepared = this.prepareJoin(options);
     if ('error' in prepared) return prepared;
+    if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
     if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
     if (this.money.backend !== 'postgres') return prepared.publish();
     const prepare = this.money.preparePlayer;
@@ -1799,6 +1891,7 @@ export class WorldInstance {
     const displayName = options.name?.trim() || prepared.player.name;
     const work = prepare.call(this.money, prepared.player.id, displayName).then(
       () => {
+        if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
         if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
         return prepared.publish();
       },

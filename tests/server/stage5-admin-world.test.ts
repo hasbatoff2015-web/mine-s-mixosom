@@ -56,11 +56,11 @@ describe('stage 5 player list, kick and ban', () => {
     expect(page.players.map((row) => row.playerId).sort()).toEqual([ada.player.id, other.player.id].sort());
     expect(page.players.every((row) => row.name === 'Ada' && row.online)).toBe(true);
 
-    const kicked = world.adminKick(ada.player.id);
-    expect(kicked.ok).toBe(true);
+    const connectionId = ada.player.connectionId;
+    expect(world.disconnectAdminConnection(ada.player.id, connectionId)).toBe('closed');
     expect(ada.player.connected).toBe(false);
     expect(other.player.connected).toBe(true);
-    expect(world.adminKick(ada.player.id)).toEqual({ ok: false, error: 'offline' });
+    expect(world.disconnectAdminConnection(ada.player.id, connectionId)).toBe('offline');
 
     world.setPlayerBan({
       playerId: other.player.id,

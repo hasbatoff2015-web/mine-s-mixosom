@@ -91,7 +91,7 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
   }, 30_000);
 
   it('applies migration 0003 once and keeps checksum protection', async () => {
-    expect(database.appliedMigrations).toEqual(['0001', '0002', '0003', '0004', '0005', '0006']);
+    expect(database.appliedMigrations).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
     const again = open(schema);
     await again.start();
     expect(again.appliedMigrations).toEqual([]);
@@ -105,6 +105,7 @@ describe.skipIf(databaseUrl === '')('postgres megacoin ledger', () => {
       '0004:gameplay_economy_scope',
       '0005:idempotency_request_scope',
       '0006:gameplay_settlements',
+      '0007:admin_player_bans',
     ]);
     const fresh = await makeSchema();
     const first = open(fresh);

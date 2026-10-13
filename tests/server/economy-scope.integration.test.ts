@@ -193,7 +193,7 @@ describe.skipIf(databaseUrl === '')('gameplay economy scope', () => {
     }
     const database = open(schema);
     await database.start();
-    expect(database.appliedMigrations).toEqual(['0005', '0006']);
+    expect(database.appliedMigrations).toEqual(['0005', '0006', '0007']);
     const anarchy = new MegacoinService(database, 'test', 'anarchy');
     expect(await anarchy.getAccount('legacy-player')).toBeNull();
     expect((await anarchy.ensureAccount({ playerId: 'legacy-player', displayName: 'Legacy' })).balance).toBe(100);

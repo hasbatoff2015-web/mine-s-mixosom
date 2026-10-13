@@ -89,7 +89,7 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       operation: 'admin_set_balance',
       actorId: 'admin-owner',
       payload: { playerId, balance: 500, reason: 'коррекция', serverMode: 'anarchy' },
-    }, (tx) => audit.append({
+    }, async (tx) => { await audit.append({
       requestId,
       adminId: 'admin-owner',
       action: 'economy_set_balance',
@@ -100,7 +100,8 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       worldId: 'anarchy',
       success: true,
       metadata: { balance: 500 },
-    }, tx));
+    }, tx);
+    });
     expect(first.ok).toBe(true);
     expect(first.replayed).toBe(false);
     expect(money.getBalance(playerId)).toBe(500);
@@ -126,7 +127,7 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       operation: 'admin_set_balance',
       actorId: 'admin-owner',
       payload: { playerId, balance: 800, reason: 'другая', serverMode: 'anarchy' },
-    }, (tx) => audit.append({
+    }, async (tx) => { await audit.append({
       requestId,
       adminId: 'admin-owner',
       action: 'economy_set_balance',
@@ -137,7 +138,8 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       worldId: 'anarchy',
       success: true,
       metadata: { balance: 800 },
-    }, tx));
+    }, tx);
+    });
     expect(conflict.ok).toBe(false);
     expect(money.getBalance(playerId)).toBe(500);
 
@@ -147,7 +149,7 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       operation: 'admin_set_balance',
       actorId: 'admin-colleague',
       payload: { playerId, balance: 800, reason: 'вторая правка', serverMode: 'anarchy' },
-    }, (tx) => audit.append({
+    }, async (tx) => { await audit.append({
       requestId: secondId,
       adminId: 'admin-colleague',
       action: 'economy_set_balance',
@@ -158,7 +160,8 @@ describe.skipIf(databaseUrl === '')('stage 5 admin balance adjustment', () => {
       worldId: 'anarchy',
       success: true,
       metadata: { balance: 800 },
-    }, tx));
+    }, tx);
+    });
     expect(second.ok).toBe(true);
     expect(money.getBalance(playerId)).toBe(800);
     const history = await money.getTransactionHistory(playerId, 10);

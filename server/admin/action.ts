@@ -50,11 +50,23 @@ export class AdminActionService {
    * success=false audit. That failure audit is observational.
    */
   async execute<T>(request: AdminActionRequest, fn: (tx: Queryable) => Promise<T>): Promise<T> {
+    const committed = await this.commit(request, fn);
+    return committed.value;
+  }
+
+  /**
+   * Same transaction as `execute`. `replayed` is true when the callback did
+   * not run. Callers must not repeat an external side effect on replay.
+   */
+  async commit<T>(request: AdminActionRequest, fn: (tx: Queryable) => Promise<T>): Promise<{
+    readonly value: T;
+    readonly replayed: boolean;
+  }> {
     this.policy.requireAdmin(request.adminId);
     if (!this.database.enabled) throw new DatabaseDisabledError();
     const prepared = prepareRequest(request);
     try {
-      return await this.idempotency.execute({
+      return await this.idempotency.executeDetailed({
         deploymentId: this.idempotency.deploymentId,
         requestId: prepared.requestId,
         operation: prepared.action,
