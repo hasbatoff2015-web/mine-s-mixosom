@@ -31,6 +31,7 @@ import { formatNotificationBadge, notificationCategoryForButton, notificationCat
 import { displayNameFor } from '../../src/i18n/displayNames';
 import { FRIENDS_DUPLICATE_REQUEST_ERROR } from '../../shared/friends';
 import { TRADE_DUPLICATE_REQUEST_ERROR } from '../../shared/trade';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-notify-hist-'));
@@ -292,6 +293,7 @@ describe('menu unread notifications', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

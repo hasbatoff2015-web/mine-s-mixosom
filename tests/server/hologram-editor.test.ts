@@ -6,6 +6,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { parseClientMessage } from '../../shared/protocol';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(pathJoin(tmpdir(), 'fc-hologram-editor-'));
@@ -75,6 +76,7 @@ describe('hologram in-game editor', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 
@@ -172,7 +174,7 @@ describe('hologram in-game editor', () => {
     });
     expect(resultLines(ada.sink).some((line) => line.includes('You do not have permission.'))).toBe(true);
     expect(world.holograms.list()[0]?.lines).toEqual(['spawn']);
-    world.permissions.grant('ada', 'holograms.create');
+    world.permissions.grant(ada.player.id, 'holograms.create');
     ada.sink.payloads.length = 0;
     world.interactHologram(ada.player, 'spawn');
     expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(true);

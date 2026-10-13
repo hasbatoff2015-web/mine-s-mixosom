@@ -9,6 +9,7 @@ import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerBuyerMessage } from '../../shared/protocol';
 import { BUYER_EXAMPLE_PUMPKIN_PRICE, buyerHologramName } from '../../shared/buyers';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-buyer-plugin-'));
@@ -105,6 +106,7 @@ describe('Buyer plugin', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 
@@ -250,7 +252,7 @@ describe('Buyer plugin', () => {
     expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(false);
     expect(world.holograms.get(hologramName)?.lines).toEqual(['Farmer']);
 
-    world.permissions.grant('ada', 'holograms.create');
+    world.permissions.grant(ada.player.id, 'holograms.create');
     ada.sink.payloads.length = 0;
     world.interactHologram(ada.player, hologramName);
     expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(false);

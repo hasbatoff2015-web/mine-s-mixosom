@@ -133,6 +133,7 @@ import {
   type IdentityReport,
 } from './identity/locationScan';
 import { PermissionService } from './services/permissions';
+import { canonicalPlayerId, isPlayerId } from './services/permissionSubject';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
@@ -926,13 +927,7 @@ export class WorldInstance {
         .filter((claim) => !claim.anchor && claim.worldId === this.worldId)
         .map((claim) => claim.volume);
     };
-    this.permissions = new PermissionService(this.pluginStore, config.operators, (idOrName) => {
-      const direct = this.players.get(idOrName);
-      if (direct) return direct.name;
-      const lower = idOrName.toLowerCase();
-      const named = [...this.players.values()].find((player) => player.name.toLowerCase() === lower);
-      return named?.name ?? idOrName;
-    });
+    this.permissions = new PermissionService(this.pluginStore, config.operators);
     this.teleportHistory = new TeleportHistoryService();
     this.teleports = new TeleportService(config.worldId, this.teleportHistory, (playerId) => {
       const player = this.players.get(playerId);
@@ -995,7 +990,7 @@ export class WorldInstance {
       notifyAdmins: (text) => {
         serverLog(`plugin automine ${text}`);
         for (const player of this.connectedPlayers()) {
-          if (!this.permissions.has(player.name, 'automine.manage') && !this.permissions.isOperator(player.name)) {
+          if (!this.permissions.has(player.id, 'automine.manage') && !this.permissions.isOperator(player.id)) {
             continue;
           }
           this.sendTo(player, {
@@ -1253,10 +1248,8 @@ export class WorldInstance {
     });
     this.commands.setPermissionCheck((sender, permission) => {
       if (isConsoleSender(sender) || sender.hasPermission?.(permission) === true) return true;
-      if (permission === 'operator') {
-        return this.permissions.isOperator(sender.name) || this.permissions.isOperator(sender.playerId);
-      }
-      return this.permissions.has(sender.playerId, permission) || this.permissions.has(sender.name, permission);
+      if (permission === 'operator') return this.permissions.isOperator(sender.playerId);
+      return this.permissions.has(sender.playerId, permission);
     });
     this.registerBuiltinCommands();
     this.plugins.attachHost(this.createPluginHost());
@@ -1438,6 +1431,7 @@ export class WorldInstance {
         openGameMenu: (playerId, screen) => this.openGameMenu(playerId, (screen as GameMenuScreenKind | undefined) ?? 'root'),
         broadcastBuyers: () => this.broadcastBuyers(),
         lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+        resolvePermissionSubject: (target) => this.resolvePermissionSubject(target),
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
@@ -1823,6 +1817,34 @@ export class WorldInstance {
     }
   }
 
+  /**
+   * Command target only. One stored or online identity, or a rejection.
+   * Authorization never calls this.
+   */
+  resolvePermissionSubject(target: string): { ok: true; playerId: string; name: string } | { ok: false; error: string } {
+    const trimmed = target.trim();
+    if (!trimmed || trimmed.length > 80 || /\s/.test(trimmed)) return { ok: false, error: 'Unknown player.' };
+    const wanted = trimmed.toLowerCase();
+    const rows: { id: string; name: string }[] = [];
+    const seen = new Set<string>();
+    const add = (id: string, name: string) => {
+      if (!isPlayerId(id)) return;
+      const canonical = canonicalPlayerId(id);
+      if (seen.has(canonical)) return;
+      seen.add(canonical);
+      rows.push({ id: canonical, name });
+    };
+    for (const player of this.players.values()) add(player.id, player.name);
+    for (const stored of Object.values(this.storedPlayers)) add(stored.id, stored.name);
+    const byId = rows.filter((row) => row.id === wanted);
+    if (byId.length === 1) return { ok: true, playerId: byId[0]!.id, name: byId[0]!.name };
+    if (byId.length > 1) return { ok: false, error: 'Ambiguous player. Use the player id.' };
+    const byName = rows.filter((row) => row.name.toLowerCase() === wanted);
+    if (byName.length === 1) return { ok: true, playerId: byName[0]!.id, name: byName[0]!.name };
+    if (byName.length > 1) return { ok: false, error: 'Ambiguous player. Use the player id.' };
+    return { ok: false, error: 'Unknown player.' };
+  }
+
   findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {
     const direct = this.players.get(idOrName);
     if (direct) return { id: direct.id, name: direct.name, connected: direct.connected };
@@ -2120,7 +2142,7 @@ export class WorldInstance {
         ? 'auction.sell'
         : action === 'cancel' || action === 'relist' || action === 'claim' ? 'auction.list'
           : 'auction.use';
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushAuction(player: ServerPlayer): void {
@@ -2215,7 +2237,7 @@ export class WorldInstance {
                   : action === 'open_requests' || action === 'select_request' || action === 'confirm_accept_request' || action === 'cancel_accept_request'
                     ? 'clan.add'
                     : 'clan.use';
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushClan(player: ServerPlayer): void {
@@ -2347,7 +2369,7 @@ export class WorldInstance {
   }
 
   private hasBuyerPermission(player: ServerPlayer, node: string): boolean {
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushBuyer(player: ServerPlayer): void {
@@ -2589,10 +2611,10 @@ export class WorldInstance {
       return Math.max(premium, vip, def);
     }
     let max = def;
-    if (this.permissions.has(player.id, 'home.multiple') || this.permissions.has(player.name, 'home.multiple')) {
+    if (this.permissions.has(player.id, 'home.multiple')) {
       max = Math.max(max, vip);
     }
-    if (this.permissions.has(player.id, 'home.limit.premium') || this.permissions.has(player.name, 'home.limit.premium')) {
+    if (this.permissions.has(player.id, 'home.limit.premium')) {
       max = Math.max(max, premium);
     }
     return max;
@@ -4130,8 +4152,7 @@ export class WorldInstance {
 
   private canEditHolograms(player: ServerPlayer): boolean {
     return this.isOperator(player)
-      || this.permissions.has(player.id, 'holograms.create')
-      || this.permissions.has(player.name, 'holograms.create');
+      || this.permissions.has(player.id, 'holograms.create');
   }
 
   private sendHologramPermissionDenied(player: ServerPlayer): void {
@@ -5764,7 +5785,7 @@ export class WorldInstance {
   }
 
   private isOperator(player: ServerPlayer): boolean {
-    return this.permissions.isOperator(player.name) || this.permissions.isOperator(player.id);
+    return this.permissions.isOperator(player.id);
   }
 
   private createPluginPlayer(player: ServerPlayer): PlayerView {

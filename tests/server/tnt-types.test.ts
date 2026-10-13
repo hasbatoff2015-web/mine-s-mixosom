@@ -9,6 +9,7 @@ import { getTntProfile } from '../../src/world/tnt';
 import { loadServerConfig } from '../../server/config';
 import { migrateClaimStore } from '../../server/services/claims';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-tnt-types-'));
@@ -78,6 +79,7 @@ describe('Anarchy TNT types vs claims', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

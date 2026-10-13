@@ -49,6 +49,7 @@ export interface BuiltinPluginContext {
   readonly openBuyerAdmin: (playerId: string, buyerId: string) => void;
   readonly broadcastBuyers: () => void;
   readonly lookupPlayer: (idOrName: string) => PlayerIdentity | undefined;
+  readonly resolvePermissionSubject: (target: string) => { ok: true; playerId: string; name: string } | { ok: false; error: string };
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;
   readonly world: VoxelWorld;

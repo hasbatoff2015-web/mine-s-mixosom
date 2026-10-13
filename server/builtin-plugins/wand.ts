@@ -29,7 +29,7 @@ export function createWandPlugin(ctx: BuiltinPluginContext): Plugin {
     apiVersion: 1,
     onEnable(api) {
       const canUse = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'wand.use') || api.isOperator(name)
+        api.hasPermission(playerId, 'wand.use') || api.isOperator(playerId)
       );
 
       const holdingWand = (playerId: string): boolean => {

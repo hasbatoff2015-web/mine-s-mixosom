@@ -81,7 +81,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       };
       const topAt = (playerId: string) => sortClaimsByPriority(standingAll(playerId))[0];
       const bypass = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'claim.admin') || api.isOperator(name)
+        api.hasPermission(playerId, 'claim.admin') || api.isOperator(playerId)
       );
       const canEdit = (claim: Claim, sender: { playerId: string; name: string }) => (
         claim.owner === keyOf(sender) || bypass(sender.playerId, sender.name)
@@ -296,7 +296,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Claim ${sub} set.`);
           }
           if (sub === 'create') {
-            if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.name)) {
+            if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.playerId)) {
               return fail('You do not have permission.');
             }
             const name = args[1]?.toLowerCase();

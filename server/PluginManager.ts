@@ -90,8 +90,10 @@ export interface ServerAPI {
   scheduleOnce(ms: number, fn: () => void): () => void;
   scheduleRepeating(ms: number, fn: () => void): () => void;
   log(message: string): void;
-  hasPermission(playerIdOrName: string, node: string): boolean;
-  isOperator(playerIdOrName: string): boolean;
+  /** Server player id. A display nickname does not receive elevated nodes. */
+  hasPermission(playerId: string, node: string): boolean;
+  /** Server player id. A display nickname is never an operator. */
+  isOperator(playerId: string): boolean;
   teleport(
     playerId: string,
     x: number,

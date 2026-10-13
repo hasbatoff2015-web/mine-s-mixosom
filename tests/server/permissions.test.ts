@@ -6,6 +6,11 @@ import { JsonFileStore } from '../../server/services/jsonStore';
 import { PermissionService, permissionMatches } from '../../server/services/permissions';
 import { clampRtpBounds, randomRtpColumn, RTP_MAX, RTP_MIN } from '../../server/services/rtp';
 
+const ROOT = '11111111-1111-4111-8111-111111111111';
+const STEVE = '22222222-2222-4222-8222-222222222222';
+const ALEX = '33333333-3333-4333-8333-333333333333';
+const ADA = '44444444-4444-4444-8444-444444444444';
+
 describe('PermissionService', () => {
   const dirs: string[] = [];
   afterEach(async () => {
@@ -37,31 +42,38 @@ describe('PermissionService', () => {
     expect(permissionMatches('claim.*', 'claim.admin')).toBe(true);
     expect(permissionMatches('server.*', 'server.plugins.manage')).toBe(true);
     expect(permissionMatches('home.use', 'home.sethome')).toBe(false);
-    permissions.assignRole('alex', 'admin');
-    expect(permissions.has('alex', 'claim.admin')).toBe(true);
-    expect(permissions.has('alex', 'buyer.create')).toBe(true);
-    expect(permissions.has('alex', 'buyer.edit')).toBe(true);
-    expect(permissions.has('alex', 'plugins.manage')).toBe(true);
+    permissions.assignRole(ALEX, 'admin');
+    expect(permissions.has(ALEX, 'claim.admin')).toBe(true);
+    expect(permissions.has(ALEX, 'buyer.create')).toBe(true);
+    expect(permissions.has(ALEX, 'buyer.edit')).toBe(true);
+    expect(permissions.has(ALEX, 'plugins.manage')).toBe(true);
+    expect(permissions.assignRole('alex', 'admin').ok).toBe(false);
+    expect(permissions.has('alex', 'claim.admin')).toBe(false);
   });
 
   it('treats OP as owner of every permission and persists deop', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fc-perm-'));
     dirs.push(dir);
-    const first = new PermissionService(new JsonFileStore(dir), ['root']);
+    const first = new PermissionService(new JsonFileStore(dir), [ROOT]);
     first.load();
-    expect(first.isOperator('root')).toBe(true);
-    expect(first.has('root', 'anything.at.all')).toBe(true);
-    expect(first.op('steve')).toBe(true);
-    expect(first.has('steve', 'server.admin')).toBe(true);
-    const removed = first.deop('steve');
+    expect(first.isOperator(ROOT)).toBe(true);
+    expect(first.isOperator('root')).toBe(false);
+    expect(first.has(ROOT, 'anything.at.all')).toBe(true);
+    expect(first.op('steve')).toBe(false);
+    expect(first.isOperator('steve')).toBe(false);
+    expect(first.op(STEVE)).toBe(true);
+    expect(first.has(STEVE, 'server.admin')).toBe(true);
+    const removed = first.deop(STEVE);
     expect(removed.ok).toBe(true);
-    expect(first.has('steve', 'server.admin')).toBe(false);
-    expect(first.deop('root').ok).toBe(false);
+    expect(first.has(STEVE, 'server.admin')).toBe(false);
+    expect(first.deop(ROOT).ok).toBe(false);
+    expect(first.ignoredOperators()).toEqual([]);
 
-    const second = new PermissionService(new JsonFileStore(dir), ['root']);
+    const second = new PermissionService(new JsonFileStore(dir), [ROOT]);
     second.load();
-    expect(second.isOperator('root')).toBe(true);
-    expect(second.isOperator('steve')).toBe(false);
+    expect(second.isOperator(ROOT)).toBe(true);
+    expect(second.isOperator(STEVE)).toBe(false);
+    expect(second.isOperator('root')).toBe(false);
   });
 
   it('keeps extra player nodes across reload', async () => {
@@ -69,10 +81,49 @@ describe('PermissionService', () => {
     dirs.push(dir);
     const first = new PermissionService(new JsonFileStore(dir));
     first.load();
-    first.grant('ada', 'holograms.create');
+    first.grant(ADA, 'holograms.create');
+    expect(first.grant('ada', 'holograms.create')).toBe(false);
     const second = new PermissionService(new JsonFileStore(dir));
     second.load();
-    expect(second.has('ada', 'holograms.create')).toBe(true);
+    expect(second.has(ADA, 'holograms.create')).toBe(true);
+    expect(second.has('ada', 'holograms.create')).toBe(false);
+  });
+
+  it('keeps a nickname grant inert across reload until it is migrated', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-perm-'));
+    dirs.push(dir);
+    const store = new JsonFileStore(dir);
+    store.save('permissions', {
+      ops: ['AdminOwner'],
+      playerRoles: { AdminOwner: ['admin'] },
+      playerPermissions: { AdminOwner: ['plugins.manage'] },
+    });
+    const first = new PermissionService(store, ['AdminOwner']);
+    first.load();
+    expect(first.isOperator('AdminOwner')).toBe(false);
+    expect(first.has('AdminOwner', 'server.admin')).toBe(false);
+    expect(first.has('adminowner', 'plugins.manage')).toBe(false);
+    expect(first.ignoredOperators()).toEqual(['AdminOwner']);
+    expect(first.legacyInfo('AdminOwner')).toMatchObject({
+      operator: true,
+      roles: ['admin'],
+      permissions: ['plugins.manage'],
+    });
+    expect(first.migrateLegacy('AdminOwner', 'not-an-id').ok).toBe(false);
+    expect(first.migrateLegacy('missing', ADA).ok).toBe(false);
+    expect(first.migrateLegacy('AdminOwner', ADA).ok).toBe(true);
+    expect(first.isOperator(ADA)).toBe(true);
+    expect(first.has(ADA, 'economy.admin')).toBe(true);
+    expect(first.has(ADA, 'plugins.manage')).toBe(true);
+    expect(first.legacyInfo('AdminOwner')).toBeNull();
+    expect(first.isOperator('AdminOwner')).toBe(false);
+
+    const second = new PermissionService(new JsonFileStore(dir), ['AdminOwner']);
+    second.load();
+    expect(second.isOperator(ADA)).toBe(true);
+    expect(second.isOperator('AdminOwner')).toBe(false);
+    expect(second.has('AdminOwner', 'server.admin')).toBe(false);
+    expect(second.legacyInfo('AdminOwner')).toBeNull();
   });
 });
 

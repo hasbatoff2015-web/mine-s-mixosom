@@ -10,6 +10,7 @@ import { BLOCK_CLAIM_OVERLAP_MESSAGE, claimAnchorVolume } from '../../server/ser
 import { DEFAULT_CLAIM_FLAGS, migrateClaimStore } from '../../server/services/claims';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import { CLAIM_BOUNDARY_DURATION_MS } from '../../shared/protocol';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-claim-anchors-'));
@@ -121,6 +122,7 @@ describe('Anarchy claim-anchor blocks', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

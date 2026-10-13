@@ -12,6 +12,7 @@
 
 - [x] `FC_ADMIN_IDS` stays exactly two equal ids. Each id has its own high-entropy token. The server stores SHA-256 digests.
 - [x] Admin HTTP binds `127.0.0.1` only when `FC_ADMIN_PORT` is set. The public gameplay listener does not grow admin routes.
+- [x] Follow-up: gameplay OP, roles, and permission nodes use the server player id. A nickname no longer grants them. Legacy nickname rows stay inactive until `/permissions migrate`.
 - [x] Sessions are memory-only, HttpOnly, SameSite=Strict, idle 30 minutes, absolute 8 hours. Logout requires Origin and a session CSRF token.
 - [x] Read API is login, logout, `/admin/api/me`, and the existing player inspection. No admin writes.
 - [ ] The admin panel is Stage 5. Backups are Stage 6. Not merged. Draft PR **#129**.

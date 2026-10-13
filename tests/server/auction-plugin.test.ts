@@ -8,6 +8,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerAuctionMessage } from '../../shared/protocol';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 import {
   AUCTION_PAGE_SIZE,
   AUCTION_PRICE_EMPTY_ERROR,
@@ -90,6 +91,7 @@ describe('Auction plugin', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

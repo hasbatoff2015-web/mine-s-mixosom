@@ -11,6 +11,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { MONEY_REQUEST_REQUIRED } from '../../server/economy/moneyRequest';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 const databaseUrl = process.env.FC_TEST_DATABASE_URL?.trim() ?? '';
 
@@ -110,6 +111,7 @@ describe.skipIf(databaseUrl === '')('postgres join and money requests', () => {
     const pending = world.join({ sink, name, sessionToken });
     const result = isPromise(pending) ? await pending : pending;
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

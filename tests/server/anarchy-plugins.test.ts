@@ -9,6 +9,7 @@ import { blockTargetFromHit } from '../../src/net/actionIntent';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-anarchy-plugins-'));
@@ -78,6 +79,7 @@ describe('Anarchy builtin plugins', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 
@@ -225,10 +227,10 @@ describe('Anarchy builtin plugins', () => {
     const op = join(world, 'Op');
     expect(chat(world, ada, '/op Bob').some((line) => line.includes('permission'))).toBe(true);
     expect(chat(world, op, '/op Ada').some((line) => line.includes('operator'))).toBe(true);
-    expect(world.permissions.isOperator('Ada')).toBe(true);
+    expect(world.permissions.isOperator(ada.player.id)).toBe(true);
     expect(chat(world, ada, '/plugins list').some((line) => line.includes('permissions'))).toBe(true);
     expect(chat(world, op, '/deop Ada').some((line) => line.includes('Removed operator'))).toBe(true);
-    expect(world.permissions.isOperator('Ada')).toBe(false);
+    expect(world.permissions.isOperator(ada.player.id)).toBe(false);
     expect(chat(world, ada, '/plugins help').some((line) => line.includes('Plugins'))).toBe(true);
   });
 

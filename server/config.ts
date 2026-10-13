@@ -32,6 +32,7 @@ export interface ServerConfig {
   readonly serverName: string;
   readonly persistIntervalMs: number;
   readonly pluginDir: string;
+  /** Server player ids from FC_OPERATORS. Nicknames are ignored at load. */
   readonly operators: readonly string[];
   /** When true, register `server/plugin-examples/hello.ts` without copying it into pluginDir. */
   readonly loadExamplePlugin: boolean;

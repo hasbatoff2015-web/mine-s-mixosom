@@ -46,7 +46,7 @@ export function createSpawnPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (args[0]?.toLowerCase() === 'config') {
-            if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sender.name)) {
+            if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sender.playerId)) {
               return fail('You do not have permission.');
             }
             if (args[1]?.toLowerCase() === 'set') {

@@ -17,7 +17,7 @@ export interface CommandSender {
   readonly playerId: string;
   readonly name: string;
   readonly gamemode: GameMode;
-  /** True when PermissionService (or FC_OPERATORS) treats the sender as OP. */
+  /** True when this connection's player id is an operator. Nicknames are not checked. */
   readonly operator?: boolean;
   /** One chat or UI send. A replay of the same id must not move money twice. */
   readonly clientRequestId?: string;

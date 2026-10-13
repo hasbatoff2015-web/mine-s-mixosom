@@ -33,7 +33,7 @@ export function createPluginAdminPlugin(ctx: BuiltinPluginContext): Plugin {
         description: 'Administer server plugins',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
-          if (!api.hasPermission(sender.playerId, 'plugins.manage') && !api.isOperator(sender.name)) {
+          if (!api.hasPermission(sender.playerId, 'plugins.manage') && !api.isOperator(sender.playerId)) {
             return fail('You do not have permission.');
           }
           const sub = (args[0] ?? 'list').toLowerCase();

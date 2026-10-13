@@ -40,28 +40,37 @@ export function createPermissionsPlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();
           if (sub === 'info') {
-            const target = args[1] ?? sender.name;
-            const info = ctx.permissions.playerInfo(target);
+            const target = args[1] ? ctx.resolvePermissionSubject(args[1]) : { ok: true as const, playerId: sender.playerId, name: sender.name };
+            if (!target.ok) return fail(target.error);
+            if (!target.playerId || target.playerId === 'console') return fail('Unknown player.');
+            const info = ctx.permissions.playerInfo(target.playerId);
+            const legacy = ctx.permissions.legacyInfo(target.name);
             return ok([
-              `Player: ${info.key}`,
+              `Player: ${target.name}`,
+              `Id: ${target.playerId}`,
               `OP: ${info.operator ? 'yes' : 'no'}`,
               `Roles: ${info.roles.join(', ')}`,
               `Permissions: ${info.permissions.join(', ') || '(none)'}`,
+              ...(legacy ? ['Legacy nickname entry: inactive'] : []),
             ]);
           }
-          const admin = api.hasPermission(sender.playerId, 'server.admin') || api.isOperator(sender.name);
+          const admin = api.hasPermission(sender.playerId, 'server.admin') || api.isOperator(sender.playerId);
           if (!admin) return fail('You do not have permission.');
           if (sub === 'roles') return ok(`Roles: ${ctx.permissions.listRoles().join(', ')}`);
           if (sub === 'grant') {
             if (!args[1] || !args[2]) return usageError('/permissions grant <player> <node>');
-            ctx.permissions.grant(args[1], args[2]);
-            return ok(`Granted ${args[2]} to ${args[1]}.`);
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
+            if (!ctx.permissions.grant(target.playerId, args[2])) return fail('Player id is required.');
+            return ok(`Granted ${args[2]} to ${target.name}.`);
           }
           if (sub === 'revoke') {
             if (!args[1] || !args[2]) return usageError('/permissions revoke <player> <node>');
-            return ctx.permissions.revoke(args[1], args[2])
-              ? ok(`Revoked ${args[2]} from ${args[1]}.`)
-              : fail(`${args[1]} does not have '${args[2]}'.`);
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
+            return ctx.permissions.revoke(target.playerId, args[2])
+              ? ok(`Revoked ${args[2]} from ${target.name}.`)
+              : fail(`${target.name} does not have '${args[2]}'.`);
           }
           if (sub === 'role') {
             const action = args[1]?.toLowerCase();
@@ -95,16 +104,32 @@ export function createPermissionsPlugin(ctx: BuiltinPluginContext): Plugin {
             }
             if (action === 'assign') {
               if (!args[2] || !args[3]) return usageError('/permissions role assign <player> <role>');
-              const result = ctx.permissions.assignRole(args[2], args[3]);
-              return result.ok ? ok(`Assigned ${args[3]} to ${args[2]}.`) : fail(result.error ?? 'Failed.');
+              const target = ctx.resolvePermissionSubject(args[2]);
+              if (!target.ok) return fail(target.error);
+              const result = ctx.permissions.assignRole(target.playerId, args[3]);
+              return result.ok ? ok(`Assigned ${args[3]} to ${target.name}.`) : fail(result.error ?? 'Failed.');
             }
             if (action === 'unassign') {
               if (!args[2] || !args[3]) return usageError('/permissions role unassign <player> <role>');
-              return ctx.permissions.unassignRole(args[2], args[3])
-                ? ok(`Removed role ${args[3]} from ${args[2]}.`)
-                : fail(`${args[2]} does not have role '${args[3]}'.`);
+              const target = ctx.resolvePermissionSubject(args[2]);
+              if (!target.ok) return fail(target.error);
+              return ctx.permissions.unassignRole(target.playerId, args[3])
+                ? ok(`Removed role ${args[3]} from ${target.name}.`)
+                : fail(`${target.name} does not have role '${args[3]}'.`);
             }
             return usageError('/permissions role <create|delete|info|addperm|removeperm|assign|unassign> ...');
+          }
+          if (sub === 'migrate') {
+            if (!args[1] || !args[2]) return usageError('/permissions migrate <legacy-name> <playerId>');
+            const playerId = args[2];
+            const confirmed = ctx.resolvePermissionSubject(playerId);
+            if (!confirmed.ok || confirmed.playerId !== playerId.trim().toLowerCase()) {
+              return fail('Player id is required.');
+            }
+            const result = ctx.permissions.migrateLegacy(args[1], confirmed.playerId);
+            return result.ok
+              ? ok(`Migrated legacy entry '${args[1]}' to ${confirmed.playerId}.`)
+              : fail(result.error ?? 'Failed.');
           }
           return usageError('/permissions help');
         },
@@ -117,8 +142,12 @@ export function createPermissionsPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (!args[0]) return usageError('/op <player>');
-          const added = ctx.permissions.op(args[0]);
-          return ok(added ? `Made ${args[0]} a server operator.` : `${args[0]} is already an operator.`);
+          const target = ctx.resolvePermissionSubject(args[0]);
+          if (!target.ok) return fail(target.error);
+          const added = ctx.permissions.op(target.playerId);
+          return ok(added
+            ? `Made ${target.name} a server operator.`
+            : `${target.name} is already an operator.`);
         },
       });
       api.registerCommand({
@@ -129,8 +158,10 @@ export function createPermissionsPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (!args[0]) return usageError('/deop <player>');
-          const result = ctx.permissions.deop(args[0]);
-          return result.ok ? ok(`Removed operator from ${args[0]}.`) : fail(result.error ?? 'Failed.');
+          const target = ctx.resolvePermissionSubject(args[0]);
+          if (!target.ok) return fail(target.error);
+          const result = ctx.permissions.deop(target.playerId);
+          return result.ok ? ok(`Removed operator from ${target.name}.`) : fail(result.error ?? 'Failed.');
         },
       });
     },
