@@ -49,4 +49,6 @@ Permission checks are a map lookup by player id. Resolving a command target walk
 - Branch `cursor/admin-antidupe-postgres-foundation-26a8`
 - `origin/main`: `78eb6f338349be32d6ecf63ba40f900020b203a2` (5 commits not in this branch; not merged)
 - Feature HEAD before: `5ce311d327e483c1681a18585c9406177baa15cb`
+- Permission follow-up: `248317c7b0135317bb4033a65cf5f953af97549f`
+- After this report line the branch is 43 ahead of `2dd09ee` and 5 behind `origin/main`
 - Draft PR **#129**. Not merged.
