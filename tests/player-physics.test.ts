@@ -7,6 +7,7 @@ import {
   PLAYER_SNEAK_HEIGHT,
   SNEAK_SPEED,
   WALK_SPEED,
+  WATER_MOVE_SPEED,
 } from '../src/core/constants';
 import { MINECART_MAX_SPEED } from '../src/entities/MinecartManager';
 import type { MoveInput } from '../src/input/InputManager';
@@ -259,5 +260,60 @@ describe('PlayerController always-run / crouch speeds', () => {
     expect(horizontalSpeed(strafe)).toBeCloseTo(7, 3);
     expect(horizontalSpeed(diagonal)).toBeCloseTo(7, 3);
     expect(horizontalSpeed(diagonal)).toBeCloseTo(horizontalSpeed(forward), 3);
+  });
+});
+
+describe('PlayerController water speed', () => {
+  function horizontalSpeed(player: PlayerController): number {
+    return Math.hypot(player.velocity.x, player.velocity.z);
+  }
+
+  function fluidColumn(block: BlockId): TestWorld {
+    const world = new TestWorld();
+    for (let z = -30; z <= 8; z += 1) {
+      for (let x = -4; x <= 4; x += 1) {
+        world.set(x, 0, z, BlockId.Stone);
+        for (let y = 1; y <= 4; y += 1) world.set(x, y, z, block);
+      }
+    }
+    return world;
+  }
+
+  function run(world: TestWorld, movement: Partial<MoveInput>, ticks: number, y = 1): PlayerController {
+    const player = new PlayerController({ position: [0.5, y, 0.5] });
+    for (let tick = 0; tick < ticks; tick += 1) {
+      player.tick(world as unknown as VoxelWorld, input(movement), 0.05);
+    }
+    return player;
+  }
+
+  it('settles near 0.8× land speed and leaves land, air, lava, and sneak alone', () => {
+    const land = run(flatWorld(), { forward: 1 }, 40);
+    const water = run(fluidColumn(BlockId.Water), { forward: 1 }, 40);
+    const waterSprint = run(fluidColumn(BlockId.Water), { forward: 1, sprint: true }, 40);
+    const waterSneak = run(fluidColumn(BlockId.Water), { forward: 1, sneak: true }, 40);
+    const lava = run(fluidColumn(BlockId.Lava), { forward: 1 }, 40);
+    const air = run(new TestWorld(), { forward: 1 }, 12, 40);
+    const landSpeed = horizontalSpeed(land);
+    const waterSpeed = horizontalSpeed(water);
+
+    expect(land.onGround).toBe(true);
+    expect(land.inWater).toBe(false);
+    expect(landSpeed).toBeCloseTo(PLAYER_MOVE_SPEED, 2);
+    expect(water.inWater).toBe(true);
+    expect(water.inLava).toBe(false);
+    expect(water.sprinting).toBe(false);
+    expect(waterSprint.sprinting).toBe(false);
+    expect(waterSpeed).toBeCloseTo(WATER_MOVE_SPEED, 2);
+    expect(waterSpeed / landSpeed).toBeGreaterThan(0.75);
+    expect(waterSpeed / landSpeed).toBeLessThan(0.85);
+    expect(horizontalSpeed(waterSprint)).toBeCloseTo(waterSpeed, 2);
+    expect(horizontalSpeed(waterSneak)).toBeCloseTo(waterSpeed, 2);
+    expect(lava.inLava).toBe(true);
+    expect(horizontalSpeed(lava)).toBeLessThan(1.2);
+    expect(horizontalSpeed(lava)).toBeGreaterThan(0.05);
+    expect(air.inWater).toBe(false);
+    expect(air.onGround).toBe(false);
+    expect(horizontalSpeed(air)).toBeGreaterThan(WATER_MOVE_SPEED);
   });
 });

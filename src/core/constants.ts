@@ -64,7 +64,17 @@ export const PLAYER_MOVE_SPEED = 7;
 export const SPRINT_SPEED = 5.612;
 /** Crouch/sneak ground speed. Shared client/server. */
 export const SNEAK_SPEED = 2;
+/**
+ * Legacy fluid cap. Lava still uses `WATER_SPEED * 0.55` plus its own drag.
+ * Water travel uses `WATER_MOVE_SPEED` so lava stays on this constant.
+ */
 export const WATER_SPEED = 2.2;
+/**
+ * Steady horizontal swim speed, 0.8× ground travel.
+ * Water keeps vertical drag. It does not also multiply XZ by 0.8, or the
+ * settled speed would land far below this cap.
+ */
+export const WATER_MOVE_SPEED = PLAYER_MOVE_SPEED * 0.8;
 export const GRAVITY = 32;
 export const WATER_GRAVITY = 5;
 export const JUMP_VELOCITY = 8.4;

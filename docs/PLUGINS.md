@@ -1,6 +1,6 @@
 # Plugins
 
-Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`.
+Phase 8 is a **server-only plugin platform**. Builtin Anarchy plugins (permissions, TPA, spawn, home, friends, trade, menu, back, RTP, claims, holograms, wand, world-events, AutoMine, Economy, Auction House, Clans, Buyers, Duels, Kits) now load from `server/builtin-plugins/` unless `FC_NO_BUILTIN_PLUGINS=1`. `/kit` stores definitions and the one-time start ledger in `plugin-data/kit/store`.
 
 Plugins talk to the Anarchy server through `ServerAPI`. They never run in the browser, Singleplayer, or the client bundle.
 

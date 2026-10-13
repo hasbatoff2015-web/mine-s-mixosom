@@ -126,6 +126,7 @@ export const EDIT_LIGHT_MAX_WAIT_MS = 150;
 interface ScheduledLightJob extends PendingLightJob {
   enqueuedAt: number;
   coalesced: number;
+  tokens: number[];
 }
 
 function regionsIntersect(a: LightRegion, b: LightRegion): boolean {
@@ -290,6 +291,8 @@ export class VoxelWorld {
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
   private readonly lightJobs: ScheduledLightJob[] = [];
+  private nextEditLightToken = 1;
+  private readonly settledEditLightTokens = new Set<number>();
   lightJobCommits = 0;
   lightJobMerges = 0;
   lightJobEnqueued = 0;
@@ -1057,14 +1060,16 @@ export class VoxelWorld {
    * A flood that has already started is left running against the block ids it
    * began with; the new edit becomes the next job and cannot commit a mix.
    */
-  queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): void {
+  queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): number {
     this.lightQueueMarks += 1;
     this.noteRegionLightDirty(region);
+    const token = this.nextEditLightToken;
+    this.nextEditLightToken += 1;
     const active = activeRegionLightJob(this);
     for (const job of this.lightJobs) {
       if (job === active || !regionsIntersect(job.region, region)) continue;
-      this.mergeLightJob(job, region, sky, block, origin);
-      return;
+      this.mergeLightJob(job, region, sky, block, origin, token);
+      return token;
     }
     if (this.lightJobs.length >= EDIT_LIGHT_QUEUE_LIMIT) {
       let best: ScheduledLightJob | undefined;
@@ -1077,8 +1082,8 @@ export class VoxelWorld {
         bestGap = gap;
       }
       if (best) {
-        this.mergeLightJob(best, region, sky, block, origin);
-        return;
+        this.mergeLightJob(best, region, sky, block, origin, token);
+        return token;
       }
     }
     this.lightJobs.push({
@@ -1088,11 +1093,33 @@ export class VoxelWorld {
       origin,
       enqueuedAt: performance.now(),
       coalesced: 1,
+      tokens: [token],
     });
     this.lightJobEnqueued += 1;
+    return token;
   }
 
-  private mergeLightJob(job: ScheduledLightJob, region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin): void {
+  /** True after the queued region that returned `token` has committed. */
+  isEditLightTokenSettled(token: number): boolean {
+    return this.settledEditLightTokens.has(token);
+  }
+
+  private settleEditLightTokens(tokens: readonly number[]): void {
+    for (const token of tokens) this.settledEditLightTokens.add(token);
+    if (this.settledEditLightTokens.size <= 1024) return;
+    const sorted = [...this.settledEditLightTokens].sort((a, b) => a - b);
+    const drop = sorted.length - 512;
+    for (let index = 0; index < drop; index += 1) this.settledEditLightTokens.delete(sorted[index]!);
+  }
+
+  private mergeLightJob(
+    job: ScheduledLightJob,
+    region: LightRegion,
+    sky: boolean,
+    block: boolean,
+    origin: LightJobOrigin,
+    token: number,
+  ): void {
     const current = job.region;
     job.region = {
       minX: Math.min(current.minX, region.minX),
@@ -1106,6 +1133,7 @@ export class VoxelWorld {
     job.block = job.block || block;
     job.origin = mergeLightOrigin(job.origin, origin);
     job.coalesced += 1;
+    job.tokens.push(token);
     this.lightJobMerges += 1;
   }
 
@@ -1153,6 +1181,7 @@ export class VoxelWorld {
       const job = this.lightJobs[0]!;
       const done = continuePendingLight(this, job, deadline);
       if (!done) return;
+      this.settleEditLightTokens(job.tokens);
       this.lightJobs.shift();
       this.lightJobCommits += 1;
       this.commitLightChanges();

@@ -963,6 +963,11 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.holograms.setAutomineSchedule((name) => {
+      const mine = this.autoMine.get(name);
+      if (!mine || mine.worldId !== this.worldId) return undefined;
+      return mine.nextResetAt;
+    });
     this.duels = new DuelService({
       worldId: config.worldId,
       store: {
@@ -1460,7 +1465,7 @@ export class WorldInstance {
           + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
           + `resumeCount=${existing.resumeCount}`,
         );
-        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name, firstJoin: false });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
         if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
         return { player: existing, resumed: true, previousConnectionId };
@@ -1476,7 +1481,7 @@ export class WorldInstance {
           `player joined: ${restored.name} (${restored.id}, resume) `
           + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
         );
-        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name, firstJoin: false });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
         this.notifyFriendsOfPresence(restored, 'joined');
         return { player: restored, resumed: true };
@@ -1514,7 +1519,7 @@ export class WorldInstance {
       `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
       + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
     );
-    this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+    this.events.emit('playerJoin', { playerId: player.id, name: player.name, firstJoin: true });
     this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
     this.notifyFriendsOfPresence(player, 'joined');
@@ -3997,6 +4002,7 @@ export class WorldInstance {
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
+    this.holograms.noteAutomineSchedule();
     this.worldEvents.tick();
     this.duels.tick();
     this.megaZombie.tick(dt);
@@ -5325,15 +5331,37 @@ export class WorldInstance {
           kind: 'system',
         });
       },
-      give: (itemId: string, count: number) => {
+      give: (itemId: string, count: number, options?: { readonly durability?: number }) => {
         if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
-        const leftover = player.inventory.addItem(itemId, count);
+        const durability = options?.durability;
+        const addOptions = durability !== undefined ? { durability } : {};
+        const leftover = player.inventory.addItem(itemId, count, addOptions);
         const given = count - leftover;
         player.inventoryDirty = true;
-        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, addOptions));
         instance.flushPlayerInventory(player);
         instance.flushBlockChanges();
         return { given, leftover };
+      },
+      contents: () => {
+        const stacks = [
+          ...player.inventory.slots,
+          player.inventory.armor.head,
+          player.inventory.armor.chest,
+          player.inventory.armor.legs,
+          player.inventory.armor.feet,
+          player.inventory.offhand,
+        ];
+        const items: { itemId: string; count: number; durability?: number }[] = [];
+        for (const stack of stacks) {
+          if (!stack || stack.count < 1 || !isKnownItemId(stack.itemId)) continue;
+          items.push({
+            itemId: stack.itemId,
+            count: stack.count,
+            ...(stack.durability !== undefined ? { durability: stack.durability } : {}),
+          });
+        }
+        return items;
       },
       removeItem: (itemId: string, count: number) => {
         const removed = player.inventory.remove(itemId, count);
@@ -5449,7 +5477,7 @@ export class WorldInstance {
     try {
       if (raw) return Inventory.deserialize(raw);
     } catch {
-      serverLog('player inventory save was invalid; using starter kit', 'warn');
+      serverLog('player inventory save was invalid; using an empty inventory', 'warn');
     }
     return createStarterInventory();
   }
@@ -5727,15 +5755,9 @@ export class WorldInstance {
   }
 }
 
+/** New online players start with an empty inventory. The one-time grant is `/kit start`. */
 export function createStarterInventory(): Inventory {
-  const inventory = new Inventory();
-  inventory.addItem('dirt', 64);
-  inventory.addItem('cobblestone', 64);
-  inventory.addItem('oak_planks', 64);
-  inventory.addItem('stone', 64);
-  inventory.addItem('oak_log', 32);
-  inventory.addItem('apple', 8);
-  return inventory;
+  return new Inventory();
 }
 
 export { ANARCHY_WORLD_ID, TICK_RATE };

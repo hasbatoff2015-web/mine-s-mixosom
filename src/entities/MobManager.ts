@@ -839,7 +839,9 @@ export class MobManager {
       if (mob.hurtSeconds > 0) {
         mob.hurtSeconds = Math.max(0, mob.hurtSeconds - delta);
         if (mob.hurtSeconds === 0 && mob.alive) this.changeState(mob, mob.resumeState);
-      } else if (!mob.meleeKnockback) {
+      }
+      // Mega Zombie stays in its attack cycle while hurt. Other mobs still pause.
+      if (mob.kind === 'mega_zombie' || (mob.hurtSeconds <= 0 && !mob.meleeKnockback)) {
         this.updateAi(mob, delta, nearestTarget, context, daylight);
       }
       if (mob.hurtFlashSeconds > 0) {
@@ -980,7 +982,7 @@ export class MobManager {
     ) {
       this.assignOwnedWolfTarget(damageOptions.attackerId, mob.id, 'mob', 'assist');
     }
-    if (damageOptions.attackerPosition) {
+    if (damageOptions.attackerPosition && mob.kind !== 'mega_zombie') {
       const dx = mob.position.x - damageOptions.attackerPosition.x;
       const dz = mob.position.z - damageOptions.attackerPosition.z;
       const length = Math.hypot(dx, dz);
@@ -1004,7 +1006,7 @@ export class MobManager {
         mob.fleeSeconds = CAT_FEAR_SECONDS;
       }
     }
-    if (damageOptions.source === 'player') {
+    if (damageOptions.source === 'player' && mob.kind !== 'mega_zombie') {
       applyExtraKnockback(mob.velocity, damageOptions.attackerYaw ?? 0, damageOptions.extraKnockbackLevel ?? 0);
       if ((damageOptions.extraKnockbackLevel ?? 0) > 0) mob.meleeKnockback = true;
     }

@@ -17,6 +17,7 @@ import {
   SNEAK_SPEED,
   TERMINAL_VELOCITY,
   WATER_GRAVITY,
+  WATER_MOVE_SPEED,
   WATER_SPEED,
   clamp,
 } from '../core/constants';
@@ -612,9 +613,11 @@ export class PlayerController {
       wishX /= wishLength;
       wishZ /= wishLength;
     }
-    const speed = (this.inWater || this.inLava
-      ? WATER_SPEED * (this.inLava ? 0.55 : 1)
-      : this.sneaking ? SNEAK_SPEED : PLAYER_MOVE_SPEED)
+    const speed = (this.inLava
+      ? WATER_SPEED * 0.55
+      : this.inWater
+        ? WATER_MOVE_SPEED
+        : this.sneaking ? SNEAK_SPEED : PLAYER_MOVE_SPEED)
       * this.webMultiplier;
     if (this.meleeKnockback) {
       // Keep the external impulse; input adds acceleration instead of replacing it.
@@ -643,8 +646,12 @@ export class PlayerController {
     if (movement.sneak) this.velocity.y -= (this.inLava ? 4 : 7) * dt;
     const drag = Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
     this.velocity.y = clamp(this.velocity.y * drag, -4, 3.5);
-    this.velocity.x *= Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
-    this.velocity.z *= Math.pow(this.inLava ? 0.5 : 0.8, dt / 0.05);
+    // Lava keeps horizontal drag. Water does not: the swim cap is already 0.8× land.
+    if (this.inLava) {
+      const horizontalDrag = Math.pow(0.5, dt / 0.05);
+      this.velocity.x *= horizontalDrag;
+      this.velocity.z *= horizontalDrag;
+    }
   }
 
   private updateFluidState(world: VoxelWorld): void {
