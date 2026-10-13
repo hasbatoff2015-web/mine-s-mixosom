@@ -17,10 +17,12 @@ const bashAvailable = await new Promise<boolean>((resolve) => {
 async function fixtureRelease(parent: string, name: string): Promise<string> {
   const dir = join(parent, name);
   await mkdir(join(dir, 'dist/server'), { recursive: true });
+  await mkdir(join(dir, 'dist/admin'), { recursive: true });
   await mkdir(join(dir, 'node_modules/ws'), { recursive: true });
   await mkdir(join(dir, 'node_modules/pg'), { recursive: true });
   await mkdir(join(dir, 'worlds/anarchy'), { recursive: true });
   await writeFile(join(dir, 'dist/server/index.mjs'), 'export {}\n');
+  await writeFile(join(dir, 'dist/admin/index.html'), '<!doctype html><title>admin</title>\n');
   await writeFile(join(dir, 'node_modules/ws/package.json'), '{"name":"ws"}\n');
   await writeFile(join(dir, 'node_modules/pg/package.json'), '{"name":"pg","dependencies":{}}\n');
   await writeFile(join(dir, 'worlds/anarchy/world.json'), '{"keep":true}\n');
@@ -63,6 +65,7 @@ describe('release layout', () => {
       const dest = await installRelease({ root: join(parent, 'opt'), source, releaseId: '228492d6607b' });
       expect(dest).toBe(join(parent, 'opt', 'releases', '228492d6607b'));
       expect(await readFile(join(dest, 'dist/server/index.mjs'), 'utf8')).toContain('export');
+      expect(await readFile(join(dest, 'dist/admin/index.html'), 'utf8')).toContain('admin');
       expect(await readFile(join(dest, 'node_modules/ws/package.json'), 'utf8')).toContain('ws');
       expect(await readFile(join(dest, 'RELEASE_ID'), 'utf8')).toBe('228492d6607b\n');
       await expect(readFile(join(dest, 'worlds/anarchy/world.json'), 'utf8')).rejects.toThrow();
@@ -76,6 +79,7 @@ describe('release layout', () => {
       const packed = await packRelease({ repo: source, releaseId: 'aabbccddee01' });
       expect(packed.out).toBe(join(source, 'release', 'aabbccddee01'));
       expect(await readFile(join(packed.out, 'dist/server/index.mjs'), 'utf8')).toContain('export');
+      expect(await readFile(join(packed.out, 'dist/admin/index.html'), 'utf8')).toContain('admin');
       expect(await readFile(join(packed.out, 'node_modules/ws/package.json'), 'utf8')).toContain('ws');
       expect(await readFile(join(packed.out, 'package.json'), 'utf8')).toContain('frontier-cubes-server');
       expect(await readFile(join(packed.out, 'RELEASE_ID'), 'utf8')).toBe('aabbccddee01\n');
@@ -321,7 +325,9 @@ describe('postgres runtime closure', () => {
       expect(copied).toContain('ws');
       expect(copied).toContain('pg-pool');
       await mkdir(join(dest, 'dist/server'), { recursive: true });
+      await mkdir(join(dest, 'dist/admin'), { recursive: true });
       await writeFile(join(dest, 'dist/server/index.mjs'), "import 'pg';\nimport 'ws';\n");
+      await writeFile(join(dest, 'dist/admin/index.html'), '<!doctype html><title>admin</title>\n');
       await writeFile(join(dest, 'package.json'), `${JSON.stringify({ name: 'frontier-cubes-server', private: true, type: 'module' })}\n`);
       await writeFile(join(dest, 'check.mjs'), `
         import pg from 'pg';

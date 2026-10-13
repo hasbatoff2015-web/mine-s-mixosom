@@ -208,6 +208,9 @@ export async function assertReleaseBundle(source) {
   const root = await resolveReleaseSource(source);
   const bundlePath = join(root, BUNDLE_RELATIVE);
   if (!await exists(bundlePath)) throw new Error(`missing ${bundlePath}`);
+  if (!await exists(join(root, 'dist/admin/index.html'))) {
+    throw new Error('missing dist/admin/index.html');
+  }
   const bundle = await readFile(bundlePath, 'utf8');
   const seen = new Set();
   for (const name of runtimePackageRoots(bundle)) {
@@ -218,8 +221,10 @@ export async function assertReleaseBundle(source) {
 
 async function copyAllowlist(source, dest, releaseId) {
   await mkdir(join(dest, 'dist/server'), { recursive: true });
+  await mkdir(join(dest, 'dist/admin'), { recursive: true });
   await mkdir(join(dest, 'node_modules'), { recursive: true });
   await cp(join(source, BUNDLE_RELATIVE), join(dest, BUNDLE_RELATIVE));
+  await cp(join(source, 'dist/admin'), join(dest, 'dist/admin'), { recursive: true });
   const bundle = await readFile(join(source, BUNDLE_RELATIVE), 'utf8');
   await copyRuntimePackages(source, dest, runtimePackageRoots(bundle));
   const manifest = {

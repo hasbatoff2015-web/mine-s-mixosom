@@ -1,9 +1,10 @@
 import { createServer } from 'node:http';
-import { mkdtemp, access, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { mkdir, mkdtemp, writeFile, access, rm } from 'node:fs/promises';
 import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '../../shared/config';
 import { AnarchyServer } from '../../server/AnarchyServer';
@@ -16,6 +17,13 @@ import { loadServerConfig } from '../../server/config';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 
 const IDS = ['admin-owner', 'admin-colleague'] as const;
+
+beforeAll(async () => {
+  const index = join(process.cwd(), 'dist/admin/index.html');
+  if (existsSync(index)) return;
+  await mkdir(join(process.cwd(), 'dist/admin'), { recursive: true });
+  await writeFile(index, '<!doctype html><title>admin</title>\n');
+});
 
 function pair(ownerSecret: string, colleagueSecret: string): readonly [AdminCredential, AdminCredential] {
   return [

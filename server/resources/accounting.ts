@@ -276,6 +276,39 @@ export class ResourceLedger {
     return this.signature() !== before;
   }
 
+  /**
+   * Last saved ledger only. It does not walk inventories or the world.
+   * Current stack counts stay empty until an explicit recheck.
+   */
+  storedView(worldId: string): {
+    readonly worldId: string;
+    readonly baselineAt: number | null;
+    readonly knownGaps: readonly string[];
+    readonly scanned: false;
+    readonly resources: readonly {
+      readonly itemId: MonitoredResourceId;
+      readonly baseline: number;
+      readonly expected: number;
+      readonly current: null;
+    }[];
+    readonly anomalies: readonly ResourceAnomaly[];
+  } {
+    const baseline = this.baseline ?? emptyResourceCounts();
+    return {
+      worldId,
+      baselineAt: this.baselineAt,
+      knownGaps: RESOURCE_KNOWN_GAPS,
+      scanned: false,
+      resources: (Object.keys(baseline) as MonitoredResourceId[]).map((itemId) => ({
+        itemId,
+        baseline: this.baseline ? baseline[itemId] : 0,
+        expected: this.baseline ? this.expected(itemId) : 0,
+        current: null,
+      })),
+      anomalies: [...this.anomalies],
+    };
+  }
+
   inspect(
     worldId: string,
     current: Record<MonitoredResourceId, number>,

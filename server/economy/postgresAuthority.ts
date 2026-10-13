@@ -196,6 +196,41 @@ export class PostgresGameplayEconomy implements CurrencyPort {
     return this.command(request, (tx) => run(tx), [playerId]);
   }
 
+  /**
+   * One idempotent currency transaction. The audit callback runs on the same
+   * connection before commit. A replay of requestId does not enter either
+   * callback and does not move money again.
+   */
+  setBalanceAudited(
+    playerId: string,
+    amount: number,
+    reason: string,
+    request: EconomyCommandRequest,
+    writeAudit: (tx: NonNullable<Parameters<MegacoinService['setBalance']>[1]>) => Promise<void>,
+  ): Promise<EconomyResult> {
+    const source = { type: 'ADMIN', id: request.requestId };
+    const run = async (tx: Parameters<MegacoinService['setBalance']>[1]) => {
+      if (!tx) throw new Error('admin balance adjustment requires a transaction');
+      const adjusted = await this.megacoin.setBalance({
+        playerId,
+        balance: amount,
+        reason,
+        source,
+        requestId: request.requestId,
+        actorId: request.actorId,
+        displayName: this.names.get(playerId),
+      }, tx);
+      await writeAudit(tx);
+      return {
+        ok: true as const,
+        balance: adjusted.account.balance,
+        amount: adjusted.operation?.legs[0] ? Math.abs(adjusted.operation.legs[0].delta) : 0,
+        replayed: adjusted.replayed,
+      };
+    };
+    return this.command(request, (tx) => run(tx), [playerId]);
+  }
+
   resetBalance(playerId: string, reason: string, request?: EconomyCommandRequest): Promise<EconomyResult> {
     return this.setBalance(playerId, ECONOMY_INITIAL_BALANCE, reason, request);
   }

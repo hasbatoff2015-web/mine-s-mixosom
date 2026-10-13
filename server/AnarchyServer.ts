@@ -14,7 +14,10 @@ import {
   type ServerWelcomeMessage,
 } from '../shared/protocol';
 import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
+import { existsSync } from 'node:fs';
 import { AdminHttpServer } from './admin/http';
+import { adminAssetIndex, resolveAdminAssetsRoot } from './admin/assets';
+import { AdminPanelHost } from './admin/panelHost';
 import type { ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
@@ -47,6 +50,7 @@ export class AnarchyServer {
   private http?: HttpServer;
   private wss?: WebSocketServer;
   private adminHttp?: AdminHttpServer;
+  private readonly startedAt = Date.now();
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
 
@@ -162,9 +166,24 @@ export class AnarchyServer {
   private async openAdminHttp(): Promise<void> {
     const admin = this.config.adminHttp;
     if (!admin.enabled) return;
+    const assetsRoot = resolveAdminAssetsRoot(import.meta.url);
+    if (!existsSync(adminAssetIndex(assetsRoot))) {
+      throw new Error(
+        `admin ui bundle is missing (${adminAssetIndex(assetsRoot)}). Run npm run build:admin before enabling FC_ADMIN_PORT.`,
+      );
+    }
+    const panel = new AdminPanelHost(
+      this.world,
+      (playerId, connectionId) => this.closeAdminKick(playerId, connectionId),
+      this.world.database,
+      this.config.database.enabled ? this.config.database.deploymentId : 'disabled',
+    );
     const listener = new AdminHttpServer({
       port: admin.port,
       credentials: admin.credentials,
+      assetsRoot,
+      panel,
+      startedAt: this.startedAt,
       inspect: (adminId, playerId) => this.world.inspectPlayer(adminId, playerId),
       describe: () => ({
         serverMode: this.config.serverMode,
@@ -180,6 +199,13 @@ export class AnarchyServer {
       throw error;
     }
     serverLog(`admin http: 127.0.0.1:${listener.port}`);
+  }
+
+  private closeAdminKick(playerId: string, connectionId: string): void {
+    for (const [socket, binding] of this.sockets) {
+      if (binding.playerId !== playerId || binding.connectionId !== connectionId || binding.superseded) continue;
+      socket.close();
+    }
   }
 
   private async closeAdminHttp(): Promise<void> {

@@ -134,6 +134,7 @@ import {
 } from './identity/locationScan';
 import { PermissionService } from './services/permissions';
 import { canonicalPlayerId, isPlayerId } from './services/permissionSubject';
+import { AdminBanList } from './admin/bans';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
@@ -688,6 +689,10 @@ export class WorldInstance {
   maxTickMs = 0;
   private dirty = false;
   private readonly identityIncidents = new IdentityIncidentLog();
+  private readonly adminBans = new AdminBanList();
+  private adminBansLoaded = false;
+  private adminRecheckBusy = false;
+  private adminRecheckAt = 0;
   private identityLogLoaded = false;
   /** A failed incident write stays pending until the next allowed checkpoint. */
   private identityPersistPending = false;
@@ -1280,6 +1285,130 @@ export class WorldInstance {
     return this.adminInspection.inspect(adminId, playerId);
   }
 
+  /** Names and ids only. Inventories stay on the single-player inspection. */
+  listAdminPlayers(query: string, cursor: string | undefined, limit: number): {
+    readonly players: readonly {
+      readonly playerId: string;
+      readonly name: string;
+      readonly online: boolean;
+      readonly gamemode: string;
+    }[];
+    readonly nextCursor?: string;
+  } {
+    const rows: Array<{ playerId: string; name: string; online: boolean; gamemode: string }> = [];
+    const seen = new Set<string>();
+    for (const player of this.players.values()) {
+      seen.add(player.id);
+      rows.push({
+        playerId: player.id,
+        name: player.name,
+        online: player.connected,
+        gamemode: player.gamemode,
+      });
+    }
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (seen.has(stored.id)) continue;
+      rows.push({
+        playerId: stored.id,
+        name: stored.name,
+        online: false,
+        gamemode: stored.gamemode,
+      });
+    }
+    const needle = query.trim().toLowerCase();
+    const filtered = needle
+      ? rows.filter((row) => row.playerId.toLowerCase() === needle
+        || row.playerId.toLowerCase().includes(needle)
+        || row.name.toLowerCase().includes(needle))
+      : rows;
+    filtered.sort((a, b) => Number(b.online) - Number(a.online)
+      || a.name.localeCompare(b.name, 'ru')
+      || a.playerId.localeCompare(b.playerId));
+    const start = cursor ? Math.max(0, filtered.findIndex((row) => row.playerId === cursor) + 1) : 0;
+    const page = filtered.slice(start, start + limit);
+    const last = page[page.length - 1];
+    return {
+      players: page,
+      ...(start + page.length < filtered.length && last ? { nextCursor: last.playerId } : {}),
+    };
+  }
+
+  adminIncidents(): ReturnType<IdentityIncidentLog['list']> {
+    this.ensureIdentityLog();
+    return this.identityIncidents.list().slice(-80);
+  }
+
+  adminResources(): ReturnType<ResourceLedger['storedView']> {
+    this.ensureResourceLog();
+    return this.resources.storedView(this.worldId);
+  }
+
+  /**
+   * Explicit operator recheck. Ordinary panel reads do not call this.
+   * One scan at a time, and not more often than once every 15 seconds.
+   */
+  adminRecheck(now = Date.now()):
+    | { ok: false; error: 'busy' | 'rate' }
+    | {
+      ok: true;
+      incidents: ReturnType<IdentityIncidentLog['list']>;
+      resources: ReturnType<WorldInstance['inspectValuableResources']>;
+    } {
+    if (this.adminRecheckBusy) return { ok: false, error: 'busy' };
+    if (now - this.adminRecheckAt < 15_000) return { ok: false, error: 'rate' };
+    this.adminRecheckBusy = true;
+    try {
+      const incidents = this.inspectUniqueItems();
+      const resources = this.inspectValuableResources();
+      this.adminRecheckAt = now;
+      return { ok: true, incidents: incidents.incidents.slice(-80), resources };
+    } finally {
+      this.adminRecheckBusy = false;
+    }
+  }
+
+  isPlayerBanned(playerId: string): boolean {
+    this.ensureAdminBans();
+    return this.adminBans.has(playerId);
+  }
+
+  setPlayerBan(record: { playerId: string; reason: string; adminId: string; at: number }): void {
+    this.ensureAdminBans();
+    this.adminBans.add(record);
+    this.pluginStore.save('admin-bans', this.adminBans.serialize());
+  }
+
+  clearPlayerBan(playerId: string): boolean {
+    this.ensureAdminBans();
+    const removed = this.adminBans.remove(playerId);
+    if (removed) this.pluginStore.save('admin-bans', this.adminBans.serialize());
+    return removed;
+  }
+
+  /**
+   * Drops the current connection only. A newer connectionId is left alone.
+   */
+  adminKick(playerId: string): { ok: true; connectionId: string } | { ok: false; error: 'offline' | 'reconnected' } {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return { ok: false, error: 'offline' };
+    const connectionId = player.connectionId;
+    this.disconnect(playerId, true, connectionId);
+    if (player.connectionId !== connectionId) return { ok: false, error: 'reconnected' };
+    if (player.connected) return { ok: false, error: 'offline' };
+    return { ok: true, connectionId };
+  }
+
+  private ensureAdminBans(): void {
+    if (this.adminBansLoaded) return;
+    this.adminBansLoaded = true;
+    try {
+      this.adminBans.load(this.pluginStore.load('admin-bans', { version: 1, bans: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`admin ban load failed: ${detail}`, 'warn');
+    }
+  }
+
   private containerRevisionFor(player: ServerPlayer): number | undefined {
     const window = player.window;
     if (window.kind === 'portal-chest') return player.portalChestRevision;
@@ -1663,12 +1792,16 @@ export class WorldInstance {
 
     const prepared = this.prepareJoin(options);
     if ('error' in prepared) return prepared;
+    if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
     if (this.money.backend !== 'postgres') return prepared.publish();
     const prepare = this.money.preparePlayer;
     if (!prepare) return { error: 'Сервер временно недоступен.' };
     const displayName = options.name?.trim() || prepared.player.name;
     const work = prepare.call(this.money, prepared.player.id, displayName).then(
-      () => prepared.publish(),
+      () => {
+        if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
+        return prepared.publish();
+      },
       () => {
         serverLog('player join economy prepare failed', 'error');
         return { error: 'Сервер временно недоступен.' };

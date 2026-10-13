@@ -1,6 +1,9 @@
+import { existsSync } from 'node:fs';
 import { timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { serverLog } from '../log';
+import { adminAssetIndex, readAdminAsset } from './assets';
+import { PanelHttpError, type AdminPanelApi } from './panelHost';
 import { AdminControlDisabledError, AdminIdentityError } from './errors';
 import {
   resolveAdminCredential,
@@ -26,6 +29,9 @@ export interface AdminHttpOptions {
   readonly credentials: readonly [AdminCredential, AdminCredential];
   readonly inspect: (adminId: string, playerId: string) => AdminPlayerSnapshot | null;
   readonly describe: () => { readonly serverMode: string; readonly worldId: string };
+  readonly assetsRoot?: string;
+  readonly panel?: AdminPanelApi;
+  readonly startedAt?: number;
   readonly now?: () => number;
   readonly idleMs?: number;
   readonly absoluteMs?: number;
@@ -121,6 +127,11 @@ export class AdminHttpServer {
 
   async start(): Promise<void> {
     if (this.http) throw new Error('admin http is already listening');
+    if (this.options.assetsRoot && !existsSync(adminAssetIndex(this.options.assetsRoot))) {
+      throw new Error(
+        `admin ui bundle is missing (${adminAssetIndex(this.options.assetsRoot)}). Run npm run build:admin before enabling FC_ADMIN_PORT.`,
+      );
+    }
     this.closed = false;
     const http = createServer((req, res) => {
       void this.handle(req, res);
@@ -185,13 +196,18 @@ export class AdminHttpServer {
         return;
       }
       if (path.startsWith('/admin/api/player/')) {
-        if (method !== 'GET') throw new HttpReply(405, 'method not allowed');
-        this.player(req, res, path);
+        await this.playerRoute(req, res, method, path);
         return;
       }
+      if (this.options.panel && await this.panelRoute(req, res, method, path)) return;
+      if (method === 'GET' && this.serveAsset(res, path)) return;
       if (method !== 'GET' && method !== 'POST') throw new HttpReply(405, 'method not allowed');
       throw new HttpReply(404, 'not found');
     } catch (error) {
+      if (error instanceof PanelHttpError) {
+        if (!res.headersSent) sendJson(res, error.status, { error: error.code });
+        return;
+      }
       if (error instanceof HttpReply) {
         if (!res.headersSent) sendJson(res, error.status, { error: error.error });
         if (error.status === 413) req.resume();
@@ -239,6 +255,141 @@ export class AdminHttpServer {
     this.requireOrigin(req, false);
     const session = this.requireSession(req);
     this.writeSession(req, res, session);
+  }
+
+  private async playerRoute(req: IncomingMessage, res: ServerResponse, method: string, path: string): Promise<void> {
+    const match = /^\/admin\/api\/player\/([^/]+)(?:\/(kick|ban|unban))?$/.exec(path);
+    if (!match) throw new HttpReply(404, 'not found');
+    const playerId = decodePlayerId(match[1] ?? '');
+    const action = match[2];
+    if (!action) {
+      if (method !== 'GET') throw new HttpReply(405, 'method not allowed');
+      this.player(req, res, `/admin/api/player/${playerId}`);
+      return;
+    }
+    if (method !== 'POST') throw new HttpReply(405, 'method not allowed');
+    const panel = this.options.panel;
+    if (!panel) throw new HttpReply(404, 'not found');
+    const session = this.requireMutation(req);
+    const body = await readJson(req);
+    const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+    const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+    const result = action === 'kick'
+      ? await panel.kick(session.adminId, playerId, reason, requestId)
+      : action === 'ban'
+        ? await panel.ban(session.adminId, playerId, reason, requestId)
+        : await panel.unban(session.adminId, playerId, reason, requestId);
+    sendJson(res, 200, result);
+  }
+
+  private async panelRoute(
+    req: IncomingMessage,
+    res: ServerResponse,
+    method: string,
+    path: string,
+  ): Promise<boolean> {
+    const panel = this.options.panel;
+    if (!panel) return false;
+    if (method === 'GET') this.requireOrigin(req, false);
+    if (path === '/admin/api/overview' && method === 'GET') {
+      this.requireSession(req);
+      sendJson(res, 200, panel.overview());
+      return true;
+    }
+    if (path === '/admin/api/players' && method === 'GET') {
+      this.requireSession(req);
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const limit = boundLimit(url.searchParams.get('limit'));
+      const cursor = boundText(url.searchParams.get('cursor'), 80);
+      const q = boundText(url.searchParams.get('q'), 64) ?? '';
+      sendJson(res, 200, panel.players(q, cursor, limit));
+      return true;
+    }
+    if (path === '/admin/api/economy' && method === 'GET') {
+      this.requireSession(req);
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const playerId = boundText(url.searchParams.get('playerId'), 64);
+      if (!playerId) throw new HttpReply(400, 'invalid request');
+      sendJson(res, 200, await panel.economy(playerId));
+      return true;
+    }
+    if (path === '/admin/api/economy/adjust' && method === 'POST') {
+      const session = this.requireMutation(req);
+      const body = await readJson(req);
+      const playerId = typeof body.playerId === 'string' ? body.playerId : '';
+      const balance = typeof body.balance === 'number' ? body.balance : Number.NaN;
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+      const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+      sendJson(res, 200, await panel.adjust(session.adminId, playerId, balance, reason, requestId));
+      return true;
+    }
+    if (path === '/admin/api/incidents' && method === 'GET') {
+      this.requireSession(req);
+      sendJson(res, 200, panel.incidents());
+      return true;
+    }
+    if (path === '/admin/api/resources' && method === 'GET') {
+      this.requireSession(req);
+      sendJson(res, 200, panel.resources());
+      return true;
+    }
+    if (path === '/admin/api/resources/recheck' && method === 'POST') {
+      const session = this.requireMutation(req);
+      const body = await readJson(req);
+      const reason = typeof body.reason === 'string' ? body.reason.trim() : 'проверка';
+      const requestId = typeof body.requestId === 'string' ? body.requestId : '';
+      sendJson(res, 200, await panel.recheck(session.adminId, requestId, reason));
+      return true;
+    }
+    if (path === '/admin/api/audit' && method === 'GET') {
+      this.requireSession(req);
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      const limit = boundLimit(url.searchParams.get('limit'));
+      const cursor = boundText(url.searchParams.get('cursor'), 96);
+      const before = cursor ? parseAuditCursor(cursor) : null;
+      sendJson(res, 200, await panel.audit(limit, before));
+      return true;
+    }
+    if (path === '/admin/api/server' && method === 'GET') {
+      this.requireSession(req);
+      sendJson(res, 200, panel.serverStatus(this.options.startedAt ?? this.now()));
+      return true;
+    }
+    return false;
+  }
+
+  private requireMutation(req: IncomingMessage) {
+    this.requireOrigin(req, true);
+    const session = this.requireSession(req);
+    const csrf = headerOne(req, 'x-csrf-token');
+    if (!csrf || !sameToken(csrf, session.csrfToken)) {
+      this.note('denied');
+      throw new HttpReply(403, 'forbidden');
+    }
+    return session;
+  }
+
+  private serveAsset(res: ServerResponse, path: string): boolean {
+    const root = this.options.assetsRoot;
+    if (!root) return false;
+    if (path !== '/admin' && path !== '/admin/' && !path.startsWith('/admin/assets/')
+      && !path.startsWith('/admin/fonts/') && !path.startsWith('/admin/icons/')
+      && path !== '/admin/index.html') {
+      return false;
+    }
+    const asset = readAdminAsset(root, path);
+    if (!asset) throw new HttpReply(404, 'not found');
+    res.writeHead(200, {
+      'Content-Type': asset.type,
+      'Content-Length': asset.body.length,
+      'Cache-Control': 'no-store',
+      'X-Content-Type-Options': 'nosniff',
+      'Referrer-Policy': 'no-referrer',
+      'Content-Security-Policy': "default-src 'none'; style-src 'self'; font-src 'self'; img-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+      'X-Frame-Options': 'DENY',
+    });
+    res.end(asset.body);
+    return true;
   }
 
   private player(req: IncomingMessage, res: ServerResponse, path: string): void {
@@ -353,6 +504,35 @@ function requestPath(req: IncomingMessage): string {
   } catch {
     throw new HttpReply(400, 'invalid request');
   }
+}
+
+function boundLimit(value: string | null): number {
+  const parsed = value === null ? 20 : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 40) throw new HttpReply(400, 'invalid request');
+  return parsed;
+}
+
+function boundText(value: string | null, max: number): string | undefined {
+  if (value === null || value === '') return undefined;
+  if (value.length > max) throw new HttpReply(400, 'invalid request');
+  return value;
+}
+
+function parseAuditCursor(value: string): { createdAt: string; eventId: string } {
+  const split = value.indexOf('|');
+  if (split <= 0) throw new HttpReply(400, 'invalid request');
+  return { createdAt: value.slice(0, split), eventId: value.slice(split + 1) };
+}
+
+function decodePlayerId(raw: string): string {
+  let playerId: string;
+  try {
+    playerId = decodeURIComponent(raw);
+  } catch {
+    throw new HttpReply(400, 'invalid request');
+  }
+  if (!PLAYER_ID.test(playerId)) throw new HttpReply(400, 'invalid request');
+  return playerId;
 }
 
 function playerIdFromPath(path: string): string {

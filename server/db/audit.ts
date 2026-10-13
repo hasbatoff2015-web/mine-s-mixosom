@@ -19,6 +19,14 @@ FROM admin_audit_log
 WHERE deployment_id = $1 AND request_id = $2::uuid
 ORDER BY created_at ASC, event_id ASC`;
 
+export const SELECT_ADMIN_AUDIT_RECENT_SQL = `SELECT event_id, deployment_id, request_id, admin_id, action, target_type, target_id,
+  reason, server_mode, world_id, success, metadata, created_at
+FROM admin_audit_log
+WHERE deployment_id = $1
+  AND ($2::timestamptz IS NULL OR (created_at, event_id) < ($2::timestamptz, $3::uuid))
+ORDER BY created_at DESC, event_id DESC
+LIMIT $4`;
+
 export interface AdminAuditInput {
   readonly requestId: string;
   readonly adminId: string;
@@ -111,6 +119,26 @@ export class AdminAuditService {
   async listByRequestId(requestId: string, tx?: Queryable): Promise<readonly AdminAuditRecord[]> {
     const rows = await this.readRequest(requestId, tx);
     return rows.map(mapAuditRow);
+  }
+
+  /**
+   * Newest rows for this deployment only. `before` is the cursor from the
+   * previous page. The existing (deployment_id, created_at) index covers it.
+   */
+  async listRecent(limit: number, before?: { readonly createdAt: string; readonly eventId: string } | null): Promise<readonly AdminAuditRecord[]> {
+    if (!Number.isSafeInteger(limit) || limit < 1 || limit > 40) {
+      throw new AdminAuditValidationError('audit limit is outside 1..40');
+    }
+    const createdAt = before?.createdAt ?? null;
+    const eventId = before?.eventId ? parseUuid(before.eventId) : null;
+    if (before && (!createdAt || !eventId)) throw new AdminAuditValidationError('audit cursor is invalid');
+    const found = await this.database.query<AdminAuditRow>(SELECT_ADMIN_AUDIT_RECENT_SQL, [
+      this.deploymentId,
+      createdAt,
+      eventId,
+      limit,
+    ]);
+    return found.rows.map(mapAuditRow);
   }
 
   /** The newest attempt, or null when this request has no audit rows. */
