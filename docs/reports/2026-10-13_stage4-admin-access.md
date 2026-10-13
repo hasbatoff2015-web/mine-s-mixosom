@@ -75,4 +75,6 @@ Stage 5 still has to choose which writes exist. `AdminActionService` is not moun
 - Branch `cursor/admin-antidupe-postgres-foundation-26a8`
 - `origin/main`: `78eb6f338349be32d6ecf63ba40f900020b203a2` (5 commits not in this branch; not merged)
 - Feature HEAD before: `a1fef6291d0a41da9aae4b98062a0ff2126fe814`
+- Stage 4 commit: `65d4e69ae44d8c6741aad27ca4b6b8878809c39d`
+- After this report update the branch is 41 ahead of the old base `2dd09ee` and 5 behind current `origin/main`
 - Draft PR **#129**. Not merged.
