@@ -78,4 +78,4 @@ Build the menu tab on `DonationRankService.status()` and point the coordinate fo
 
 ## Git
 
-Branch `cursor/donation-ranks-fb58`. Not merged.
+Branch `cursor/donation-ranks-fb58`. Draft PR **#131**. Not merged.

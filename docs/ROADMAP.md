@@ -7,7 +7,7 @@
 - [x] `/ec`, `/an`, `/invsee`, `/invseeop`, `/nickcolor`, and `/tpa x y z` share the rank service. Player `/tpa` stays.
 - [x] Kit periods and command cooldowns survive restart. A failed give does not spend the use.
 - [ ] Menu tab «Донат-привилегии» and coordinate form are not built. `DonationRankService.status()` is the source they should call.
-- [ ] Not merged. Wait for an explicit merge command.
+- [ ] Not merged. Draft PR **#131**. Wait for an explicit merge command.
 
 ## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback
 
