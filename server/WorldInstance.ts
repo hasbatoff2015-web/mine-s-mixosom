@@ -2463,6 +2463,7 @@ export class WorldInstance {
         const live = this.players.get(entry.id);
         return live ? this.findOwnedClaim(live, claimId) : undefined;
       },
+      resolvePlayer: (target) => this.resolvePermissionSubject(target),
       duels: this.duels,
     };
   }
@@ -2499,7 +2500,7 @@ export class WorldInstance {
       return;
     }
     if (outcome.kind === 'home-teleport') {
-      const dest = this.homes.get(player.name, outcome.name);
+      const dest = this.homes.get(player.id, outcome.name);
       if (!dest) {
         session.message = HOME_MISSING_ERROR;
         this.flushMenu(player);
@@ -2630,9 +2631,9 @@ export class WorldInstance {
   }
 
   private findOwnedClaim(player: ServerPlayer, claimId: string) {
-    const key = player.name.toLowerCase();
+    const id = canonicalPlayerId(player.id);
     return this.loadClaimStore().claims.find((claim) => claim.id === claimId && (
-      claim.owner === key || this.permissions.has(player.id, 'claim.admin') || this.permissions.isOperator(player.id)
+      claim.owner === id || this.permissions.has(player.id, 'claim.admin') || this.permissions.isOperator(player.id)
     ));
   }
 
@@ -2707,7 +2708,7 @@ export class WorldInstance {
       ...(session.message ? { message: session.message } : {}),
     };
     if (session.screen === 'homes' || session.screen === 'home-delete-confirm') {
-      const homes = this.homes.list(player.name);
+      const homes = this.homes.list(player.id);
       return {
         ...base,
         homeNameText: session.homeNameText,
@@ -2768,7 +2769,7 @@ export class WorldInstance {
       };
     }
     if (session.screen === 'claims' || session.screen === 'claim-settings' || session.screen === 'claim-delete-confirm') {
-      const owner = player.name.toLowerCase();
+      const owner = canonicalPlayerId(player.id);
       const mine = this.loadClaimStore().claims.filter((claim) => claim.owner === owner);
       const selected = session.claimId ? mine.find((claim) => claim.id === session.claimId) : undefined;
       return {

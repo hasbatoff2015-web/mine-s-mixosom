@@ -50,6 +50,7 @@ export interface MenuActionHost {
   loadClaims(): ClaimStore;
   saveClaims(store: ClaimStore): void;
   findOwnedClaim(player: MenuPlayer, claimId: string): Claim | undefined;
+  resolvePlayer(target: string): { ok: true; playerId: string; name: string } | { ok: false; error: string };
   duels: DuelService;
 }
 
@@ -123,11 +124,11 @@ export function applyGameMenuAction(
       session.message = parsed.error;
       return { kind: 'flush' };
     }
-    if (host.homes.get(player.name, parsed.name)) {
+    if (host.homes.get(player.id, parsed.name)) {
       session.message = host.homes.uniqueError().error;
       return { kind: 'flush' };
     }
-    const result = host.homes.set(player.name, parsed.name, {
+    const result = host.homes.set(player.id, parsed.name, {
       worldId: host.worldId,
       x: player.x,
       y: player.y,
@@ -141,7 +142,7 @@ export function applyGameMenuAction(
     return { kind: 'flush' };
   }
   if (action === 'home_teleport' && message.name) {
-    if (!host.homes.get(player.name, message.name)) {
+    if (!host.homes.get(player.id, message.name)) {
       session.message = HOME_MISSING_ERROR;
       return { kind: 'flush' };
     }
@@ -159,7 +160,7 @@ export function applyGameMenuAction(
   }
   if (action === 'home_confirm_delete') {
     if (session.pendingHomeName) {
-      const result = host.homes.remove(player.name, session.pendingHomeName);
+      const result = host.homes.remove(player.id, session.pendingHomeName);
       if (!result.ok) session.message = result.error;
     }
     session.pendingHomeName = undefined;
@@ -287,7 +288,7 @@ export function applyGameMenuAction(
     }
     const store = host.loadClaims();
     const live = store.claims.find((entry) => entry.id === claim.id);
-    if (!live) {
+    if (!live || !host.findOwnedClaim(player, live.id)) {
       session.message = 'Приват не найден.';
       return { kind: 'flush' };
     }
@@ -305,7 +306,7 @@ export function applyGameMenuAction(
     const claim = session.claimId ? host.findOwnedClaim(player, session.claimId) : undefined;
     const store = host.loadClaims();
     const live = claim ? store.claims.find((entry) => entry.id === claim.id) : undefined;
-    if (!live) {
+    if (!live || !host.findOwnedClaim(player, live.id)) {
       session.message = 'Приват не найден.';
       return { kind: 'flush' };
     }
@@ -319,18 +320,23 @@ export function applyGameMenuAction(
   }
   if (action === 'claim_add_member') {
     const claim = session.claimId ? host.findOwnedClaim(player, session.claimId) : undefined;
-    const name = (message.name ?? session.claimMemberText).trim().toLowerCase();
+    const name = (message.name ?? session.claimMemberText).trim();
     if (!claim || !name) {
       session.message = 'Введите ник игрока.';
       return { kind: 'flush' };
     }
+    const subject = host.resolvePlayer(name);
+    if (!subject.ok) {
+      session.message = subject.error;
+      return { kind: 'flush' };
+    }
     const store = host.loadClaims();
     const live = store.claims.find((entry) => entry.id === claim.id);
-    if (!live) {
+    if (!live || !host.findOwnedClaim(player, live.id)) {
       session.message = 'Приват не найден.';
       return { kind: 'flush' };
     }
-    if (!live.members.includes(name)) live.members.push(name);
+    if (!live.members.includes(subject.playerId)) live.members.push(subject.playerId);
     host.saveClaims(store);
     session.claimMemberText = '';
     return { kind: 'flush' };
@@ -339,8 +345,9 @@ export function applyGameMenuAction(
     const claim = session.claimId ? host.findOwnedClaim(player, session.claimId) : undefined;
     const store = host.loadClaims();
     const live = claim ? store.claims.find((entry) => entry.id === claim.id) : undefined;
-    if (live) {
-      live.members = live.members.filter((member) => member !== message.name!.toLowerCase());
+    const subject = host.resolvePlayer(message.name);
+    if (live && subject.ok && host.findOwnedClaim(player, live.id)) {
+      live.members = live.members.filter((member) => member !== subject.playerId);
       host.saveClaims(store);
     }
     return { kind: 'flush' };
@@ -356,11 +363,21 @@ export function applyGameMenuAction(
     return { kind: 'flush' };
   }
   if (action === 'claim_confirm_delete') {
+    const owned = session.claimId ? host.findOwnedClaim(player, session.claimId) : undefined;
+    if (!owned) {
+      session.message = 'Приват не найден.';
+      session.claimId = undefined;
+      session.pendingClaimName = undefined;
+      session.screen = 'claims';
+      return { kind: 'flush' };
+    }
     const store = host.loadClaims();
-    const index = store.claims.findIndex((entry) => entry.id === session.claimId);
-    if (index >= 0) {
+    const index = store.claims.findIndex((entry) => entry.id === owned.id);
+    if (index >= 0 && host.findOwnedClaim(player, owned.id)) {
       store.claims.splice(index, 1);
       host.saveClaims(store);
+    } else {
+      session.message = 'Приват не найден.';
     }
     session.claimId = undefined;
     session.pendingClaimName = undefined;

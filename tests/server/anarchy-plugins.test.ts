@@ -675,9 +675,9 @@ describe('Anarchy builtin plugins', () => {
     ada.player.controller.teleport([x + 40.5, y, z + 40.5]);
     expect(chat(world, ada, '/claim flag spawn pvp true').some((line) => line.includes("Set pvp=true on claim 'spawn'"))).toBe(true);
     expect(chat(world, bob, '/claim flag spawn block-break true').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/claim addmember spawn bob').some((line) => line.includes("Added bob to claim 'spawn'"))).toBe(true);
-    expect(chat(world, ada, '/claim members spawn').some((line) => line.includes('bob'))).toBe(true);
-    expect(chat(world, ada, '/claim removemember spawn bob').some((line) => line.includes("Removed bob from claim 'spawn'"))).toBe(true);
+    expect(chat(world, ada, '/claim addmember spawn bob').some((line) => line.includes(`Added Bob to claim 'spawn'`))).toBe(true);
+    expect(chat(world, ada, '/claim members spawn').some((line) => line.includes(bob.player.id))).toBe(true);
+    expect(chat(world, ada, '/claim removemember spawn bob').some((line) => line.includes(`Removed Bob from claim 'spawn'`))).toBe(true);
     expect(chat(world, ada, '/claim info spawn').some((line) => line.includes('pvp: true'))).toBe(true);
     expect(chat(world, ada, '/claim info spawn').some((line) => line.includes('mob-spawn: false'))).toBe(true);
     expect(chat(world, ada, '/claim delete spawn').some((line) => line.includes("Deleted claim 'spawn'"))).toBe(true);

@@ -125,6 +125,39 @@ describe('PermissionService', () => {
     expect(second.has('AdminOwner', 'server.admin')).toBe(false);
     expect(second.legacyInfo('AdminOwner')).toBeNull();
   });
+
+  it('does not persist environment operators and keeps manual grants', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-perm-'));
+    dirs.push(dir);
+    const store = new JsonFileStore(dir);
+    const envOnly = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+    const manual = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
+    const both = 'cccccccc-cccc-4ccc-8ccc-ccccccccccc3';
+    const first = new PermissionService(store, [envOnly, 'AdminOwner', both]);
+    first.load();
+    expect(first.isOperator(envOnly)).toBe(true);
+    expect(first.isOperator('AdminOwner')).toBe(false);
+    expect(first.snapshot().ops).not.toContain(envOnly);
+    expect(first.op(manual)).toBe(true);
+    expect(first.op(both)).toBe(true);
+    expect(first.deop(envOnly).ok).toBe(false);
+    expect(first.isOperator(envOnly)).toBe(true);
+
+    const saved = new PermissionService(new JsonFileStore(dir), []);
+    saved.load();
+    expect(saved.isOperator(envOnly)).toBe(false);
+    expect(saved.isOperator(manual)).toBe(true);
+    expect(saved.isOperator(both)).toBe(true);
+
+    store.save('permissions', { version: 2, ops: [envOnly], roles: {}, playerRoles: {}, playerPermissions: {} });
+    const ambiguous = new PermissionService(new JsonFileStore(dir), []);
+    ambiguous.load();
+    expect(ambiguous.isOperator(envOnly)).toBe(false);
+    expect(ambiguous.snapshot().ops).not.toContain(envOnly);
+    expect(ambiguous.snapshot().unreviewedOps).toContain(envOnly);
+    expect(ambiguous.op(envOnly)).toBe(true);
+    expect(ambiguous.isOperator(envOnly)).toBe(true);
+  });
 });
 
 describe('RTP bounds', () => {

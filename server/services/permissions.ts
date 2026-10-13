@@ -9,7 +9,7 @@ export interface RoleDefinition {
   permissions: string[];
 }
 
-export const PERMISSION_STATE_VERSION = 2;
+export const PERMISSION_STATE_VERSION = 3;
 
 /** Nickname-keyed grants. They are kept and never authorize a player. */
 export interface LegacyPermissionSubjects {
@@ -21,6 +21,8 @@ export interface LegacyPermissionSubjects {
 export interface PermissionState {
   version: typeof PERMISSION_STATE_VERSION;
   ops: string[];
+  /** Saved player ids whose OP source could not be proven. They do not authorize. */
+  unreviewedOps: string[];
   roles: Record<string, string[]>;
   playerRoles: Record<string, string[]>;
   playerPermissions: Record<string, string[]>;
@@ -127,6 +129,8 @@ interface LegacyMaps {
 
 export class PermissionService {
   private ops = new Set<string>();
+  private envOps = new Set<string>();
+  private unreviewedOps = new Set<string>();
   private roles = new Map<string, Set<string>>();
   private playerRoles = new Map<string, Set<string>>();
   private playerPermissions = new Map<string, Set<string>>();
@@ -151,7 +155,20 @@ export class PermissionService {
       }
     }
     const legacy = emptyLegacy();
-    for (const raw of saved.ops ?? []) this.takeSubject(raw, (id) => this.ops.add(id), (name) => legacy.ops.add(name));
+    const savedVersion = saved.version === PERMISSION_STATE_VERSION ? PERMISSION_STATE_VERSION : 0;
+    for (const raw of saved.ops ?? []) {
+      this.takeSubject(
+        raw,
+        (id) => {
+          if (savedVersion >= PERMISSION_STATE_VERSION) this.ops.add(id);
+          else this.unreviewedOps.add(id);
+        },
+        (name) => legacy.ops.add(name),
+      );
+    }
+    for (const raw of saved.unreviewedOps ?? []) {
+      if (typeof raw === 'string' && isPlayerId(raw)) this.unreviewedOps.add(canonicalPlayerId(raw));
+    }
     for (const [player, roles] of Object.entries(saved.playerRoles ?? {})) {
       this.takeSubject(
         player,
@@ -180,8 +197,9 @@ export class PermissionService {
     }
     this.legacy = legacy;
     this.ignoredEnvOperators = [];
+    this.envOps = new Set();
     for (const entry of this.envOperators) {
-      if (isPlayerId(entry)) this.ops.add(canonicalPlayerId(entry));
+      if (isPlayerId(entry)) this.envOps.add(canonicalPlayerId(entry));
       else if (entry.trim()) this.ignoredEnvOperators.push(entry.trim());
     }
     if (this.ignoredEnvOperators.length > 0) {
@@ -201,6 +219,7 @@ export class PermissionService {
     return {
       version: PERMISSION_STATE_VERSION,
       ops: [...this.ops].sort(),
+      unreviewedOps: [...this.unreviewedOps].sort(),
       roles: Object.fromEntries([...this.roles.entries()].map(([name, nodes]) => [name, [...nodes].sort()])),
       playerRoles: Object.fromEntries(
         [...this.playerRoles.entries()].map(([name, roles]) => [name, [...roles].sort()]),
@@ -245,13 +264,12 @@ export class PermissionService {
 
   isOperator(playerId: string): boolean {
     const key = this.keyFor(playerId);
-    return key !== '' && this.ops.has(key);
+    return key !== '' && (this.ops.has(key) || this.envOps.has(key));
   }
 
   isEnvOperator(playerId: string): boolean {
     const key = this.keyFor(playerId);
-    if (!key) return false;
-    return this.envOperators.some((entry) => isPlayerId(entry) && canonicalPlayerId(entry) === key);
+    return key !== '' && this.envOps.has(key);
   }
 
   op(playerId: string): boolean {
@@ -276,7 +294,7 @@ export class PermissionService {
 
   has(playerId: string, node: string): boolean {
     const key = this.keyFor(playerId);
-    if (key && this.ops.has(key)) return true;
+    if (this.isOperator(playerId)) return true;
     for (const granted of this.collect(key)) {
       if (permissionMatches(granted, node)) return true;
     }
@@ -427,7 +445,7 @@ export class PermissionService {
     const key = this.keyFor(playerId);
     return {
       key,
-      operator: key !== '' && this.ops.has(key),
+      operator: this.isOperator(playerId),
       roles: this.rolesOf(key),
       permissions: [...this.collect(key)].sort(),
     };
@@ -460,6 +478,8 @@ export class PermissionService {
 
   private resetDefaults(): void {
     this.ops = new Set();
+    this.envOps = new Set();
+    this.unreviewedOps = new Set();
     this.ignoredEnvOperators = [];
     this.legacy = emptyLegacy();
     this.roles = new Map();

@@ -233,9 +233,9 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(placeAnchor(world, bob.player, x, y, z + 80, BlockId.IronBlock)).toEqual({ ok: true });
 
     const store = loadClaims(world);
-    expect(store.blockClaimSeq).toEqual({ ada: 3, bob: 1 });
-    const adaClaims = store.claims.filter((claim) => claim.owner === 'ada').sort((a, b) => a.name.localeCompare(b.name));
-    const bobClaims = store.claims.filter((claim) => claim.owner === 'bob');
+    expect(store.blockClaimSeq).toEqual({ [ada.player.id]: 3, [bob.player.id]: 1 });
+    const adaClaims = store.claims.filter((claim) => claim.owner === ada.player.id).sort((a, b) => a.name.localeCompare(b.name));
+    const bobClaims = store.claims.filter((claim) => claim.owner === bob.player.id);
     expect(adaClaims.map((claim) => claim.name)).toEqual(['1', '2', '3']);
     expect(bobClaims.map((claim) => claim.name)).toEqual(['1']);
 
@@ -258,7 +258,7 @@ describe('Anarchy claim-anchor blocks', () => {
     const info = chat(world, ada, '/claim info 1');
     expect(info).toEqual(expect.arrayContaining([
       'Claim: 1',
-      'Owner: ada',
+      `Owner: ${ada.player.id}`,
       'Type: block',
       `Anchor: ${x},${y},${z} iron_block`,
       'Radius: 10',
@@ -458,7 +458,7 @@ describe('Anarchy claim-anchor blocks', () => {
     expect(restored.claims[0]!.volume).toEqual({
       minX: x - 10, maxX: x + 10, minY: y - 10, maxY: y + 10, minZ: z - 10, maxZ: z + 10,
     });
-    expect(restored.blockClaimSeq).toEqual({ ada: 1 });
+    expect(restored.blockClaimSeq).toEqual({ [ada.player.id]: 1 });
 
     const resumed = join(second, 'Ada', token);
     const bob = join(second, 'Bob');
@@ -493,7 +493,7 @@ describe('Anarchy claim-anchor blocks', () => {
 
     expect(placeAnchor(world, ada.player, x + 21, y, z, BlockId.IronBlock)).toEqual({ ok: true });
     expect(loadClaims(world).claims.map((claim) => claim.name).sort()).toEqual(['1', '3']);
-    expect(loadClaims(world).blockClaimSeq).toEqual({ ada: 3 });
+    expect(loadClaims(world).blockClaimSeq).toEqual({ [ada.player.id]: 3 });
   });
 
   it('rolls back a racing place and returns the item in survival', async () => {
@@ -534,7 +534,7 @@ describe('Anarchy claim-anchor blocks', () => {
       minZ: z - 10,
       maxZ: z + 10,
     })]);
-    const live = loadClaims(world).claims.filter((claim) => claim.owner === 'ada');
+    const live = loadClaims(world).claims.filter((claim) => claim.owner === ada.player.id);
     expect(live).toEqual([]);
   });
 

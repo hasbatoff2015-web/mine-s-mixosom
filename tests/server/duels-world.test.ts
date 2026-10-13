@@ -298,7 +298,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     const bob = join(world, 'Bob');
     const cara = join(world, 'Cara');
     arena(world);
-    expect(world.homes.set(ada.player.name, 'base', {
+    expect(world.homes.set(ada.player.id, 'base', {
       worldId: world.worldId, x: 4.5, y: 80, z: 4.5,
     }, 3).ok).toBe(true);
     expect(world.teleports.now(ada.player.id, { x: 6.5, y: 80, z: 6.5 }, 'command').ok).toBe(true);
