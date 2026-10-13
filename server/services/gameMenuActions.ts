@@ -11,6 +11,7 @@ import { CLAN_ALREADY_MEMBER_ERROR, type ClanService } from './clan';
 import type { NotificationService } from './notifications';
 import { notificationCategoryForScreen } from '../../shared/notifications';
 import type { Claim, ClaimStore } from './claims';
+import { canonicalPlayerId, isPlayerId } from './permissionSubject';
 import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
 import { isRankingKind } from '../../shared/ranking';
@@ -341,15 +342,27 @@ export function applyGameMenuAction(
     session.claimMemberText = '';
     return { kind: 'flush' };
   }
-  if (action === 'claim_remove_member' && message.name) {
+  if (action === 'claim_remove_member') {
+    const targetId = message.playerId && isPlayerId(message.playerId)
+      ? canonicalPlayerId(message.playerId)
+      : undefined;
+    if (!targetId) {
+      session.message = 'Игрок не найден.';
+      return { kind: 'flush' };
+    }
     const claim = session.claimId ? host.findOwnedClaim(player, session.claimId) : undefined;
     const store = host.loadClaims();
     const live = claim ? store.claims.find((entry) => entry.id === claim.id) : undefined;
-    const subject = host.resolvePlayer(message.name);
-    if (live && subject.ok && host.findOwnedClaim(player, live.id)) {
-      live.members = live.members.filter((member) => member !== subject.playerId);
-      host.saveClaims(store);
+    if (!live || !host.findOwnedClaim(player, live.id)) {
+      session.message = 'Приват не найден.';
+      return { kind: 'flush' };
     }
+    if (!live.members.includes(targetId)) {
+      session.message = 'Участник не найден.';
+      return { kind: 'flush' };
+    }
+    live.members = live.members.filter((member) => member !== targetId);
+    host.saveClaims(store);
     return { kind: 'flush' };
   }
   if (action === 'claim_delete') {

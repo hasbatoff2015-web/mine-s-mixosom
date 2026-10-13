@@ -1491,6 +1491,7 @@ export interface NetworkMenuClaim {
 }
 
 export interface NetworkMenuClaimMember {
+  readonly playerId?: string;
   readonly name: string;
 }
 

@@ -5063,7 +5063,7 @@ export class GameUI {
       }
       const claimKick = target.closest<HTMLElement>('[data-menu-claim-kick]');
       if (claimKick?.dataset.menuClaimKick) {
-        actions.send({ type: 'menu_action', action: 'claim_remove_member', name: claimKick.dataset.menuClaimKick });
+        actions.send({ type: 'menu_action', action: 'claim_remove_member', playerId: claimKick.dataset.menuClaimKick });
         return;
       }
       const claimPvp = target.closest<HTMLElement>('[data-menu-claim-pvp]');

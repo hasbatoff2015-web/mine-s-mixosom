@@ -2687,6 +2687,15 @@ export class WorldInstance {
     this.sendTo(player, payload);
   }
 
+  private menuClaimMember(member: string): { playerId?: string; name: string } {
+    if (!isPlayerId(member)) return { name: member };
+    const playerId = canonicalPlayerId(member);
+    const name = this.players.get(playerId)?.name
+      ?? this.storedPlayers[playerId]?.name
+      ?? `Игрок ${playerId.slice(0, 8)}`;
+    return { playerId, name };
+  }
+
   private buildMenuMessage(player: ServerPlayer): import('../shared/protocol').ServerMenuMessage {
     const session = this.menuSessions.get(player.id);
     if (!session || session.screen === 'closed') return closedMenuMessage();
@@ -2781,7 +2790,7 @@ export class WorldInstance {
           claimId: selected.id,
           claimNameText: session.claimNameText,
           claimPvp: selected.flags.pvp === true,
-          claimMembers: selected.members.map((name) => ({ name })),
+          claimMembers: selected.members.map((member) => this.menuClaimMember(member)),
           claimMemberText: session.claimMemberText,
         } : {}),
         ...(session.pendingClaimName ? { pendingClaimName: session.pendingClaimName } : {}),
