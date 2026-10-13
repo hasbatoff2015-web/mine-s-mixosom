@@ -1,5 +1,9 @@
 # Архитектура
 
+## Резервные копии — 2026-10-13
+
+Снимок VPS делает `scripts/fc-backup.sh`, не игровой тик. Скрипт останавливает запущенные `frontier-cubes-*.service` через SIGTERM, копирует `/var/lib/frontier-cubes/worlds/{anarchy,survival,peaceful}` и при наличии файлов `/var/lib/frontier-cubes/plugins`, снимает `pg_dump -Fc` по `FC_DATABASE_URL` из env и снова запускает только те unit-ы, которые были активны. Архив лежит в `/var/backups/frontier-cubes`. Игровой HTTP его не отдаёт. `/etc/frontier-cubes/*.env` в архив не входит. Подробности: `docs/BACKUPS.md`.
+
 ## PostgreSQL — 2026-10-11
 
 PostgreSQL is optional and server-only. `FC_DATABASE_URL` unset means `DisabledDatabase`: no pool and no socket. A set URL requires `FC_DEPLOYMENT_ID` (`dev` / `prod` are explicit; the hostname is not a scope). Connection or migration failure aborts startup and releases the world lock. There is no JSON fallback for a configured database.

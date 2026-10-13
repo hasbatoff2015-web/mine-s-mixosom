@@ -113,3 +113,7 @@ sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-c
 ## Обновление и откат
 
 Новый релиз ставится через `scripts/deploy-release.sh`: каталог создаётся рядом со старым, `current` переключается атомарно, три сервиса получают SIGTERM и проходят `/status`. Предыдущий релиз не удаляется. Откат: `scripts/rollback-release.sh`. Подробности и очистка старых каталогов: `docs/DEPLOYMENT.md`. `daemon-reload` нужен только после смены unit-файлов, не после смены релиза.
+
+## Резервная копия
+
+`frontier-cubes-backup.service` и `frontier-cubes-backup.timer` вызывают `/usr/local/sbin/fc-backup`. Таймер по умолчанию срабатывает в 04:00 местного времени VPS. Выкладка релиза эти unit-ы не включает. Установка, скачивание и восстановление: `docs/BACKUPS.md`.

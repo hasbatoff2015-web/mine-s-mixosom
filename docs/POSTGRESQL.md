@@ -117,7 +117,7 @@ Unique item instance ids are not part of this stage. Reconciliation stays on dem
 
 ## Backups
 
-Database backups are a later operational task. This document does not change world-directory backups.
+A consistent copy is `scripts/fc-backup.sh`. It dumps the configured database once with `pg_dump -Fc` while the game units are stopped, and it does not change the schema. World files and the database dump travel in one archive. The env files that hold `FC_DATABASE_URL` stay out of that archive. See `docs/BACKUPS.md`.
 
 ## Manual setup
 
