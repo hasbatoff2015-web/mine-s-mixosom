@@ -1035,21 +1035,25 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url));
     const client = new AnarchyClient();
     try {
-      const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance);
+      const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, { targetServer: id });
       this.toastGuestIdentity(client);
       await this.startOnlineAnarchy(client, welcome);
     } catch (error) {
-      client.disconnect();
       const code = error && typeof error === 'object' && 'code' in error
         ? String((error as { code?: string }).code ?? '')
         : '';
-      if (code === 'unknown_guest') {
-        this.ui.toast(error instanceof Error ? error.message : 'Гостевой ключ не найден в этом мире.');
+      if (code === 'cancelled') return;
+      client.disconnect();
+      if (code === 'unknown_guest' || code === 'world_changed') {
+        this.ui.toast(error instanceof Error ? error.message : 'Сохранённый персонаж не подключён.');
         const startNew = typeof window !== 'undefined' && typeof window.confirm === 'function'
-          && window.confirm('Сохранённый гостевой ключ не подошёл к этому миру. Начать нового гостя? Прежний ключ останется в браузере и сам не сотрётся.');
+          && window.confirm('Начать отдельного гостя в этом мире? Прежний ключ останется в браузере и сам не сотрётся.');
         if (startNew) {
           try {
-            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, { freshGuest: true });
+            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
+              targetServer: id,
+              freshGuest: true,
+            });
             this.toastGuestIdentity(client);
             await this.startOnlineAnarchy(client, welcome);
             return;
@@ -1060,7 +1064,27 @@ export class Game {
         await this.showOnlineServerList();
         return;
       }
-      if (code === 'ambiguous_legacy' || code === 'status_unavailable') {
+      if (code === 'storage_unavailable') {
+        this.ui.toast(error instanceof Error ? error.message : 'Браузер не прочитал сохранённую личность.');
+        const ephemeral = typeof window !== 'undefined' && typeof window.confirm === 'function'
+          && window.confirm('Продолжить без сохранения? После закрытия браузера этот персонаж может не вернуться. Запись в браузере не будет стёрта.');
+        if (ephemeral) {
+          try {
+            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
+              targetServer: id,
+              allowEphemeral: true,
+            });
+            this.ui.toast('Сессия без сохранения. После закрытия браузера персонаж может не вернуться.');
+            await this.startOnlineAnarchy(client, welcome);
+            return;
+          } catch {
+            this.ui.toast('Временный вход не начат');
+          }
+        }
+        await this.showOnlineServerList();
+        return;
+      }
+      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'mode_mismatch' || code === 'world_mismatch') {
         this.ui.toast(error instanceof Error ? error.message : 'Подключение остановлено');
         await this.showOnlineServerList();
         return;
@@ -1072,9 +1096,7 @@ export class Game {
 
   private toastGuestIdentity(client: AnarchyClient): void {
     if (client.identityWarning === 'storage') {
-      this.ui.toast('Браузер не сохраняет гостевой ключ. После закрытия браузера персонаж может не восстановиться.');
-    } else if (client.identityWarning === 'other-world') {
-      this.ui.toast('Сервер открыл другой сохранённый мир. Прежний персонаж не подключён.');
+      this.ui.toast('Ключ не записался в браузер. После закрытия вкладки персонаж может не вернуться. Прежние ключи не стёрты.');
     }
   }
 

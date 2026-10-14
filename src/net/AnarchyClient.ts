@@ -21,8 +21,13 @@ import {
 import { sanitizePlayerName } from '../../shared/playerName';
 import {
   confirmGuestWelcome,
+  guestScopeKey,
+  isGuestToken,
   legacySessionStorageKey,
   planGuestJoin,
+  readGuestStore,
+  withGuestScopeLock,
+  type GuestIdentityScope,
   type GuestJoinPlan,
   type GuestStorage,
 } from './guestIdentityStorage';
@@ -182,12 +187,10 @@ function normalizeEndpoint(url: string): string {
   }
 }
 
-/** Query overrides that point away from the configured endpoint do not inherit a saved guest token. */
-export function guestEndpointTrusted(connectUrl: string, search?: string): boolean {
-  const params = readConnectParams(search);
-  const override = Boolean(params?.get('anarchyUrl') || (params ? hasExplicitEndpoint(params) : false));
-  if (!override) return true;
-  return normalizeEndpoint(connectUrl) === normalizeEndpoint(anarchyClientUrl(stripGuestOverrides(search)));
+/** A saved guest token is sent only when the socket is the canonical endpoint for that menu card. */
+export function guestEndpointTrusted(connectUrl: string, target: LocalServerName, search?: string): boolean {
+  const canonical = clientUrlForServer(target, stripGuestOverrides(search));
+  return normalizeEndpoint(connectUrl) === normalizeEndpoint(canonical);
 }
 
 function browserStore(kind: 'local' | 'session'): GuestStorage | null {
@@ -201,16 +204,42 @@ function browserStore(kind: 'local' | 'session'): GuestStorage | null {
   }
 }
 
-async function fetchIdentityStatus(url: string): Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }> {
+async function fetchIdentityStatus(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }> {
   try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    const response = await fetch(url, { signal });
     if (!response.ok) return { ok: false };
     const json = await response.json() as { ready?: unknown; mode?: unknown; world?: unknown };
-    if (json.ready !== true || typeof json.mode !== 'string' || typeof json.world !== 'string') return { ok: false };
+    if (json.ready !== true || typeof json.mode !== 'string' || typeof json.world !== 'string' || json.world.trim() === '') {
+      return { ok: false };
+    }
     return { ok: true, ready: true, mode: json.mode, world: json.world };
   } catch {
     return { ok: false };
   }
+}
+
+export interface GuestConnectOptions {
+  readonly freshGuest?: boolean;
+  readonly allowEphemeral?: boolean;
+  readonly search?: string;
+  readonly hostname?: string;
+  readonly targetServer?: LocalServerName;
+  readonly fetchStatus?: (url: string, signal: AbortSignal) => Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }>;
+  readonly durable?: GuestStorage | null;
+  readonly legacy?: GuestStorage | null;
+  readonly scopeLock?: <T>(scope: GuestIdentityScope, body: () => Promise<T>) => Promise<T>;
+}
+
+function cancelledJoin(): Error {
+  return Object.assign(new Error('Подключение отменено'), { code: 'cancelled' });
+}
+
+function browserLocks(): { request<T>(name: string, callback: () => Promise<T>): Promise<T> } | undefined {
+  const locks = (globalThis as { navigator?: { locks?: { request<T>(name: string, callback: () => Promise<T>): Promise<T> } } }).navigator?.locks;
+  return locks;
 }
 
 export type AnarchyMessageHandler = (message: ServerMessage) => void;
@@ -222,6 +251,7 @@ export class AnarchyClient {
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private intentionalClose = false;
   private generation = 0;
+  private identityAbort: AbortController | null = null;
   state: ConnectionState = 'idle';
   lastWelcome: ServerWelcomeMessage | undefined;
   lastError: string | undefined;
@@ -241,7 +271,7 @@ export class AnarchyClient {
     url = anarchyClientUrl(),
     name?: string,
     appearance?: PlayerAppearance,
-    options?: { freshGuest?: boolean; search?: string; hostname?: string },
+    options?: GuestConnectOptions,
   ): Promise<ServerWelcomeMessage> {
     this.disconnect();
     this.state = 'connecting';
@@ -252,22 +282,63 @@ export class AnarchyClient {
     this.intentionalClose = false;
     this.generation += 1;
     const generation = this.generation;
+    const abort = new AbortController();
+    this.identityAbort = abort;
     const search = options?.search ?? (typeof location === 'undefined' ? '' : location.search);
     const hostname = options?.hostname ?? (typeof location === 'undefined' ? 'localhost' : location.hostname);
-    return this.planJoin(url, search, hostname, Boolean(options?.freshGuest)).then((plan) => {
-      if (plan.blocked) {
-        const code = plan.blocked === 'ambiguous' ? 'ambiguous_legacy' : 'status_unavailable';
-        const message = plan.message ?? 'Подключение остановлено';
-        this.lastError = message;
-        this.lastErrorCode = code;
-        this.state = 'error';
-        return Promise.reject(Object.assign(new Error(message), { code }));
-      }
-      this.identityWarning = plan.warning;
-      return new Promise<ServerWelcomeMessage>((resolve, reject) => {
+    const target = options?.targetServer ?? selectedLocalServer(search);
+    const durable = options?.durable === undefined ? browserStore('local') : options.durable;
+    const legacy = options?.legacy === undefined ? browserStore('session') : options.legacy;
+    return this.planJoin(url, search, hostname, target, Boolean(options?.freshGuest), Boolean(options?.allowEphemeral), generation, abort.signal, options?.fetchStatus, durable, legacy)
+      .then((plan) => {
+        if (this.generation !== generation) return Promise.reject(cancelledJoin());
+        if (plan.outcome === 'cancelled') return Promise.reject(cancelledJoin());
+        if (plan.outcome !== 'ready_existing' && plan.outcome !== 'ready_new' && plan.outcome !== 'untrusted') {
+          const message = 'message' in plan ? plan.message : 'Подключение остановлено';
+          this.lastError = message;
+          this.lastErrorCode = plan.outcome;
+          this.state = 'error';
+          return Promise.reject(Object.assign(new Error(message), { code: plan.outcome }));
+        }
+        const open = (): Promise<ServerWelcomeMessage> => this.openSocket(url, name, appearance, plan, generation, durable, legacy);
+        if (plan.outcome === 'ready_new' && plan.scope && !plan.ephemeral) {
+          const lock = options?.scopeLock
+            ?? ((scope, body) => withGuestScopeLock(scope, body, browserLocks()));
+          return lock(plan.scope, async () => {
+            if (this.generation !== generation) throw cancelledJoin();
+            const reread = durable ? readGuestStore(durable) : { kind: 'absent' as const };
+            if (reread.kind === 'valid') {
+              const row = reread.file.records[guestScopeKey(plan.scope!)];
+              if (row && isGuestToken(row.sessionToken)) {
+                return this.openSocket(url, name, appearance, {
+                  ...plan,
+                  outcome: 'ready_existing',
+                  sendToken: row.sessionToken,
+                  freshGuest: false,
+                }, generation, durable, legacy);
+              }
+            }
+            return open();
+          });
+        }
+        return open();
+      });
+  }
+
+  private openSocket(
+    url: string,
+    name: string | undefined,
+    appearance: PlayerAppearance | undefined,
+    plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>,
+    generation: number,
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+  ): Promise<ServerWelcomeMessage> {
+    if (this.generation !== generation) return Promise.reject(cancelledJoin());
+    return new Promise((resolve, reject) => {
       const socket = new WebSocket(url);
       this.socket = socket;
-      const timeout = window.setTimeout(() => {
+      const timeout = globalThis.setTimeout(() => {
         if (this.generation !== generation || this.socket !== socket) return;
         this.lastError = 'timeout';
         this.lastErrorCode = 'timeout';
@@ -277,7 +348,7 @@ export class AnarchyClient {
       }, 5000);
       const fail = (message: string, code?: string): void => {
         if (this.generation !== generation || this.socket !== socket) return;
-        window.clearTimeout(timeout);
+        globalThis.clearTimeout(timeout);
         this.lastError = message;
         this.lastErrorCode = code;
         this.state = 'error';
@@ -285,7 +356,7 @@ export class AnarchyClient {
       };
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
-        this.send(buildAnarchyJoinMessage(name, plan.sendToken, appearance, plan.freshGuest));
+        this.send(buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
       });
       socket.addEventListener('message', (event) => {
         if (this.generation !== generation || this.socket !== socket) return;
@@ -305,18 +376,19 @@ export class AnarchyClient {
         }
         const parseMs = performance.now() - parseStart;
         if (payload.type === 'welcome') {
-          window.clearTimeout(timeout);
+          globalThis.clearTimeout(timeout);
+          if (plan.outcome !== 'untrusted' && plan.scope && payload.worldId !== plan.scope.worldId) {
+            fail('Сервер открыл другой мир. Прежний ключ не записан.', 'world_mismatch');
+            socket.close();
+            return;
+          }
           this.lastWelcome = payload;
           this.state = 'connected';
-          const saved = confirmGuestWelcome(
-            browserStore('local'),
-            browserStore('session'),
-            plan.scope,
-            payload.sessionToken,
-            plan.legacyKeys,
-          );
-          this.identityPersisted = saved.persisted;
-          if (saved.warning) this.identityWarning = 'storage';
+          if (plan.outcome !== 'untrusted' && plan.scope && !plan.ephemeral) {
+            const saved = confirmGuestWelcome(durable, legacy, plan.scope, payload.sessionToken, plan.legacyKeys);
+            this.identityPersisted = saved.persisted;
+            if (!saved.persisted) this.identityWarning = 'storage';
+          }
           this.startPing();
           if (typeof console !== 'undefined') {
             console.info(
@@ -345,16 +417,30 @@ export class AnarchyClient {
           if (!this.intentionalClose) this.disconnectHandler?.();
         }
       });
-      });
     });
   }
 
-  private async planJoin(url: string, search: string, hostname: string, freshGuest: boolean): Promise<GuestJoinPlan> {
-    const trusted = guestEndpointTrusted(url, search);
+  private async planJoin(
+    url: string,
+    search: string,
+    hostname: string,
+    target: LocalServerName,
+    freshGuest: boolean,
+    allowEphemeral: boolean,
+    generation: number,
+    signal: AbortSignal,
+    fetchStatus: GuestConnectOptions['fetchStatus'],
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+  ): Promise<GuestJoinPlan | { outcome: 'cancelled' }> {
+    if (this.generation !== generation) return { outcome: 'cancelled' };
+    const trusted = guestEndpointTrusted(url, target, search);
     if (!trusted) {
       return planGuestJoin({
         trusted: false,
         freshGuest,
+        allowEphemeral,
+        targetMode: target,
         hostname,
         status: { ok: false },
         durable: null,
@@ -362,12 +448,12 @@ export class AnarchyClient {
         legacyKeys: [],
       });
     }
-    const modeHint = selectedLocalServer(search);
-    const status = await fetchIdentityStatus(statusUrlForServer(modeHint, search));
-    const mode = status.mode === 'survival' || status.mode === 'peaceful' || status.mode === 'anarchy'
-      ? status.mode
-      : modeHint;
-    const canonical = clientUrlForServer(mode, stripGuestOverrides(search));
+    const statusUrl = statusUrlForServer(target, search);
+    const status = fetchStatus
+      ? await fetchStatus(statusUrl, signal)
+      : await fetchIdentityStatus(statusUrl, signal);
+    if (this.generation !== generation || signal.aborted) return { outcome: 'cancelled' };
+    const canonical = clientUrlForServer(target, stripGuestOverrides(search));
     const legacyKeys = [...new Set([
       legacySessionStorageKey(url, defaultWsUrl()),
       legacySessionStorageKey(canonical, defaultWsUrl()),
@@ -375,10 +461,12 @@ export class AnarchyClient {
     return planGuestJoin({
       trusted: true,
       freshGuest,
+      allowEphemeral,
+      targetMode: target,
       hostname,
       status,
-      durable: browserStore('local'),
-      legacy: browserStore('session'),
+      durable,
+      legacy,
       legacyKeys,
     });
   }
@@ -390,6 +478,8 @@ export class AnarchyClient {
 
   disconnect(): void {
     this.intentionalClose = true;
+    this.identityAbort?.abort();
+    this.identityAbort = null;
     this.stopPing();
     this.generation += 1;
     this.handler = null;
