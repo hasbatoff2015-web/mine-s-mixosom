@@ -19,8 +19,13 @@ import {
   type ServerWelcomeMessage,
 } from '../../shared/protocol';
 import { sanitizePlayerName } from '../../shared/playerName';
-
-const SESSION_KEY = 'fc.anarchy.sessionToken';
+import {
+  confirmGuestWelcome,
+  legacySessionStorageKey,
+  planGuestJoin,
+  type GuestJoinPlan,
+  type GuestStorage,
+} from './guestIdentityStorage';
 
 function readConnectParams(search?: string): URLSearchParams | null {
   if (search !== undefined) return new URLSearchParams(search);
@@ -156,7 +161,56 @@ export function statusUrlForServer(server: LocalServerName, search?: string): st
 }
 
 export function clientSessionStorageKey(url: string): string {
-  return url === defaultWsUrl() ? SESSION_KEY : `fc.session.${url}`;
+  return legacySessionStorageKey(url, defaultWsUrl());
+}
+
+function stripGuestOverrides(search?: string): string {
+  const params = new URLSearchParams(search ?? '');
+  params.delete('anarchyUrl');
+  params.delete('anarchyHost');
+  params.delete('anarchyPort');
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+function normalizeEndpoint(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/** Query overrides that point away from the configured endpoint do not inherit a saved guest token. */
+export function guestEndpointTrusted(connectUrl: string, search?: string): boolean {
+  const params = readConnectParams(search);
+  const override = Boolean(params?.get('anarchyUrl') || (params ? hasExplicitEndpoint(params) : false));
+  if (!override) return true;
+  return normalizeEndpoint(connectUrl) === normalizeEndpoint(anarchyClientUrl(stripGuestOverrides(search)));
+}
+
+function browserStore(kind: 'local' | 'session'): GuestStorage | null {
+  try {
+    if (typeof globalThis === 'undefined') return null;
+    const store = kind === 'local' ? globalThis.localStorage : globalThis.sessionStorage;
+    if (!store) return null;
+    return store;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIdentityStatus(url: string): Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }> {
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+    if (!response.ok) return { ok: false };
+    const json = await response.json() as { ready?: unknown; mode?: unknown; world?: unknown };
+    if (json.ready !== true || typeof json.mode !== 'string' || typeof json.world !== 'string') return { ok: false };
+    return { ok: true, ready: true, mode: json.mode, world: json.world };
+  } catch {
+    return { ok: false };
+  }
 }
 
 export type AnarchyMessageHandler = (message: ServerMessage) => void;
@@ -171,6 +225,9 @@ export class AnarchyClient {
   state: ConnectionState = 'idle';
   lastWelcome: ServerWelcomeMessage | undefined;
   lastError: string | undefined;
+  lastErrorCode: string | undefined;
+  identityWarning: 'storage' | 'other-world' | undefined;
+  identityPersisted = false;
 
   onMessage(handler: AnarchyMessageHandler): void {
     this.handler = handler;
@@ -180,35 +237,55 @@ export class AnarchyClient {
     this.disconnectHandler = handler;
   }
 
-  connect(url = anarchyClientUrl(), name?: string, appearance?: PlayerAppearance): Promise<ServerWelcomeMessage> {
+  connect(
+    url = anarchyClientUrl(),
+    name?: string,
+    appearance?: PlayerAppearance,
+    options?: { freshGuest?: boolean; search?: string; hostname?: string },
+  ): Promise<ServerWelcomeMessage> {
     this.disconnect();
     this.state = 'connecting';
     this.lastError = undefined;
+    this.lastErrorCode = undefined;
+    this.identityWarning = undefined;
+    this.identityPersisted = false;
     this.intentionalClose = false;
     this.generation += 1;
     const generation = this.generation;
-    return new Promise((resolve, reject) => {
+    const search = options?.search ?? (typeof location === 'undefined' ? '' : location.search);
+    const hostname = options?.hostname ?? (typeof location === 'undefined' ? 'localhost' : location.hostname);
+    return this.planJoin(url, search, hostname, Boolean(options?.freshGuest)).then((plan) => {
+      if (plan.blocked) {
+        const code = plan.blocked === 'ambiguous' ? 'ambiguous_legacy' : 'status_unavailable';
+        const message = plan.message ?? 'Подключение остановлено';
+        this.lastError = message;
+        this.lastErrorCode = code;
+        this.state = 'error';
+        return Promise.reject(Object.assign(new Error(message), { code }));
+      }
+      this.identityWarning = plan.warning;
+      return new Promise<ServerWelcomeMessage>((resolve, reject) => {
       const socket = new WebSocket(url);
       this.socket = socket;
       const timeout = window.setTimeout(() => {
         if (this.generation !== generation || this.socket !== socket) return;
         this.lastError = 'timeout';
+        this.lastErrorCode = 'timeout';
         this.state = 'error';
         socket.close();
         reject(new Error('Сервер недоступен'));
       }, 5000);
-      const fail = (message: string): void => {
+      const fail = (message: string, code?: string): void => {
         if (this.generation !== generation || this.socket !== socket) return;
         window.clearTimeout(timeout);
         this.lastError = message;
+        this.lastErrorCode = code;
         this.state = 'error';
-        reject(new Error(message));
+        reject(Object.assign(new Error(message), code ? { code } : {}));
       };
-      const sessionKey = clientSessionStorageKey(url);
       socket.addEventListener('open', () => {
         if (this.generation !== generation || this.socket !== socket) return;
-        const sessionToken = sessionStorage.getItem(sessionKey) ?? undefined;
-        this.send(buildAnarchyJoinMessage(name, sessionToken, appearance));
+        this.send(buildAnarchyJoinMessage(name, plan.sendToken, appearance, plan.freshGuest));
       });
       socket.addEventListener('message', (event) => {
         if (this.generation !== generation || this.socket !== socket) return;
@@ -231,7 +308,15 @@ export class AnarchyClient {
           window.clearTimeout(timeout);
           this.lastWelcome = payload;
           this.state = 'connected';
-          sessionStorage.setItem(sessionKey, payload.sessionToken);
+          const saved = confirmGuestWelcome(
+            browserStore('local'),
+            browserStore('session'),
+            plan.scope,
+            payload.sessionToken,
+            plan.legacyKeys,
+          );
+          this.identityPersisted = saved.persisted;
+          if (saved.warning) this.identityWarning = 'storage';
           this.startPing();
           if (typeof console !== 'undefined') {
             console.info(
@@ -241,7 +326,7 @@ export class AnarchyClient {
           }
           resolve(payload);
         } else if (payload.type === 'error' && this.state === 'connecting') {
-          fail(payload.message || 'Сервер недоступен');
+          fail(payload.message || 'Сервер недоступен', payload.code);
           return;
         }
         this.handler?.(payload);
@@ -260,6 +345,41 @@ export class AnarchyClient {
           if (!this.intentionalClose) this.disconnectHandler?.();
         }
       });
+      });
+    });
+  }
+
+  private async planJoin(url: string, search: string, hostname: string, freshGuest: boolean): Promise<GuestJoinPlan> {
+    const trusted = guestEndpointTrusted(url, search);
+    if (!trusted) {
+      return planGuestJoin({
+        trusted: false,
+        freshGuest,
+        hostname,
+        status: { ok: false },
+        durable: null,
+        legacy: null,
+        legacyKeys: [],
+      });
+    }
+    const modeHint = selectedLocalServer(search);
+    const status = await fetchIdentityStatus(statusUrlForServer(modeHint, search));
+    const mode = status.mode === 'survival' || status.mode === 'peaceful' || status.mode === 'anarchy'
+      ? status.mode
+      : modeHint;
+    const canonical = clientUrlForServer(mode, stripGuestOverrides(search));
+    const legacyKeys = [...new Set([
+      legacySessionStorageKey(url, defaultWsUrl()),
+      legacySessionStorageKey(canonical, defaultWsUrl()),
+    ])];
+    return planGuestJoin({
+      trusted: true,
+      freshGuest,
+      hostname,
+      status,
+      durable: browserStore('local'),
+      legacy: browserStore('session'),
+      legacyKeys,
     });
   }
 
@@ -297,13 +417,15 @@ export function buildAnarchyJoinMessage(
   name?: string,
   sessionToken?: string,
   appearance?: PlayerAppearance,
+  freshGuest?: boolean,
 ): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
   return {
     type: 'join',
     protocol: PROTOCOL_VERSION,
     ...(sanitized ? { name: sanitized } : {}),
-    ...(sessionToken ? { sessionToken } : {}),
+    ...(freshGuest ? { freshGuest: true } : {}),
+    ...(!freshGuest && sessionToken ? { sessionToken } : {}),
     ...(appearance ? {
       appearance: {
         skinId: appearance.skinId,

@@ -1934,12 +1934,67 @@ export class WorldInstance {
     name?: string;
     sessionToken?: string;
     appearance?: PlayerAppearance;
-  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
-    if (this.readyState !== 'READY') return { error: 'world not ready' };
-    if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
+    freshGuest?: boolean;
+    durableFresh?: false;
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
+  join(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+    freshGuest?: boolean;
+    durableFresh: true;
+  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }>;
+  join(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+    freshGuest?: boolean;
+    durableFresh?: boolean;
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }
+    | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }> {
+    if (this.readyState !== 'READY') return options.durableFresh
+      ? Promise.resolve({ error: 'world not ready' })
+      : { error: 'world not ready' };
+    if (this.onlineCount() >= this.config.maxPlayers) return options.durableFresh
+      ? Promise.resolve({ error: 'server full' })
+      : { error: 'server full' };
 
     const prepared = this.prepareJoin(options);
-    if ('error' in prepared) return prepared;
+    if ('error' in prepared) return options.durableFresh ? Promise.resolve(prepared) : prepared;
+    const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string } => {
+      if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
+      if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
+      return prepared.publish();
+    };
+    if (prepared.fresh && options.durableFresh) {
+      return this.persistCandidate(prepared.player).then(
+        async () => {
+          if (this.money.backend === 'postgres') {
+            const prepare = this.money.preparePlayer;
+            if (!prepare) {
+              await this.rollbackCandidate(prepared.player);
+              return { error: 'Сервер временно недоступен.' };
+            }
+            try {
+              await prepare.call(this.money, prepared.player.id, options.name?.trim() || prepared.player.name);
+            } catch {
+              serverLog('player join economy prepare failed', 'error');
+              await this.rollbackCandidate(prepared.player);
+              return { error: 'Сервер временно недоступен.' };
+            }
+          }
+          const published = publishIfAllowed();
+          if ('error' in published) await this.rollbackCandidate(prepared.player);
+          return published;
+        },
+        () => {
+          serverLog('guest identity save failed', 'error');
+          return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
+        },
+      );
+    }
     if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
     if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
     if (this.money.backend !== 'postgres') return prepared.publish();
@@ -1957,7 +2012,7 @@ export class WorldInstance {
         return { error: 'Сервер временно недоступен.' };
       },
     );
-    return work as unknown as { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string };
+    return work as unknown as { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
   }
 
   /**
@@ -1970,8 +2025,10 @@ export class WorldInstance {
     name?: string;
     sessionToken?: string;
     appearance?: PlayerAppearance;
-  }): { error: string } | {
+    freshGuest?: boolean;
+  }): { error: string; code?: string } | {
     player: ServerPlayer;
+    fresh: boolean;
     publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string };
   } {
     if (options.sessionToken) {
@@ -1982,6 +2039,7 @@ export class WorldInstance {
         const previousConnectionId = existing.connectionId;
         return {
           player: existing,
+          fresh: false,
           publish: () => {
             existing.connected = true;
             existing.disconnectedAt = 0;
@@ -2018,6 +2076,7 @@ export class WorldInstance {
         restored.resumeCount += 1;
         return {
           player: restored,
+          fresh: false,
           publish: () => {
             this.players.set(restored.id, restored);
             this.tokens.set(restored.sessionToken, restored.id);
@@ -2031,6 +2090,12 @@ export class WorldInstance {
             this.notifyFriendsOfPresence(restored, 'joined');
             return { player: restored, resumed: true };
           },
+        };
+      }
+      if (!options.freshGuest) {
+        return {
+          error: 'Этот гостевой ключ не найден в этом мире.',
+          code: 'unknown_guest',
         };
       }
     }
@@ -2061,6 +2126,7 @@ export class WorldInstance {
     player.viewRadius = this.config.chunkViewRadius;
     return {
       player,
+      fresh: true,
       publish: () => {
         this.players.set(id, player);
         this.tokens.set(sessionToken, id);
@@ -6652,6 +6718,33 @@ export class WorldInstance {
     }
     player.inventory.restore(copy.serialize());
     player.heldReturns = [];
+  }
+
+  private async persistCandidate(player: ServerPlayer): Promise<void> {
+    const run = this.saveQueue.then(async () => {
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      for (const online of this.players.values()) players[online.id] = this.durablePlayerRecord(online);
+      players[player.id] = this.durablePlayerRecord(player);
+      await this.worldStore.savePlayers(this.worldId, players);
+      this.storedPlayers = players;
+      this.tokens.set(player.sessionToken, player.id);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  private async rollbackCandidate(player: ServerPlayer): Promise<void> {
+    if (this.players.has(player.id)) return;
+    const run = this.saveQueue.then(async () => {
+      if (this.players.has(player.id)) return;
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      delete players[player.id];
+      await this.worldStore.savePlayers(this.worldId, players);
+      this.storedPlayers = players;
+      this.tokens.delete(player.sessionToken);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
   }
 
   private async savePlayersCritical(): Promise<void> {

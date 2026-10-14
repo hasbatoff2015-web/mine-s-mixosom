@@ -334,6 +334,8 @@ export class AnarchyServer {
       name: message.name,
       sessionToken: message.sessionToken,
       appearance: message.appearance,
+      freshGuest: message.freshGuest,
+      durableFresh: true,
     });
     if (isPromise(pending)) {
       pending.then(
@@ -347,11 +349,15 @@ export class AnarchyServer {
 
   private finishJoin(
     socket: WebSocket,
-    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string },
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string },
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     if ('error' in result) {
-      this.send(socket, { type: 'error', code: 'join_failed', message: result.error });
+      this.send(socket, {
+        type: 'error',
+        code: result.code ?? 'join_failed',
+        message: result.error,
+      });
       socket.close();
       return;
     }

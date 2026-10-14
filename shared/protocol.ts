@@ -319,6 +319,8 @@ export interface ClientJoinMessage {
   readonly protocol: typeof PROTOCOL_VERSION;
   readonly name?: string;
   readonly sessionToken?: string;
+  /** Explicit new-guest request. Does not reuse or erase a stored credential by itself. */
+  readonly freshGuest?: boolean;
   readonly appearance?: PlayerAppearance;
 }
 
@@ -2156,6 +2158,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       }
       const name = sanitizeName(raw.name);
       const sessionToken = typeof raw.sessionToken === 'string' ? raw.sessionToken.slice(0, 80) : undefined;
+      const freshGuest = raw.freshGuest === true;
       const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
       if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
       return {
@@ -2163,6 +2166,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         protocol: PROTOCOL_VERSION,
         ...(name ? { name } : {}),
         ...(sessionToken ? { sessionToken } : {}),
+        ...(freshGuest ? { freshGuest } : {}),
         ...(appearance ? { appearance } : {}),
       };
     }

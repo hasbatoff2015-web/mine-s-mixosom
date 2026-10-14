@@ -706,7 +706,7 @@ describe('WorldInstance foundation simulation', () => {
     return world;
   }
 
-  function join(world: WorldInstance, name = 'Sim'): ReturnType<WorldInstance['join']> {
+  function join(world: WorldInstance, name = 'Sim') {
     return world.join({ sink: new MemorySink(), name });
   }
 

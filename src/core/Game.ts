@@ -1036,11 +1036,45 @@ export class Game {
     const client = new AnarchyClient();
     try {
       const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance);
+      this.toastGuestIdentity(client);
       await this.startOnlineAnarchy(client, welcome);
-    } catch {
+    } catch (error) {
       client.disconnect();
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: string }).code ?? '')
+        : '';
+      if (code === 'unknown_guest') {
+        this.ui.toast(error instanceof Error ? error.message : 'Гостевой ключ не найден в этом мире.');
+        const startNew = typeof window !== 'undefined' && typeof window.confirm === 'function'
+          && window.confirm('Сохранённый гостевой ключ не подошёл к этому миру. Начать нового гостя? Прежний ключ останется в браузере и сам не сотрётся.');
+        if (startNew) {
+          try {
+            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, { freshGuest: true });
+            this.toastGuestIdentity(client);
+            await this.startOnlineAnarchy(client, welcome);
+            return;
+          } catch {
+            this.ui.toast('Новый гость не создан');
+          }
+        }
+        await this.showOnlineServerList();
+        return;
+      }
+      if (code === 'ambiguous_legacy' || code === 'status_unavailable') {
+        this.ui.toast(error instanceof Error ? error.message : 'Подключение остановлено');
+        await this.showOnlineServerList();
+        return;
+      }
       this.ui.toast('Сервер недоступен');
       await this.showOnlineServerList();
+    }
+  }
+
+  private toastGuestIdentity(client: AnarchyClient): void {
+    if (client.identityWarning === 'storage') {
+      this.ui.toast('Браузер не сохраняет гостевой ключ. После закрытия браузера персонаж может не восстановиться.');
+    } else if (client.identityWarning === 'other-world') {
+      this.ui.toast('Сервер открыл другой сохранённый мир. Прежний персонаж не подключён.');
     }
   }
 
