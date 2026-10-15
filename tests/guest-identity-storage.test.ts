@@ -6,6 +6,7 @@ import {
   confirmGuestWelcome,
   guestDeploymentId,
   guestScopeKey,
+  guestScopeStorageKey,
   importGuestCredential,
   planGuestJoin,
   readGuestCredential,
@@ -21,6 +22,7 @@ function memoryStore(initial: Record<string, string> = {}): GuestStorage & { dat
     getItem(key) { return Object.prototype.hasOwnProperty.call(data, key) ? data[key]! : null; },
     setItem(key, value) { data[key] = value; },
     removeItem(key) { delete data[key]; },
+    keys() { return Object.keys(data); },
   };
 }
 
@@ -41,9 +43,10 @@ describe('guest identity storage', () => {
     writeGuestCredential(store, { ...scope, worldId: 'other' }, 'token-b');
     expect(readGuestCredential(store, scope)?.sessionToken).toBe('token-a');
     expect(readGuestCredential(store, { ...scope, worldId: 'other' })?.sessionToken).toBe('token-b');
-    const raw = store.data[GUEST_STORAGE_KEY] ?? '';
+    const raw = store.data[guestScopeStorageKey(scope)] ?? '';
     expect(raw).toContain('token-a');
     expect(raw).not.toContain('sessionToken=');
+    expect(store.data[guestScopeStorageKey({ ...scope, worldId: 'other' })]).toContain('token-b');
   });
 
   it('migrates one legacy token and does not delete it before confirmation', () => {
@@ -128,6 +131,7 @@ describe('guest identity storage', () => {
       getItem() { throw new Error('SecurityError'); },
       setItem() { throw new Error('QuotaExceededError'); },
       removeItem() { throw new Error('SecurityError'); },
+      keys() { throw new Error('SecurityError'); },
     };
     const plan = planGuestJoin({
       trusted: true,
@@ -231,5 +235,260 @@ describe('guest identity storage', () => {
     expect(readGuestCredential(store, { deployment: 'dev', mode: 'anarchy', worldId: 'A' })?.retained).toContain('token-a');
     expect(readGuestCredential(store, { deployment: 'dev', mode: 'survival', worldId: 'B' })).toEqual(beforeB);
     expect(readGuestCredential(store, { deployment: 'prod', mode: 'anarchy', worldId: 'C' })).toEqual(beforeC);
+  });
+});
+
+describe('per-scope guest storage', () => {
+  const anarchy = { deployment: 'dev', mode: 'anarchy', worldId: 'world-A' };
+  const survival = { deployment: 'dev', mode: 'survival', worldId: 'world-B' };
+  const prod = { deployment: 'prod', mode: 'anarchy', worldId: 'world-C' };
+
+  it('L stores each scope in its own key', () => {
+    const store = memoryStore();
+    writeGuestCredential(store, anarchy, 'token-a');
+    writeGuestCredential(store, survival, 'token-b');
+    writeGuestCredential(store, prod, 'token-c');
+    expect(store.data[guestScopeStorageKey(anarchy)]).toContain('token-a');
+    expect(store.data[guestScopeStorageKey(survival)]).toContain('token-b');
+    expect(store.data[guestScopeStorageKey(prod)]).toContain('token-c');
+    const beforeB = store.data[guestScopeStorageKey(survival)];
+    const beforeC = store.data[guestScopeStorageKey(prod)];
+    writeGuestCredential(store, anarchy, 'token-a2', true);
+    expect(store.data[guestScopeStorageKey(survival)]).toBe(beforeB);
+    expect(store.data[guestScopeStorageKey(prod)]).toBe(beforeC);
+    expect(store.data[guestScopeStorageKey(anarchy)]).not.toBe(beforeB);
+  });
+
+  it('M keeps interleaved cross-scope writes', async () => {
+    const store = memoryStore();
+    let releaseA!: () => void;
+    let releaseB!: () => void;
+    const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
+    const gateB = new Promise<void>((resolve) => { releaseB = resolve; });
+    const writeA = (async () => {
+      const previous = readGuestCredential(store, anarchy);
+      await gateA;
+      writeGuestCredential(store, anarchy, previous?.sessionToken ?? 'token-a');
+    })();
+    const writeB = (async () => {
+      const previous = readGuestCredential(store, survival);
+      await gateB;
+      writeGuestCredential(store, survival, 'token-b');
+      void previous;
+    })();
+    releaseB();
+    releaseA();
+    await Promise.all([writeA, writeB]);
+    expect(readGuestCredential(store, anarchy)?.sessionToken).toBe('token-a');
+    expect(readGuestCredential(store, survival)?.sessionToken).toBe('token-b');
+  });
+
+  it('N migrates one v1 record without dropping the others', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      records: {
+        [guestScopeKey(anarchy)]: { sessionToken: 'old-a' },
+        [guestScopeKey(survival)]: { sessionToken: 'old-b' },
+      },
+    });
+    const store = memoryStore({ [GUEST_STORAGE_KEY]: raw });
+    const legacy = memoryStore();
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'world-A' },
+      durable: store,
+      legacy,
+      legacyKeys: [],
+    });
+    expect(plan.outcome).toBe('ready_existing');
+    if (plan.outcome !== 'ready_existing') return;
+    expect(plan.sendToken).toBe('old-a');
+    const saved = confirmGuestWelcome(store, legacy, plan.scope, 'old-a', []);
+    expect(saved.persisted).toBe(true);
+    expect(readGuestCredential(store, anarchy)?.sessionToken).toBe('old-a');
+    expect(store.data[GUEST_STORAGE_KEY]).toBe(raw);
+    expect(readGuestCredential(store, survival)?.sessionToken).toBe('old-b');
+  });
+
+  it('O keeps an unmigrated mode after another mode moves to v2', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      records: {
+        [guestScopeKey(anarchy)]: { sessionToken: 'old-a' },
+        [guestScopeKey(survival)]: { sessionToken: 'old-b' },
+      },
+    });
+    const store = memoryStore({ [GUEST_STORAGE_KEY]: raw });
+    confirmGuestWelcome(store, memoryStore(), anarchy, 'old-a', []);
+    const survivalPlan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'survival',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'survival', world: 'world-B' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(survivalPlan).toMatchObject({ outcome: 'ready_existing', sendToken: 'old-b' });
+    expect(planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'world-A' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    })).toMatchObject({ outcome: 'ready_existing', sendToken: 'old-a' });
+  });
+
+  it('P migrates a legacy session token into the scoped record', () => {
+    const store = memoryStore();
+    const legacy = memoryStore({ 'fc.anarchy.sessionToken': 'legacy-token' });
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: '127.0.0.1',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'anarchy' },
+      durable: store,
+      legacy,
+      legacyKeys: ['fc.anarchy.sessionToken'],
+    });
+    expect(plan).toMatchObject({ outcome: 'ready_existing', sendToken: 'legacy-token' });
+    if (plan.outcome !== 'ready_existing') return;
+    confirmGuestWelcome(store, legacy, plan.scope, 'legacy-token', plan.legacyKeys);
+    expect(readGuestCredential(store, { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' })?.sessionToken).toBe('legacy-token');
+    expect(legacy.data['fc.anarchy.sessionToken']).toBeUndefined();
+  });
+
+  it('Q prefers v2 and leaves a different v1 token in place', () => {
+    const scope = { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' };
+    const raw = JSON.stringify({ version: 1, records: { [guestScopeKey(scope)]: { sessionToken: 'from-v1' } } });
+    const store = memoryStore({
+      [GUEST_STORAGE_KEY]: raw,
+      [guestScopeStorageKey(scope)]: JSON.stringify({ version: 2, sessionToken: 'from-v2' }),
+    });
+    expect(readGuestCredential(store, scope)?.sessionToken).toBe('from-v2');
+    expect(store.data[GUEST_STORAGE_KEY]).toBe(raw);
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: '127.0.0.1',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'anarchy' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(plan).toMatchObject({ outcome: 'ready_existing', sendToken: 'from-v2' });
+  });
+
+  it('R blocks registration when v1 is corrupt and v2 is absent', () => {
+    const raw = '{not-json';
+    const store = memoryStore({ [GUEST_STORAGE_KEY]: raw });
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: '127.0.0.1',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'anarchy' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(plan.outcome).toBe('storage_corrupt');
+    expect(store.data[GUEST_STORAGE_KEY]).toBe(raw);
+    expect(Object.keys(store.data)).toEqual([GUEST_STORAGE_KEY]);
+  });
+
+  it('S does not overwrite a corrupt scoped record', () => {
+    const scope = { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' };
+    const key = guestScopeStorageKey(scope);
+    const store = memoryStore({ [key]: '{' });
+    expect(() => writeGuestCredential(store, scope, 'replacement')).toThrow(/corrupt/);
+    expect(store.data[key]).toBe('{');
+    expect(planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: '127.0.0.1',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'anarchy' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    }).outcome).toBe('storage_corrupt');
+  });
+
+  it('T does not replace an unsupported record', () => {
+    const scope = { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' };
+    const key = guestScopeStorageKey(scope);
+    const raw = JSON.stringify({ version: 9, sessionToken: 'future' });
+    const store = memoryStore({ [key]: raw });
+    expect(() => importGuestCredential(store, scope, 'replacement', true)).toThrow(/unsupported/);
+    expect(store.data[key]).toBe(raw);
+  });
+
+  it('U imports one scope and rejects a bad token', () => {
+    const store = memoryStore();
+    writeGuestCredential(store, survival, 'keep-survival');
+    writeGuestCredential(store, anarchy, 'old-anarchy');
+    expect(() => importGuestCredential(store, anarchy, 'rotated-token', false)).toThrow(/exists/);
+    importGuestCredential(store, anarchy, 'rotated-token', true);
+    expect(readGuestCredential(store, anarchy)?.sessionToken).toBe('rotated-token');
+    expect(readGuestCredential(store, anarchy)?.retained).toContain('old-anarchy');
+    expect(readGuestCredential(store, survival)?.sessionToken).toBe('keep-survival');
+    expect(() => importGuestCredential(store, prod, 'bad token', true)).toThrow(/invalid/);
+    expect(store.data[guestScopeStorageKey(prod)]).toBeUndefined();
+  });
+
+  it('V reports a world change stored only in v1', () => {
+    const raw = JSON.stringify({
+      version: 1,
+      records: { 'dev|anarchy|world-A': { sessionToken: 'old-a' } },
+    });
+    const store = memoryStore({ [GUEST_STORAGE_KEY]: raw });
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'world-B' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(plan.outcome).toBe('world_changed');
+    expect(store.data[GUEST_STORAGE_KEY]).toBe(raw);
+  });
+
+  it('W starts Survival without treating an Anarchy credential as a world change', () => {
+    const store = memoryStore();
+    writeGuestCredential(store, anarchy, 'token-a');
+    const plan = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'survival',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'survival', world: 'world-B' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(plan.outcome).toBe('ready_new');
+    expect(readGuestCredential(store, anarchy)?.sessionToken).toBe('token-a');
   });
 });
