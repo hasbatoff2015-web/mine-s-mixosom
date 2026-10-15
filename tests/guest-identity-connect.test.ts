@@ -974,3 +974,291 @@ describe('explicit fresh guest consent', () => {
     client.disconnect();
   });
 });
+
+function deliver(socket: FakeSocket, message: Record<string, unknown>): void {
+  socket.emit('message', { data: JSON.stringify(message) });
+}
+
+const BLOCK_UPDATE = { type: 'block_update', x: 2, y: 64, z: 5, blockId: 1 };
+const BLOCK_BATCH = {
+  type: 'block_batch',
+  changes: [
+    { x: 2, y: 64, z: 5, blockId: 0 },
+    { x: 3, y: 64, z: 5, blockId: 4 },
+  ],
+};
+const INVENTORY = {
+  type: 'inventory',
+  inventory: { slots: [{ id: 'cobble', count: 2 }] },
+  selectedSlot: 0,
+  gamemode: 'survival',
+  inventoryRevision: 4,
+};
+const PLAYER_STATE_1 = { type: 'player_state', tick: 10, players: [{ id: 'p', x: 1 }] };
+const PLAYER_STATE_2 = { type: 'player_state', tick: 11, players: [{ id: 'p', x: 2 }] };
+const ACTION_RESULT = { type: 'action_result', ok: true, actionSeq: 8, kind: 'drop_selected' };
+const BLOCK_RESULT = { type: 'block_result', ok: true, action: 'break', x: 2, y: 64, z: 5 };
+const ENTITY_SNAPSHOT = { type: 'entity_snapshot', tick: 12, entities: [] };
+
+async function welcomedClient(): Promise<{ client: AnarchyClient; socket: FakeSocket; durable: ReturnType<typeof memoryStore> }> {
+  installSocket();
+  const durable = memoryStore();
+  const client = new AnarchyClient();
+  const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const socket = FakeSocket.instances[0]!;
+  socket.welcome('anarchy', 'token-live');
+  await pending;
+  return { client, socket, durable };
+}
+
+describe('gameplay messages after welcome', () => {
+  it('1 delivers gameplay packets registered after connect resolves', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: Array<{ type: string }> = [];
+    client.onMessage((message) => received.push(message));
+    for (const message of [BLOCK_UPDATE, INVENTORY, PLAYER_STATE_1, ACTION_RESULT, BLOCK_RESULT, ENTITY_SNAPSHOT]) {
+      deliver(socket, message);
+    }
+    expect(received.map((message) => message.type)).toEqual([
+      'block_update', 'inventory', 'player_state', 'action_result', 'block_result', 'entity_snapshot',
+    ]);
+    expect(received[0]).toMatchObject({ x: 2, y: 64, z: 5, blockId: 1 });
+    expect(received[3]).toMatchObject({ actionSeq: 8, kind: 'drop_selected' });
+    expect(received[4]).toMatchObject({ action: 'break', ok: true });
+    expect(client.state).toBe('connected');
+    expect(socket.readyState).toBe(FakeSocket.OPEN);
+    client.disconnect();
+  });
+
+  it('2 delivers a block batch after welcome', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: Array<{ type: string; changes?: unknown[] }> = [];
+    client.onMessage((message) => received.push(message as { type: string; changes?: unknown[] }));
+    deliver(socket, BLOCK_BATCH);
+    expect(received).toHaveLength(1);
+    expect(received[0]?.type).toBe('block_batch');
+    expect(received[0]?.changes).toEqual(BLOCK_BATCH.changes);
+    client.disconnect();
+  });
+
+  it('3 delivers the authoritative inventory revision after welcome', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: Array<{ type: string; inventoryRevision?: number; inventory?: { slots?: unknown[] } }> = [];
+    client.onMessage((message) => received.push(message as { type: string; inventoryRevision?: number; inventory?: { slots?: unknown[] } }));
+    deliver(socket, INVENTORY);
+    expect(received[0]).toMatchObject({
+      type: 'inventory',
+      inventoryRevision: 4,
+      inventory: { slots: [{ id: 'cobble', count: 2 }] },
+    });
+    client.disconnect();
+  });
+
+  it('4 delivers player_state ticks in order', async () => {
+    const { client, socket } = await welcomedClient();
+    const ticks: number[] = [];
+    client.onMessage((message) => {
+      if (message.type === 'player_state') ticks.push(message.tick);
+    });
+    deliver(socket, PLAYER_STATE_1);
+    deliver(socket, PLAYER_STATE_2);
+    expect(ticks).toEqual([10, 11]);
+    client.disconnect();
+  });
+
+  it('5 forwards packets when onMessage is installed only after welcome', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: string[] = [];
+    client.onMessage((message) => received.push(message.type));
+    deliver(socket, BLOCK_UPDATE);
+    expect(received).toEqual(['block_update']);
+    client.disconnect();
+  });
+
+  it('6 ignores a second welcome', async () => {
+    vi.useFakeTimers();
+    try {
+      installSocket();
+      const durable = memoryStore();
+      const client = new AnarchyClient();
+      const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+      await vi.advanceTimersByTimeAsync(0);
+      const socket = FakeSocket.instances[0]!;
+      socket.welcome('anarchy', 'token-a', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      const welcome = await pending;
+      const received: string[] = [];
+      client.onMessage((message) => received.push(message.type));
+      socket.welcome('other-world', 'token-b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+      await vi.advanceTimersByTimeAsync(2000);
+      const pings = socket.sent.filter((raw) => raw.includes('"type":"ping"'));
+      expect(welcome.playerId).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      expect(client.lastWelcome?.playerId).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      expect(client.lastWelcome?.sessionToken).toBe('token-a');
+      expect(readStored(durable)).toBe('token-a');
+      expect(received).not.toContain('welcome');
+      expect(pings).toHaveLength(1);
+      expect(client.state).toBe('connected');
+      client.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('7 drops late packets from a cancelled attempt', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const client = new AnarchyClient();
+    const received: string[] = [];
+    client.onMessage((message) => received.push(message.type));
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const socket = FakeSocket.instances[0]!;
+    client.disconnect();
+    await expect(pending).rejects.toMatchObject({ code: 'cancelled' });
+    client.onMessage((message) => received.push(message.type));
+    socket.welcome('anarchy', 'token-late');
+    deliver(socket, BLOCK_UPDATE);
+    expect(received).toEqual([]);
+    expect(readStored(durable)).toBeUndefined();
+    expect(client.lastWelcome).toBeUndefined();
+  });
+
+  it('8 ignores the previous socket after a replacement welcome', async () => {
+    const { client, socket: stale, durable } = await welcomedClient();
+    const replacement = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const live = FakeSocket.instances[FakeSocket.instances.length - 1]!;
+    live.welcome('anarchy', 'token-b', 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb');
+    await replacement;
+    const received: string[] = [];
+    let disconnects = 0;
+    client.onMessage((message) => received.push(message.type));
+    client.onDisconnect(() => { disconnects += 1; });
+    deliver(stale, BLOCK_UPDATE);
+    stale.emit('error');
+    stale.close();
+    deliver(live, INVENTORY);
+    expect(received).toEqual(['inventory']);
+    expect(disconnects).toBe(0);
+    expect(client.state).toBe('connected');
+    expect(readStored(durable)).toBe('token-b');
+    client.disconnect();
+  });
+
+  it('9 notifies disconnect once when the live socket closes', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: string[] = [];
+    let disconnects = 0;
+    client.onMessage((message) => received.push(message.type));
+    client.onDisconnect(() => { disconnects += 1; });
+    deliver(socket, BLOCK_UPDATE);
+    socket.close();
+    deliver(socket, INVENTORY);
+    expect(received).toEqual(['block_update']);
+    expect(disconnects).toBe(1);
+    expect(client.state).toBe('disconnected');
+    client.disconnect();
+    expect(disconnects).toBe(1);
+  });
+
+  it('10 keeps an intentional disconnect silent', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: string[] = [];
+    let disconnects = 0;
+    client.onDisconnect(() => { disconnects += 1; });
+    const welcome = client.lastWelcome;
+    client.disconnect();
+    client.onMessage((message) => received.push(message.type));
+    deliver(socket, BLOCK_UPDATE);
+    expect(disconnects).toBe(0);
+    expect(received).toEqual([]);
+    expect(socket.readyState).toBe(FakeSocket.CLOSED);
+    expect(client.lastWelcome?.sessionToken).toBe(welcome?.sessionToken);
+    expect(client.state).toBe('disconnected');
+  });
+
+  it('11 rejects unknown_guest before gameplay starts', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' }, 'token-old');
+    const client = new AnarchyClient();
+    const received: string[] = [];
+    client.onMessage((message) => received.push(message.type));
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const socket = FakeSocket.instances[0]!;
+    deliver(socket, { type: 'error', code: 'unknown_guest', message: 'Этот гостевой ключ не найден в этом мире.' });
+    await expect(pending).rejects.toMatchObject({ code: 'unknown_guest' });
+    deliver(socket, BLOCK_UPDATE);
+    expect(received).toEqual([]);
+    expect(client.state).not.toBe('connected');
+    expect(client.freshGuestOffer?.previousCredential).toBe('token-old');
+  });
+
+  it('12 forwards session_taken without rejecting the finished connect', async () => {
+    const { client, socket } = await welcomedClient();
+    const received: Array<{ type: string; code?: string }> = [];
+    let disconnects = 0;
+    client.onMessage((message) => received.push(message as { type: string; code?: string }));
+    client.onDisconnect(() => { disconnects += 1; });
+    deliver(socket, { type: 'error', code: 'session_taken', message: 'Сессия открыта в другой вкладке' });
+    expect(received).toEqual([{ type: 'error', code: 'session_taken', message: 'Сессия открыта в другой вкладке' }]);
+    expect(client.state).toBe('connected');
+    socket.close();
+    deliver(socket, BLOCK_UPDATE);
+    expect(disconnects).toBe(1);
+    expect(received.map((message) => message.type)).toEqual(['error']);
+    expect(client.state).toBe('disconnected');
+    expect(socket.readyState).toBe(FakeSocket.CLOSED);
+  });
+
+  it('13 still delivers gameplay after the connect timeout window', async () => {
+    vi.useFakeTimers();
+    try {
+      installSocket();
+      const client = new AnarchyClient();
+      const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(memoryStore(), statusFetch('anarchy', 'anarchy', [])));
+      await vi.advanceTimersByTimeAsync(0);
+      const socket = FakeSocket.instances[0]!;
+      socket.welcome('anarchy', 'token-live');
+      await pending;
+      const received: string[] = [];
+      client.onMessage((message) => received.push(message.type));
+      await vi.advanceTimersByTimeAsync(5000);
+      deliver(socket, BLOCK_UPDATE);
+      expect(client.state).toBe('connected');
+      expect(socket.readyState).toBe(FakeSocket.OPEN);
+      expect(received).toEqual(['block_update']);
+      client.disconnect();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('14 pings after welcome and stops after disconnect', async () => {
+    vi.useFakeTimers();
+    try {
+      installSocket();
+      const client = new AnarchyClient();
+      const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(memoryStore(), statusFetch('anarchy', 'anarchy', [])));
+      await vi.advanceTimersByTimeAsync(0);
+      const socket = FakeSocket.instances[0]!;
+      socket.welcome('anarchy', 'token-live');
+      await pending;
+      const received: Array<{ type: string; t?: number }> = [];
+      client.onMessage((message) => received.push(message as { type: string; t?: number }));
+      await vi.advanceTimersByTimeAsync(2000);
+      const pings = socket.sent.map((raw) => JSON.parse(raw) as { type: string; t?: number }).filter((message) => message.type === 'ping');
+      expect(pings).toHaveLength(1);
+      deliver(socket, { type: 'pong', t: pings[0]?.t ?? 1, serverNow: 50 });
+      expect(received.map((message) => message.type)).toEqual(['pong']);
+      client.disconnect();
+      await vi.advanceTimersByTimeAsync(4000);
+      const later = socket.sent.map((raw) => JSON.parse(raw) as { type: string }).filter((message) => message.type === 'ping');
+      expect(later).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

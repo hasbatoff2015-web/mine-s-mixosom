@@ -251,6 +251,8 @@ export const STATUS_PREFLIGHT_MS = 3000;
 interface ConnectAttempt {
   generation: number;
   settled: boolean;
+  /** Welcome was accepted. Later gameplay packets still belong to this socket. */
+  accepted: boolean;
   resolve: (welcome: ServerWelcomeMessage) => void;
   reject: (error: unknown) => void;
   socket: WebSocket | null;
@@ -363,6 +365,7 @@ export class AnarchyClient {
       const attempt: ConnectAttempt = {
         generation,
         settled: false,
+        accepted: false,
         resolve,
         reject,
         socket: null,
@@ -529,7 +532,7 @@ export class AnarchyClient {
       this.send(buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
     });
     socket.addEventListener('message', (event) => {
-      if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      if (this.generation !== generation || this.socket !== socket) return;
       const parseStart = performance.now();
       const rawText = String(event.data);
       let payload: ServerMessage;
@@ -544,6 +547,12 @@ export class AnarchyClient {
         console.warn('[anarchy] invalid server JSON');
         return;
       }
+      if (attempt.accepted) {
+        if (payload.type === 'welcome') return;
+        this.handler?.(payload);
+        return;
+      }
+      if (attempt.settled) return;
       const parseMs = performance.now() - parseStart;
       if (payload.type === 'welcome') {
         if (plan.outcome !== 'untrusted' && plan.scope && payload.worldId !== plan.scope.worldId) {
@@ -565,6 +574,7 @@ export class AnarchyClient {
             + `modChunks=${Object.keys(payload.modifications ?? {}).length}`,
           );
         }
+        attempt.accepted = true;
         this.settle(attempt, undefined, payload);
         return;
       }
@@ -582,7 +592,8 @@ export class AnarchyClient {
       this.handler?.(payload);
     });
     socket.addEventListener('error', () => {
-      if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      if (this.generation !== generation || this.socket !== socket) return;
+      if (attempt.accepted || attempt.settled) return;
       if (this.state === 'connecting') fail('Сервер недоступен');
       else this.state = 'error';
     });
@@ -590,6 +601,7 @@ export class AnarchyClient {
       if (attempt.settled) {
         if (this.generation !== generation) return;
         this.stopPing();
+        attempt.accepted = false;
         if (this.state === 'connected') {
           this.state = 'disconnected';
           if (!this.intentionalClose) this.disconnectHandler?.();
