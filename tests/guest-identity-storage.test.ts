@@ -491,4 +491,34 @@ describe('per-scope guest storage', () => {
     expect(plan.outcome).toBe('ready_new');
     expect(readGuestCredential(store, anarchy)?.sessionToken).toBe('token-a');
   });
+
+  it('does not treat a key-listing failure as an empty world list', () => {
+    const store = memoryStore();
+    writeGuestCredential(store, anarchy, 'token-a');
+    store.keys = () => { throw new Error('SecurityError'); };
+    const blocked = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'world-b' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(blocked.outcome).toBe('storage_unavailable');
+    const resumed = planGuestJoin({
+      trusted: true,
+      freshGuest: false,
+      allowEphemeral: false,
+      targetMode: 'anarchy',
+      hostname: 'dev.megacraft.agariobrainrot.ru',
+      status: { ok: true, ready: true, mode: 'anarchy', world: 'world-A' },
+      durable: store,
+      legacy: memoryStore(),
+      legacyKeys: [],
+    });
+    expect(resumed).toMatchObject({ outcome: 'ready_existing', sendToken: 'token-a' });
+  });
 });

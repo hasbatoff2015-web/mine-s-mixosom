@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AnarchyClient, statusUrlForServer } from '../src/net/AnarchyClient';
-import { GUEST_STORAGE_KEY, guestScopeKey, guestScopeStorageKey, withGuestScopeLock, writeGuestCredential, type GuestScopeLock, type GuestStorage } from '../src/net/guestIdentityStorage';
+import { GUEST_STORAGE_KEY, guestScopeKey, guestScopeStorageKey, readGuestCredential, withGuestScopeLock, writeGuestCredential, type FreshGuestConsent, type GuestScopeLock, type GuestStorage } from '../src/net/guestIdentityStorage';
 import { PROTOCOL_VERSION } from '../shared/config';
 
 function memoryStore(initial: Record<string, string> = {}): GuestStorage & { data: Record<string, string> } {
@@ -723,6 +723,254 @@ describe('two AnarchyClient registrations', () => {
     FakeSocket.instances[0]!.welcome('anarchy', 'solo-token');
     await expect(pending).resolves.toMatchObject({ sessionToken: 'solo-token' });
     expect(readStored(durable)).toBe('solo-token');
+    client.disconnect();
+  });
+});
+
+const WORLD_A = { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' };
+const WORLD_B = { deployment: 'dev', mode: 'anarchy', worldId: 'world-b' };
+const UUID_NEW = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+const UUID_OLD = '11111111-1111-4111-8111-111111111111';
+
+function rejectUnknown(socket: FakeSocket): void {
+  socket.emit('message', {
+    data: JSON.stringify({
+      type: 'error',
+      code: 'unknown_guest',
+      message: 'Этот гостевой ключ не найден в этом мире.',
+    }),
+  });
+}
+
+describe('explicit fresh guest consent', () => {
+  it('1 creates a new guest after unknown_guest confirmation and keeps the old token', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const survival = { deployment: 'local', mode: 'survival', worldId: 'survival' };
+    writeGuestCredential(durable, WORLD_A, 'token-old');
+    writeGuestCredential(durable, survival, 'token-survival');
+    const client = new AnarchyClient();
+    const first = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstJoin = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(firstJoin.sessionToken).toBe('token-old');
+    expect(firstJoin.freshGuest).toBeFalsy();
+    rejectUnknown(FakeSocket.instances[0]!);
+    await expect(first).rejects.toMatchObject({ code: 'unknown_guest' });
+    const offer = client.freshGuestOffer;
+    expect(offer).toMatchObject({ reason: 'unknown_guest', previousCredential: 'token-old', scope: WORLD_A });
+    const second = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', []), { freshConsent: offer }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const retry = FakeSocket.instances[FakeSocket.instances.length - 1]!;
+    const secondJoin = JSON.parse(retry.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(secondJoin.freshGuest).toBe(true);
+    expect(secondJoin.sessionToken).toBeUndefined();
+    expect(JSON.stringify(secondJoin)).not.toContain('token-old');
+    retry.welcome('anarchy', 'token-new', UUID_NEW);
+    await expect(second).resolves.toMatchObject({ playerId: UUID_NEW, sessionToken: 'token-new' });
+    const saved = readGuestCredential(durable, WORLD_A);
+    expect(saved?.sessionToken).toBe('token-new');
+    expect(saved?.retained).toContain('token-old');
+    expect(readGuestCredential(durable, survival)?.sessionToken).toBe('token-survival');
+    client.disconnect();
+  });
+
+  it('2 creates a guest in the approved world and leaves the previous world', async () => {
+    installSocket();
+    const worldA = { deployment: 'dev', mode: 'anarchy', worldId: 'world-a' };
+    const durable = memoryStore();
+    writeGuestCredential(durable, worldA, 'token-a');
+    const seen: string[] = [];
+    const client = new AnarchyClient();
+    const first = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+      durable,
+      statusFetch('anarchy', 'world-b', seen),
+      { hostname: 'dev.megacraft.agariobrainrot.ru' },
+    ));
+    await expect(first).rejects.toMatchObject({ code: 'world_changed' });
+    expect(FakeSocket.instances).toHaveLength(0);
+    const offer = client.freshGuestOffer;
+    expect(offer).toMatchObject({ reason: 'world_changed', previousCredential: null, scope: WORLD_B });
+    const second = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+      durable,
+      statusFetch('anarchy', 'world-b', seen),
+      { hostname: 'dev.megacraft.agariobrainrot.ru', freshConsent: offer },
+    ));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeSocket.instances).toHaveLength(1);
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(join.freshGuest).toBe(true);
+    expect(join.sessionToken).toBeUndefined();
+    expect(JSON.stringify(join)).not.toContain('token-a');
+    FakeSocket.instances[0]!.welcome('world-b', 'token-b', UUID_NEW);
+    await expect(second).resolves.toMatchObject({ playerId: UUID_NEW, worldId: 'world-b' });
+    expect(readGuestCredential(durable, worldA)?.sessionToken).toBe('token-a');
+    expect(readGuestCredential(durable, WORLD_B)?.sessionToken).toBe('token-b');
+    expect(durable.data[guestScopeStorageKey(worldA)]).toContain('token-a');
+    client.disconnect();
+  });
+
+  it('3 refuses a new guest when stored-world listing fails', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const worldA = { deployment: 'local', mode: 'anarchy', worldId: 'world-a' };
+    writeGuestCredential(durable, worldA, 'token-a');
+    const before = durable.data[guestScopeStorageKey(worldA)];
+    durable.keys = () => { throw new Error('SecurityError'); };
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'world-b', [])));
+    await expect(pending).rejects.toMatchObject({ code: 'storage_unavailable' });
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(durable.data[guestScopeStorageKey(worldA)]).toBe(before);
+    expect(readGuestCredential(durable, worldA)?.sessionToken).toBe('token-a');
+  });
+
+  it('4 resumes a credential another tab saved during the confirmed retry', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, WORLD_A, 'token-old');
+    const locks = new ScopeLocks();
+    let release!: () => void;
+    const held = locks.request(`fc-guest:${guestScopeKey(WORLD_A)}`, {}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const client = new AnarchyClient();
+    const consent: FreshGuestConsent = { reason: 'unknown_guest', scope: WORLD_A, previousCredential: 'token-old' };
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', []), {
+      freshConsent: consent,
+      scopeLock: (scope: { deployment: string; mode: string; worldId: string }, signal: AbortSignal, body: () => Promise<void>) => withGuestScopeLock(scope, body, locks, signal),
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeSocket.instances).toHaveLength(0);
+    writeGuestCredential(durable, WORLD_A, 'token-new');
+    release();
+    await held;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(join.sessionToken).toBe('token-new');
+    expect(join.freshGuest).toBeFalsy();
+    FakeSocket.instances[0]!.welcome('anarchy', 'token-new', UUID_NEW);
+    await expect(pending).resolves.toMatchObject({ playerId: UUID_NEW, sessionToken: 'token-new' });
+    expect(readGuestCredential(durable, WORLD_A)?.sessionToken).toBe('token-new');
+    client.disconnect();
+  });
+
+  it('5 does not reuse consent when status reports a different world', async () => {
+    installSocket();
+    const worldA = { deployment: 'dev', mode: 'anarchy', worldId: 'world-a' };
+    const durable = memoryStore();
+    writeGuestCredential(durable, worldA, 'token-a');
+    let world = 'world-b';
+    const client = new AnarchyClient();
+    const first = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+      durable,
+      async () => ({ ok: true, ready: true, mode: 'anarchy', world }),
+      { hostname: 'dev.megacraft.agariobrainrot.ru' },
+    ));
+    await expect(first).rejects.toMatchObject({ code: 'world_changed' });
+    const offer = client.freshGuestOffer;
+    world = 'world-c';
+    const second = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+      durable,
+      async () => ({ ok: true, ready: true, mode: 'anarchy', world }),
+      { hostname: 'dev.megacraft.agariobrainrot.ru', freshConsent: offer },
+    ));
+    await expect(second).rejects.toMatchObject({ code: 'consent_mismatch' });
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(readGuestCredential(durable, worldA)?.sessionToken).toBe('token-a');
+    expect(durable.data[guestScopeStorageKey(WORLD_B)]).toBeUndefined();
+    expect(durable.data[guestScopeStorageKey({ deployment: 'dev', mode: 'anarchy', worldId: 'world-c' })]).toBeUndefined();
+  });
+
+  it('6 leaves the credential unchanged when confirmation is declined', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, WORLD_A, 'token-old');
+    const before = durable.data[guestScopeStorageKey(WORLD_A)];
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    rejectUnknown(FakeSocket.instances[0]!);
+    await expect(pending).rejects.toMatchObject({ code: 'unknown_guest' });
+    expect(client.freshGuestOffer?.previousCredential).toBe('token-old');
+    expect(FakeSocket.instances).toHaveLength(1);
+    expect(durable.data[guestScopeStorageKey(WORLD_A)]).toBe(before);
+    client.disconnect();
+    expect(durable.data[guestScopeStorageKey(WORLD_A)]).toBe(before);
+  });
+
+  it('7 rejects when the approved record turns corrupt while waiting', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, WORLD_A, 'token-old');
+    const key = guestScopeStorageKey(WORLD_A);
+    const locks = new ScopeLocks();
+    let release!: () => void;
+    const held = locks.request(`fc-guest:${guestScopeKey(WORLD_A)}`, {}, () => new Promise<void>((resolve) => { release = resolve; }));
+    const client = new AnarchyClient();
+    const consent: FreshGuestConsent = { reason: 'unknown_guest', scope: WORLD_A, previousCredential: 'token-old' };
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', []), {
+      freshConsent: consent,
+      scopeLock: (scope: { deployment: string; mode: string; worldId: string }, signal: AbortSignal, body: () => Promise<void>) => withGuestScopeLock(scope, body, locks, signal),
+    }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    durable.data[key] = '{';
+    const settled = expect(pending).rejects.toMatchObject({ code: 'storage_corrupt' });
+    release();
+    await held;
+    await settled;
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(durable.data[key]).toBe('{');
+  });
+
+  it('8 starts Survival without touching an Anarchy credential', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, WORLD_A, 'token-anarchy');
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2568', 'Ada', undefined, {
+      ...clientOptions(durable, statusFetch('survival', 'survival', [])),
+      targetServer: 'survival',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(join.sessionToken).toBeUndefined();
+    expect(JSON.stringify(join)).not.toContain('token-anarchy');
+    FakeSocket.instances[0]!.welcome('survival', 'token-survival', UUID_NEW);
+    await expect(pending).resolves.toMatchObject({ playerId: UUID_NEW });
+    expect(readGuestCredential(durable, WORLD_A)?.sessionToken).toBe('token-anarchy');
+    expect(readGuestCredential(durable, { deployment: 'local', mode: 'survival', worldId: 'survival' })?.sessionToken).toBe('token-survival');
+    client.disconnect();
+  });
+
+  it('9 registers one guest when no credential and no other world exist', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeSocket.instances).toHaveLength(1);
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(join.sessionToken).toBeUndefined();
+    expect(join.freshGuest).toBeFalsy();
+    FakeSocket.instances[0]!.welcome('anarchy', 'token-first', UUID_NEW);
+    await expect(pending).resolves.toMatchObject({ playerId: UUID_NEW, sessionToken: 'token-first' });
+    expect(readGuestCredential(durable, WORLD_A)?.sessionToken).toBe('token-first');
+    client.disconnect();
+  });
+
+  it('10 resumes a valid token even when key listing throws', async () => {
+    installSocket();
+    const durable = memoryStore();
+    writeGuestCredential(durable, WORLD_A, 'token-live');
+    durable.keys = () => { throw new Error('SecurityError'); };
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; freshGuest?: boolean };
+    expect(join.sessionToken).toBe('token-live');
+    expect(join.freshGuest).toBeFalsy();
+    FakeSocket.instances[0]!.welcome('anarchy', 'token-live', UUID_OLD);
+    await expect(pending).resolves.toMatchObject({ playerId: UUID_OLD, sessionToken: 'token-live' });
+    expect(readGuestCredential(durable, WORLD_A)?.sessionToken).toBe('token-live');
     client.disconnect();
   });
 });

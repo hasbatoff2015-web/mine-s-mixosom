@@ -1048,18 +1048,21 @@ export class Game {
         this.ui.toast(error instanceof Error ? error.message : 'Сохранённый персонаж не подключён.');
         const startNew = typeof window !== 'undefined' && typeof window.confirm === 'function'
           && window.confirm('Начать отдельного гостя в этом мире? Прежний ключ останется в браузере и сам не сотрётся.');
-        if (startNew) {
+        const offer = client.freshGuestOffer;
+        if (startNew && offer) {
           try {
             const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
               targetServer: id,
-              freshGuest: true,
+              freshConsent: offer,
             });
             this.toastGuestIdentity(client);
             await this.startOnlineAnarchy(client, welcome);
             return;
-          } catch {
-            this.ui.toast('Новый гость не создан');
+          } catch (retryError) {
+            this.ui.toast(retryError instanceof Error ? retryError.message : 'Новый гость не создан');
           }
+        } else if (startNew) {
+          this.ui.toast('Новый гость не создан');
         }
         await this.showOnlineServerList();
         return;
@@ -1084,7 +1087,7 @@ export class Game {
         await this.showOnlineServerList();
         return;
       }
-      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'status_timeout' || code === 'mode_mismatch' || code === 'world_mismatch') {
+      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'status_timeout' || code === 'mode_mismatch' || code === 'world_mismatch' || code === 'consent_mismatch') {
         this.ui.toast(error instanceof Error ? error.message : 'Подключение остановлено');
         await this.showOnlineServerList();
         return;

@@ -191,11 +191,11 @@ export function readGuestCredential(storage: GuestStorage, scope: GuestIdentityS
 
 export function sameModeOtherWorld(storage: GuestStorage, scope: GuestIdentityScope): boolean {
   const own = guestScopeStorageKey(scope);
-  let names: readonly string[] = [];
+  let names: readonly string[];
   try {
     names = storage.keys();
   } catch {
-    names = [];
+    throw new GuestStorageError('unavailable');
   }
   for (const key of names) {
     if (key === own) continue;
@@ -203,8 +203,14 @@ export function sameModeOtherWorld(storage: GuestStorage, scope: GuestIdentitySc
     if (!parsed || parsed.deployment !== scope.deployment || parsed.mode !== scope.mode || parsed.worldId === scope.worldId) continue;
     const row = readScopedRecord(storage, parsed);
     if (row.kind === 'valid') return true;
+    if (row.kind === 'corrupt') throw new GuestStorageError('corrupt');
+    if (row.kind === 'unsupported') throw new GuestStorageError('unsupported');
+    if (row.kind === 'unavailable') throw new GuestStorageError('unavailable');
   }
   const read = readGuestStore(storage);
+  if (read.kind === 'unavailable') throw new GuestStorageError('unavailable');
+  if (read.kind === 'corrupt') throw new GuestStorageError('corrupt');
+  if (read.kind === 'unsupported') throw new GuestStorageError('unsupported');
   if (read.kind !== 'valid') return false;
   const prefix = `${scope.deployment}|${scope.mode}|`;
   const ownV1 = guestScopeKey(scope);
@@ -295,6 +301,13 @@ export function forgetLegacyKeys(legacy: GuestStorage, keys: readonly string[]):
   }
 }
 
+/** In-memory approval for one deployment, mode and world. Not stored and not sent to the server. */
+export interface FreshGuestConsent {
+  readonly scope: GuestIdentityScope;
+  readonly previousCredential: string | null;
+  readonly reason: 'unknown_guest' | 'world_changed';
+}
+
 export interface IdentityStatus {
   readonly ok: boolean;
   readonly ready?: boolean;
@@ -316,7 +329,7 @@ export type GuestJoinPlan =
     readonly legacyKeys: readonly string[];
   }
   | {
-    readonly outcome: 'storage_unavailable' | 'storage_corrupt' | 'storage_unsupported' | 'world_changed' | 'mode_mismatch' | 'status_unavailable' | 'status_timeout' | 'ambiguous_legacy';
+    readonly outcome: 'storage_unavailable' | 'storage_corrupt' | 'storage_unsupported' | 'world_changed' | 'mode_mismatch' | 'status_unavailable' | 'status_timeout' | 'ambiguous_legacy' | 'consent_mismatch';
     readonly legacyKeys: readonly string[];
     readonly message: string;
     readonly scope?: GuestIdentityScope;
@@ -325,6 +338,7 @@ export type GuestJoinPlan =
 export function planGuestJoin(input: {
   readonly trusted: boolean;
   readonly freshGuest: boolean;
+  readonly freshConsent?: FreshGuestConsent;
   readonly allowEphemeral: boolean;
   readonly targetMode: string;
   readonly hostname: string;
@@ -420,15 +434,49 @@ export function planGuestJoin(input: {
   const existingToken = scoped.kind === 'valid'
     ? scoped.record.sessionToken
     : migrated && migrated !== 'blocked' ? migrated.sessionToken : undefined;
-  if (input.freshGuest) return { outcome: 'ready_new', scope, legacyKeys: [], freshGuest: true };
+  const consent = input.freshConsent;
+  if (consent) {
+    const sameScope = consent.scope.deployment === scope.deployment
+      && consent.scope.mode === scope.mode
+      && consent.scope.worldId === scope.worldId;
+    if (!sameScope) {
+      return {
+        outcome: 'consent_mismatch',
+        legacyKeys: [],
+        scope,
+        message: 'Подтверждение было для другого мира. Новый персонаж не создавался.',
+      };
+    }
+    if (existingToken && existingToken !== consent.previousCredential) {
+      return { outcome: 'ready_existing', scope, legacyKeys: [], sendToken: existingToken };
+    }
+    return { outcome: 'ready_new', scope, legacyKeys: [], freshGuest: true };
+  }
   if (existingToken) return { outcome: 'ready_existing', scope, legacyKeys: [], sendToken: existingToken };
-  if (sameModeOtherWorld(input.durable, scope)) {
-    return {
-      outcome: 'world_changed',
-      legacyKeys: [],
-      scope,
-      message: 'Сервер открыл другой сохранённый мир этого режима. Новый персонаж не создавался.',
-    };
+  try {
+    if (sameModeOtherWorld(input.durable, scope)) {
+      return {
+        outcome: 'world_changed',
+        legacyKeys: [],
+        scope,
+        message: 'Сервер открыл другой сохранённый мир этого режима. Новый персонаж не создавался.',
+      };
+    }
+  } catch (error) {
+    if (error instanceof GuestStorageError) {
+      const outcome = error.reason === 'corrupt'
+        ? 'storage_corrupt'
+        : error.reason === 'unsupported'
+          ? 'storage_unsupported'
+          : 'storage_unavailable';
+      const message = outcome === 'storage_corrupt'
+        ? 'Сохранённые гостевые ключи повреждены. Они не перезаписаны и новый персонаж не создавался.'
+        : outcome === 'storage_unsupported'
+          ? 'Формат сохранённых гостевых ключей не поддерживается. Запись не изменена.'
+          : 'Браузер не смог проверить прежние миры. Новый персонаж не создавался.';
+      return { outcome, legacyKeys: [], scope, message };
+    }
+    throw error;
   }
   if (!input.legacy) return { outcome: 'ready_new', scope, legacyKeys: [] };
   let legacy: ReturnType<typeof collectLegacyTokens>;

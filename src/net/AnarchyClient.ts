@@ -24,6 +24,7 @@ import {
   legacySessionStorageKey,
   planGuestJoin,
   withGuestScopeLock,
+  type FreshGuestConsent,
   type GuestScopeLock,
   type GuestIdentityScope,
   type GuestJoinPlan,
@@ -233,6 +234,7 @@ async function fetchIdentityStatus(
 
 export interface GuestConnectOptions {
   readonly freshGuest?: boolean;
+  readonly freshConsent?: FreshGuestConsent;
   readonly allowEphemeral?: boolean;
   readonly search?: string;
   readonly hostname?: string;
@@ -325,6 +327,7 @@ export class AnarchyClient {
   lastErrorCode: string | undefined;
   identityWarning: 'storage' | 'other-world' | undefined;
   identityPersisted = false;
+  freshGuestOffer: FreshGuestConsent | undefined = undefined;
 
   onMessage(handler: AnarchyMessageHandler): void {
     this.handler = handler;
@@ -341,6 +344,7 @@ export class AnarchyClient {
     options?: GuestConnectOptions,
   ): Promise<ServerWelcomeMessage> {
     this.disconnect();
+    this.freshGuestOffer = undefined;
     this.state = 'connecting';
     this.lastError = undefined;
     this.lastErrorCode = undefined;
@@ -422,7 +426,7 @@ export class AnarchyClient {
   ): Promise<void> {
     const plan = await this.planJoin(
       url, search, hostname, target,
-      Boolean(options?.freshGuest), Boolean(options?.allowEphemeral),
+      Boolean(options?.freshGuest), options?.freshConsent, Boolean(options?.allowEphemeral),
       attempt.generation, signal, options?.fetchStatus, durable, legacy,
     );
     if (attempt.settled) return;
@@ -431,6 +435,9 @@ export class AnarchyClient {
       return;
     }
     if (plan.outcome !== 'ready_existing' && plan.outcome !== 'ready_new' && plan.outcome !== 'untrusted') {
+      if (plan.outcome === 'world_changed' && plan.scope) {
+        this.freshGuestOffer = { reason: 'world_changed', scope: plan.scope, previousCredential: null };
+      }
       const message = 'message' in plan ? plan.message : 'Подключение остановлено';
       this.failAttempt(attempt, Object.assign(new Error(message), { code: plan.outcome }));
       return;
@@ -447,6 +454,7 @@ export class AnarchyClient {
         const again = planGuestJoin({
           trusted: true,
           freshGuest: false,
+          freshConsent: options?.freshConsent,
           allowEphemeral: Boolean(options?.allowEphemeral),
           targetMode: target,
           hostname,
@@ -461,12 +469,9 @@ export class AnarchyClient {
         }
         if (again.outcome === 'ready_new') {
           if (again.scope.deployment !== scope.deployment || again.scope.mode !== scope.mode || again.scope.worldId !== scope.worldId) {
-            throw Object.assign(new Error('Сервер открыл другой сохранённый мир этого режима. Новый персонаж не создавался.'), { code: 'world_changed' });
+            throw Object.assign(new Error('Подтверждение было для другого мира. Новый персонаж не создавался.'), { code: 'consent_mismatch' });
           }
-          await this.openAndHold(attempt, () => open({
-            ...again,
-            freshGuest: Boolean(options?.freshGuest),
-          }));
+          await this.openAndHold(attempt, () => open(again));
           return;
         }
         const message = 'message' in again ? again.message : 'Подключение остановлено';
@@ -564,6 +569,13 @@ export class AnarchyClient {
         return;
       }
       if (payload.type === 'error' && this.state === 'connecting') {
+        if (payload.code === 'unknown_guest' && plan.outcome === 'ready_existing' && plan.scope && plan.sendToken) {
+          this.freshGuestOffer = {
+            reason: 'unknown_guest',
+            scope: plan.scope,
+            previousCredential: plan.sendToken,
+          };
+        }
         fail(payload.message || 'Сервер недоступен', payload.code);
         return;
       }
@@ -598,6 +610,7 @@ export class AnarchyClient {
     hostname: string,
     target: LocalServerName,
     freshGuest: boolean,
+    freshConsent: FreshGuestConsent | undefined,
     allowEphemeral: boolean,
     generation: number,
     signal: AbortSignal,
@@ -611,6 +624,7 @@ export class AnarchyClient {
       return planGuestJoin({
         trusted: false,
         freshGuest,
+        freshConsent,
         allowEphemeral,
         targetMode: target,
         hostname,
@@ -652,6 +666,7 @@ export class AnarchyClient {
     return planGuestJoin({
       trusted: true,
       freshGuest,
+      freshConsent,
       allowEphemeral,
       targetMode: target,
       hostname,
