@@ -18,7 +18,7 @@ import { existsSync } from 'node:fs';
 import { AdminHttpServer } from './admin/http';
 import { adminAssetIndex, resolveAdminAssetsRoot } from './admin/assets';
 import { AdminPanelHost } from './admin/panelHost';
-import type { ServerConfig } from './config';
+import { yandexAuthLogLabel, type ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
 import { isPromise } from './economy/currencyPort';
@@ -135,6 +135,7 @@ export class AnarchyServer {
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
     serverLog(`mode: ${this.config.serverMode}`);
+    serverLog(yandexAuthLogLabel(this.config.yandexAuth));
     serverLog(`world loaded: ${this.config.worldId}`);
     console.log(`${readyLabel(this.config.serverMode)} server ready`);
   }

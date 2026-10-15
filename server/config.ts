@@ -43,6 +43,7 @@ export interface ServerConfig {
    * Voxel world snapshots stay on the filesystem either way.
    */
   readonly database: DatabaseConfig;
+  readonly yandexAuth: YandexAuthConfig;
   /**
    * `legacy_json` keeps the synchronous JSON wallet.
    * `postgres` makes PostgreSQL the only currency authority.
@@ -138,6 +139,32 @@ export function loadAdminIdentityConfig(env: NodeJS.ProcessEnv): AdminIdentityCo
   }
   if (parts[0] === parts[1]) throw new Error('FC_ADMIN_IDS must be two different ids.');
   return { enabled: true, ids: [parts[0]!, parts[1]!] };
+}
+
+export interface YandexAuthConfig {
+  /** Always false until the signed player-profile schema is documented and a secret is set. */
+  readonly enabled: false;
+  readonly reason: 'disabled' | 'missing_secret' | 'profile_schema_unverified';
+}
+
+/**
+ * Provider login stays off. A flag without a secret does not accept unsigned ids.
+ * The secret is never returned to logs; only whether it was present.
+ */
+export function loadYandexAuthConfig(env: NodeJS.ProcessEnv): YandexAuthConfig {
+  const requested = env.FC_YANDEX_AUTH_ENABLED === '1' || env.FC_YANDEX_AUTH_ENABLED === 'true';
+  if (!requested) return { enabled: false, reason: 'disabled' };
+  const secret = env.FC_YANDEX_AUTH_SECRET ?? '';
+  if (secret.trim() === '') return { enabled: false, reason: 'missing_secret' };
+  return { enabled: false, reason: 'profile_schema_unverified' };
+}
+
+export function yandexAuthLogLabel(auth: YandexAuthConfig): string {
+  if (auth.reason === 'missing_secret') return 'yandex auth: disabled (FC_YANDEX_AUTH_SECRET is missing)';
+  if (auth.reason === 'profile_schema_unverified') {
+    return 'yandex auth: disabled (signed player profile schema is not documented)';
+  }
+  return 'yandex auth: disabled';
 }
 
 export type DatabaseConfig =
@@ -243,6 +270,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
     database: loadDatabaseConfig(env),
+    yandexAuth: loadYandexAuthConfig(env),
     economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
     adminIdentity,
     adminHttp: loadAdminHttpConfig(env, adminIdentity),

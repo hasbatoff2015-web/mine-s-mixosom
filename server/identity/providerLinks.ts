@@ -26,7 +26,8 @@ export type ProviderLinkStatus =
   | 'invalid_player'
   | 'unknown_player'
   | 'unavailable'
-  | 'unverified';
+  | 'unverified'
+  | 'identity_scope_mismatch';
 
 export interface ProviderLinkResult {
   readonly status: ProviderLinkStatus;
@@ -36,7 +37,8 @@ export type ProviderLookup =
   | { readonly status: 'found'; readonly playerId: string }
   | { readonly status: 'absent' }
   | { readonly status: 'unavailable' }
-  | { readonly status: 'unverified' };
+  | { readonly status: 'unverified' }
+  | { readonly status: 'identity_scope_mismatch' };
 
 const PROVIDER_USER_MAX = 128;
 
@@ -63,6 +65,8 @@ export async function lookupVerifiedProviderIdentity(
   identity: unknown,
 ): Promise<ProviderLookup> {
   if (!db.enabled) return { status: 'unavailable' };
+  const scopeError = foreignScope(db, scope);
+  if (scopeError) return scopeError;
   const verified = asVerifiedProviderIdentity(identity);
   if (!verified) return { status: 'unverified' };
   if (!validScope(scope)) return { status: 'unverified' };
@@ -74,8 +78,10 @@ export async function lookupPlayerLinks(
   db: Database,
   scope: IdentityScope,
   playerId: string,
-): Promise<{ readonly status: 'found'; readonly providerUserIds: readonly string[] } | { readonly status: 'absent' | 'unavailable' | 'invalid_player' }> {
+): Promise<{ readonly status: 'found'; readonly providerUserIds: readonly string[] } | { readonly status: 'absent' | 'unavailable' | 'invalid_player' | 'identity_scope_mismatch' }> {
   if (!db.enabled) return { status: 'unavailable' };
+  const scopeError = foreignScope(db, scope);
+  if (scopeError) return { status: 'identity_scope_mismatch' };
   if (!isPlayerId(playerId) || !validScope(scope)) return { status: 'invalid_player' };
   const ids = await selectPlayerProviderIds(db, scope, canonicalPlayerId(playerId));
   return ids.length > 0 ? { status: 'found', providerUserIds: ids } : { status: 'absent' };
@@ -94,6 +100,8 @@ export async function bindVerifiedProviderIdentity(
   playerExists: (playerId: string) => boolean,
 ): Promise<ProviderLinkResult> {
   if (!db.enabled) return { status: 'unavailable' };
+  const scopeError = foreignScope(db, scope);
+  if (scopeError) return scopeError;
   const verified = asVerifiedProviderIdentity(identity);
   if (!verified || !validScope(scope)) return { status: 'unverified' };
   if (!isPlayerId(playerId)) return { status: 'invalid_player' };
@@ -122,6 +130,19 @@ export async function bindVerifiedProviderIdentity(
     if (isUniqueViolation(error)) return { status: 'provider_conflict' };
     throw error;
   }
+}
+
+function foreignScope(db: Database, scope: IdentityScope): { readonly status: 'identity_scope_mismatch' } | undefined {
+  if (db.deploymentId && scope.deploymentId !== db.deploymentId) {
+    return { status: 'identity_scope_mismatch' };
+  }
+  return undefined;
+}
+
+export function scopeMatchesProcess(processScope: IdentityScope, requested: IdentityScope): boolean {
+  return processScope.deploymentId === requested.deploymentId
+    && processScope.serverMode === requested.serverMode
+    && processScope.worldId === requested.worldId;
 }
 
 function isProviderUserId(value: unknown): value is string {

@@ -205,13 +205,15 @@ describe('provider identity links', () => {
     expect(db.rows).toHaveLength(1);
   });
 
-  it('LINK-7 keeps dev and prod links apart', async () => {
+  it('LINK-7 rejects a prod scope on a dev database', async () => {
     const db = new MemoryLinks();
     const prod = { ...DEV_ANARCHY, deploymentId: 'prod' };
     await bindVerifiedProviderIdentity(db, DEV_ANARCHY, yandex('Y1'), A, everyone);
-    await bindVerifiedProviderIdentity(db, prod, yandex('Y1'), B, everyone);
+    const rejected = await bindVerifiedProviderIdentity(db, prod, yandex('Y1'), B, everyone);
+    expect(rejected).toEqual({ status: 'identity_scope_mismatch' });
+    expect(await lookupVerifiedProviderIdentity(db, prod, yandex('Y1'))).toEqual({ status: 'identity_scope_mismatch' });
     expect(await lookupVerifiedProviderIdentity(db, DEV_ANARCHY, yandex('Y1'))).toEqual({ status: 'found', playerId: A });
-    expect(await lookupVerifiedProviderIdentity(db, prod, yandex('Y1'))).toEqual({ status: 'found', playerId: B });
+    expect(db.rows).toHaveLength(1);
   });
 
   it('LINK-8 keeps anarchy and survival apart', async () => {
