@@ -1608,7 +1608,7 @@ export class GameUI {
         ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
     };
     const capture = (): void => { if (!locked) pages[page] = text.value; };
-    const close = (): void => { this.closeInventory(false); onClose(); };
+    const close = this.bindStandaloneEditor(modal, onClose);
     modal.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -1673,7 +1673,13 @@ export class GameUI {
       modal.querySelector('.sign-lines')!.append(input);
       return input;
     });
-    const close = (): void => { this.closeInventory(false); onClose(); };
+    const close = this.bindStandaloneEditor(modal, onClose);
+    modal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
     modal.querySelector('[data-sign="close"]')!.addEventListener('click', close);
     modal.querySelector('[data-sign="save"]')!.addEventListener('click', () => {
       const sanitized = sanitizeSignLines(inputs.map((input) => input.value));
@@ -3556,6 +3562,19 @@ export class GameUI {
     if (keep !== 'menu') this.closeGameMenu(keepModal);
     if (keep !== 'trade') this.closeTrade(keepModal);
     this.closeInventory(false);
+  }
+
+  /** Sign and book editors are not inventory screens. Close only the overlay this editor still owns. */
+  private bindStandaloneEditor(modal: HTMLElement, onClose: () => void): () => void {
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const owned = this.modal === modal;
+      if (owned) this.releaseOverlay();
+      else if (modal.isConnected) modal.remove();
+      if (owned) onClose();
+    };
   }
 
   private releaseOverlay(options?: OverlayCloseOptions): void {
