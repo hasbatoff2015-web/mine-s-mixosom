@@ -273,7 +273,7 @@ esac
     await check.connect();
     try {
       const migrations = await check.query<{ n: string }>('SELECT count(*)::text AS n FROM schema_migrations');
-      expect(migrations.rows[0]?.n).toBe('7');
+      expect(migrations.rows[0]?.n).toBe('8');
       const ledger = await check.query<{ balance_after: string; reason: string }>(
         `SELECT balance_after::text, reason FROM economy_ledger WHERE player_id = $1`,
         [PLAYER],

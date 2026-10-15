@@ -36,6 +36,29 @@ export const INSERT_MIGRATION_SQL = 'INSERT INTO schema_migrations (version, nam
  * block a future migration from dropping that trigger, changing columns, and
  * installing it again.
  */
+const PROVIDER_IDENTITY_LINKS_SQL = `CREATE TABLE player_identity_links (
+  deployment_id TEXT NOT NULL,
+  server_mode TEXT NOT NULL,
+  world_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_user_id TEXT NOT NULL,
+  player_id UUID NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT player_identity_links_provider_user UNIQUE (deployment_id, server_mode, world_id, provider, provider_user_id),
+  CONSTRAINT player_identity_links_player_provider UNIQUE (deployment_id, server_mode, world_id, player_id, provider),
+  CONSTRAINT player_identity_links_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT player_identity_links_mode_nonempty CHECK (length(btrim(server_mode)) > 0),
+  CONSTRAINT player_identity_links_world_nonempty CHECK (length(btrim(world_id)) > 0),
+  CONSTRAINT player_identity_links_provider_yandex CHECK (provider = 'yandex'),
+  CONSTRAINT player_identity_links_provider_user_nonempty CHECK (length(btrim(provider_user_id)) > 0),
+  CONSTRAINT player_identity_links_provider_user_exact CHECK (provider_user_id = btrim(provider_user_id)),
+  CONSTRAINT player_identity_links_provider_user_len CHECK (char_length(provider_user_id) <= 128),
+  CONSTRAINT player_identity_links_deployment_len CHECK (char_length(deployment_id) <= 64),
+  CONSTRAINT player_identity_links_mode_len CHECK (char_length(server_mode) <= 32),
+  CONSTRAINT player_identity_links_world_len CHECK (char_length(world_id) <= 128)
+)`;
+
 const ADMIN_AUDIT_LOG_SQL = `CREATE TABLE admin_audit_log (
   event_id UUID PRIMARY KEY,
   deployment_id TEXT NOT NULL,
@@ -510,6 +533,13 @@ export const MIGRATIONS: readonly Migration[] = [
     statements: [
       ADMIN_PLAYER_BANS_SQL,
       ADMIN_PLAYER_BANS_ACTIVE_INDEX_SQL,
+    ],
+  },
+  {
+    version: '0008',
+    name: 'provider_identity_links',
+    statements: [
+      PROVIDER_IDENTITY_LINKS_SQL,
     ],
   },
 ];

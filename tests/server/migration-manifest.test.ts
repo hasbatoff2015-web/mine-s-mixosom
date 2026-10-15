@@ -122,7 +122,7 @@ const SAMPLE: readonly Migration[] = [
 
 describe('migration manifest', () => {
   it('is ordered, unique, and checksum-stable', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008']);
     expect(new Set(MIGRATIONS.map((migration) => migration.version)).size).toBe(MIGRATIONS.length);
     expect(new Set(MIGRATIONS.map((migration) => migration.name)).size).toBe(MIGRATIONS.length);
     const checksum = migrationChecksum(MIGRATIONS[0]!);
@@ -136,7 +136,21 @@ describe('migration manifest', () => {
     const sql = MIGRATIONS.map((migration) => migrationSql(migration)).join('\n');
     expect(sql).not.toMatch(/DROP\s+TABLE/i);
     expect(sql).not.toMatch(/DELETE\s+FROM/i);
+    expect(sql).toContain('player_identity_links');
     expect(sql).toContain('admin_audit_log is append-only');
+    const pinned: Record<string, string> = {
+      '0001': '60333f77a224e45b9d80a8a61baa220cba14455a842ad846942928707174d79f',
+      '0002': '7d75214ba98188cd1b85434fa59f32da0cb61c0f198c43e198b4a92c62048b85',
+      '0003': 'ce6452e90627ea4a99d396d5288bafb0b80b83ef04cb4512f6229579a48a2072',
+      '0004': 'f419bd007d20ee33767faa7abf8788bd04fa4b18b7d553c860243a3f743b7387',
+      '0005': '3541cf3e9f5e02a0af930b7d5e50a13d15ba21e5eeb7eb662fdeed104f10fae2',
+      '0006': '84c308e8bd9281790dac2ab2826380f23d694d7778ede7e2ea0189b3323a5fda',
+      '0007': '6e3784843a8afc01388e54974c20628f1b4c1cdae0668cd904075904af510a99',
+    };
+    for (const migration of MIGRATIONS) {
+      if (migration.version > '0007') continue;
+      expect(migrationChecksum(migration), migration.version).toBe(pinned[migration.version]);
+    }
     expect(sql).toContain('idempotency_requests');
     expect(sql).toContain('economy_accounts');
     expect(sql).toContain('economy_operations');
@@ -234,7 +248,7 @@ describe('migration manifest', () => {
   it('records the foundation statements and their checksum', async () => {
     const shared = sharedState();
     const result = await runMigrations(new MigrationDb(shared), MIGRATIONS);
-    expect(result.applied).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007']);
+    expect(result.applied).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008']);
     expect(shared.statements).toEqual(MIGRATIONS.flatMap((migration) => [...migration.statements]));
     expect(shared.rows.map((row) => row.checksum)).toEqual(MIGRATIONS.map((migration) => migrationChecksum(migration)));
     expect(shared.statements.join('\n')).toContain('DROP CONSTRAINT admin_audit_log_request_scope');
