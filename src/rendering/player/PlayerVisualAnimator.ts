@@ -1,8 +1,10 @@
 import * as THREE from 'three';
+import type { EmoteId } from '../../../shared/emotes';
 import {
   THIRD_PERSON_SWORD_BLOCKING_ARM,
   advanceSwordBlockingProgress,
 } from './swordBlockingVisual';
+import { createEmotePose, writeEmotePose } from './emotePose';
 
 export interface PlayerAnimationState {
   readonly viewYaw: number;
@@ -18,6 +20,10 @@ export interface PlayerAnimationState {
   readonly foodUseProgress: number;
   /** Reusable sit pose (minecart now; chairs/sofas later). Independent of bed rest. */
   readonly seated?: boolean;
+  /** Active one-shot. Absent means the idle/walk pose is unchanged. */
+  readonly emote?: EmoteId | null;
+  /** Seconds since this emote started. Ignored when `emote` is absent. */
+  readonly emoteTime?: number;
 }
 
 export interface PlayerVisualPose {
@@ -57,6 +63,7 @@ export class PlayerVisualAnimator {
   private swingSeconds = 1;
   private elapsedSeconds = 0;
   private blockingProgress = 0;
+  private readonly emotePose = createEmotePose();
 
   reset(viewYaw = 0): void {
     this.bodyYaw = viewYaw;
@@ -108,8 +115,8 @@ export class PlayerVisualAnimator {
     let rightArmZ = 0.04;
     let leftArmZ = -0.04;
     const seated = state.seated === true;
-    const bodyPitch = seated ? 0 : state.sneaking ? -0.48 : 0;
-    const bodyYOffset = 0;
+    let bodyPitch = seated ? 0 : state.sneaking ? -0.48 : 0;
+    let bodyYOffset = 0;
 
     if (seated) {
       this.walkStrength = 0;
@@ -171,8 +178,24 @@ export class PlayerVisualAnimator {
       leftArmZ = 0;
     }
 
+    let bodyYawOffset = 0;
+    if (state.emote) {
+      const pose = writeEmotePose(state.emote, state.emoteTime ?? 0, this.emotePose);
+      rightArmX = pose.rightArmX;
+      rightArmY = pose.rightArmY;
+      rightArmZ = pose.rightArmZ;
+      leftArmX = pose.leftArmX;
+      leftArmY = pose.leftArmY;
+      leftArmZ = pose.leftArmZ;
+      if (!seated) {
+        bodyPitch = pose.bodyPitch;
+        bodyYOffset = pose.bodyYOffset;
+      }
+      bodyYawOffset = pose.bodyYawOffset;
+    }
+
     return {
-      bodyYaw: this.bodyYaw,
+      bodyYaw: this.bodyYaw + bodyYawOffset,
       headYaw,
       headPitch: state.viewPitch,
       bodyPitch,

@@ -98,6 +98,8 @@ export interface InputCallbacks {
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
   isChatOpen?(): boolean;
+  /** `down` / `up` for Z. `cancel` when focus or the tab is lost while Z may still be down. */
+  onEmoteKey?(phase: 'down' | 'up' | 'cancel'): void;
 }
 
 export function shouldCyclePerspectiveOnKey(input: {
@@ -458,6 +460,11 @@ export class InputManager {
         this.callbacks.toggleMenu?.();
         return;
       }
+      if (event.code === 'KeyZ' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !typing && this.callbacks.canCapture()) {
+        event.preventDefault();
+        this.callbacks.onEmoteKey?.('down');
+        return;
+      }
       if (event.code === 'KeyQ' && !event.repeat) {
         this.callbacks.dropItem();
         return;
@@ -469,6 +476,7 @@ export class InputManager {
     });
     window.addEventListener('keyup', (event) => {
       if (event.code === 'Escape') this.swallowEscapeKeyup = false;
+      if (event.code === 'KeyZ') this.callbacks.onEmoteKey?.('up');
       this.keys.delete(event.code);
     });
     window.addEventListener('blur', () => {
@@ -476,6 +484,7 @@ export class InputManager {
       this.lockAttempt?.finish();
       this.requestPending = false;
       this.clearHeldKeys();
+      this.callbacks.onEmoteKey?.('cancel');
     });
     document.addEventListener('visibilitychange', () => {
       this.resetPointerSession();
@@ -483,6 +492,7 @@ export class InputManager {
         this.clearHeldKeys();
         this.lockAttempt?.finish();
         this.requestPending = false;
+        this.callbacks.onEmoteKey?.('cancel');
       }
     });
 

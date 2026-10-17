@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-17: Emotes
+
+- [x] Hold Z for a four-sector wheel. Release plays the sector. The center plays nothing.
+- [x] One-shot procedural poses on the existing player rig. Third-person back camera, hidden main-hand item, armor stays attached.
+- [x] Movement, death, blur, and other UI cancel the emote. Mouse look does not.
+- [x] Server `emote` start/stop on the existing presentation snapshot. No position or damage change. Protocol stays 4.
+- [ ] Not merged. Wait for an explicit merge command.
+
 ## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback
 
 - [x] Settled swim speed is 0.8× ground speed. Land, sneak, air, and lava caps stay on their previous constants.
