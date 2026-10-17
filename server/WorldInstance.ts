@@ -16,6 +16,8 @@ import {
 } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
+import { emoteDurationTicks, emoteMovementInterrupts } from '../shared/emotes';
+import type { EmoteId } from '../shared/emotes';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import { manualJumpLevel } from '../src/player/creativeFlight';
@@ -58,6 +60,7 @@ import type {
   ClientMenuActionMessage,
   ClientTradeActionMessage,
   ClientDirectMessageActionMessage,
+  ClientEmoteMessage,
   GameMenuScreenKind,
   ClientBookUpdateMessage,
   ClientSignUpdateMessage,
@@ -334,6 +337,11 @@ export class ServerPlayer implements GameplayPlayer {
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
   private presentationHurtSeq = 0;
+  emoteId: EmoteId | null = null;
+  emoteSeq = 0;
+  emoteTicksRemaining = 0;
+  /** Last input seq observed when the emote was accepted. Older commands cannot cancel it. */
+  emoteArmedSeq = -1;
   miningProgress = 0;
   miningStartCommandSeq?: number;
   bowUseTicks = 0;
@@ -422,6 +430,8 @@ export class ServerPlayer implements GameplayPlayer {
       swingSeq: this.presentationSwingSeq,
       armor: equippedArmorFromInventory(this.inventory),
       hurtSeq: this.presentationHurtSeq,
+      emote: alive ? this.emoteId : null,
+      emoteSeq: this.emoteSeq,
     };
   }
 
@@ -2569,6 +2579,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    this.clearPlayerEmote(player);
     this.gameplay.forceReleaseVehicle(player, false);
     player.restingBed = undefined;
     this.gameplay.whMarks.clearPlayer(player.id);
@@ -4313,6 +4324,7 @@ export class WorldInstance {
       }
       if (player.survival.dead) {
         player.restingBed = undefined;
+        this.clearPlayerEmote(player);
         player.controller.velocity.set(0, 0, 0);
         this.flushHealthIfDeadThenRespawn(player);
         const position = player.controller.position;
@@ -4346,6 +4358,7 @@ export class WorldInstance {
           player.controller.velocity.set(0, 0, 0);
         }
       }
+      this.tickPlayerEmote(player, command);
       const jump = input.jump && !exitedRest;
       const using = input.use === true;
       const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
@@ -4717,8 +4730,38 @@ export class WorldInstance {
     const respawned = this.gameplay.respawnPlayer(player);
     if (!respawned) return false;
     player.restingBed = undefined;
+    this.clearPlayerEmote(player);
     this.rebaseAfterHardRelocation(player);
     return true;
+  }
+
+  /** Cosmetic only. Rejects a second start and never writes position, health, or inventory. */
+  setPlayerEmote(player: ServerPlayer, message: ClientEmoteMessage): void {
+    if (!player.connected) return;
+    if (message.action === 'stop') {
+      this.clearPlayerEmote(player);
+      return;
+    }
+    if (player.survival.dead || player.emoteId || !message.id) return;
+    player.emoteId = message.id;
+    player.emoteSeq += 1;
+    player.emoteTicksRemaining = emoteDurationTicks(message.id);
+    player.emoteArmedSeq = player.lastInputSeq;
+  }
+
+  private clearPlayerEmote(player: ServerPlayer): void {
+    player.emoteId = null;
+    player.emoteTicksRemaining = 0;
+  }
+
+  private tickPlayerEmote(player: ServerPlayer, command: PlayerCommand | null): void {
+    if (!player.emoteId) return;
+    if (command && command.commandSeq > player.emoteArmedSeq && emoteMovementInterrupts(command)) {
+      this.clearPlayerEmote(player);
+      return;
+    }
+    player.emoteTicksRemaining -= 1;
+    if (player.emoteTicksRemaining <= 0) this.clearPlayerEmote(player);
   }
 
   refreshGameMenu(playerId: string): void {

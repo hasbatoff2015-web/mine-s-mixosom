@@ -1,5 +1,13 @@
 # Архитектура
 
+## Emotes — 2026-10-17
+
+`EmoteSession` is the local phase (`idle`, `wheel`, `playing`). `InputManager` reports Z only when the player is not typing and `canCapture()` is true. The wheel is a HUD overlay. It releases pointer lock while it is open and asks for it again on close. Primary-hand presses are swallowed for the whole session. Movement is zeroed only while the wheel is open, so a later WASD, jump, sneak, or descend intent can cancel playback. Look yaw and pitch are not an intent.
+
+Playback writes one reused pose into `PlayerVisualAnimator` and hides `rig.heldItem`. Armor stays parented to the existing pivots. The camera uses `thirdPersonBack`, `availableThirdPersonDistance`, and a small upward bias on that same ray. The stored perspective preference is restored when the emote ends.
+
+Other clients see `presentation.emote` and `presentation.emoteSeq` on the existing player snapshot. The client sends one `emote` start and one stop. The server ignores a second start, clears the id on a newer movement command, on death, on disconnect, and when the duration elapses. It does not move the player.
+
 ## Water, automine reset, item throw, kits, Mega Zombie knockback — 2026-10-11
 
 `PlayerController.updateHorizontalVelocity` is still the only walk/swim cap. Water uses `WATER_MOVE_SPEED` (`PLAYER_MOVE_SPEED * 0.8`). Lava still uses `WATER_SPEED * 0.55`. `updateFluidVerticalVelocity` keeps the 0.8 water Y drag and the 0.5 lava drag. Water no longer applies that 0.8 factor to XZ, because the blend target and the per-tick drag were stacking and the settled speed was about half the cap.
