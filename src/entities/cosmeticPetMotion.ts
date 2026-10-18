@@ -229,7 +229,9 @@ export function stepBeeFlight(
     }
   }
   const ownerStep = Math.hypot(movedX, movedZ);
-  const preferred = ownerStep > 0.08
+  if (ownerStep > 0.12) body.cosmeticFollowActive = true;
+  else if (ownerStep < 0.04) body.cosmeticFollowActive = false;
+  const preferred = body.cosmeticFollowActive
     ? beeFollowTarget(owner.position, movedX, movedZ)
     : beeHoverTarget(owner.position, body.ageSeconds, owner.id);
   const goal = resolveBeeGoal(world, preferred, owner.position, shape);
@@ -241,17 +243,20 @@ export function stepBeeFlight(
   if (distance < 1.15) maxSpeed = 2.5;
   else if (distance < 3.4) maxSpeed = 5.4;
   else if (distance < 7) maxSpeed = 7.6;
-  const desired = distance < 0.22 ? 0 : Math.min(maxSpeed, distance * 2.7);
+  const desired = Math.min(maxSpeed, distance * 2.2);
   const scale = distance > 1e-4 ? desired / distance : 0;
-  const accel = 24 * delta;
+  const accel = 8 * delta;
   body.velocity.x = approach(body.velocity.x, toX * scale, accel);
   body.velocity.y = approach(body.velocity.y, toY * scale, accel);
   body.velocity.z = approach(body.velocity.z, toZ * scale, accel);
   body.locomotionSpeed = horizontalSpeed(body);
-  const facing = body.locomotionSpeed > 0.35
-    ? Math.atan2(body.velocity.x, body.velocity.z) + Math.PI
-    : Math.atan2(ownerX - body.position.x, ownerZ - body.position.z) + Math.PI;
-  body.facingYaw = approachAngle(body.facingYaw, facing, 6 * delta);
+  if (body.locomotionSpeed > 0.2) {
+    body.facingYaw = approachAngle(
+      body.facingYaw,
+      Math.atan2(body.velocity.x, body.velocity.z) + Math.PI,
+      3.2 * delta,
+    );
+  }
   integrateBee(body, world, delta, shape);
   if (!cosmeticBodyClear(world, body.position.x, body.position.y, body.position.z, shape)) {
     const spot = findBeeHoverSpot(world, owner.position);

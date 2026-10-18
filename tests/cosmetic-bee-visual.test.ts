@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ThreeEntityHost } from '../src/entities/ThreeEntityHost';
@@ -127,30 +128,39 @@ describe('bee and mini creeper visuals', () => {
     host.dispose();
   });
 
-  it('uses a 64×64 sheet whose painted islands stay inside the texture', () => {
-    const png = decodeRgbaPng(readFileSync(new URL('../public/textures/entity/bee.png', import.meta.url)));
+  it('maps the committed bee sheet onto the bedrock face islands', () => {
+    const bytes = readFileSync(new URL('../public/textures/entity/bee.png', import.meta.url));
+    const blob = createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex');
+    expect(blob).toBe('41cfe1ab85aa0cbc7ad824c742085fa248cef270');
+    const png = decodeRgbaPng(bytes);
     expect(png.width).toBe(64);
     expect(png.height).toBe(64);
     const sample = (u: number, v: number) => {
       const index = (v * png.width + u) * 4;
       return [png.data[index], png.data[index + 1], png.data[index + 2], png.data[index + 3]] as const;
     };
-    const pupil = sample(11, 12);
-    expect(pupil[3]).toBe(255);
-    expect(pupil[0]).toBeLessThan(40);
-    const cheek = sample(13, 10);
+    const body = cuboidUvRects({ size: [7, 7, 10], textureOffset: [0, 0], logicalTextureSize: [64, 64] });
+    const eye = sample(body.front.u + 1, body.front.v + 1);
+    const cheek = sample(body.front.u + 3, body.front.v + 2);
+    expect(eye[3]).toBe(255);
+    expect(eye[0]).toBeLessThan(cheek[0]);
     expect(cheek[3]).toBe(255);
     expect(cheek[0]).toBeGreaterThan(180);
-    expect(cheek[1]).toBeGreaterThan(120);
-    const back = sample(30, 13);
-    expect(back[0]).toBeLessThan(140);
-    const wingCorner = sample(6, 18);
-    const wingCenter = sample(10, 21);
-    const leftWing = sample(19, 27);
-    expect(wingCorner[3]).toBe(0);
-    expect(wingCenter[3]).toBeGreaterThan(40);
-    expect(wingCenter[3]).toBeLessThan(255);
-    expect(leftWing[3]).toBeGreaterThan(40);
+    const back = sample(body.back.u + 3, body.back.v + 3);
+    expect(back[3]).toBe(255);
+    expect(back[0]).toBeLessThan(cheek[0]);
+    const headSide = sample(body.left.u + body.left.width - 1, body.left.v + 2);
+    const rearSide = sample(body.left.u, body.left.v + 2);
+    expect(headSide[0]).toBeGreaterThan(rearSide[0]);
+    const rightWing = cuboidUvRects({ size: [9, 0, 6], textureOffset: [0, 18], logicalTextureSize: [64, 64] });
+    const leftWing = cuboidUvRects({ size: [9, 0, 6], textureOffset: [9, 24], logicalTextureSize: [64, 64] });
+    expect(sample(rightWing.top.u, rightWing.top.v)[3]).toBe(0);
+    expect(sample(rightWing.top.u + 3, rightWing.top.v)[3]).toBe(255);
+    expect(sample(leftWing.top.u, leftWing.top.v)[3]).toBe(0);
+    expect(sample(leftWing.top.u + 3, leftWing.top.v)[3]).toBe(255);
+    const stinger = cuboidUvRects({ size: [0, 1, 2], textureOffset: [26, 7], logicalTextureSize: [64, 64] });
+    expect(sample(stinger.left.u, stinger.left.v)[3]).toBe(255);
+    expect(sample(stinger.left.u, stinger.left.v)[0]).toBeLessThan(80);
     for (const part of BEE_MODEL.parts) {
       for (const box of part.boxes) {
         const rects = cuboidUvRects({
@@ -181,6 +191,37 @@ describe('bee and mini creeper visuals', () => {
     host.syncMob(state('pet_bee', created.model, quarter));
     expect(left.rotation.z).toBeCloseTo(BEE_WING_AMPLITUDE, 3);
     expect(right.rotation.z).toBeCloseTo(-BEE_WING_AMPLITUDE, 3);
+    expect(right.rotation.x).toBeLessThan(-0.2);
+    expect(left.rotation.x).toBeLessThan(-0.2);
+    const outerTip = (wing: THREE.Object3D) => {
+      const mesh = wing.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+      mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox!;
+      let best = new THREE.Vector3();
+      let bestAbs = 0;
+      for (const x of [box.min.x, box.max.x]) {
+        for (const y of [box.min.y, box.max.y]) {
+          for (const z of [box.min.z, box.max.z]) {
+            const world = mesh.localToWorld(new THREE.Vector3(x, y, z));
+            if (Math.abs(world.x) >= bestAbs) {
+              bestAbs = Math.abs(world.x);
+              best = world;
+            }
+          }
+        }
+      }
+      return best;
+    };
+    (created.visual as THREE.Object3D).updateMatrixWorld(true);
+    const bodyMesh = (created.model.parts.get('body') as THREE.Object3D).children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+    const bodyCenter = bodyMesh.getWorldPosition(new THREE.Vector3());
+    const raisedRight = outerTip(right);
+    const raisedLeft = outerTip(left);
+    expect(raisedRight.x).toBeLessThan(bodyCenter.x - 0.15);
+    expect(raisedLeft.x).toBeGreaterThan(bodyCenter.x + 0.15);
+    expect(raisedRight.y).toBeGreaterThan(bodyCenter.y + 0.08);
+    expect(raisedLeft.y).toBeGreaterThan(bodyCenter.y + 0.08);
+    expect(Math.abs(Math.abs(raisedRight.x) - Math.abs(raisedLeft.x))).toBeLessThan(0.08);
     expect((created.visual as THREE.Object3D).scale.x).toBeCloseTo(PET_BEE_MODEL_SCALE, 5);
     const rightMesh = right.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
     const leftMesh = left.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;

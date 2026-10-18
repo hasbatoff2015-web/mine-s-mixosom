@@ -251,6 +251,45 @@ describe('cosmetic pet simulation', () => {
     mobs.dispose();
   });
 
+  it('orbits a still owner without start-stop jolts or yaw snaps', () => {
+    const { mobs } = manager('bee-idle-smooth');
+    const owner = { id: 'owner', position: new Vec3(8, 71, 8), alive: true };
+    const bee = mobs.spawn('pet_bee', new Vec3(9.4, 72.05, 8.2), { ownerId: 'owner' })!;
+    const speeds: number[] = [];
+    const yaws: number[] = [];
+    let minX = bee.position.x;
+    let maxX = bee.position.x;
+    let jumps = 0;
+    let previousX = bee.position.x;
+    let previousZ = bee.position.z;
+    for (let index = 0; index < 400; index += 1) {
+      mobs.update(0.05, { players: [owner] });
+      const step = Math.hypot(bee.position.x - previousX, bee.position.z - previousZ);
+      if (step > 0.6) jumps += 1;
+      previousX = bee.position.x;
+      previousZ = bee.position.z;
+      minX = Math.min(minX, bee.position.x);
+      maxX = Math.max(maxX, bee.position.x);
+      speeds.push(Math.hypot(bee.velocity.x, bee.velocity.z));
+      yaws.push(bee.facingYaw);
+    }
+    expect(jumps).toBe(0);
+    expect(maxX - minX).toBeGreaterThan(0.15);
+    let cliffs = 0;
+    let yawSnaps = 0;
+    for (let index = 1; index < speeds.length; index += 1) {
+      expect(Math.abs(speeds[index]! - speeds[index - 1]!)).toBeLessThan(0.5);
+      if (speeds[index - 1]! > 0.4 && speeds[index]! < 0.05) cliffs += 1;
+      let turn = yaws[index]! - yaws[index - 1]!;
+      while (turn > Math.PI) turn -= Math.PI * 2;
+      while (turn < -Math.PI) turn += Math.PI * 2;
+      if (Math.abs(turn) > 0.25) yawSnaps += 1;
+    }
+    expect(cliffs).toBe(0);
+    expect(yawSnaps).toBe(0);
+    mobs.dispose();
+  });
+
   it('does not let one owner pet follow the other player', () => {
     const { mobs } = manager('owners');
     const alpha = { id: 'alpha', position: new Vec3(6, 71, 4), alive: true };

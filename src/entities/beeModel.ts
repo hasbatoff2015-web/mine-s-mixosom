@@ -103,13 +103,16 @@ export function beeLegacyChildPivot(
 }
 
 /**
- * Bedrock [x, y, z] degrees, Y-up, expressed as the legacy radians that
- * `legacyRotationToThree` turns back into that orientation.
+ * Bedrock wing bind pose, as legacy radians.
+ * Yaw is kept. Pitch is stored with the opposite legacy sign from a direct
+ * axis copy: Three.js +X drops the trailing edge of a wing pivoted on its
+ * leading edge, which left the membranes beside the body. The negated pitch
+ * lifts that deck above the thorax. The flap itself is added later on Z.
  */
 export function beeLegacyRotation(
   degrees: readonly [number, number, number],
 ): readonly [number, number, number] {
-  return [-degrees[0] * DEG, degrees[1] * DEG, -degrees[2] * DEG];
+  return [degrees[0] * DEG, degrees[1] * DEG, -degrees[2] * DEG];
 }
 
 function physicalSize(size: readonly [number, number, number]): readonly [number, number, number] {

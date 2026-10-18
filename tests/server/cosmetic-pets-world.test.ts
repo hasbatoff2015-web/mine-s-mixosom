@@ -93,6 +93,50 @@ describe('cosmetic pets on the anarchy world', () => {
     expect(lines(sink).some((line) => line.includes('отключён'))).toBe(true);
   }, 40_000);
 
+  it('removes a bee or mini creeper with /spawnpet off and does not restore it', async () => {
+    const { world, dataDir } = await boot();
+    const sink = new MemorySink();
+    const joined = world.join({ sink, name: 'Owner' });
+    if ('error' in joined) throw new Error(joined.error);
+    const player = joined.player;
+    const token = player.sessionToken;
+    pad(world, 20, 20);
+    player.controller.teleport([20.5, 80, 20.5]);
+    world.permissions.op(player.id);
+    world.handleChat(player, '/spawnpet bee');
+    expect(world.gameplay.mobs.entities.some((mob) => mob.kind === 'pet_bee')).toBe(true);
+    world.handleChat(player, '/spawnpet off');
+    for (let index = 0; index < 40; index += 1) world.tick();
+    expect(world.gameplay.mobs.entities.some((mob) => isCosmeticPetKind(mob.kind))).toBe(false);
+    expect(player.cosmeticPet).toBeNull();
+    world.disconnect(player.id);
+    const resumed = world.join({ sink: new MemorySink(), name: 'Owner', sessionToken: token });
+    if ('error' in resumed) throw new Error(resumed.error);
+    for (let index = 0; index < 25; index += 1) world.tick();
+    expect(resumed.player.cosmeticPet).toBeNull();
+    expect(world.gameplay.mobs.entities.some((mob) => isCosmeticPetKind(mob.kind))).toBe(false);
+    world.disconnect(resumed.player.id);
+    await world.stop();
+    worlds.splice(0, worlds.length);
+    const restarted = await boot(dataDir);
+    const again = restarted.world.join({ sink: new MemorySink(), name: 'Owner', sessionToken: token });
+    if ('error' in again) throw new Error(again.error);
+    expect(again.player.cosmeticPet).toBeNull();
+    expect(restarted.world.gameplay.mobs.entities.some((mob) => isCosmeticPetKind(mob.kind))).toBe(false);
+    pad(restarted.world, 20, 20);
+    again.player.controller.teleport([20.5, 80, 20.5]);
+    restarted.world.permissions.op(again.player.id);
+    restarted.world.handleChat(again.player, '/spawnpet creeper');
+    expect(restarted.world.gameplay.mobs.entities.some((mob) => mob.kind === 'pet_creeper')).toBe(true);
+    restarted.world.handleChat(again.player, '/spawnpet off');
+    restarted.world.handleChat(again.player, '/spawnpet off');
+    for (let index = 0; index < 25; index += 1) restarted.world.tick();
+    expect(again.player.cosmeticPet).toBeNull();
+    expect(restarted.world.gameplay.mobs.entities.some((mob) => isCosmeticPetKind(mob.kind))).toBe(false);
+    restarted.world.handleChat(again.player, '/spawnpet bee');
+    expect(restarted.world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_bee')).toHaveLength(1);
+  }, 60_000);
+
   it('restores one pet after reconnect and server restart, and ignores a bad save', async () => {
     const { world, dataDir } = await boot();
     const sink = new MemorySink();
