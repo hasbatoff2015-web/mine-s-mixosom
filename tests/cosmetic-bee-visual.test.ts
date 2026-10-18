@@ -161,6 +161,15 @@ describe('bee and mini creeper visuals', () => {
     const stinger = cuboidUvRects({ size: [0, 1, 2], textureOffset: [26, 7], logicalTextureSize: [64, 64] });
     expect(sample(stinger.left.u, stinger.left.v)[3]).toBe(255);
     expect(sample(stinger.left.u, stinger.left.v)[0]).toBeLessThan(80);
+    const bodyPart = BEE_MODEL.parts.find((part) => part.name === 'body')!;
+    const bodyBox = bodyPart.boxes[0]!;
+    expect(bodyBox.faceUvFlipU).toEqual({ left: true, right: true });
+    expect(bodyBox.faceUvFlipV).toEqual({ top: true });
+    expect(bodyPart.boxes[1]?.faceUvFlipU).toBeUndefined();
+    expect(bodyPart.boxes[2]?.faceUvFlipV).toBeUndefined();
+    expect(BEE_MODEL.parts.find((part) => part.name === 'rightwing_bone')?.boxes[0]?.faceUvFlipU).toEqual({ top: true });
+    expect(BEE_MODEL.parts.find((part) => part.name === 'leftwing_bone')?.boxes[0]?.faceUvFlipU).toEqual({ top: true });
+    expect(BEE_MODEL.parts.find((part) => part.name === 'stinger')?.boxes[0]?.faceUvFlipU).toBeUndefined();
     for (const part of BEE_MODEL.parts) {
       for (const box of part.boxes) {
         const rects = cuboidUvRects({
@@ -253,6 +262,199 @@ describe('bee and mini creeper visuals', () => {
     const second = (bee.model!.wings[0] as THREE.Object3D).rotation.z;
     expect(second).not.toBeCloseTo(first, 2);
     mobs.dispose();
+    host.dispose();
+  });
+
+  it('maps yellow head texels to -Z and the wing tip outward', () => {
+    const png = decodeRgbaPng(readFileSync(new URL('../public/textures/entity/bee.png', import.meta.url)));
+    const texel = (u: number, v: number) => {
+      const x = Math.min(63, Math.max(0, Math.floor(u)));
+      const y = Math.min(63, Math.max(0, Math.floor(v)));
+      const index = (y * 64 + x) * 4;
+      return [png.data[index], png.data[index + 1], png.data[index + 2], png.data[index + 3]] as const;
+    };
+    const scene = new THREE.Scene();
+    const host = new ThreeEntityHost(scene);
+    const created = host.createMob('pet_bee')!;
+    host.syncMob({ ...state('pet_bee', created.model, 0), yaw: 0 });
+    const root = created.visual as THREE.Object3D;
+    root.updateMatrixWorld(true);
+    expect(root.rotation.y).toBeCloseTo(0, 5);
+    expect(root.scale.x).toBeCloseTo(PET_BEE_MODEL_SCALE, 5);
+
+    const body = created.model.parts.get('body') as THREE.Object3D;
+    const bodyMesh = [...body.children].filter((child): child is THREE.Mesh => child instanceof THREE.Mesh)
+      .map((mesh) => {
+        mesh.geometry.computeBoundingBox();
+        return mesh;
+      })
+      .sort((a, b) => b.geometry.boundingBox!.getSize(new THREE.Vector3()).z
+        - a.geometry.boundingBox!.getSize(new THREE.Vector3()).z)[0]!;
+
+    type Corner = { world: THREE.Vector3; u: number; v: number };
+    const faceCorners = (mesh: THREE.Mesh, normal: readonly [number, number, number]): Corner[] => {
+      const position = mesh.geometry.getAttribute('position');
+      const normals = mesh.geometry.getAttribute('normal');
+      const uv = mesh.geometry.getAttribute('uv');
+      const corners: Corner[] = [];
+      for (let index = 0; index < position.count; index += 1) {
+        if (normals.getX(index) !== normal[0] || normals.getY(index) !== normal[1] || normals.getZ(index) !== normal[2]) continue;
+        corners.push({
+          world: mesh.localToWorld(new THREE.Vector3(position.getX(index), position.getY(index), position.getZ(index))),
+          u: uv.getX(index) * 64,
+          v: (1 - uv.getY(index)) * 64,
+        });
+      }
+      expect(corners).toHaveLength(4);
+      return corners;
+    };
+    const bilerp = (corners: readonly Corner[], s: number, t: number) => {
+      const weights = [(1 - s) * (1 - t), s * (1 - t), s * t, (1 - s) * t];
+      const world = new THREE.Vector3();
+      let u = 0;
+      let v = 0;
+      corners.forEach((corner, index) => {
+        world.addScaledVector(corner.world, weights[index]!);
+        u += corner.u * weights[index]!;
+        v += corner.v * weights[index]!;
+      });
+      return { world, u, v };
+    };
+    const depthRed = (mesh: THREE.Mesh, normal: readonly [number, number, number], upperOnly: boolean) => {
+      const corners = faceCorners(mesh, normal);
+      const samples: { z: number; y: number; r: number; u: number; v: number }[] = [];
+      for (const along of [0.08, 0.92]) {
+        for (const across of [0.3, 0.5, 0.7]) {
+          for (const point of [bilerp(corners, along, across), bilerp(corners, across, along)]) {
+            const pixel = texel(point.u, point.v);
+            if (pixel[3] < 200) continue;
+            samples.push({
+              z: Number(point.world.z.toFixed(3)),
+              y: Number(point.world.y.toFixed(3)),
+              r: pixel[0],
+              u: Number(point.u.toFixed(2)),
+              v: Number(point.v.toFixed(2)),
+            });
+          }
+        }
+      }
+      const ys = samples.map((sample) => sample.y);
+      const yCut = (Math.min(...ys) + Math.max(...ys)) / 2;
+      const band = upperOnly ? samples.filter((sample) => sample.y >= yCut - 1e-4) : samples;
+      const minZ = Math.min(...band.map((sample) => sample.z));
+      const maxZ = Math.max(...band.map((sample) => sample.z));
+      const span = maxZ - minZ;
+      const front = band.filter((sample) => sample.z < minZ + span * 0.25);
+      const back = band.filter((sample) => sample.z > maxZ - span * 0.25);
+      expect(front.length).toBeGreaterThan(1);
+      expect(back.length).toBeGreaterThan(1);
+      const mean = (points: readonly { r: number }[]) => points.reduce((sum, sample) => sum + sample.r, 0) / points.length;
+      return { front: mean(front), back: mean(back), frontPixels: front, backPixels: back };
+    };
+
+    const left = depthRed(bodyMesh, [-1, 0, 0], true);
+    const right = depthRed(bodyMesh, [1, 0, 0], true);
+    const top = depthRed(bodyMesh, [0, 1, 0], false);
+    const bottom = depthRed(bodyMesh, [0, -1, 0], false);
+    expect(left.front).toBeGreaterThan(left.back + 40);
+    expect(right.front).toBeGreaterThan(right.back + 40);
+    expect(top.front).toBeGreaterThan(top.back + 40);
+    expect(bottom.front).toBeGreaterThan(bottom.back + 20);
+    for (const side of [left, right]) {
+      expect(Math.max(...side.frontPixels.map((pixel) => pixel.r))).toBeGreaterThan(180);
+      expect(Math.max(...side.backPixels.map((pixel) => pixel.r))).toBeLessThan(120);
+      expect(Math.min(...side.frontPixels.map((pixel) => pixel.r))).toBeLessThan(80);
+    }
+
+    const frontCorners = faceCorners(bodyMesh, [0, 0, -1]);
+    const backCorners = faceCorners(bodyMesh, [0, 0, 1]);
+    const frontZ = frontCorners.reduce((sum, corner) => sum + corner.world.z, 0) / 4;
+    const backZ = backCorners.reduce((sum, corner) => sum + corner.world.z, 0) / 4;
+    expect(frontZ).toBeLessThan(-0.1);
+    expect(backZ).toBeGreaterThan(0.1);
+    const frontPixels = [1, 2, 3].flatMap((s) => [1, 2, 3].map((t) => {
+      const point = bilerp(frontCorners, s / 4, t / 4);
+      return texel(point.u, point.v);
+    }));
+    expect(Math.min(...frontPixels.map((pixel) => pixel[0]))).toBeLessThan(80);
+    expect(Math.max(...frontPixels.map((pixel) => pixel[0]))).toBeGreaterThan(180);
+
+    const bodyCenter = bodyMesh.getWorldPosition(new THREE.Vector3());
+    const antennae = body.children.filter((child) => child instanceof THREE.Mesh && child !== bodyMesh);
+    expect(antennae).toHaveLength(2);
+    for (const antenna of antennae) {
+      expect((antenna as THREE.Mesh).getWorldPosition(new THREE.Vector3()).z).toBeLessThan(bodyCenter.z);
+    }
+    const stinger = created.model.parts.get('stinger') as THREE.Object3D;
+    expect(stinger.getWorldPosition(new THREE.Vector3()).z).toBeGreaterThan(bodyCenter.z);
+
+    const membrane = (wing: THREE.Object3D) => {
+      const mesh = wing.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+      const corners = faceCorners(mesh, [0, 1, 0]);
+      const u0 = corners[0]!.u;
+      const v0 = corners[0]!.v;
+      const us = corners[1]!.u - u0;
+      const vs = corners[1]!.v - v0;
+      const ut = corners[3]!.u - u0;
+      const vt = corners[3]!.v - v0;
+      const det = us * vt - vs * ut;
+      const minU = Math.min(...corners.map((corner) => corner.u));
+      const maxU = Math.max(...corners.map((corner) => corner.u));
+      const minV = Math.min(...corners.map((corner) => corner.v));
+      const maxV = Math.max(...corners.map((corner) => corner.v));
+      let tip = new THREE.Vector3();
+      let root = new THREE.Vector3();
+      let tipAbs = -1;
+      let rootAbs = Number.POSITIVE_INFINITY;
+      let count = 0;
+      for (let v = Math.floor(minV); v < maxV; v += 1) {
+        for (let u = Math.floor(minU); u < maxU; u += 1) {
+          if (texel(u + 0.5, v + 0.5)[3] < 128) continue;
+          const du = u + 0.5 - u0;
+          const dv = v + 0.5 - v0;
+          const s = (du * vt - dv * ut) / det;
+          const t = (us * dv - vs * du) / det;
+          if (s < -0.02 || s > 1.02 || t < -0.02 || t > 1.02) continue;
+          const world = bilerp(corners, s, t).world;
+          const absX = Math.abs(world.x);
+          if (absX > tipAbs) {
+            tipAbs = absX;
+            tip = world;
+          }
+          if (absX < rootAbs) {
+            rootAbs = absX;
+            root = world;
+          }
+          count += 1;
+        }
+      }
+      expect(count).toBeGreaterThan(8);
+      return { tip, root };
+    };
+
+    const poseWings = (age: number) => {
+      host.syncMob({ ...state('pet_bee', created.model, age), yaw: 0 });
+      root.updateMatrixWorld(true);
+      const rightWing = membrane(created.model.wings[0] as THREE.Object3D);
+      const leftWing = membrane(created.model.wings[1] as THREE.Object3D);
+      expect(rightWing.tip.x).toBeLessThan(-0.2);
+      expect(leftWing.tip.x).toBeGreaterThan(0.2);
+      expect(rightWing.tip.z).toBeGreaterThan(rightWing.root.z);
+      expect(leftWing.tip.z).toBeGreaterThan(leftWing.root.z);
+      expect(rightWing.tip.z).toBeGreaterThan(frontZ);
+      expect(leftWing.tip.z).toBeGreaterThan(frontZ);
+      expect(rightWing.tip.y).toBeGreaterThan(bodyCenter.y);
+      expect(leftWing.tip.y).toBeGreaterThan(bodyCenter.y);
+      expect(Math.abs(Math.abs(rightWing.tip.x) - Math.abs(leftWing.tip.x))).toBeLessThan(0.05);
+      expect(Math.abs(rightWing.tip.z - leftWing.tip.z)).toBeLessThan(0.05);
+      return { rightWing, leftWing };
+    };
+    const rest = poseWings(0);
+    const raised = poseWings(1 / (4 * 6.5));
+    const lowered = poseWings(3 / (4 * 6.5));
+    expect(raised.rightWing.tip.y).toBeGreaterThan(rest.rightWing.tip.y);
+    expect(lowered.rightWing.tip.y).toBeLessThan(rest.rightWing.tip.y);
+    expect(raised.leftWing.tip.y).toBeGreaterThan(lowered.leftWing.tip.y);
     host.dispose();
   });
 

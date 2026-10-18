@@ -142,7 +142,7 @@ Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`;
 
 ## Decorative bee
 
-`src/entities/beeModel.ts` adapts public Bedrock `geometry.bee` into LegacyModel. Bedrock pivots are absolute and Y-up. A child pivot is `child - parent`, then Y is flipped. Cube corners use the same pivot delta, and the legacy Y origin is `-(originY - pivotY) - sizeY`. The entity root is bedrock Y=0, so the body center sits at local Y `5.5/16` before scale. `PET_BEE_MODEL_SCALE` is 0.5. Wings, the stinger, and the three leg planes keep a 0.12-pixel thickness so a zero bedrock axis still has two visible sides. UV islands stay `[0,0]`, `[0,18]`, `[9,24]`, `[2,0]`, `[2,3]`, `[26,1]`, `[26,3]`, `[26,5]`, `[26,7]`. The PNG is original pixel art on those islands. Flap remains 6.5 Hz on the render clock. **Adapted bedrock reference.**
+`src/entities/beeModel.ts` adapts public Bedrock `geometry.bee` into LegacyModel. Bedrock pivots are absolute and Y-up. A child pivot is `child - parent`, then Y is flipped. Cube corners use the same pivot delta, and the legacy Y origin is `-(originY - pivotY) - sizeY`. The entity root is bedrock Y=0, so the body center sits at local Y `5.5/16` before scale. `PET_BEE_MODEL_SCALE` is 0.5. Wings, the stinger, and the three leg planes keep a 0.12-pixel thickness so a zero bedrock axis still has two visible sides. UV islands stay `[0,0]`, `[0,18]`, `[9,24]`, `[2,0]`, `[2,3]`, `[26,1]`, `[26,3]`, `[26,5]`, `[26,7]`. The committed `bee.png` is unchanged. The body cube flips U on left and right and V on top so the yellow head samples at -Z. Each wing flips U on its top face so the painted tip points outward. Flap remains 6.5 Hz on the render clock. **Adapted bedrock reference.**
 
 ## Mini creeper
 

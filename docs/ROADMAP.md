@@ -4,6 +4,7 @@
 
 - [x] Separate runtime kinds `pet_bee` and `pet_creeper`. They are not `isPetKind()` wolves or cats.
 - [x] Original bee rig, 64×64 sheet, render-clock wing flap and server flight follow.
+- [x] Bee head texels sit on -Z and each wing tip points outward. The sheet bytes are unchanged.
 - [x] Mini creeper reuses the creeper rig at scale 0.49 and never runs creeper fuse.
 - [x] `/spawnpet bee|creeper|off` for the calling operator. `wolf` and `cat` no longer spawn.
 - [x] Player `cosmeticPet` survives reconnect and restart. The runtime mob is not in the world mob list.

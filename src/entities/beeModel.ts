@@ -115,6 +115,40 @@ export function beeLegacyRotation(
   return [degrees[0] * DEG, degrees[1] * DEG, -degrees[2] * DEG];
 }
 
+/**
+ * Per-face UV corrections measured on the built mesh against `bee.png`.
+ *
+ * Body cube, legacy cross, no flip: both side windings put the dark end of
+ * the island on -Z and the yellow/eye end on +Z. The left island's yellow
+ * texels sit on high U; the right island's yellow texels sit on low U, so
+ * each side needs its own U flip. The top island's yellow rows sit on high V,
+ * which the top winding assigns to +Z, so only that face needs a V flip.
+ * Bottom already puts yellow on -Z. Front, back, antennae, legs, and the
+ * stinger already face the correct way.
+ *
+ * Each wing membrane is the top face of a flat cube. The painted tip is the
+ * outer corner of that island (high U on the right wing, low U on the left).
+ * The unflipped top winding maps that tip to the inner edge, so the point
+ * aims at the thorax. Flipping U on the top face sends the tip outward and
+ * keeps high V, the tip's other axis, on +Z. Bind-pose yaw stays the Bedrock
+ * ±15°.
+ */
+function beeCubeUvAdjustment(boneName: string, cubeIndex: number): {
+  readonly faceUvFlipU?: { readonly left?: boolean; readonly right?: boolean; readonly top?: boolean };
+  readonly faceUvFlipV?: { readonly top?: boolean };
+} {
+  if (boneName === 'body' && cubeIndex === 0) {
+    return {
+      faceUvFlipU: { left: true, right: true },
+      faceUvFlipV: { top: true },
+    };
+  }
+  if (boneName === 'rightwing_bone' || boneName === 'leftwing_bone') {
+    return { faceUvFlipU: { top: true } };
+  }
+  return {};
+}
+
 function physicalSize(size: readonly [number, number, number]): readonly [number, number, number] {
   return [
     size[0] === 0 ? PLANE : size[0],
@@ -131,12 +165,15 @@ const bodyPivotLegacy: readonly [number, number, number] = [BEE_BODY_PIVOT[0], 2
 
 function bonePart(bone: BeeBedrockBone) {
   const pivot = bone.parent ? beeLegacyChildPivot(bone.pivot, BEE_BODY_PIVOT) : bodyPivotLegacy;
-  const boxes = bone.cubes.map((cube) => {
+  const boxes = bone.cubes.map((cube, index) => {
     const plane = needsPlane(cube.size);
+    const uv = beeCubeUvAdjustment(bone.name, index);
     return {
       origin: beeLegacyBoxOrigin(cube.origin, cube.size, bone.pivot),
       size: cube.size,
       textureOffset: cube.uv,
+      ...(uv.faceUvFlipU === undefined ? {} : { faceUvFlipU: uv.faceUvFlipU }),
+      ...(uv.faceUvFlipV === undefined ? {} : { faceUvFlipV: uv.faceUvFlipV }),
       ...(plane ? {
         doubleSided: true,
         alphaTest: cube.size[1] === 0 ? 0.15 : 0.1,
