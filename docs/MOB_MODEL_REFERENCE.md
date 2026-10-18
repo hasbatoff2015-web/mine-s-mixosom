@@ -140,6 +140,14 @@ Geometry is legacy `ModelOcelot`.
 
 Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`; head `Y-3.3, Z+1`; tail1 `Y+8, Z-2`, `rx=1.7278761`; tail2 `Y+2, Z-0.8`, `rx=2.670354`; front legs `y=15.8, z=-7`, `rx=-0.157`; back legs `y=21, z=1`, `rx=+π/2` (legacy; the adapter reflects X). Converted through the project adapter each frame from base transforms — no accumulated offsets. Walk uses separate front/back legs, `legacyRotationToThree` for swing, and a light tail motion. **Alpha approximation**.
 
+## Decorative bee
+
+Original rig in `src/entities/beeModel.ts`. Texture `public/textures/entity/bee.png`, logical 64×64. Not a copy of the Mojang bee geometry or PNG. Body box is 7×7×10 model units on pivot `(0,16,0)`. Wings, antennae, stinger, and six legs are child parts. Wings use a thin physical height, `doubleSided`, and `alphaTest` 0.15. Flap, bob, and tilt are applied every render sync from `beeVisual.ts`. **Alpha approximation.**
+
+## Mini creeper
+
+Same `CREEPER_MODEL` and `entity/creeper` sheet as the hostile creeper. `PET_CREEPER_MODEL_SCALE` is 0.49, so the rendered height is about 0.80 blocks and the feet stay on the entity origin. The scale is reapplied in `syncMob`. The hostile creeper scale path is unchanged.
+
 ## Animation contract
 
 - Every animated part stores `baseRotationX/Y/Z` once and each frame computes `base + offset`; angles never accumulate.

@@ -1,5 +1,15 @@
 # Архитектура
 
+## Decorative pets — 2026-10-18
+
+`pet_bee` and `pet_creeper` are `MobKind` values in the existing `MobManager`. They are not members of `PET_KINDS`. `isCosmeticPetKind()` is the gate for damage, raycasts, burning, separation, wolf targets, distance despawn, and mob-list serialization.
+
+The saved choice is `ServerPlayer.cosmeticPet`: `'bee' | 'creeper' | null`. `WorldInstance.ensureCosmeticPet()` creates at most one runtime entity for a connected living owner. Disconnect removes that entity and keeps the choice. A hard relocate or respawn moves the same entity to a clear spot and bumps `poseEpoch`. Cosmetic mobs are omitted from `MobManager.serialize()` and rejected by `restore()`, so a restart cannot duplicate them.
+
+Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` for other mobs. Wing flap, bob, and body tilt are render-only in `ThreeEntityHost.syncBee()` from a wrapped clock advanced in `interpolateVisuals()`. The mini creeper reuses `CREEPER_MODEL` and `entity/creeper`. `syncMob()` sets scale `0.49` every frame. `updateCreeper()` is not called for it.
+
+`/spawnpet` remains operator-only. There is no rank grant in this change.
+
 ## Emotes — 2026-10-17
 
 `EmoteSession` is the local phase (`idle`, `wheel`, `playing`). `InputManager` reports Z only when the player is not typing and `canCapture()` is true. The wheel is a HUD overlay. It releases pointer lock while it is open and asks for it again on close. Primary-hand presses are swallowed for the whole session. Movement is zeroed only while the wheel is open, so a later WASD, jump, sneak, or descend intent can cancel playback. Look yaw and pitch are not an intent.

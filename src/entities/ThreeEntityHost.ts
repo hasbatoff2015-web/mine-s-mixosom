@@ -28,6 +28,8 @@ import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
 import { petAppearanceKey, petBodyTexturePath, WOLF_COLLAR_COLOR } from './petAppearance';
 import { applyCatVisualPose, applyWolfVisualPose } from './petPoses';
+import { PET_CREEPER_MODEL_SCALE } from './cosmeticPets';
+import { beeBodyPitch, beeBobOffset, beeLegRadians, beeWingRadians } from './beeVisual';
 import { MEGA_ZOMBIE_FOOT_LIFT, MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
 import { applyMegaZombiePose } from './megaZombiePose';
 import { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
@@ -261,6 +263,7 @@ export class ThreeEntityHost implements EntityHost {
   syncMob(state: MobVisualState): EntityVisual | undefined {
     const visual = asObject3D(state.visual);
     if (state.kind === 'mega_zombie') return this.syncMegaZombie(state, visual);
+    if (state.kind === 'pet_bee') return this.syncBee(state, visual);
     const model = state.model;
     const legs = model.legs.map(asObject3D);
     const arms = model.arms.map(asObject3D);
@@ -333,6 +336,9 @@ export class ThreeEntityHost implements EntityHost {
       const [scaleX, scaleY, scaleZ] = creeperFuseVisualScale(state.fuseSeconds);
       visual.scale.set(scaleX, scaleY, scaleZ);
       visual.rotation.z = 0;
+    } else if (state.kind === 'pet_creeper') {
+      visual.scale.setScalar(PET_CREEPER_MODEL_SCALE);
+      visual.rotation.z = 0;
     } else {
       visual.scale.setScalar(1);
       visual.rotation.z = 0;
@@ -365,6 +371,49 @@ export class ThreeEntityHost implements EntityHost {
     this.tntMaps.clear();
     for (const material of this.tntMaterials) material.dispose();
     this.tntMaterials.length = 0;
+  }
+
+  private syncBee(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
+    const model = state.model;
+    const previousAge = Number(visual.userData.beeVisualAge ?? state.visualAge);
+    let delta = state.visualAge - previousAge;
+    if (delta < 0) delta += 60;
+    if (!Number.isFinite(delta) || delta < 0) delta = 0;
+    visual.userData.beeVisualAge = state.visualAge;
+    const previousPitch = Number(visual.userData.beeTilt ?? 0);
+    const pitch = beeBodyPitch(state.locomotionSpeed, previousPitch, delta);
+    visual.userData.beeTilt = pitch;
+    visual.rotation.set(0, state.yaw, 0);
+    visual.scale.setScalar(1);
+    const body = model.parts.get('body');
+    if (body) {
+      const bodyObject = asObject3D(body);
+      bodyObject.rotation.x = Number(bodyObject.userData.baseRotationX ?? 0) + pitch;
+      bodyObject.rotation.y = Number(bodyObject.userData.baseRotationY ?? 0);
+      bodyObject.rotation.z = Number(bodyObject.userData.baseRotationZ ?? 0);
+    }
+    model.wings.forEach((wing, index) => {
+      const wingObject = asObject3D(wing);
+      const side = index === 0 ? 'right' : 'left';
+      wingObject.rotation.x = Number(wingObject.userData.baseRotationX ?? 0);
+      wingObject.rotation.y = Number(wingObject.userData.baseRotationY ?? 0);
+      wingObject.rotation.z = Number(wingObject.userData.baseRotationZ ?? 0) + beeWingRadians(state.visualAge, side);
+    });
+    model.legs.forEach((leg, index) => {
+      const legObject = asObject3D(leg);
+      legObject.rotation.x = Number(legObject.userData.baseRotationX ?? 0) + beeLegRadians(state.visualAge, index);
+      legObject.rotation.y = Number(legObject.userData.baseRotationY ?? 0);
+      legObject.rotation.z = Number(legObject.userData.baseRotationZ ?? 0);
+    });
+    for (const name of ['antennaLeft', 'antennaRight'] as const) {
+      const antenna = model.parts.get(name);
+      if (!antenna) continue;
+      const antennaObject = asObject3D(antenna);
+      const sway = Math.sin(state.visualAge * Math.PI * 2 * 1.55 + (name === 'antennaLeft' ? 0.6 : 0)) * 0.08;
+      antennaObject.rotation.z = Number(antennaObject.userData.baseRotationZ ?? 0) + sway;
+    }
+    visual.position.set(state.x, state.y + beeBobOffset(state.visualAge), state.z);
+    return this.syncFireOverlay(state, visual);
   }
 
   private syncMegaZombie(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {

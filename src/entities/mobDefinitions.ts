@@ -9,6 +9,7 @@ import {
   MEGA_ZOMBIE_SPEED,
   MEGA_ZOMBIE_WIDTH,
 } from './megaZombie';
+import { BEE_BODY_HEIGHT, BEE_BODY_WIDTH, PET_CREEPER_HEIGHT, PET_CREEPER_WIDTH } from './cosmeticPets';
 import { CAT_MAX_HEALTH, WOLF_ATTACK_DAMAGE, WOLF_MAX_HEALTH } from './petConstants';
 
 export type MobKind =
@@ -22,7 +23,9 @@ export type MobKind =
   | 'skeleton'
   | 'creeper'
   | 'spider'
-  | 'mega_zombie';
+  | 'mega_zombie'
+  | 'pet_bee'
+  | 'pet_creeper';
 
 export type MobDisposition = 'passive' | 'hostile';
 export type MobState = 'idle' | 'wander' | 'chase' | 'attack' | 'hurt' | 'die';
@@ -132,6 +135,19 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
     attackRange: MEGA_ZOMBIE_ATTACK_RANGE,
     attackDamage: MEGA_ZOMBIE_ATTACK_DAMAGE,
     attackCooldownSeconds: MEGA_ZOMBIE_ATTACK_COOLDOWN_SECONDS,
+    loot: Object.freeze([]),
+  }),
+  pet_bee: Object.freeze({
+    kind: 'pet_bee', disposition: 'passive', maxHealth: 20, width: BEE_BODY_WIDTH, height: BEE_BODY_HEIGHT,
+    eyeHeight: 0.45, speed: 9.2, detectionRange: 0, attackRange: 0,
+    attackDamage: 0, attackCooldownSeconds: 1,
+    loot: Object.freeze([]),
+  }),
+  pet_creeper: Object.freeze({
+    kind: 'pet_creeper', disposition: 'passive', maxHealth: 20,
+    width: PET_CREEPER_WIDTH, height: PET_CREEPER_HEIGHT,
+    eyeHeight: PET_CREEPER_HEIGHT * 0.72, speed: 4.4, detectionRange: 0, attackRange: 0,
+    attackDamage: 0, attackCooldownSeconds: 1,
     loot: Object.freeze([]),
   }),
 });

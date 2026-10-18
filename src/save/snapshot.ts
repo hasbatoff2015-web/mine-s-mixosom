@@ -1,3 +1,4 @@
+import { parseCosmeticPetSelection } from '../entities/cosmeticPets';
 import { Inventory } from '../inventory';
 import { PersistenceError } from './PersistenceError';
 import {
@@ -106,6 +107,9 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
     ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
     ...(value.appearance !== undefined ? { appearance: value.appearance } : {}),
+    ...(parseCosmeticPetSelection(value.cosmeticPet)
+      ? { cosmeticPet: parseCosmeticPetSelection(value.cosmeticPet)! }
+      : {}),
   };
 }
 
