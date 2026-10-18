@@ -70,6 +70,9 @@ import {
   WILD_WOLF_ANGER_SECONDS,
   WOLF_ATTACK_DAMAGE,
 } from './petConstants';
+import { COSMETIC_PET_WORLD_CAP, isCosmeticPetKind } from './cosmeticPets';
+import { stepBeeFlight, stepMiniCreeperFollow } from './cosmeticPetMotion';
+import { advanceBeeAnimSeconds } from './beeVisual';
 import { fallbackCatVariant, isPetKind, samePetOwner, type CatVariant, type PetCombatPriority, type PetCombatTargetKind } from './petTypes';
 import { petBodyTexturePath } from './petAppearance';
 import { findSafePetTeleport, lastPetTeleportSearchStats, resetPetTeleportSearchStats } from './petTeleport';
@@ -427,6 +430,14 @@ export class MobEntity {
   poseEpoch = 0;
   petHomeX?: number;
   petHomeZ?: number;
+  /** Hysteresis for the mini creeper. Not serialized. */
+  cosmeticFollowActive = false;
+  cosmeticAnchorX?: number;
+  cosmeticAnchorY?: number;
+  cosmeticAnchorZ?: number;
+  /** Render-only bee clock. Not part of the 20 TPS snapshot. */
+  beeAnimSeconds = 0;
+  beeClockMs?: number;
 
   constructor(
     readonly id: string,
@@ -672,7 +683,16 @@ export class MobManager {
   countTamedPets(): number {
     let count = 0;
     for (const mob of this.mobsById.values()) {
-      if (mob.ownerId) count += 1;
+      if (!mob.ownerId || isCosmeticPetKind(mob.kind)) continue;
+      count += 1;
+    }
+    return count;
+  }
+
+  countCosmeticPets(): number {
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (mob.alive && isCosmeticPetKind(mob.kind)) count += 1;
     }
     return count;
   }
@@ -702,21 +722,27 @@ export class MobManager {
   ): MobEntity | undefined {
     this.assertActive();
     const definition = getMobDefinition(kind);
-    const tamed = Boolean(spawnOptions.ownerId);
+    const cosmetic = isCosmeticPetKind(kind);
+    if (cosmetic && !spawnOptions.ownerId) return undefined;
+    if (cosmetic && this.countCosmeticPets() >= COSMETIC_PET_WORLD_CAP) return undefined;
+    const tamed = Boolean(spawnOptions.ownerId) && !cosmetic;
     if (!spawnOptions.force && tamed && this.countTamedPets() >= this.maxTamedPets) {
       return undefined;
     }
-    if (!spawnOptions.force && !tamed && !this.hasPopulationRoom(definition.disposition)) {
+    if (!spawnOptions.force && !tamed && !cosmetic && !this.hasPopulationRoom(definition.disposition)) {
       return undefined;
     }
     if (!spawnOptions.force && this.options.allowSpawn
       && !this.options.allowSpawn(kind, position.x, position.y, position.z)) {
       return undefined;
     }
-    if (!spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
+    if (!cosmetic && !spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
       return undefined;
     }
-    if (!tamed && this.countWildMobs() >= this.maxMobs) {
+    if (cosmetic && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
+      return undefined;
+    }
+    if (!tamed && !cosmetic && this.countWildMobs() >= this.maxMobs) {
       if (!spawnOptions.force) return undefined;
       this.evictFarthestOrOldest(position);
       if (this.countWildMobs() >= this.maxMobs) return undefined;
@@ -873,9 +899,10 @@ export class MobManager {
    * Render-only interpolation. Gameplay/AI/physics keep using simulation transforms.
    * Interaction raycasts may opt into `networkRenderPose` so the hitbox matches the model.
    */
-  interpolateVisuals(alpha: number): void {
+  interpolateVisuals(alpha: number, nowMs = typeof performance === 'undefined' ? 0 : performance.now()): void {
     const t = Math.max(0, Math.min(1, alpha));
     for (const mob of this.mobsById.values()) {
+      if (mob.kind === 'pet_bee') this.advanceBeeClock(mob, nowMs);
       this.syncVisual(mob, 0, t);
     }
     for (const projectile of this.projectiles.values()) {
@@ -919,10 +946,11 @@ export class MobManager {
   private applyBoundedSeparation(delta: number): void {
     let checked = 0;
     for (const first of this.mobsById.values()) {
-      if (!first.alive) continue;
+      if (!first.alive || isCosmeticPetKind(first.kind)) continue;
       for (const second of this.mobsById.values()) {
         if (second === first) break;
-        if (!second.alive || checked >= MAX_SEPARATION_PAIRS) {
+        if (!second.alive || isCosmeticPetKind(second.kind)) continue;
+        if (checked >= MAX_SEPARATION_PAIRS) {
           this.lastSeparationPairChecks = checked;
           return;
         }
@@ -959,6 +987,7 @@ export class MobManager {
     if (!mob || !this.mobsById.has(mob.id) || !mob.alive || !Number.isFinite(amount) || amount <= 0) {
       return false;
     }
+    if (isCosmeticPetKind(mob.kind)) return false;
     if (damageOptions.lethal === true) {
       this.noteBossAttacker(mob, damageOptions);
       mob.health = 0;
@@ -1056,7 +1085,7 @@ export class MobManager {
     const poseMode = options?.pose ?? 'sim';
     let closest: MobRaycastHit | undefined;
     for (const mob of this.mobsById.values()) {
-      if (!mob.alive) continue;
+      if (!mob.alive || isCosmeticPetKind(mob.kind)) continue;
       const pose = poseMode === 'render' && mob.networkRenderPose
         ? mob.networkRenderPose
         : {
@@ -1204,7 +1233,7 @@ export class MobManager {
     if (!ownerId || ownerId === targetId) return;
     if (kind === 'mob') {
       const target = this.mobsById.get(targetId);
-      if (target && target.ownerId === ownerId) return;
+      if (target && (target.ownerId === ownerId || isCosmeticPetKind(target.kind))) return;
     }
     for (const mob of this.mobsById.values()) {
       if (!mob.alive || mob.kind !== 'wolf' || mob.ownerId !== ownerId || mob.sitting) continue;
@@ -1238,7 +1267,7 @@ export class MobManager {
   }
 
   serialize(): SerializedMob[] {
-    return [...this.mobsById.values()].filter((mob) => mob.kind !== 'mega_zombie').map((mob) => ({
+    return [...this.mobsById.values()].filter((mob) => mob.kind !== 'mega_zombie' && !isCosmeticPetKind(mob.kind)).map((mob) => ({
       id: mob.id,
       kind: mob.kind,
       position: [mob.position.x, mob.position.y, mob.position.z],
@@ -1277,7 +1306,7 @@ export class MobManager {
   }
 
   private restoreOne(entry: SerializedMob, force: boolean): boolean {
-    if (entry.kind === 'mega_zombie') return false;
+    if (entry.kind === 'mega_zombie' || isCosmeticPetKind(entry.kind)) return false;
     if (!(entry.kind in MOB_DEFINITIONS)) return false;
     if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) return false;
     if (!Number.isFinite(entry.health) || entry.health <= 0) return false;
@@ -1353,6 +1382,10 @@ export class MobManager {
   ): void {
     if (mob.kind === 'mega_zombie') {
       this.updateMegaZombie(mob, delta, context);
+      return;
+    }
+    if (isCosmeticPetKind(mob.kind)) {
+      this.updateCosmeticPet(mob, delta);
       return;
     }
     if (isPetKind(mob.kind)) {
@@ -1478,6 +1511,32 @@ export class MobManager {
     this.steerToward(mob, mob.wanderDirection, mob.definition.speed);
   }
 
+  private updateCosmeticPet(mob: MobEntity, delta: number): void {
+    const owner = mob.ownerId ? this.playerById.get(mob.ownerId) : undefined;
+    const result = mob.kind === 'pet_bee'
+      ? stepBeeFlight(mob, owner, this.world, delta)
+      : stepMiniCreeperFollow(mob, owner, this.world, delta);
+    if (result.teleported) {
+      mob.previousPosition.copy(mob.position);
+      mob.previousFacingYaw = mob.facingYaw;
+      mob.poseHistory.length = 0;
+      this.snapMobRender(mob);
+    }
+    mob.fuseSeconds = 0;
+    this.changeState(mob, mob.locomotionSpeed > 0.2 ? 'wander' : 'idle');
+  }
+
+  private advanceBeeClock(mob: MobEntity, nowMs: number): void {
+    if (!Number.isFinite(nowMs)) return;
+    if (mob.beeClockMs === undefined) {
+      mob.beeClockMs = nowMs;
+      return;
+    }
+    const deltaSeconds = (nowMs - mob.beeClockMs) / 1000;
+    mob.beeClockMs = nowMs;
+    mob.beeAnimSeconds = advanceBeeAnimSeconds(mob.beeAnimSeconds, deltaSeconds);
+  }
+
   private updatePassiveAi(mob: MobEntity, delta: number): void {
     if (mob.fleeSeconds > 0 && mob.wanderDirection.lengthSq() > 0) {
       this.changeState(mob, 'wander');
@@ -1600,7 +1659,7 @@ export class MobManager {
       return true;
     }
     const targetMob = this.mobsById.get(mob.combatTargetId);
-    if (!targetMob || !targetMob.alive || targetMob.id === mob.id || samePetOwner(mob, targetMob)) {
+    if (!targetMob || !targetMob.alive || targetMob.id === mob.id || samePetOwner(mob, targetMob) || isCosmeticPetKind(targetMob.kind)) {
       this.clearCombatTarget(mob);
       return false;
     }
@@ -1699,7 +1758,7 @@ export class MobManager {
     if (targetId === mob.ownerId || targetId === mob.id) return;
     if (kind === 'mob') {
       const target = this.mobsById.get(targetId);
-      if (target && samePetOwner(mob, target)) return;
+      if (target && (samePetOwner(mob, target) || isCosmeticPetKind(target.kind))) return;
     }
     mob.combatTargetId = targetId;
     mob.combatTargetKind = kind;
@@ -1792,6 +1851,7 @@ export class MobManager {
   }
 
   private simulateMobPhysics(mob: MobEntity, delta: number): void {
+    if (mob.kind === 'pet_bee') return;
     const substeps = Math.max(1, Math.ceil(delta / 0.05));
     const step = delta / substeps;
     for (let index = 0; index < substeps; index += 1) {
@@ -1855,6 +1915,13 @@ export class MobManager {
     delta: number,
     daylight: number,
   ): void {
+    if (isCosmeticPetKind(mob.kind)) {
+      mob.fireTicks = 0;
+      mob.contactBurning = false;
+      mob.sunlightBurning = false;
+      mob.fireDamageTimer = 0;
+      return;
+    }
     const box = aabbFromBody(
       mob.position.x, mob.position.y, mob.position.z,
       mob.definition.width, mob.definition.height,
@@ -1893,6 +1960,7 @@ export class MobManager {
     delta: number,
     playerPosition: Readonly<Vec3> | undefined,
   ): void {
+    if (isCosmeticPetKind(mob.kind)) return;
     if (mob.position.y < -32) {
       this.removeMob(mob, 'despawn');
       return;
@@ -1941,7 +2009,7 @@ export class MobManager {
       z: pose.z,
       yaw: pose.yaw,
       walkPhase: pose.walkPhase,
-      visualAge: mob.ageSeconds - FIXED_DT * (1 - alpha),
+      visualAge: mob.kind === 'pet_bee' ? mob.beeAnimSeconds : mob.ageSeconds - FIXED_DT * (1 - alpha),
       locomotionSpeed: mob.locomotionSpeed,
       state: mob.state,
       stateSeconds: mob.stateSeconds,

@@ -57,8 +57,10 @@ export function startMobQaHarness(
   scene.background = new THREE.Color(0x91b7ca);
   const camera = new THREE.PerspectiveCamera(32, 1, 0.05, 50);
   camera.position.set(...CAMERA_POSITIONS[view]);
-  camera.lookAt(0, kind === 'mega_zombie' ? 2.1 : 0.85, 0);
+  const lookY = kind === 'mega_zombie' ? 2.1 : kind === 'pet_bee' ? 0.5 : kind === 'pet_creeper' ? 0.4 : 0.85;
+  camera.lookAt(0, lookY, 0);
   if (kind === 'mega_zombie') camera.position.multiplyScalar(1.8);
+  if (kind === 'pet_bee' || kind === 'pet_creeper') camera.position.multiplyScalar(0.62);
   scene.add(new THREE.HemisphereLight(0xdcefff, 0x4d4a42, 1.5));
   const key = new THREE.DirectionalLight(0xfff0d2, 2.2);
   key.position.set(-3, 6, -4);
@@ -94,7 +96,7 @@ export function startMobQaHarness(
     const elapsed = (now - startedAt) / 1000;
     const params = new URLSearchParams(location.search);
     const requestedState = params.get('mobState');
-    const walking = !sitting && (kind === 'chicken' || kind === 'wolf' || kind === 'cat' || (kind === 'mega_zombie' && requestedState !== 'die' && requestedState !== 'attack'));
+    const walking = !sitting && (kind === 'chicken' || kind === 'wolf' || kind === 'cat' || kind === 'pet_creeper' || (kind === 'mega_zombie' && requestedState !== 'die' && requestedState !== 'attack'));
     const state = requestedState === 'attack' || requestedState === 'die' || requestedState === 'hurt' || requestedState === 'idle'
       ? requestedState
       : kind === 'skeleton' ? 'attack' : 'idle';
