@@ -466,7 +466,7 @@ export class ServerPlayer implements GameplayPlayer {
       selectedSlot: this.selectedSlot,
       presentation: this.presentation(),
       equipment: playerEquipmentFromInventory(this.inventory),
-      invisible: this.survival.invisible || this.gamemode === 'spectator',
+      invisible: this.survival.invisible,
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
       armor: getArmorPoints(this.inventory),
@@ -541,6 +541,7 @@ export class ServerPlayer implements GameplayPlayer {
     return {
       id: snap.id,
       name: snap.name,
+      gamemode: snap.gamemode,
       x: snap.x,
       y: snap.y,
       z: snap.z,
@@ -5970,6 +5971,7 @@ export class WorldInstance {
       name: 'give',
       usage: '/give <item> [count]',
       description: 'Give an item to yourself',
+      permission: 'operator',
       execute: (args, sender) => {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('Player not found.');
@@ -6017,6 +6019,7 @@ export class WorldInstance {
       name: 'time',
       usage: '/time <day|noon|night|midnight>',
       description: 'Set the time of day',
+      permission: 'operator',
       execute: (args) => {
         const key = args[0]?.toLowerCase() as keyof typeof TIME_PRESETS | undefined;
         if (!key || TIME_PRESETS[key] === undefined) return fail('Usage: /time <day|noon|night|midnight>');
@@ -6079,6 +6082,7 @@ export class WorldInstance {
       name: 'predsim',
       usage: '/predsim [ticks]',
       description: 'DEV: lockstep pose dump (walk/flight/stationary) and latest-input coalesce',
+      permission: 'operator',
       execute: (args) => {
         const raw = args[0] === undefined || args[0] === '' ? 20 : Number(args[0]);
         const ticks = Number.isInteger(raw) && raw >= 1 && raw <= 40 ? raw : 20;

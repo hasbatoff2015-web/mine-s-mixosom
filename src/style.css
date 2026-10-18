@@ -2118,8 +2118,7 @@ textarea,
 }
 
 .mc-donate-rank span,
-.mc-donate-card span,
-.mc-donate-catalog {
+.mc-donate-card span {
   color: #c8c8c8;
   font-size: calc(7px * var(--mc-ui-scale, 3));
   line-height: 1.25;

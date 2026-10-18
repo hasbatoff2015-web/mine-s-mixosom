@@ -152,7 +152,8 @@ describe('main menu HUD and chrome', () => {
     expect(donate).toContain('Наборы');
     expect(donate).not.toContain('Оператор. Донат-ранга нет');
     expect(donate).toContain('disabled');
-    expect(donate).toContain('VIP');
+    expect(donate).not.toContain('Эндер-сундук и наборы');
+    expect(donate).not.toContain('mc-donate-catalog');
     expect(donate).not.toContain('invseeop');
   });
 

@@ -511,7 +511,7 @@ export class DonationRankService {
       row(
         'back-death',
         '/back',
-        true,
+        operator || nodes.has('back.death'),
         deathLimited ? 'deathBack' : undefined,
         deathLimited ? limits.deathBackPerDay ?? undefined : undefined,
       ),

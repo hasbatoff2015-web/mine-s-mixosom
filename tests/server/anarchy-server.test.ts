@@ -808,6 +808,7 @@ describe('WorldInstance foundation simulation', () => {
     const sink = new MemorySink();
     const joined = world.join({ sink, name: 'Sim' });
     if ('error' in joined) throw new Error(joined.error);
+    world.permissions.op(joined.player.name);
     world.handleChat(joined.player, '/predsim 5');
     const result = [...sink.payloads].reverse().find((payload) => (
       payload as { type?: string }).type === 'command_result'

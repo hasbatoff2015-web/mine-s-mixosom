@@ -412,6 +412,7 @@ describe('authoritative God Sword combat', { timeout: 120_000 }, () => {
     const joined = first.join({ sink: new MemorySink(), name: 'Keeper' });
     if ('error' in joined) throw new Error('join failed');
     joined.player.inventory.clear();
+    first.permissions.op(joined.player.name);
     first.handleChat(joined.player, '/give god_sword 1');
     expect(joined.player.inventory.getSlot(0)?.itemId).toBe(ItemId.GodSword);
     expect(joined.player.inventory.getSlot(0)?.durability).toBeUndefined();

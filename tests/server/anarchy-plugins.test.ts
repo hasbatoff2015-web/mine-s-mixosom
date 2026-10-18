@@ -204,6 +204,8 @@ describe('Anarchy builtin plugins', () => {
     expect(chat(world, ada, '/sethome overflow').some((line) => line.includes('You can only set 3 home'))).toBe(true);
     ada.player.controller.teleport([50, 70, 50]);
     chat(world, ada, '/home');
+    expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
+    world.donation.grant(ada.player.id, 'boss');
     expect(chat(world, ada, '/back').some((line) => line.includes('previous'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(50, 1);
 

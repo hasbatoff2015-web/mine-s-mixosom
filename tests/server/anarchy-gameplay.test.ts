@@ -184,6 +184,7 @@ describe('Anarchy server gameplay authority', () => {
     if ('error' in joined) throw new Error(joined.error);
     const player = joined.player;
     player.inventory.clear();
+    world.permissions.op(player.name);
     world.handleChat(player, '/give diamond 2');
     expect(player.inventory.has('diamond', 2)).toBe(true);
     const before = world.world.timeOfDay;
@@ -510,7 +511,7 @@ describe('Anarchy server gameplay authority', () => {
   it('two websocket clients get entity snapshots and isolated give', async () => {
     const dir = await tempDir();
     dirs.push(dir);
-    const server = new AnarchyServer(testConfig(dir));
+    const server = new AnarchyServer({ ...testConfig(dir), operators: ['Ada'] });
     servers.push(server);
     await server.start();
     const { WebSocket } = await import('ws');
@@ -536,8 +537,8 @@ describe('Anarchy server gameplay authority', () => {
         close() { socket.close(); },
       };
     }
-    const a = collect(server.wsUrl(), 'A');
-    const b = collect(server.wsUrl(), 'B');
+    const a = collect(server.wsUrl(), 'Ada');
+    const b = collect(server.wsUrl(), 'Bob');
     await a.join();
     await b.join();
     await new Promise((resolve) => setTimeout(resolve, 120));

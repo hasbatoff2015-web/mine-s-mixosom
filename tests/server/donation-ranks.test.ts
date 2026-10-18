@@ -626,7 +626,9 @@ describe('donation commands on the anarchy world', () => {
     };
     expect(menu.donate?.deathPoint?.x).toBeCloseTo(diedX, 1);
     expect(menu.donate?.actions?.find((action) => action.id === 'back')?.label).toBe('Вернуться в место последней смерти');
-    expect(menu.donate?.actions?.find((action) => action.id === 'back')?.detail).toBe('Возврат к последней смерти');
+    expect(menu.donate?.actions?.find((action) => action.id === 'back')?.detail).toContain('BOSS');
+    expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
+    world.donation.grant(ada.player.id, 'titan');
     expect(chat(world, ada, '/back').some((line) => line.includes('death'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(diedX, 1);
 
@@ -703,9 +705,51 @@ describe('donation commands on the anarchy world', () => {
     expect(chat(world, op, '/gamemode 2').some((line) => line.includes('Наблюдатель'))).toBe(true);
     expect(op.player.gamemode).toBe('spectator');
     expect(op.player.controller.noclip).toBe(true);
-    expect(op.player.snapshot().invisible).toBe(true);
+    expect(op.player.snapshot().invisible).toBe(false);
+    expect(op.player.snapshot().gamemode).toBe('spectator');
     expect(world.gameplay.breakBlock(op.player, 1, 70, 1).ok).toBe(false);
     expect(chat(world, op, '/gamemode survival').some((line) => line.includes('Выживание'))).toBe(true);
     expect(op.player.controller.noclip).toBe(false);
+  });
+
+  it('keeps give, time, and predsim for OP and /back for BOSS, TITAN, and OP', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    for (const rank of ['vip', 'premium', 'boss', 'titan'] as const) {
+      world.donation.grant(ada.player.id, rank);
+      expect(chat(world, ada, '/give dirt 1').some((line) => line.includes('прав'))).toBe(true);
+      expect(chat(world, ada, '/time day').some((line) => line.includes('прав'))).toBe(true);
+      expect(chat(world, ada, '/predsim 5').some((line) => line.includes('прав'))).toBe(true);
+    }
+    world.donation.revoke(ada.player.id);
+    expect(ada.player.inventory.has('dirt', 1)).toBe(false);
+    expect(chat(world, op, '/give dirt 1').some((line) => line.includes('Gave'))).toBe(true);
+    expect(ada.player.inventory.has('dirt', 1)).toBe(false);
+    expect(op.player.inventory.has('dirt', 1)).toBe(true);
+    expect(chat(world, op, '/time night').some((line) => line.includes('night'))).toBe(true);
+    expect(world.world.timeOfDay).toBe(13_000);
+    expect(chat(world, op, '/predsim 5').some((line) => line.includes('identical=yes'))).toBe(true);
+
+    expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
+    world.donation.grant(ada.player.id, 'vip');
+    expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
+    world.donation.grant(ada.player.id, 'premium');
+    expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
+    ada.player.controller.teleport([40, 70, 40]);
+    world.events.emit('entityDeath', {
+      entityId: ada.player.id,
+      cause: 'generic',
+      playerId: ada.player.id,
+    });
+    const diedX = ada.player.controller.position.x;
+    ada.player.controller.teleport([10, 70, 10]);
+    world.donation.grant(ada.player.id, 'boss');
+    expect(chat(world, ada, '/back').some((line) => line.includes('death'))).toBe(true);
+    expect(ada.player.controller.position.x).toBeCloseTo(diedX, 1);
+    ada.player.controller.teleport([12, 70, 12]);
+    world.events.emit('entityDeath', { entityId: ada.player.id, cause: 'generic', playerId: ada.player.id });
+    ada.player.controller.teleport([14, 70, 14]);
+    expect(chat(world, ada, '/back').some((line) => line.includes('через'))).toBe(true);
   });
 });

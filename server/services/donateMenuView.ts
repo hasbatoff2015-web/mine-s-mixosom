@@ -15,13 +15,6 @@ const RANK_LABEL: Record<EffectiveRank, string> = {
   titan: 'TITAN',
 };
 
-const CATALOG: NetworkDonatePerk[] = [
-  { title: 'VIP', detail: 'Дома 4, приваты 4, лоты 10. Эндер-сундук и наборы VIP.' },
-  { title: 'PREMIUM', detail: 'Дома 5, приваты 5, лоты 15. Объявление и цвет ника.' },
-  { title: 'BOSS', detail: 'Дома 6, приваты 6, лоты 20. Возврат к смерти 1 раз в 24 часа.' },
-  { title: 'TITAN', detail: 'Дома 7, приваты 7, лоты 25. /tp и просмотр инвентаря по 1 разу в 24 часа.' },
-];
-
 const KIT_LABELS: Record<string, string> = {
   start: 'Стартовый набор',
   vip: 'Набор VIP',
@@ -120,7 +113,9 @@ export function buildDonateMenu(input: {
       label: 'Вернуться в место последней смерти',
       screen: 'donate-back',
       available: back?.available === true,
-      detail: input.deathPoint ? deathDetail : 'Точка смерти не сохранена',
+      detail: back?.available
+        ? (input.deathPoint ? deathDetail : 'Точка смерти не сохранена')
+        : 'Эта функция доступна с привилегии BOSS.',
     },
     {
       id: 'tp',
@@ -180,7 +175,7 @@ export function buildDonateMenu(input: {
     perks,
     actions,
     kits,
-    catalog: rank === 'default' && !input.operator ? CATALOG : [],
+    catalog: [],
     nickChoices: [...status.nick.choices],
     ...(status.nick.color ? { nickColor: status.nick.color } : {}),
     previewName: input.playerName,

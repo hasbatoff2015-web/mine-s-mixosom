@@ -27,6 +27,9 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'back.use',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
+          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const allowed = operator || api.hasPermission(sender.playerId, 'back.death');
+          if (!allowed) return fail('Эта функция доступна с привилегии BOSS.');
           const death = ctx.history.peekDeath(sender.playerId);
           const last = ctx.history.peek(sender.playerId);
           const deathIsLatest = Boolean(
@@ -39,7 +42,6 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
           if (death && death.worldId !== ctx.worldId() && !last) {
             return fail('Точка смерти сохранена в другом мире.');
           }
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
           const cap = operator ? null : RANK_LIMITS[ctx.donation.effectiveRank(sender.playerId)].deathBackPerDay;
           const go = (): { ok: boolean; error?: string } => api.teleport(sender.playerId, target.x, target.y, target.z, 'back', { warmupMs: 0 });
           if (target.reason === 'death' && cap !== null) {

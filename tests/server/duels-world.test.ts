@@ -321,6 +321,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     world.handleChat(ada.player, '/home base');
     expect(texts(ada.sink).join('\n')).toContain(DUEL_TELEPORT_DENIED);
     ada.sink.payloads.length = 0;
+    world.donation.grant(ada.player.id, 'boss');
     world.handleChat(ada.player, '/back');
     expect(texts(ada.sink).join('\n')).toContain(DUEL_TELEPORT_DENIED);
     ada.sink.payloads.length = 0;

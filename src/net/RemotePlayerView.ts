@@ -32,6 +32,7 @@ import {
 import {
   humanoidDeathProgress,
 } from '../entities/humanoidDeath';
+import { remotePlayerPresence } from './spectatorPresence';
 
 export { REMOTE_INTERP_DELAY_MS };
 
@@ -71,6 +72,7 @@ export class RemotePlayerView {
   private emoteElapsed = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private spectator = false;
   private seated = false;
   private readonly whOutline: THREE.LineSegments[] = [];
   private readonly whOutlineGeometries: THREE.EdgesGeometry[] = [];
@@ -163,6 +165,7 @@ export class RemotePlayerView {
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
+    this.spectator = 'gamemode' in snapshot && snapshot.gamemode === 'spectator';
     if (tick === undefined || !Number.isInteger(tick)) return;
     this.buffer.push(remoteSampleFromSnapshot(snapshot, tick, now));
     if (tick <= this.presentationTick) return;
@@ -225,6 +228,10 @@ export class RemotePlayerView {
     const emote = !dying && active ? this.emoteId : null;
     const emoteTime = emote ? this.emoteElapsed : 0;
     if (emote) this.emoteElapsed += Math.max(0, deltaSeconds);
+    const presence = remotePlayerPresence({
+      invisible: pose?.invisible,
+      gamemode: this.spectator ? 'spectator' : undefined,
+    });
     if (!pose) {
       const seated = this.seated && !dying;
       const visualPose = this.visual.update(deltaSeconds, {
@@ -239,13 +246,15 @@ export class RemotePlayerView {
         seated,
         emote,
         emoteTime,
-        invisible: false,
+        invisible: presence.hideModel,
+        spectator: this.spectator,
         hurtFlash: 0,
         deathProgress,
         onFire: this.lastRenderedPose?.onFire === true || this.joinOnFire,
       });
       applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
       this.visual.updateWorldParticles(deltaSeconds);
+      this.lastInvisible = presence.hideNameplate;
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
@@ -263,14 +272,15 @@ export class RemotePlayerView {
       seated,
       emote,
       emoteTime,
-      invisible: pose.invisible,
+      invisible: presence.hideModel,
+      spectator: this.spectator,
       hurtFlash: 0,
       deathProgress,
       onFire: pose.onFire === true,
     });
     applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
     this.visual.updateWorldParticles(deltaSeconds);
-    this.lastInvisible = pose.invisible === true;
+    this.lastInvisible = presence.hideNameplate;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);
     maybeLogRemoteTimeline(this.id.slice(0, 8), this.buffer.snapshots(), this.buffer.diagnostics(now), now);

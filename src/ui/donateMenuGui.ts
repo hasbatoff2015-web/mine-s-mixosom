@@ -58,10 +58,6 @@ function overview(donate: NetworkDonateMenu, message: string, escape: (value: st
   const limits = donate.perks.map((perk) => `
     <span class="mc-donate-chip"><strong>${escape(perk.title)}</strong> ${escape(perk.detail)}</span>`).join('');
   const actions = donate.actions.map((action) => card(action, escape)).join('');
-  const catalog = donate.catalog.length === 0 ? '' : `
-    <div class="mc-donate-catalog">
-      ${donate.catalog.map((row) => `<p><strong>${escape(row.title)}.</strong> ${escape(row.detail)}</p>`).join('')}
-    </div>`;
   return shell('donate', 'Донат', `
     <div class="mc-donate-rank">
       <strong>${escape(donate.rankLabel)}</strong>
@@ -70,7 +66,6 @@ function overview(donate: NetworkDonateMenu, message: string, escape: (value: st
     <div class="mc-donate-chips">${limits}</div>
     <div class="mc-duel-section-head"><span>Действия</span></div>
     <div class="mc-donate-grid">${actions}</div>
-    ${catalog}
     ${messageHtml(message, escape)}`);
 }
 

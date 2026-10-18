@@ -206,6 +206,7 @@ export interface RemotePlayerInfo {
   readonly onFire?: boolean;
   readonly id: string;
   readonly name: string;
+  readonly gamemode?: GameMode;
   readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
