@@ -10,7 +10,7 @@ import {
   BEE_BODY_WIDTH,
   BEE_CATCHUP_DISTANCE,
   BEE_MAX_SPEED,
-  BEE_SHOULDER_OFFSET,
+  beeRootYForShoulder,
   MINI_CREEPER_CATCHUP_DISTANCE,
   MINI_CREEPER_START_DISTANCE,
   MINI_CREEPER_STOP_DISTANCE,
@@ -120,7 +120,7 @@ function beeHoverTarget(owner: Vec3Like, ageSeconds: number, ownerId: string): V
   const radius = 1.45 + Math.sin(ageSeconds * 0.37 + seed) * 0.22;
   return new Vec3(
     owner.x + Math.cos(angle) * radius,
-    owner.y + BEE_SHOULDER_OFFSET + Math.sin(ageSeconds * 1.25) * 0.03,
+    beeRootYForShoulder(owner.y) + Math.sin(ageSeconds * 1.25) * 0.012,
     owner.z + Math.sin(angle) * radius,
   );
 }
@@ -134,7 +134,7 @@ function beeFollowTarget(owner: Vec3Like, movedX: number, movedZ: number): Vec3 
   const sideZ = forwardX;
   return new Vec3(
     owner.x - forwardX * 1.15 + sideX * 0.75,
-    owner.y + BEE_SHOULDER_OFFSET,
+    beeRootYForShoulder(owner.y),
     owner.z - forwardZ * 1.15 + sideZ * 0.75,
   );
 }
@@ -153,9 +153,9 @@ function firstClearPoint(
 }
 
 export function findBeeHoverSpot(world: VoxelWorld, owner: Vec3Like): Vec3 | undefined {
-  const shoulder = owner.y + BEE_SHOULDER_OFFSET;
+  const shoulder = beeRootYForShoulder(owner.y);
   const points: Vec3[] = [];
-  const heights = [shoulder, shoulder + 0.55, shoulder - 0.4, owner.y + 0.45, shoulder + 1.15];
+  const heights = [shoulder, shoulder + 0.35, shoulder - 0.28, owner.y + 0.4, shoulder + 0.55];
   for (const y of heights) {
     for (const [ox, oz] of BEE_IDLE_OFFSETS) {
       points.push(new Vec3(owner.x + ox, y, owner.z + oz));
@@ -220,7 +220,7 @@ export function stepBeeFlight(
   body.cosmeticAnchorX = ownerX;
   body.cosmeticAnchorY = ownerY;
   body.cosmeticAnchorZ = ownerZ;
-  const toOwner = Math.hypot(ownerX - body.position.x, ownerY + BEE_SHOULDER_OFFSET - body.position.y, ownerZ - body.position.z);
+  const toOwner = Math.hypot(ownerX - body.position.x, beeRootYForShoulder(ownerY) - body.position.y, ownerZ - body.position.z);
   if (toOwner > BEE_CATCHUP_DISTANCE) {
     const spot = findBeeHoverSpot(world, owner.position);
     if (spot) {

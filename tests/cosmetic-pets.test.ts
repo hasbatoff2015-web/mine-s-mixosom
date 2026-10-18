@@ -4,9 +4,13 @@ import { BlockId } from '../src/blocks';
 import { PlayerArrowManager } from '../src/combat/PlayerArrowManager';
 import { MobManager } from '../src/entities';
 import {
+  BEE_BODY_CENTER_LOCAL_Y,
+  BEE_SHOULDER_CENTER_HEIGHT,
   CREEPER_MODEL_HEIGHT,
+  PET_BEE_MODEL_SCALE,
   PET_CREEPER_HEIGHT,
   PET_CREEPER_MODEL_SCALE,
+  beeRootYForShoulder,
   isCosmeticPetKind,
   parseCosmeticPetSelection,
 } from '../src/entities/cosmeticPets';
@@ -87,8 +91,8 @@ describe('cosmetic pet classification', () => {
     expect(beeWingRadians(quarter, 'right')).toBeCloseTo(-BEE_WING_AMPLITUDE, 5);
     expect(beeWingRadians(quarter + 1 / BEE_WING_HZ, 'left')).toBeCloseTo(BEE_WING_AMPLITUDE, 4);
     expect(Math.abs(beeBobOffset(0.2))).toBeLessThanOrEqual(BEE_BOB_AMPLITUDE + 1e-6);
-    expect(BEE_BOB_AMPLITUDE).toBeGreaterThanOrEqual(0.04);
-    expect(BEE_BOB_AMPLITUDE).toBeLessThanOrEqual(0.1);
+    expect(BEE_BOB_AMPLITUDE).toBeGreaterThanOrEqual(0.025);
+    expect(BEE_BOB_AMPLITUDE).toBeLessThanOrEqual(0.035);
     expect(BEE_WING_HZ).toBeGreaterThanOrEqual(5);
     expect(BEE_WING_HZ).toBeLessThanOrEqual(8);
   });
@@ -202,6 +206,48 @@ describe('cosmetic pet simulation', () => {
     expect(mobs.isTamedPet(wolf)).toBe(true);
     expect(mobs.countCosmeticPets()).toBe(1);
     arrows.dispose();
+    mobs.dispose();
+  });
+
+  it('keeps the visible body center at shoulder height while idle, following, and after a teleport', () => {
+    const { mobs } = manager('bee-shoulder');
+    const feet = 70;
+    const owner = { id: 'owner', position: new Vec3(8, feet, 8), alive: true };
+    const bee = mobs.spawn('pet_bee', new Vec3(9.3, beeRootYForShoulder(feet), 8.1), { ownerId: 'owner' })!;
+    const bodyCenterY = () => {
+      mobs.interpolateVisuals(1, 8_000);
+      const root = bee.visual as THREE.Object3D;
+      expect(root.scale.x).toBeCloseTo(PET_BEE_MODEL_SCALE, 5);
+      expect(root.scale.y).toBeCloseTo(root.scale.x, 5);
+      expect(root.scale.z).toBeCloseTo(root.scale.x, 5);
+      root.updateMatrixWorld(true);
+      const body = bee.model?.parts.get('body') as THREE.Object3D;
+      const mesh = body.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+      return mesh.getWorldPosition(new THREE.Vector3()).y;
+    };
+    for (let index = 0; index < 30; index += 1) mobs.update(0.05, { players: [owner] });
+    const idle = bodyCenterY();
+    expect(idle).toBeGreaterThan(feet + 1.15);
+    expect(idle).toBeLessThan(feet + 1.35);
+    expect(idle).toBeLessThan(feet + 1.5);
+    expect(Math.abs(idle - (feet + BEE_SHOULDER_CENTER_HEIGHT))).toBeLessThan(0.08);
+    owner.position = new Vec3(12, feet, 8);
+    for (let index = 0; index < 20; index += 1) mobs.update(0.05, { players: [owner] });
+    expect(bodyCenterY()).toBeLessThan(feet + 1.4);
+    owner.position = new Vec3(14, feet + 1.1, 8);
+    for (let index = 0; index < 20; index += 1) mobs.update(0.05, { players: [owner] });
+    const running = bodyCenterY();
+    expect(running).toBeGreaterThan(feet + 1.1 + 0.9);
+    expect(running).toBeLessThan(feet + 1.1 + 1.45);
+    owner.position = new Vec3(40, feet + 3, 8);
+    mobs.update(0.05, { players: [owner] });
+    const relocated = bodyCenterY();
+    expect(Math.abs(relocated - (feet + 3 + BEE_SHOULDER_CENTER_HEIGHT))).toBeLessThan(0.12);
+    expect(bee.position.y).toBeCloseTo(
+      beeRootYForShoulder(feet + 3),
+      1,
+    );
+    expect(BEE_BODY_CENTER_LOCAL_Y * PET_BEE_MODEL_SCALE).toBeGreaterThan(0.1);
     mobs.dispose();
   });
 

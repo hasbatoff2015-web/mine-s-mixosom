@@ -6,7 +6,7 @@
 
 The saved choice is `ServerPlayer.cosmeticPet`: `'bee' | 'creeper' | null`. `WorldInstance.ensureCosmeticPet()` creates at most one runtime entity for a connected living owner. Disconnect removes that entity and keeps the choice. A hard relocate or respawn moves the same entity to a clear spot and bumps `poseEpoch`. Cosmetic mobs are omitted from `MobManager.serialize()` and rejected by `restore()`, so a restart cannot duplicate them.
 
-Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` for other mobs. Wing flap, bob, and body tilt are render-only in `ThreeEntityHost.syncBee()` from a wrapped clock advanced in `interpolateVisuals()`. The mini creeper reuses `CREEPER_MODEL` and `entity/creeper`. `syncMob()` sets scale `0.49` every frame. `updateCreeper()` is not called for it.
+Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` for other mobs. The root Y is `ownerFeet + 1.22 - bodyCenterLocalY * 0.5`, so the body center, not the root, sits at shoulder height. Wing flap, bob, and body tilt are render-only in `ThreeEntityHost.syncBee()` from a wrapped clock advanced in `interpolateVisuals()`. `syncBee` sets scale `0.5` every frame. The mini creeper reuses `CREEPER_MODEL` and `entity/creeper`. `syncMob()` sets scale `0.49` every frame. `updateCreeper()` is not called for it.
 
 `/spawnpet` remains operator-only. There is no rank grant in this change.
 

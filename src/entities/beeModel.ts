@@ -1,115 +1,157 @@
 /**
- * Original voxel bee. Proportions are in the same family as a small flying
- * insect (body about 7×7×10 model units, wings wider than the body) but the
- * pivots, UVs, and texture are authored for this game's LegacyModel.
- * Mojang bedrock samples were used only as a visual reference and are not
- * copied into the build.
+ * Bedrock bee geometry adapted to LegacyModel.
  *
- * 16 model units = 1 block. Child pivots are parent-relative, Y-down.
- * The body centre sits near world Y=0.5 so the legs hang above the entity origin.
+ * Source numbers are the public `geometry.bee` bones (texture 64×64). They are
+ * not copied as a Mojang JSON file. Bedrock is Y-up and states pivots in
+ * absolute model pixels. This rig is Y-down, 16 pixels = 1 block, and a child
+ * pivot is the parent's pivot subtracted, then Y-flipped.
+ *
+ * Entity root is bedrock model Y=0. The body cube center is therefore at
+ * local Y = 5.5/16 before `PET_BEE_MODEL_SCALE`.
  */
-const box = (
+
+const DEG = Math.PI / 180;
+/** Visual thickness for a bedrock zero-size axis. UV still uses the source size. */
+const PLANE = 0.12;
+
+export const BEE_BODY_PIVOT: readonly [number, number, number] = [0.5, 5, 0];
+
+export interface BeeBedrockCube {
+  readonly origin: readonly [number, number, number];
+  readonly size: readonly [number, number, number];
+  readonly uv: readonly [number, number];
+}
+
+export interface BeeBedrockBone {
+  readonly name: string;
+  readonly parent?: 'body';
+  readonly pivot: readonly [number, number, number];
+  readonly rotation?: readonly [number, number, number];
+  readonly cubes: readonly BeeBedrockCube[];
+}
+
+/** Official bedrock layout, pixels, Y-up. */
+export const BEE_BEDROCK_BONES: readonly BeeBedrockBone[] = [
+  {
+    name: 'body',
+    pivot: BEE_BODY_PIVOT,
+    cubes: [
+      { origin: [-3, 2, -5], size: [7, 7, 10], uv: [0, 0] },
+      { origin: [2, 7, -8], size: [1, 2, 3], uv: [2, 0] },
+      { origin: [-2, 7, -8], size: [1, 2, 3], uv: [2, 3] },
+    ],
+  },
+  {
+    name: 'stinger',
+    parent: 'body',
+    pivot: [0.5, 6, 1],
+    cubes: [{ origin: [0.5, 5, 5], size: [0, 1, 2], uv: [26, 7] }],
+  },
+  {
+    name: 'rightwing_bone',
+    parent: 'body',
+    pivot: [-1, 9, -3],
+    rotation: [15, -15, 0],
+    cubes: [{ origin: [-10, 9, -3], size: [9, 0, 6], uv: [0, 18] }],
+  },
+  {
+    name: 'leftwing_bone',
+    parent: 'body',
+    pivot: [2, 9, -3],
+    rotation: [15, 15, 0],
+    cubes: [{ origin: [2, 9, -3], size: [9, 0, 6], uv: [9, 24] }],
+  },
+  {
+    name: 'leg_front',
+    parent: 'body',
+    pivot: [2, 2, -2],
+    cubes: [{ origin: [-3, 0, -2], size: [7, 2, 0], uv: [26, 1] }],
+  },
+  {
+    name: 'leg_mid',
+    parent: 'body',
+    pivot: [2, 2, 0],
+    cubes: [{ origin: [-3, 0, 0], size: [7, 2, 0], uv: [26, 3] }],
+  },
+  {
+    name: 'leg_back',
+    parent: 'body',
+    pivot: [2, 2, 2],
+    cubes: [{ origin: [-3, 0, 2], size: [7, 2, 0], uv: [26, 5] }],
+  },
+];
+
+/** Cube corner relative to its bone, legacy Y-down. */
+export function beeLegacyBoxOrigin(
   origin: readonly [number, number, number],
   size: readonly [number, number, number],
-  textureOffset: readonly [number, number],
-  options: {
-    readonly mirror?: boolean;
-    readonly doubleSided?: boolean;
-    readonly alphaTest?: number;
-    readonly physicalSize?: readonly [number, number, number];
-  } = {},
-) => ({ origin, size, textureOffset, ...options });
+  pivot: readonly [number, number, number],
+): readonly [number, number, number] {
+  return [
+    origin[0] - pivot[0],
+    -(origin[1] - pivot[1]) - size[1],
+    origin[2] - pivot[2],
+  ];
+}
+
+/** Child pivot relative to its parent, legacy Y-down. */
+export function beeLegacyChildPivot(
+  child: readonly [number, number, number],
+  parent: readonly [number, number, number],
+): readonly [number, number, number] {
+  return [child[0] - parent[0], -(child[1] - parent[1]), child[2] - parent[2]];
+}
+
+/**
+ * Bedrock [x, y, z] degrees, Y-up, expressed as the legacy radians that
+ * `legacyRotationToThree` turns back into that orientation.
+ */
+export function beeLegacyRotation(
+  degrees: readonly [number, number, number],
+): readonly [number, number, number] {
+  return [-degrees[0] * DEG, degrees[1] * DEG, -degrees[2] * DEG];
+}
+
+function physicalSize(size: readonly [number, number, number]): readonly [number, number, number] {
+  return [
+    size[0] === 0 ? PLANE : size[0],
+    size[1] === 0 ? PLANE : size[1],
+    size[2] === 0 ? PLANE : size[2],
+  ];
+}
+
+function needsPlane(size: readonly [number, number, number]): boolean {
+  return size[0] === 0 || size[1] === 0 || size[2] === 0;
+}
+
+const bodyPivotLegacy: readonly [number, number, number] = [BEE_BODY_PIVOT[0], 24 - BEE_BODY_PIVOT[1], BEE_BODY_PIVOT[2]];
+
+function bonePart(bone: BeeBedrockBone) {
+  const pivot = bone.parent ? beeLegacyChildPivot(bone.pivot, BEE_BODY_PIVOT) : bodyPivotLegacy;
+  const boxes = bone.cubes.map((cube) => {
+    const plane = needsPlane(cube.size);
+    return {
+      origin: beeLegacyBoxOrigin(cube.origin, cube.size, bone.pivot),
+      size: cube.size,
+      textureOffset: cube.uv,
+      ...(plane ? {
+        doubleSided: true,
+        alphaTest: cube.size[1] === 0 ? 0.15 : 0.1,
+        physicalSize: physicalSize(cube.size),
+      } : {}),
+    };
+  });
+  return {
+    name: bone.name,
+    ...(bone.parent ? { parent: bone.parent } : {}),
+    rotationPoint: pivot,
+    ...(bone.rotation ? { rotation: beeLegacyRotation(bone.rotation) } : {}),
+    boxes,
+  };
+}
 
 export const BEE_MODEL = {
   texturePath: 'entity/bee',
   logicalTextureSize: [64, 64] as const,
-  parts: [
-    {
-      name: 'body',
-      rotationPoint: [0, 16, 0],
-      boxes: [
-        box([-3.5, -3.5, -5], [7, 7, 10], [0, 0]),
-      ],
-    },
-    {
-      name: 'stinger',
-      parent: 'body',
-      rotationPoint: [0, 0.2, 5],
-      boxes: [
-        box([-1, -1, 0], [2, 2, 3], [0, 20]),
-        box([-0.5, -0.5, 3], [1, 1, 2], [0, 20]),
-      ],
-    },
-    {
-      name: 'antennaRight',
-      parent: 'body',
-      rotationPoint: [1.4, -3.3, -4.6],
-      rotation: [0.45, 0, -0.35],
-      boxes: [box([-0.5, -5, -0.5], [1, 5, 1], [16, 20])],
-    },
-    {
-      name: 'antennaLeft',
-      parent: 'body',
-      rotationPoint: [-1.4, -3.3, -4.6],
-      rotation: [0.45, 0, 0.35],
-      boxes: [box([-0.5, -5, -0.5], [1, 5, 1], [16, 20], { mirror: true })],
-    },
-    {
-      name: 'rightWing',
-      parent: 'body',
-      rotationPoint: [1.6, -3.3, -0.4],
-      boxes: [box([0, -0.2, -3], [10, 0.4, 6], [0, 32], {
-        doubleSided: true,
-        alphaTest: 0.15,
-        physicalSize: [10, 0.55, 6],
-      })],
-    },
-    {
-      name: 'leftWing',
-      parent: 'body',
-      rotationPoint: [-1.6, -3.3, -0.4],
-      boxes: [box([-10, -0.2, -3], [10, 0.4, 6], [0, 32], {
-        mirror: true,
-        doubleSided: true,
-        alphaTest: 0.15,
-        physicalSize: [10, 0.55, 6],
-      })],
-    },
-    {
-      name: 'leg1',
-      parent: 'body',
-      rotationPoint: [-1.7, 3.15, -2.2],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20])],
-    },
-    {
-      name: 'leg2',
-      parent: 'body',
-      rotationPoint: [1.7, 3.15, -2.2],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20], { mirror: true })],
-    },
-    {
-      name: 'leg3',
-      parent: 'body',
-      rotationPoint: [-1.8, 3.2, 0.2],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20])],
-    },
-    {
-      name: 'leg4',
-      parent: 'body',
-      rotationPoint: [1.8, 3.2, 0.2],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20], { mirror: true })],
-    },
-    {
-      name: 'leg5',
-      parent: 'body',
-      rotationPoint: [-1.6, 3.15, 2.4],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20])],
-    },
-    {
-      name: 'leg6',
-      parent: 'body',
-      rotationPoint: [1.6, 3.15, 2.4],
-      boxes: [box([-0.5, 0, -0.5], [1, 3, 1], [24, 20], { mirror: true })],
-    },
-  ],
+  parts: BEE_BEDROCK_BONES.map(bonePart),
 };

@@ -27,11 +27,24 @@ export const PET_CREEPER_WIDTH = CREEPER_MODEL_WIDTH * PET_CREEPER_MODEL_SCALE;
 /** Hard ceiling for connected decorative pets. Not the wolf/cat tame cap. */
 export const COSMETIC_PET_WORLD_CAP = 64;
 
-export const BEE_BODY_WIDTH = 0.5;
-export const BEE_BODY_HEIGHT = 0.78;
-export const BEE_SHOULDER_OFFSET = 1.22;
+/** Half the first displayed bee. The source cube is the same 7×7×10 pixels. */
+export const PET_BEE_MODEL_SCALE = 0.5;
+/**
+ * Body-cube center above the entity root before scale.
+ * Bedrock body center Y is 5.5 pixels and the root is model Y=0.
+ */
+export const BEE_BODY_CENTER_LOCAL_Y = 5.5 / 16;
+/** Visible body center above the owner's feet. Eyes sit near 1.62. */
+export const BEE_SHOULDER_CENTER_HEIGHT = 1.22;
+export const BEE_BODY_WIDTH = (7 / 16) * PET_BEE_MODEL_SCALE + 0.04;
+export const BEE_BODY_HEIGHT = (9 / 16) * PET_BEE_MODEL_SCALE + 0.04;
 export const BEE_CATCHUP_DISTANCE = 16;
 export const BEE_MAX_SPEED = 9.2;
+
+/** Root Y that puts the scaled body center on the shoulder line. */
+export function beeRootYForShoulder(ownerFeetY: number): number {
+  return ownerFeetY + BEE_SHOULDER_CENTER_HEIGHT - BEE_BODY_CENTER_LOCAL_Y * PET_BEE_MODEL_SCALE;
+}
 
 export const MINI_CREEPER_STOP_DISTANCE = 2;
 export const MINI_CREEPER_START_DISTANCE = 3;

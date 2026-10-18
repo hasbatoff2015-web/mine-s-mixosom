@@ -6,7 +6,7 @@
 export const BEE_WING_HZ = 6.5;
 export const BEE_WING_AMPLITUDE = 32 * Math.PI / 180;
 export const BEE_BOB_HZ = 1.55;
-export const BEE_BOB_AMPLITUDE = 0.06;
+export const BEE_BOB_AMPLITUDE = 0.03;
 export const BEE_TILT_MAX = 8 * Math.PI / 180;
 export const BEE_LEG_AMPLITUDE = 0.11;
 export const BEE_ANIM_PERIOD_SECONDS = 60;

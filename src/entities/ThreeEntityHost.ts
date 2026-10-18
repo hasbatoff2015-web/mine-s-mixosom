@@ -28,7 +28,7 @@ import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
 import { petAppearanceKey, petBodyTexturePath, WOLF_COLLAR_COLOR } from './petAppearance';
 import { applyCatVisualPose, applyWolfVisualPose } from './petPoses';
-import { PET_CREEPER_MODEL_SCALE } from './cosmeticPets';
+import { PET_BEE_MODEL_SCALE, PET_CREEPER_MODEL_SCALE } from './cosmeticPets';
 import { beeBodyPitch, beeBobOffset, beeLegRadians, beeWingRadians } from './beeVisual';
 import { MEGA_ZOMBIE_FOOT_LIFT, MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
 import { applyMegaZombiePose } from './megaZombiePose';
@@ -384,7 +384,7 @@ export class ThreeEntityHost implements EntityHost {
     const pitch = beeBodyPitch(state.locomotionSpeed, previousPitch, delta);
     visual.userData.beeTilt = pitch;
     visual.rotation.set(0, state.yaw, 0);
-    visual.scale.setScalar(1);
+    visual.scale.setScalar(PET_BEE_MODEL_SCALE);
     const body = model.parts.get('body');
     if (body) {
       const bodyObject = asObject3D(body);
@@ -405,13 +405,6 @@ export class ThreeEntityHost implements EntityHost {
       legObject.rotation.y = Number(legObject.userData.baseRotationY ?? 0);
       legObject.rotation.z = Number(legObject.userData.baseRotationZ ?? 0);
     });
-    for (const name of ['antennaLeft', 'antennaRight'] as const) {
-      const antenna = model.parts.get(name);
-      if (!antenna) continue;
-      const antennaObject = asObject3D(antenna);
-      const sway = Math.sin(state.visualAge * Math.PI * 2 * 1.55 + (name === 'antennaLeft' ? 0.6 : 0)) * 0.08;
-      antennaObject.rotation.z = Number(antennaObject.userData.baseRotationZ ?? 0) + sway;
-    }
     visual.position.set(state.x, state.y + beeBobOffset(state.visualAge), state.z);
     return this.syncFireOverlay(state, visual);
   }

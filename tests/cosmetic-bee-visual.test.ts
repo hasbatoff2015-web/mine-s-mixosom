@@ -3,8 +3,13 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { ThreeEntityHost } from '../src/entities/ThreeEntityHost';
 import { createMobModel } from '../src/entities/mobModels';
-import { BEE_MODEL } from '../src/entities/beeModel';
-import { PET_CREEPER_MODEL_SCALE } from '../src/entities/cosmeticPets';
+import {
+  BEE_BEDROCK_BONES,
+  BEE_MODEL,
+  beeLegacyBoxOrigin,
+  beeLegacyChildPivot,
+} from '../src/entities/beeModel';
+import { PET_BEE_MODEL_SCALE, PET_CREEPER_MODEL_SCALE } from '../src/entities/cosmeticPets';
 import { VoxelVisualFactory } from '../src/entities/voxelVisuals';
 import type { MobKind } from '../src/entities/mobDefinitions';
 import type { MobModel, MobVisualState } from '../src/entities/EntityHost';
@@ -41,15 +46,42 @@ function state(kind: MobKind, model: MobModel, visualAge: number, fuseSeconds = 
 }
 
 describe('bee and mini creeper visuals', () => {
+  it('adapts the bedrock bee cubes, pivots, and UV islands', () => {
+    const body = BEE_BEDROCK_BONES[0]!;
+    expect(body.cubes[0]).toMatchObject({ origin: [-3, 2, -5], size: [7, 7, 10], uv: [0, 0] });
+    expect(body.cubes[1]?.uv).toEqual([2, 0]);
+    expect(body.cubes[2]?.uv).toEqual([2, 3]);
+    const right = BEE_BEDROCK_BONES.find((bone) => bone.name === 'rightwing_bone')!;
+    const left = BEE_BEDROCK_BONES.find((bone) => bone.name === 'leftwing_bone')!;
+    expect(right.cubes[0]).toMatchObject({ size: [9, 0, 6], uv: [0, 18] });
+    expect(left.cubes[0]).toMatchObject({ size: [9, 0, 6], uv: [9, 24] });
+    expect(BEE_BEDROCK_BONES.find((bone) => bone.name === 'stinger')?.cubes[0]?.uv).toEqual([26, 7]);
+    expect(BEE_BEDROCK_BONES.filter((bone) => bone.name.startsWith('leg_')).map((bone) => bone.cubes[0]?.uv)).toEqual([
+      [26, 1], [26, 3], [26, 5],
+    ]);
+    const bodyPart = BEE_MODEL.parts.find((part) => part.name === 'body')!;
+    expect(bodyPart.boxes[0]?.origin).toEqual(beeLegacyBoxOrigin([-3, 2, -5], [7, 7, 10], body.pivot));
+    expect(bodyPart.boxes[0]?.textureOffset).toEqual([0, 0]);
+    expect(BEE_MODEL.parts.find((part) => part.name === 'rightwing_bone')?.rotationPoint).toEqual(
+      beeLegacyChildPivot(right.pivot, body.pivot),
+    );
+    expect(BEE_MODEL.parts.find((part) => part.name === 'leftwing_bone')?.boxes[0]?.textureOffset).toEqual([9, 24]);
+    expect(BEE_MODEL.parts.filter((part) => part.name.startsWith('leg_'))).toHaveLength(3);
+  });
+
   it('builds a bee with body, wings, antennae, legs, and a stinger', () => {
     const visuals = new VoxelVisualFactory();
     const model = createMobModel(visuals, 'pet_bee');
+    const host = new ThreeEntityHost(new THREE.Scene());
+    host.syncMob(state('pet_bee', model, 0));
     expect(model.parts.get('body')).toBeDefined();
-    expect(model.parts.get('antennaLeft')).toBeDefined();
-    expect(model.parts.get('antennaRight')).toBeDefined();
     expect(model.parts.get('stinger')).toBeDefined();
-    expect(model.wings).toHaveLength(2);
-    expect(model.legs).toHaveLength(6);
+    expect(model.wings.map((wing) => (wing as THREE.Object3D).name)).toEqual([
+      'mob:pet_bee:rightwing_bone',
+      'mob:pet_bee:leftwing_bone',
+    ]);
+    expect(model.legs).toHaveLength(3);
+    expect((model.parts.get('body') as THREE.Object3D).children.filter((child) => child instanceof THREE.Mesh)).toHaveLength(3);
     const root = model.root as THREE.Object3D;
     const wingMeshes: THREE.Mesh[] = [];
     for (const wing of model.wings) {
@@ -67,12 +99,32 @@ describe('bee and mini creeper visuals', () => {
     root.updateMatrixWorld(true);
     const bounds = new THREE.Box3().setFromObject(root);
     expect(bounds.isEmpty()).toBe(false);
-    const size = bounds.getSize(new THREE.Vector3());
-    expect(size.x).toBeGreaterThan(0.9);
-    expect(size.z).toBeGreaterThan(0.5);
-    expect(size.y).toBeGreaterThan(0.4);
-    expect(size.y).toBeLessThan(1.3);
+    const bodyMesh = (model.parts.get('body') as THREE.Object3D).children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+    bodyMesh.geometry.computeBoundingBox();
+    const bodySize = bodyMesh.geometry.boundingBox!.getSize(new THREE.Vector3()).multiplyScalar(PET_BEE_MODEL_SCALE);
+    const previousBody = new THREE.Vector3(7 / 16, 7 / 16, 10 / 16);
+    expect(bodySize.x / previousBody.x).toBeCloseTo(PET_BEE_MODEL_SCALE, 2);
+    expect(bodySize.y / previousBody.y).toBeCloseTo(PET_BEE_MODEL_SCALE, 2);
+    expect(bodySize.z / previousBody.z).toBeCloseTo(PET_BEE_MODEL_SCALE, 2);
+    const wingSpan = bounds.getSize(new THREE.Vector3()).x;
+    expect(wingSpan).toBeGreaterThan(0.5);
+    expect(wingSpan).toBeLessThan(0.85);
+    const positions = root.getObjectByProperty('type', 'Mesh') as THREE.Mesh | undefined;
+    root.traverse((object) => {
+      if (!(object instanceof THREE.Mesh)) return;
+      const position = object.geometry.getAttribute('position');
+      for (let index = 0; index < position.count; index += 1) {
+        expect(Number.isFinite(position.getX(index))).toBe(true);
+        expect(Number.isFinite(position.getY(index))).toBe(true);
+        expect(Number.isFinite(position.getZ(index))).toBe(true);
+      }
+    });
+    expect(positions).toBeDefined();
+    expect((model.parts.get('stinger') as THREE.Object3D).position.z).toBeGreaterThan(0);
+    const antenna = (model.parts.get('body') as THREE.Object3D).children.filter((child) => child instanceof THREE.Mesh)[1] as THREE.Mesh;
+    expect(antenna.position.z).toBeLessThan(bodyMesh.position.z);
     visuals.dispose();
+    host.dispose();
   });
 
   it('uses a 64×64 sheet whose painted islands stay inside the texture', () => {
@@ -83,18 +135,22 @@ describe('bee and mini creeper visuals', () => {
       const index = (v * png.width + u) * 4;
       return [png.data[index], png.data[index + 1], png.data[index + 2], png.data[index + 3]] as const;
     };
-    const eye = sample(12, 13);
-    expect(eye[3]).toBe(255);
-    expect(eye[0]).toBeLessThan(40);
-    const cheek = sample(13, 11);
+    const pupil = sample(11, 12);
+    expect(pupil[3]).toBe(255);
+    expect(pupil[0]).toBeLessThan(40);
+    const cheek = sample(13, 10);
     expect(cheek[3]).toBe(255);
     expect(cheek[0]).toBeGreaterThan(180);
     expect(cheek[1]).toBeGreaterThan(120);
-    const wingCorner = sample(7, 32);
-    const wingCenter = sample(12, 35);
+    const back = sample(30, 13);
+    expect(back[0]).toBeLessThan(140);
+    const wingCorner = sample(6, 18);
+    const wingCenter = sample(10, 21);
+    const leftWing = sample(19, 27);
     expect(wingCorner[3]).toBe(0);
     expect(wingCenter[3]).toBeGreaterThan(40);
     expect(wingCenter[3]).toBeLessThan(255);
+    expect(leftWing[3]).toBeGreaterThan(40);
     for (const part of BEE_MODEL.parts) {
       for (const box of part.boxes) {
         const rects = cuboidUvRects({
@@ -125,6 +181,19 @@ describe('bee and mini creeper visuals', () => {
     host.syncMob(state('pet_bee', created.model, quarter));
     expect(left.rotation.z).toBeCloseTo(BEE_WING_AMPLITUDE, 3);
     expect(right.rotation.z).toBeCloseTo(-BEE_WING_AMPLITUDE, 3);
+    expect((created.visual as THREE.Object3D).scale.x).toBeCloseTo(PET_BEE_MODEL_SCALE, 5);
+    const rightMesh = right.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+    const leftMesh = left.children.find((child) => child instanceof THREE.Mesh) as THREE.Mesh;
+    (created.visual as THREE.Object3D).updateMatrixWorld(true);
+    const rightRaised = rightMesh.getWorldPosition(new THREE.Vector3()).y;
+    const leftRaised = leftMesh.getWorldPosition(new THREE.Vector3()).y;
+    host.syncMob(state('pet_bee', created.model, 0));
+    (created.visual as THREE.Object3D).updateMatrixWorld(true);
+    const rightRest = rightMesh.getWorldPosition(new THREE.Vector3()).y;
+    const leftRest = leftMesh.getWorldPosition(new THREE.Vector3()).y;
+    expect(Math.abs(rightRaised - rightRest)).toBeGreaterThan(0.01);
+    expect(Math.abs(leftRaised - leftRest)).toBeGreaterThan(0.01);
+    expect((leftRaised - leftRest) * (rightRaised - rightRest)).toBeGreaterThan(0);
     const yValues: number[] = [];
     for (let step = 0; step < 8; step += 1) {
       host.syncMob(state('pet_bee', created.model, step / 8));

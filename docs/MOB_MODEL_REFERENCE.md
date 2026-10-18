@@ -142,7 +142,7 @@ Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`;
 
 ## Decorative bee
 
-Original rig in `src/entities/beeModel.ts`. Texture `public/textures/entity/bee.png`, logical 64×64. Not a copy of the Mojang bee geometry or PNG. Body box is 7×7×10 model units on pivot `(0,16,0)`. Wings, antennae, stinger, and six legs are child parts. Wings use a thin physical height, `doubleSided`, and `alphaTest` 0.15. Flap, bob, and tilt are applied every render sync from `beeVisual.ts`. **Alpha approximation.**
+`src/entities/beeModel.ts` adapts public Bedrock `geometry.bee` into LegacyModel. Bedrock pivots are absolute and Y-up. A child pivot is `child - parent`, then Y is flipped. Cube corners use the same pivot delta, and the legacy Y origin is `-(originY - pivotY) - sizeY`. The entity root is bedrock Y=0, so the body center sits at local Y `5.5/16` before scale. `PET_BEE_MODEL_SCALE` is 0.5. Wings, the stinger, and the three leg planes keep a 0.12-pixel thickness so a zero bedrock axis still has two visible sides. UV islands stay `[0,0]`, `[0,18]`, `[9,24]`, `[2,0]`, `[2,3]`, `[26,1]`, `[26,3]`, `[26,5]`, `[26,7]`. The PNG is original pixel art on those islands. Flap remains 6.5 Hz on the render clock. **Adapted bedrock reference.**
 
 ## Mini creeper
 

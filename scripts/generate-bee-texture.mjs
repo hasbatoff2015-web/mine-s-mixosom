@@ -1,6 +1,6 @@
 /**
- * Original 64×64 bee sheet. UV islands match BEE_MODEL in src/entities/beeModel.ts.
- * Not a copy of the Mojang bedrock bee texture.
+ * Original 64×64 bee sheet painted on the bedrock bee UV islands.
+ * The pixel art is not the Mojang PNG. Island positions match geometry.bee.
  */
 import { writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -9,20 +9,14 @@ import { encodeRgbaPng } from './png-rgba.mjs';
 
 const WIDTH = 64;
 const HEIGHT = 64;
-
-const YELLOW = [246, 208, 52, 255];
-const YELLOW_MID = [232, 176, 36, 255];
-const YELLOW_DEEP = [186, 128, 28, 255];
-const BLACK = [32, 30, 34, 255];
-const BLACK_SOFT = [54, 50, 56, 255];
-const EYE = [248, 248, 252, 255];
-const PUPIL = [16, 14, 18, 255];
-const STINGER = [58, 56, 62, 255];
-const STINGER_TIP = [28, 26, 30, 255];
-const ANTENNA = [42, 40, 44, 255];
-const LEG = [48, 44, 46, 255];
-const WING = [206, 230, 248, 176];
-const WING_VEIN = [238, 246, 255, 236];
+const YELLOW = [246, 196, 48, 255];
+const YELLOW_DEEP = [214, 150, 28, 255];
+const BLACK = [36, 32, 38, 255];
+const BROWN = [92, 58, 36, 255];
+const EYE = [250, 248, 240, 255];
+const PUPIL = [18, 16, 22, 255];
+const WING = [210, 232, 250, 168];
+const VEIN = [236, 246, 255, 230];
 const CLEAR = [0, 0, 0, 0];
 
 function paint(data, u, v, width, height, colorAt) {
@@ -30,9 +24,7 @@ function paint(data, u, v, width, height, colorAt) {
     for (let x = 0; x < width; x += 1) {
       const px = u + x;
       const py = v + y;
-      if (px < 0 || py < 0 || px >= WIDTH || py >= HEIGHT) {
-        throw new Error(`UV overflow ${px},${py}`);
-      }
+      if (px < 0 || py < 0 || px >= WIDTH || py >= HEIGHT) throw new Error(`UV overflow ${px},${py}`);
       const color = colorAt(x, y, width, height);
       const index = (py * WIDTH + px) * 4;
       data[index] = color[0];
@@ -43,96 +35,67 @@ function paint(data, u, v, width, height, colorAt) {
   }
 }
 
-function stripeColor(along, length) {
-  const head = along < 2;
-  if (head) return along === 0 ? YELLOW : YELLOW_MID;
-  const band = Math.floor((along - 2) / 2) % 2;
-  return band === 0 ? BLACK : (along % 4 === 3 ? YELLOW_MID : YELLOW);
+function stripe(along) {
+  const band = Math.floor(along / 2) % 2;
+  return band === 0 ? YELLOW : BLACK;
 }
 
-function bodyFront(x, y) {
-  const leftEye = x >= 1 && x <= 2 && y >= 2 && y <= 3;
-  const rightEye = x >= 4 && x <= 5 && y >= 2 && y <= 3;
-  if (leftEye || rightEye) {
-    const pupil = (x === 2 || x === 5) && y >= 2;
-    return pupil ? PUPIL : EYE;
-  }
-  if (y === 5 && x >= 2 && x <= 4) return BLACK_SOFT;
-  if (y >= 6) return YELLOW_DEEP;
-  return y <= 1 ? YELLOW : YELLOW_MID;
+function face(x, y) {
+  const eye = (x === 1 || x === 5) && y === 1;
+  const pupil = (x === 1 || x === 5) && y === 2;
+  if (eye) return EYE;
+  if (pupil) return PUPIL;
+  if ((y === 4 || y === 5) && (x <= 1 || x >= 5)) return BLACK;
+  return y >= 5 ? YELLOW_DEEP : YELLOW;
 }
 
-function bodySide(x, y) {
-  const base = stripeColor(x, 10);
-  return y === 0 || y === 6 ? (base === BLACK ? BLACK_SOFT : YELLOW_DEEP) : base;
-}
-
-function bodyTop(x, y) {
-  return stripeColor(y, 10);
-}
-
-function bodyBack(x, y) {
-  return (x + y) % 3 === 0 ? BLACK : BLACK_SOFT;
-}
-
-function bodyBottom(x, y) {
-  return stripeColor(y, 10) === BLACK ? BLACK_SOFT : YELLOW_DEEP;
-}
-
-function wingMembrane(x, y, width, height) {
-  const nx = (x + 0.5) / width - 0.5;
+function wing(x, y, width, height, flip) {
+  const px = flip ? width - 1 - x : x;
+  const nx = (px + 0.5) / width - 0.45;
   const ny = (y + 0.5) / height - 0.5;
-  const ellipse = nx * nx * 3.1 + ny * ny * 4.4;
-  if (ellipse > 1) return CLEAR;
-  const vein = x === 1 || y === Math.floor(height / 2) || (x === 4 && y >= 1 && y <= height - 2);
-  return vein ? WING_VEIN : WING;
-}
-
-function stingerColor(x, y, width, height) {
-  return x > width * 0.55 || y > height * 0.55 ? STINGER_TIP : STINGER;
+  if (nx * nx * 3.2 + ny * ny * 5.2 > 1) return CLEAR;
+  if (px === 2 || y === 2) return VEIN;
+  return WING;
 }
 
 export function createBeeTextureRgba() {
   const data = Buffer.alloc(WIDTH * HEIGHT * 4);
-  // Body 7×7×10 at [0, 0]. Cross layout from cuboidUvRects.
-  paint(data, 10, 0, 7, 10, bodyTop);
-  paint(data, 17, 0, 7, 10, bodyBottom);
-  paint(data, 0, 10, 10, 7, bodySide);
-  paint(data, 10, 10, 7, 7, bodyFront);
-  paint(data, 17, 10, 10, 7, (x, y) => bodySide(9 - x, y));
-  paint(data, 27, 10, 7, 7, bodyBack);
-  // Stinger 2×2×4 at [0, 20].
-  paint(data, 4, 20, 2, 4, stingerColor);
-  paint(data, 6, 20, 2, 4, stingerColor);
-  paint(data, 0, 24, 4, 2, () => STINGER);
-  paint(data, 4, 24, 2, 2, () => STINGER_TIP);
-  paint(data, 6, 24, 4, 2, () => STINGER);
-  paint(data, 10, 24, 2, 2, () => STINGER_TIP);
-  // Antenna 1×5×1 at [16, 20].
-  paint(data, 17, 20, 1, 1, () => ANTENNA);
-  paint(data, 18, 20, 1, 1, () => ANTENNA);
-  paint(data, 16, 21, 1, 5, () => ANTENNA);
-  paint(data, 17, 21, 1, 5, () => ANTENNA);
-  paint(data, 18, 21, 1, 5, () => ANTENNA);
-  paint(data, 19, 21, 1, 5, () => ANTENNA);
-  // Legs 1×3×1 at [24, 20].
-  paint(data, 25, 20, 1, 1, () => LEG);
-  paint(data, 26, 20, 1, 1, () => LEG);
-  paint(data, 24, 21, 1, 3, () => LEG);
-  paint(data, 25, 21, 1, 3, () => LEG);
-  paint(data, 26, 21, 1, 3, () => LEG);
-  paint(data, 27, 21, 1, 3, () => LEG);
-  // Wings 10×1×7 at [0, 32]. Top and bottom share the membrane.
-  paint(data, 7, 32, 10, 7, wingMembrane);
-  paint(data, 17, 32, 10, 7, wingMembrane);
-  paint(data, 0, 39, 7, 1, (x) => (x === 0 || x === 6 ? CLEAR : WING_VEIN));
-  paint(data, 7, 39, 10, 1, (x) => (x === 0 || x === 9 ? CLEAR : WING));
-  paint(data, 17, 39, 7, 1, (x) => (x === 0 || x === 6 ? CLEAR : WING_VEIN));
-  paint(data, 24, 39, 10, 1, (x) => (x === 0 || x === 9 ? CLEAR : WING));
+  // Body 7×7×10 at [0, 0].
+  paint(data, 10, 0, 7, 10, (_x, y) => stripe(y));
+  paint(data, 17, 0, 7, 10, (_x, y) => (stripe(y) === BLACK ? BROWN : YELLOW_DEEP));
+  paint(data, 0, 10, 10, 7, (x) => stripe(x));
+  paint(data, 17, 10, 10, 7, (x) => stripe(9 - x));
+  paint(data, 10, 10, 7, 7, face);
+  paint(data, 27, 10, 7, 7, () => BROWN);
+  // Antenna faces for cubes at [2, 0] and [2, 3].
+  paint(data, 5, 0, 1, 3, () => BLACK);
+  paint(data, 6, 0, 1, 3, () => BLACK);
+  paint(data, 2, 3, 3, 2, () => BLACK);
+  paint(data, 5, 3, 1, 2, () => BLACK);
+  paint(data, 6, 3, 3, 2, () => BLACK);
+  paint(data, 9, 3, 1, 2, () => BLACK);
+  paint(data, 5, 3, 1, 3, () => BLACK);
+  paint(data, 6, 3, 1, 3, () => BLACK);
+  paint(data, 2, 6, 3, 2, () => BLACK);
+  paint(data, 5, 6, 1, 2, () => BLACK);
+  paint(data, 6, 6, 3, 2, () => BLACK);
+  paint(data, 9, 6, 1, 2, () => BLACK);
+  // Stinger plane [26, 7], size 0×1×2. Visible left/right islands.
+  paint(data, 26, 9, 2, 1, () => BROWN);
+  paint(data, 28, 9, 2, 1, () => BLACK);
+  // Three flat leg segments. Visible front/back islands.
+  for (const v of [1, 3, 5]) {
+    paint(data, 26, v, 7, 2, (x, y) => ((x === 2 || x === 4) && y === 0 ? BLACK : YELLOW_DEEP));
+    paint(data, 33, v, 7, 2, (x, y) => ((x === 2 || x === 4) && y === 0 ? BLACK : BROWN));
+  }
+  // Wings. Top and bottom islands, right [0, 18] and left [9, 24].
+  paint(data, 6, 18, 9, 6, (x, y, w, h) => wing(x, y, w, h, false));
+  paint(data, 15, 18, 9, 6, (x, y, w, h) => wing(x, y, w, h, false));
+  paint(data, 15, 24, 9, 6, (x, y, w, h) => wing(x, y, w, h, true));
+  paint(data, 24, 24, 9, 6, (x, y, w, h) => wing(x, y, w, h, true));
   return data;
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-const target = join(here, '../public/textures/entity/bee.png');
+const target = join(dirname(fileURLToPath(import.meta.url)), '../public/textures/entity/bee.png');
 writeFileSync(target, encodeRgbaPng({ width: WIDTH, height: HEIGHT, data: createBeeTextureRgba() }));
 console.log(`wrote ${target}`);

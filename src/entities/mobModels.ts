@@ -314,9 +314,9 @@ const PART_NAMES: Readonly<Record<MobKind, {
   creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   pet_bee: {
     head: 'body',
-    legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6'],
-    legSwingSigns: [1, -1, 1, -1, 1, -1],
-    wings: ['rightWing', 'leftWing'],
+    legs: ['leg_front', 'leg_mid', 'leg_back'],
+    legSwingSigns: [1, -1, 1],
+    wings: ['rightwing_bone', 'leftwing_bone'],
   },
   pet_creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   spider: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6', 'leg7', 'leg8'], legSwingSigns: [] },
