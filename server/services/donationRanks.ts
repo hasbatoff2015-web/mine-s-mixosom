@@ -375,8 +375,10 @@ export class DonationRankService {
   }
 
   /**
-   * Runs `commit` while the channel is locked. The use is stored only when `commit` returns true.
-   * A thrown commit or a failed write leaves the previous ledger in place.
+   * Reserves the use on disk before `commit` runs.
+   * A failed reservation does not run the action.
+   * A failed action removes the reservation when that write succeeds.
+   * If the removal write fails, the reservation stays so a restart cannot grant a free use.
    */
   consumeIf(
     playerIdOrName: string,
@@ -400,14 +402,8 @@ export class DonationRankService {
     this.busy.add(lock);
     const previous = cloneStore(this.state);
     try {
-      let committed = false;
-      try {
-        committed = commit();
-      } catch {
-        committed = false;
-      }
-      if (!committed) return { ok: false, error: 'Не удалось выполнить команду.' };
       this.pushStamp(key, channel, now);
+      const reserved = cloneStore(this.state);
       try {
         this.persist();
       } catch (error) {
@@ -416,7 +412,22 @@ export class DonationRankService {
         serverLog(`donation cooldown write failed: ${message}`, 'error');
         return { ok: false, error: 'Не удалось сохранить кулдаун.' };
       }
-      return { ok: true };
+      let committed = false;
+      try {
+        committed = commit();
+      } catch {
+        committed = false;
+      }
+      if (committed) return { ok: true };
+      this.state = previous;
+      try {
+        this.persist();
+      } catch (error) {
+        this.state = reserved;
+        const message = error instanceof Error ? error.message : String(error);
+        serverLog(`donation cooldown rollback failed: ${message}`, 'error');
+      }
+      return { ok: false, error: 'Не удалось выполнить команду.' };
     } finally {
       this.busy.delete(lock);
     }
@@ -434,6 +445,21 @@ export class DonationRankService {
     } = {},
   ): DonationStatus {
     const now = options.now ?? Date.now();
+    if (this.readFailed) {
+      return {
+        rank: 'default',
+        remainingMs: 0,
+        limits: {
+          homes: { max: 0 },
+          claims: { max: 0 },
+          auction: { max: 0 },
+        },
+        commands: [],
+        kits: [],
+        nick: { canColor: false, choices: [] },
+        loadError: 'Не удалось прочитать данные привилегий.',
+      };
+    }
     const rank = this.effectiveRank(playerIdOrName, now);
     const grant = this.activeGrant(playerIdOrName, now);
     const limits = RANK_LIMITS[rank];
@@ -490,7 +516,7 @@ export class DonationRankService {
         deathLimited ? 'deathBack' : undefined,
         deathLimited ? limits.deathBackPerDay ?? undefined : undefined,
       ),
-      row('tpa-coords', '/tpa <x> <y> <z>', operator || nodes.has('tpa.coords'), 'coords', operator ? 0 : (limits.coordTeleportPerDay || 1)),
+      row('tp', '/tp <x> <y> <z>', operator || nodes.has('tp.coords'), 'coords', operator ? 0 : (limits.coordTeleportPerDay || 1)),
       row('invsee', '/invsee <игрок>', operator || nodes.has('invsee.use'), 'invsee', operator ? 0 : (limits.invseePerDay || 1)),
       row('invseeop', '/invseeop <игрок>', operator),
       row('nickcolor', '/nickcolor <цвет>', operator || nodes.has('nick.color')),

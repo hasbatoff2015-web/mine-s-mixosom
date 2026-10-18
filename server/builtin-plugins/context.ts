@@ -29,6 +29,8 @@ export interface PlayerIdentity {
 export interface BuiltinPluginContext {
   readonly permissions: PermissionService;
   readonly donation: DonationRankService;
+  /** Server config `FC_RANK_TEST`. False on production. */
+  readonly rankTestEnabled: boolean;
   readonly openPortalChest: (playerId: string) => { ok: boolean; error?: string };
   readonly openPlayerInventory: (
     viewerId: string,

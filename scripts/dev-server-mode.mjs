@@ -20,7 +20,7 @@ if (!preset) {
 
 const child = spawn('npx', ['vite-node', 'server/index.ts'], {
   stdio: 'inherit',
-  env: { ...process.env, ...preset },
+  env: { ...process.env, ...preset, FC_RANK_TEST: '1' },
   shell: true,
 });
 

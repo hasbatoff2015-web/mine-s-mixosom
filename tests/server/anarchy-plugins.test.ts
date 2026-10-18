@@ -154,7 +154,9 @@ describe('Anarchy builtin plugins', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const lines = chat(world, ada, '/tp 8 70 8');
-    expect(lines.some((line) => line.includes('Teleported to 8.0, 70.0, 8.0'))).toBe(true);
+    expect(lines.some((line) => line.includes('permission'))).toBe(true);
+    const op = join(world, 'Op');
+    expect(chat(world, op, '/tp 8 70 8').some((line) => line.includes('Teleported to 8.0, 70.0, 8.0'))).toBe(true);
     expect(world.commands.find('tp')?.usage).toBe('/tp <x> <y> <z>');
     expect(world.commands.find('tpa')).toBeDefined();
     expect(chat(world, ada, '/tpa help').some((line) => line.includes('TPA'))).toBe(true);

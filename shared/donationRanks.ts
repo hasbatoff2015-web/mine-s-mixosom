@@ -57,7 +57,7 @@ const RANK_ADDED_NODES: Record<DonationRankId, readonly string[]> = {
     'kit.use.food_prem',
   ],
   boss: ['donate.rank.boss', 'back.death', 'kit.use.boss', 'kit.use.food_boss'],
-  titan: ['donate.rank.titan', 'tpa.coords', 'invsee.use', 'kit.use.titan', 'kit.use.food_titan'],
+  titan: ['donate.rank.titan', 'tp.coords', 'invsee.use', 'kit.use.titan', 'kit.use.food_titan'],
 };
 
 const ADMIN_NODE_PREFIXES = ['admin', 'server.', 'plugins.manage', 'server.admin'];
@@ -246,6 +246,31 @@ export function announcementLine(displayName: string, text: string): string {
   return `[ОБЪЯВЛЕНИЕ ОТ ИГРОКА ${displayName}] ${text}`;
 }
 
+const RANK_TEST_UNIT_MS = {
+  s: 1000,
+  m: 60_000,
+  h: 60 * 60_000,
+  d: DONATION_DAY_MS,
+} as const;
+
+/** DEV `/ranktest set` duration. A suffix is required so `30` is not silently 30 days. */
+export function parseRankTestDuration(raw: string | undefined): { ok: true; ms: number } | { ok: false; error: string } {
+  const match = raw?.trim().toLowerCase().match(/^(\d+)([smhd])$/);
+  if (!match) {
+    return { ok: false, error: 'Срок: <число><s|m|h|d>, например 30s, 5m, 2h или 1d.' };
+  }
+  const amount = Number(match[1]);
+  const unit = match[2] as keyof typeof RANK_TEST_UNIT_MS;
+  if (!Number.isInteger(amount) || amount < 1) {
+    return { ok: false, error: 'Срок должен быть целым числом от 1.' };
+  }
+  const ms = amount * RANK_TEST_UNIT_MS[unit];
+  if (ms > 3650 * DONATION_DAY_MS) {
+    return { ok: false, error: 'Срок не длиннее 3650 дней.' };
+  }
+  return { ok: true, ms };
+}
+
 export function formatDurationMs(ms: number): string {
   const total = Math.max(0, Math.ceil(ms / 1000));
   const days = Math.floor(total / 86_400);
@@ -312,4 +337,6 @@ export interface DonationStatus {
     readonly color?: NickColorId;
     readonly choices: readonly NickColorId[];
   };
+  /** Set when the rank file could not be read. The menu must not invent a rank. */
+  readonly loadError?: string;
 }

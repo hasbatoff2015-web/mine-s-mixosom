@@ -20,7 +20,7 @@ export type CoordinateTeleportResult =
   | { ok: false; error: string; remainingMs?: number };
 
 /**
- * Shared by `/tpa x y z` and a future coordinate form.
+ * Shared by `/tp <x> <y> <z>` and the donate menu. Player `/tpa` does not call this.
  * A failed validation or teleport does not consume the daily use.
  */
 export function attemptCoordinateTeleport(
@@ -34,7 +34,7 @@ export function attemptCoordinateTeleport(
     return { ok: false, error: 'You do not have permission.' };
   }
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
-    return { ok: false, error: 'Usage: /tpa <x> <y> <z>' };
+    return { ok: false, error: 'Usage: /tp <x> <y> <z>' };
   }
   if (!isValidWorldY(Math.floor(point.y)) && !isValidWorldY(Math.ceil(point.y))) {
     return { ok: false, error: 'Y is outside the world.' };

@@ -2104,6 +2104,68 @@ textarea,
     inset calc(-1px * var(--mc-ui-scale, 3)) calc(-1px * var(--mc-ui-scale, 3)) 0 rgba(255, 255, 255, 0.08);
 }
 
+.mc-donate-rank,
+.mc-donate-perk,
+.mc-donate-action {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  align-items: center;
+  color: #f4f4f4;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+}
+
+.mc-donate-rank {
+  margin: calc(4px * var(--mc-ui-scale, 3)) 0;
+}
+
+.mc-donate-perks,
+.mc-donate-actions,
+.mc-donate-swatches,
+.mc-donate-coords {
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-donate-action,
+.mc-donate-perk {
+  width: 100%;
+}
+
+.mc-donate-preview {
+  margin: calc(4px * var(--mc-ui-scale, 3)) 0;
+  font-weight: 800;
+  text-align: center;
+}
+
+.mc-donate-swatch {
+  width: calc(16px * var(--mc-ui-scale, 3));
+  height: calc(16px * var(--mc-ui-scale, 3));
+  border: calc(1px * var(--mc-ui-scale, 3)) solid #111;
+  padding: 0;
+  cursor: pointer;
+}
+
+.mc-donate-swatch.is-selected,
+.mc-donate-swatch.is-current {
+  outline: calc(1px * var(--mc-ui-scale, 3)) solid #fff;
+}
+
+.mc-donate-coords input,
+.mc-menu-body textarea[data-donate-announce] {
+  box-sizing: border-box;
+  width: 100%;
+  color: #fff;
+  background: #1b1e24;
+  border: calc(1px * var(--mc-ui-scale, 3)) solid #111;
+  font: inherit;
+}
+
+.mc-donate-coords input {
+  width: calc(33% - 4px);
+}
+
 .mc-menu-tile-icon {
   width: calc(26px * var(--mc-ui-scale, 3));
   height: calc(26px * var(--mc-ui-scale, 3));

@@ -8,8 +8,8 @@ import {
   formatDurationMs,
   isNickColorId,
   parseDonationRank,
-  playerNameStyle,
-  sanitizeAnnouncementText,
+  parseRankTestDuration,
+        sanitizeAnnouncementText,
 } from '../../shared/donationRanks';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
@@ -28,7 +28,7 @@ const HELP = {
     { usage: '/an <текст>', description: 'Объявление в общий чат', permission: 'announce.use' },
     { usage: '/invsee <player>', description: 'Посмотреть инвентарь', permission: 'invsee.use' },
     { usage: '/invseeop <player>', description: 'Изменить инвентарь', permission: 'operator' },
-    { usage: '/nickcolor [color]', description: 'Цвет ника', permission: 'nick.color' },
+    { usage: '/nickcolor [color]', description: 'Цвет ника (PREMIUM и выше)' },
   ],
 };
 
@@ -127,6 +127,38 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
       });
 
       api.registerCommand({
+        name: 'ranktest',
+        usage: '/ranktest status <player>',
+        description: 'DEV: временный тестовый ранг',
+        permission: 'operator',
+        execute: (args, sender) => {
+          if (!ctx.rankTestEnabled) return fail('Команда /ranktest доступна только на DEV.');
+          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          if (!operator) return fail('You do not have permission.');
+          const action = args[0]?.toLowerCase();
+          if (action === 'status') {
+            if (!args[1]) return usageError('/ranktest status <player>');
+            return ok(describe(args[1], args[1]));
+          }
+          if (action === 'clear') {
+            if (!args[1]) return usageError('/ranktest clear <player>');
+            const result = ctx.donation.revoke(args[1], { source: 'ranktest' });
+            return result.ok ? ok(`Тестовый ранг игрока ${args[1]} снят.`) : fail(result.error ?? 'Не удалось снять ранг.');
+          }
+          if (action === 'set') {
+            const rank = parseDonationRank(args[2]);
+            const duration = parseRankTestDuration(args[3]);
+            if (!args[1] || !rank || !args[3]) return usageError('/ranktest set <player> <vip|premium|boss|titan> <duration>');
+            if (!duration.ok) return fail(duration.error);
+            const result = ctx.donation.grant(args[1], rank, { durationMs: duration.ms, source: 'ranktest' });
+            if (!result.ok) return fail(result.error ?? 'Не удалось выдать ранг.');
+            return ok(`Тестовый ранг ${rank} выдан игроку ${args[1]} на ${formatDurationMs(duration.ms)}.`);
+          }
+          return usageError('/ranktest <set|clear|status> ...');
+        },
+      });
+
+      api.registerCommand({
         name: 'ec',
         aliases: ['enderchest'],
         usage: '/ec',
@@ -219,13 +251,13 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
         aliases: ['nickcolour'],
         usage: '/nickcolor [color]',
         description: 'Цвет ника',
-        permission: 'nick.color',
+        permission: 'player',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
-          const rank = ctx.donation.effectiveRank(sender.playerId);
-          const allowed = operator || playerNameStyle(rank, false, undefined)?.bold === true || rank === 'premium' || rank === 'boss' || rank === 'titan';
-          if (!allowed && !api.hasPermission(sender.playerId, 'nick.color')) return fail('You do not have permission.');
+          if (!operator && !api.hasPermission(sender.playerId, 'nick.color')) {
+            return fail('Цвет ника доступен с привилегии PREMIUM.');
+          }
           const choice = args[0]?.trim().toLowerCase();
           if (!choice) {
             const current = ctx.donation.nickColor(sender.playerId) ?? 'обычный';

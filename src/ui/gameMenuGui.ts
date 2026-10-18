@@ -14,6 +14,7 @@ import {
 } from '../../shared/notifications';
 import { AUCTION_HISTORY_EMPTY } from '../../shared/auctionHistory';
 import type { NetworkDirectMessage, ServerMenuMessage } from '../../shared/protocol';
+import { menuDonateHtml } from './donateMenuGui';
 
 const MENU_SPRITE_FILES = {
   '--mc-menu-close': 'close.png',
@@ -135,16 +136,18 @@ function menuTileHtml(
 export function menuRootHtml(
   state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel' | 'notifications'>,
 ): string {
-  const row = (start: number) => GAME_MENU_BUTTONS.slice(start, start + 3)
-    .map((button) => menuTileHtml(button, state?.notifications))
-    .join('');
+  const rows: string[] = [];
+  for (let start = 0; start < GAME_MENU_BUTTONS.length; start += 3) {
+    const cells = GAME_MENU_BUTTONS.slice(start, start + 3)
+      .map((button) => menuTileHtml(button, state?.notifications))
+      .join('');
+    rows.push(`<div class="mc-menu-grid-row mc-menu-grid-row-3-full">${cells}</div>`);
+  }
   return `<div class="mc-menu-body mc-menu-root" data-menu-screen="root">
     ${menuHeadingHtml('Меню')}
     ${menuBalanceHtml(state)}
     <div class="mc-menu-grid">
-      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(0)}</div>
-      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(3)}</div>
-      <div class="mc-menu-grid-row mc-menu-grid-row-3-full">${row(6)}</div>
+      ${rows.join('')}
     </div>
   </div>`;
 }
@@ -559,6 +562,14 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   if (state.screen === 'auction-history') return menuAuctionHistoryHtml(state, escape);
   if (state.screen === 'rating') return menuRatingHtml(state, escape);
   if (state.screen === 'duels') return menuDuelsHtml(state, escape);
+  if (
+    state.screen === 'donate'
+    || state.screen === 'donate-color'
+    || state.screen === 'donate-announce'
+    || state.screen === 'donate-invsee'
+    || state.screen === 'donate-tp'
+    || state.screen === 'donate-back'
+  ) return menuDonateHtml(state, escape);
   return menuRootHtml(state);
 }
 

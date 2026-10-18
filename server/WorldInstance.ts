@@ -141,7 +141,9 @@ import {
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
 import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
 import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, resolveHomeLimit } from '../shared/homes';
-import { sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
+import { formatDurationMs, sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
+import { attemptCoordinateTeleport } from './services/coordinateTeleport';
+import { buildDonateMenu } from './services/donateMenuView';
 import {
   applyGameMenuAction,
   type MenuActionHost,
@@ -1277,6 +1279,7 @@ export class WorldInstance {
         holograms: this.holograms,
         claimBoundaries: this.claimBoundaries,
         donation: this.donation,
+        rankTestEnabled: this.config.rankTestEnabled,
         openPortalChest: (playerId) => this.openPortalChest(playerId),
         openPlayerInventory: (viewerId, targetName, mode) => this.openPlayerInventory(viewerId, targetName, mode),
         broadcastAnnouncement: (text) => this.broadcastAnnouncement(text),
@@ -2134,6 +2137,14 @@ export class WorldInstance {
         return live ? this.findOwnedClaim(live, claimId) : undefined;
       },
       duels: this.duels,
+      reloadDonation: () => {
+        this.donation.load();
+      },
+      deathPoint: (entry) => {
+        const last = this.teleportHistory.peek(entry.id);
+        if (!last || last.reason !== 'death') return undefined;
+        return { x: last.x, y: last.y, z: last.z };
+      },
     };
   }
 
@@ -2260,6 +2271,18 @@ export class WorldInstance {
     }
     if (outcome.kind === 'refresh-players') {
       this.flushMenuPlayers([...new Set([player.id, ...outcome.affected])]);
+      return;
+    }
+    if (outcome.kind === 'donate-command') {
+      session.screen = outcome.screen;
+      const result = this.runPlayerCommand(player, outcome.command);
+      session.message = result.lines.join(' ');
+      if (result.ok && outcome.closeOnSuccess) {
+        this.menuSessions.delete(player.id);
+        this.sendTo(player, closedMenuMessage());
+        return;
+      }
+      this.flushMenu(player);
       return;
     }
     this.flushMenuPlayers(outcome.affected);
@@ -2480,6 +2503,39 @@ export class WorldInstance {
       return {
         ...base,
         ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
+      };
+    }
+    if (
+      session.screen === 'donate'
+      || session.screen === 'donate-color'
+      || session.screen === 'donate-announce'
+      || session.screen === 'donate-invsee'
+      || session.screen === 'donate-tp'
+      || session.screen === 'donate-back'
+    ) {
+      const owner = player.name.toLowerCase();
+      const claims = this.loadClaimStore().claims.filter((claim) => claim.owner === owner).length;
+      const last = this.teleportHistory.peek(player.id);
+      const deathPoint = last?.reason === 'death' ? { x: last.x, y: last.y, z: last.z } : undefined;
+      return {
+        ...base,
+        donate: buildDonateMenu({
+          status: this.donation.status(player.id, {
+            operator: this.isOperator(player),
+            homes: this.homes.list(player.name).length,
+            claims,
+            auction: this.auction.activeCount(player.id),
+          }),
+          operator: this.isOperator(player),
+          playerName: player.name,
+          homes: this.homes.list(player.name).length,
+          claims,
+          auction: this.auction.activeCount(player.id),
+          onlinePlayers: this.connectedPlayers()
+            .filter((other) => other.id !== player.id)
+            .map((other) => ({ playerId: other.id, name: other.name })),
+          ...(deathPoint ? { deathPoint } : {}),
+        }),
       };
     }
     if (session.screen === 'duels') {
@@ -3933,6 +3989,29 @@ export class WorldInstance {
       serverLog(`console command failed: ${message}`, 'error');
       return { ok: false, lines: [`Command failed: ${message}`] };
     }
+  }
+
+  private runPlayerCommand(player: ServerPlayer, text: string): { ok: boolean; lines: readonly string[] } {
+    const commandEvent = this.events.createPlayerCommand(player.id, text);
+    this.events.emit('playerCommand', commandEvent);
+    if (commandEvent.cancelled) return { ok: false, lines: ['Command cancelled.'] };
+    const dispatched = this.commands.dispatch(text, {
+      ...player.commandSender(),
+      operator: this.isOperator(player),
+    });
+    const lines = dispatched.result?.lines ?? ['Команда не выполнена.'];
+    const okResult = dispatched.result?.ok ?? false;
+    this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
+    const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+    this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: lines.join('\n'),
+      kind: okResult ? 'command' : 'error',
+    });
+    return { ok: okResult, lines };
   }
 
   handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
@@ -5931,16 +6010,26 @@ export class WorldInstance {
       execute: (args, sender) => {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('Player not found.');
-        const x = Number(args[0]);
-        const y = Number(args[1]);
-        const z = Number(args[2]);
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-          return fail('Usage: /tp <x> <y> <z>');
-        }
-        if (!isValidWorldY(y)) return fail('Y is outside the world.');
-        const result = this.teleports.now(player.id, { x, y, z }, 'command', { silent: true });
-        if (!result.ok) return fail(result.error ?? 'Teleport failed.');
-        return ok(`Teleported to ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`);
+        const point = { x: Number(args[0]), y: Number(args[1]), z: Number(args[2]) };
+        let failure = 'Teleport failed.';
+        const result = attemptCoordinateTeleport({
+          hasPermission: (playerId) => this.permissions.has(playerId, 'tp.coords') || this.permissions.has(player.name, 'tp.coords'),
+          isOperator: () => this.isOperator(player),
+          teleport: (playerId, dest) => {
+            const moved = this.teleports.now(playerId, dest, 'command', { silent: true });
+            if (!moved.ok) failure = moved.error ?? failure;
+            return moved;
+          },
+          peekCooldown: (playerId, now) => {
+            const peek = this.donation.peekCooldown(playerId, 'coords', 1, now);
+            return { allowed: peek.allowed, remainingMs: peek.remainingMs };
+          },
+          consume: (playerId, now, commit) => this.donation.consumeIf(playerId, 'coords', 1, commit, now),
+        }, player.id, point);
+        if (result.ok) return ok(`Teleported to ${point.x.toFixed(1)}, ${point.y.toFixed(1)}, ${point.z.toFixed(1)}`);
+        if (result.remainingMs) return fail(`Телепортация по координатам будет доступна через ${formatDurationMs(result.remainingMs)}.`);
+        if (result.error === 'Не удалось выполнить команду.') return fail(failure);
+        return fail(result.error);
       },
     });
     this.commands.register({

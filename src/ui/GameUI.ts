@@ -5024,6 +5024,11 @@ export class GameUI {
     bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
+    for (const field of this.modal!.querySelectorAll<HTMLElement>('[data-donate-field]')) {
+      field.addEventListener('pointerdown', (event) => event.stopPropagation());
+      field.addEventListener('keydown', (event) => event.stopPropagation());
+      field.addEventListener('keyup', (event) => event.stopPropagation());
+    }
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
     for (const list of lists) {
@@ -5166,6 +5171,17 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) + 1 });
         return;
       }
+      const swatch = target.closest<HTMLElement>('[data-donate-swatch]');
+      if (swatch?.dataset.donateSwatch) {
+        const pick = this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]');
+        if (pick) pick.dataset.selected = swatch.dataset.donateSwatch;
+        const preview = this.modal?.querySelector<HTMLElement>('[data-donate-preview]');
+        if (preview) preview.style.color = swatch.style.backgroundColor;
+        for (const entry of this.modal?.querySelectorAll<HTMLElement>('[data-donate-swatch]') ?? []) {
+          entry.classList.toggle('is-selected', entry === swatch);
+        }
+        return;
+      }
       const button = target.closest<HTMLElement>('[data-menu-action]');
       const kind = button?.dataset.menuAction;
       if (!kind || !isMenuActionKind(kind)) return;
@@ -5194,6 +5210,53 @@ export class GameUI {
       if (kind === 'trade_request') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? current.tradeNameText;
         actions.send({ type: 'menu_action', action: 'trade_request', name });
+        return;
+      }
+      if (kind === 'donate_color') {
+        const selected = button?.dataset.donateColor
+          ?? this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]')?.dataset.selected;
+        if (!selected) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Выберите цвет.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_color', color: selected, name: selected });
+        return;
+      }
+      if (kind === 'donate_announce') {
+        const text = this.modal?.querySelector<HTMLTextAreaElement>('[data-donate-announce]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'donate_announce', text });
+        return;
+      }
+      if (kind === 'donate_tp') {
+        const raw = (selector: string) => this.modal?.querySelector<HTMLInputElement>(selector)?.value.trim() ?? '';
+        const x = Number(raw('[data-donate-x]'));
+        const y = Number(raw('[data-donate-y]'));
+        const z = Number(raw('[data-donate-z]'));
+        if (!raw('[data-donate-x]') || !raw('[data-donate-y]') || !raw('[data-donate-z]') || ![x, y, z].every(Number.isFinite)) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Введите координаты X, Y и Z.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_tp', x, y, z });
+        return;
+      }
+      if (kind === 'donate_invsee' || kind === 'donate_invseeop') {
+        const name = button?.dataset.donatePlayer;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: kind, name });
+        return;
+      }
+      if (kind === 'donate_kit') {
+        const name = button?.dataset.donateKit;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_kit', name });
         return;
       }
       actions.send({ type: 'menu_action', action: kind });

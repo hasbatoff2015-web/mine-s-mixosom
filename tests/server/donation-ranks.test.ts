@@ -11,6 +11,7 @@ import {
   RANK_LIMITS,
   announcementLine,
   donationNodesAreNonAdmin,
+  parseRankTestDuration,
   permissionNodesForRank,
   sanitizeAnnouncementText,
 } from '../../shared/donationRanks';
@@ -62,7 +63,7 @@ describe('donation rank limits and expiry', () => {
     }
     const nodes = permissionNodesForRank('titan');
     expect(nodes).toEqual(expect.arrayContaining([
-      'enderchest.use', 'announce.use', 'back.death', 'tpa.coords', 'invsee.use', 'nick.color',
+      'enderchest.use', 'announce.use', 'back.death', 'tp.coords', 'invsee.use', 'nick.color',
       'kit.use.vip', 'kit.use.prem', 'kit.use.boss', 'kit.use.titan',
       'kit.use.food_vip', 'kit.use.food_titan',
     ]));
@@ -140,6 +141,43 @@ describe('donation rank limits and expiry', () => {
     expect(first.ok).toBe(true);
     expect(nested?.ok).toBe(false);
     expect(service.peekCooldown('ada', 'announce', 1).used).toBe(1);
+  });
+
+  it('keeps a cooldown reservation when the action fails and the rollback cannot be saved', async () => {
+    const dir = await mkdtemp(pathJoin(tmpdir(), 'fc-donate-disk-'));
+    dirs.push(dir);
+    class FlakyStore extends JsonFileStore {
+      failNext = 0;
+      override save(name: string, value: unknown): void {
+        if (this.failNext > 0) {
+          this.failNext -= 1;
+          throw new Error('disk');
+        }
+        super.save(name, value);
+      }
+    }
+    const store = new FlakyStore(dir);
+    const service = new DonationRankService(store);
+    service.load();
+    store.failNext = 1;
+    let ran = 0;
+    const blocked = service.consumeIf('ada', 'coords', 1, () => {
+      ran += 1;
+      return true;
+    }, 1_000);
+    expect(blocked.ok).toBe(false);
+    expect(ran).toBe(0);
+    expect(service.peekCooldown('ada', 'coords', 1, 1_000).allowed).toBe(true);
+
+    const rolled = service.consumeIf('ada', 'coords', 1, () => {
+      store.failNext = 1;
+      return false;
+    }, 2_000);
+    expect(rolled.ok).toBe(false);
+    expect(service.peekCooldown('ada', 'coords', 1, 2_000).allowed).toBe(false);
+    const again = new DonationRankService(new JsonFileStore(dir));
+    again.load();
+    expect(again.peekCooldown('ada', 'coords', 1, 2_000).allowed).toBe(false);
   });
 
   it('keeps kit cooldowns across a reload without touching the start ledger', async () => {
@@ -220,7 +258,7 @@ function resultLines(sink: MemorySink): string[] {
   return lines;
 }
 
-function testConfig(dataDir: string) {
+function testConfig(dataDir: string, rankTestEnabled = false) {
   return {
     ...loadServerConfig({
       HOST: '127.0.0.1',
@@ -240,6 +278,7 @@ function testConfig(dataDir: string) {
     loadExamplePlugin: false,
     loadBuiltinPlugins: true,
     operators: ['Op'],
+    rankTestEnabled,
   };
 }
 
@@ -250,10 +289,10 @@ describe('donation commands on the anarchy world', () => {
     for (const world of worlds.splice(0)) await world.stop();
   });
 
-  async function boot(): Promise<WorldInstance> {
+  async function boot(rankTestEnabled = false): Promise<WorldInstance> {
     const dir = await mkdtemp(pathJoin(tmpdir(), 'fc-donate-world-'));
     dirs.push(dir);
-    const world = new WorldInstance(testConfig(dir));
+    const world = new WorldInstance(testConfig(dir, rankTestEnabled));
     worlds.push(world);
     await world.initialize();
     await world.loadPlugins();
@@ -282,11 +321,12 @@ describe('donation commands on the anarchy world', () => {
     expect(chat(world, ada, '/an hello').some((line) => line.includes('permission'))).toBe(true);
     expect(chat(world, ada, '/invsee Bob').some((line) => line.includes('permission'))).toBe(true);
     expect(chat(world, ada, '/invseeop Bob').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/tpa 8 70 8').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/tpa 8 70 8').some((line) => line.includes('not online'))).toBe(true);
     expect(ada.player.window.kind).toBe('inventory');
     expect(chat(world, ada, '/tpa Bob').some((line) => line.includes('Asked Bob'))).toBe(true);
     expect(world.commands.find('tp')?.usage).toBe('/tp <x> <y> <z>');
-    expect(chat(world, ada, '/tp 8 70 8').some((line) => line.includes('Teleported'))).toBe(true);
+    expect(chat(world, ada, '/tp 8 70 8').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/nickcolor aqua').some((line) => line.includes('PREMIUM'))).toBe(true);
   });
 
   it('grants 30 days, extends the current end, and keeps the rank across a restart', async () => {
@@ -392,6 +432,14 @@ describe('donation commands on the anarchy world', () => {
     expect(said.text).toBe('привет');
     expect(said.nameStyle?.prefix).toBe('[PREMIUM]');
     expect(said.nameStyle?.nameColor).toBe('aqua');
+    chat(world, op, '/donate revoke Ada');
+    ada.sink.payloads.length = 0;
+    world.handleChat(ada.player, 'после');
+    const faded = ada.sink.payloads.find((payload) => {
+      const record = payload as { type?: string; kind?: string };
+      return record.type === 'chat' && record.kind === 'player';
+    }) as { nameStyle?: { nameColor?: string } };
+    expect(faded.nameStyle?.nameColor).toBeUndefined();
   });
 
   it('limits death back and coordinate teleport to successful moves', async () => {
@@ -421,14 +469,14 @@ describe('donation commands on the anarchy world', () => {
     expect(ada.player.controller.position.x).toBeCloseTo(start.x + 60, 1);
 
     const before = { ...ada.player.controller.position };
-    expect(chat(world, ada, '/tpa 4 70 4').some((line) => line.includes('Teleported'))).toBe(true);
+    expect(chat(world, ada, '/tp 4 70 4').some((line) => line.includes('Teleported'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(4, 1);
     ada.player.controller.teleport([start.x, start.y, start.z]);
-    expect(chat(world, ada, '/tpa 9 70 9').some((line) => line.includes('через'))).toBe(true);
+    expect(chat(world, ada, '/tp 9 70 9').some((line) => line.includes('через'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(start.x, 1);
     expect(chat(world, ada, '/tpa not-a-player').some((line) => line.includes('not online'))).toBe(true);
-    expect(chat(world, op, '/tpa 6 70 6').some((line) => line.includes('Teleported'))).toBe(true);
-    expect(chat(world, op, '/tpa 7 70 7').some((line) => line.includes('Teleported'))).toBe(true);
+    expect(chat(world, op, '/tp 6 70 6').some((line) => line.includes('Teleported'))).toBe(true);
+    expect(chat(world, op, '/tp 7 70 7').some((line) => line.includes('Teleported'))).toBe(true);
     expect(before.x).toBeTypeOf('number');
   });
 
@@ -469,5 +517,82 @@ describe('donation commands on the anarchy world', () => {
     expect(bob.player.inventory.getSlot(10)).toBeNull();
     world.disconnect(bob.player.id);
     expect(op.player.window.kind).toBe('inventory');
+  });
+
+  it('rejects /ranktest on production and lets only OP use it on DEV', async () => {
+    expect(loadServerConfig({}).rankTestEnabled).toBe(false);
+    expect(loadServerConfig({ FC_RANK_TEST: '1' }).rankTestEnabled).toBe(true);
+    expect(loadServerConfig({ FC_RANK_TEST: 'true' }).rankTestEnabled).toBe(true);
+    expect(loadServerConfig({ FC_RANK_TEST: '0' }).rankTestEnabled).toBe(false);
+    expect(parseRankTestDuration('30s')).toEqual({ ok: true, ms: 30_000 });
+    expect(parseRankTestDuration('30').ok).toBe(false);
+
+    const production = await boot(false);
+    const prodOp = join(production, 'Op');
+    const prodAda = join(production, 'Ada');
+    expect(chat(production, prodOp, '/ranktest set Ada titan 30s').some((line) => line.includes('только на DEV'))).toBe(true);
+    expect(production.donation.effectiveRank(prodAda.player.id)).toBe('default');
+    expect(production.permissions.has(prodAda.player.id, 'server.admin')).toBe(false);
+
+    const world = await boot(true);
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    expect(chat(world, ada, '/ranktest set Ada titan 30s').some((line) => line.includes('permission'))).toBe(true);
+    expect(world.donation.effectiveRank(ada.player.id)).toBe('default');
+    expect(chat(world, op, '/ranktest set Ada titan 1s').some((line) => line.includes('titan'))).toBe(true);
+    expect(world.donation.effectiveRank(ada.player.id)).toBe('titan');
+    expect(world.permissions.has(ada.player.id, 'invsee.use')).toBe(true);
+    expect(world.permissions.has(ada.player.id, 'server.admin')).toBe(false);
+    expect(world.permissions.has(ada.player.id, 'plugins.manage')).toBe(false);
+    const status = chat(world, op, '/ranktest status Ada').join('\n');
+    expect(status).toContain('Ранг: titan');
+    expect(status).toContain('ещё');
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+    expect(world.donation.effectiveRank(ada.player.id)).toBe('default');
+    expect(world.permissions.has(ada.player.id, 'invsee.use')).toBe(false);
+    expect(chat(world, op, '/ranktest status Ada').join('\n')).toContain('Ранг: default');
+
+    expect(chat(world, op, '/ranktest set Ada premium 5m').some((line) => line.includes('premium'))).toBe(true);
+    expect(world.donation.effectiveRank(ada.player.id)).toBe('premium');
+    expect(world.permissions.has(ada.player.id, 'enderchest.use')).toBe(true);
+    expect(chat(world, op, '/ranktest clear Ada').some((line) => line.includes('снят'))).toBe(true);
+    expect(world.donation.effectiveRank(ada.player.id)).toBe('default');
+    expect(world.permissions.has(ada.player.id, 'enderchest.use')).toBe(false);
+  });
+
+  it('renders the donate menu from the live rank and uses the same /tp check', async () => {
+    const world = await boot(true);
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    const menuOf = () => ada.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').at(-1) as {
+      screen?: string;
+      message?: string;
+      donate?: { rankLabel?: string; actions?: { id: string; available: boolean }[] };
+    };
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'donate' });
+    expect(menuOf().screen).toBe('donate');
+    expect(menuOf().donate?.rankLabel).toBe('Обычный игрок');
+    expect(menuOf().donate?.actions?.find((action) => action.id === 'tp')?.available).toBe(false);
+    expect(menuOf().donate?.actions?.some((action) => action.id === 'invseeop')).toBe(false);
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'donate_tp', x: 8, y: 70, z: 8 });
+    expect(menuOf().message).toContain('permission');
+    expect(ada.player.controller.position.x).not.toBeCloseTo(8, 0);
+    expect(chat(world, op, '/ranktest set Ada titan 1h').some((line) => line.includes('titan'))).toBe(true);
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'donate' });
+    expect(menuOf().donate?.rankLabel).toBe('TITAN');
+    expect(menuOf().donate?.actions?.find((action) => action.id === 'nickcolor')?.available).toBe(true);
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'donate_color', color: 'gold', name: 'gold' });
+    expect(world.donation.nickColor(ada.player.id)).toBe('gold');
+    expect(menuOf().screen).toBe('donate-color');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });
+    expect(menuOf().screen).toBe('donate');
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'back' });
+    expect(menuOf().screen).toBe('root');
+    world.handleMenuAction(op.player, { type: 'menu_action', action: 'open', screen: 'donate' });
+    const opMenu = op.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').at(-1) as {
+      donate?: { rankLabel?: string; showInvseeOp?: boolean };
+    };
+    expect(opMenu.donate?.rankLabel).toBe('OP');
+    expect(opMenu.donate?.showInvseeOp).toBe(true);
   });
 });

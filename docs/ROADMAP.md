@@ -11,9 +11,9 @@
 
 - [x] VIP, PREMIUM, BOSS, TITAN replace each other and expire to `default`.
 - [x] Homes, claims, and auction lots use one server limit. Existing objects stay when the rank drops.
-- [x] `/ec`, `/an`, `/invsee`, `/invseeop`, `/nickcolor`, and `/tpa x y z` share the rank service. Player `/tpa` stays.
-- [x] Kit periods and command cooldowns survive restart. A failed give does not spend the use.
-- [ ] Menu tab «Донат-привилегии» and coordinate form are not built. `DonationRankService.status()` is the source they should call.
+- [x] `/ec`, `/an`, `/invsee`, `/invseeop`, `/nickcolor`, and `/tp` share the rank service. Player `/tpa` stays a request.
+- [x] Kit periods and command cooldowns survive restart. The stamp is saved before the action.
+- [x] Menu tab «Донат» reads `DonationRankService.status()` and calls the same commands.
 - [ ] Not merged. Draft PR **#131**. Wait for an explicit merge command.
 
 ## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback

@@ -16,11 +16,11 @@ A rank lasts 30 days unless an operator passes another day count. Extension of a
 | VIP | 4 | 4 | 10 | `vip` / 7d | `food_vip` / 24h | — |
 | PREMIUM | 5 | 5 | 15 | `prem` / 7d | `food_prem` / 24h | `/ec`, `/an`, nick color |
 | BOSS | 6 | 6 | 20 | `boss` / 7d | `food_boss` / 24h | death `/back` 1 / 24h |
-| TITAN | 7 | 7 | 25 | `titan` / 7d | `food_titan` / 24h | `/tpa x y z` 1 / 24h, `/invsee` 1 / 24h |
+| TITAN | 7 | 7 | 25 | `titan` / 7d | `food_titan` / 24h | `/tp` 1 / 24h, `/invsee` 1 / 24h |
 
 Higher ranks include the lower permission nodes. Nodes do not include `server.*`, `plugins.manage`, or `*`. OP still has every permission and the prefix `[ADMIN]`. `/invseeop` is operator-only.
 
-`/ec` opens the existing personal portal chest. `/an` broadcasts `[ОБЪЯВЛЕНИЕ ОТ ИГРОКА <prefix> <name>] <text>`. The name is the server name. Control characters, `§` / `&` codes, and forged rank prefixes are removed from the text. `/invsee` cannot move the target inventory. `/invseeop` can, and each open and edit is logged. `/tpa <player>` is unchanged. `/tpa x y z` is the ranked coordinate teleport and uses `attemptCoordinateTeleport`, which a future form can call. `/tp` is still the old unrestricted command.
+`/ec` opens the existing personal portal chest. `/an` broadcasts `[ОБЪЯВЛЕНИЕ ОТ ИГРОКА <prefix> <name>] <text>`. The name is the server name. Control characters, `§` / `&` codes, and forged rank prefixes are removed from the text. `/invsee` cannot move the target inventory. `/invseeop` can, and each open and edit is logged. `/tpa <player>` is unchanged. Ranked coordinates moved to `/tp` on 2026-10-18. See `docs/reports/2026-10-18_donate-menu.md`.
 
 Cooldowns are sliding windows from the successful use, stored in `plugin-data/donation/ranks.json` with the grant and nick color. A failed give, teleport, or announcement does not write a use. A nested call on the same channel is rejected. Rank changes do not clear cooldowns. The one-time `start` ledger stays in the kit store.
 
@@ -62,11 +62,15 @@ Rank checks are in-memory map reads. Inventory flushes of a watched player also 
 
 ## Known issues
 
-`/tp <x> <y> <z>` is still available to every player. That command existed with permission `player` and was left in place. The ranked coordinate limit is `/tpa x y z`.
+Superseded on 2026-10-18: `/tp <x> <y> <z>` is the ranked coordinate command. `/tpa` is only a player request. See `docs/reports/2026-10-18_donate-menu.md`.
 
 Operator auction listings keep the old fallback cap of 30 (`AUCTION_MAX_ACTIVE`) when it is higher than the rank. Other players use 7/10/15/20/25.
 
 A corrupt donation file fails closed: no donate nodes and no extra command uses until the file can be read again.
+
+## DEV rank test
+
+`/ranktest` is registered with the donate plugin but does nothing unless `ServerConfig.rankTestEnabled` is true. That flag is true only when `FC_RANK_TEST` is `1` or `true`. It defaults to false. `npm run dev:server` and `dev:server:anarchy|survival|peaceful` set it. `npm run start:server` does not. Only an operator can use the command. It calls `DonationRankService.grant` / `revoke` with source `ranktest`.
 
 ## Deferred
 
