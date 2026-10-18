@@ -1,5 +1,13 @@
 # Архитектура
 
+## Emotes — 2026-10-17
+
+`EmoteSession` is the local phase (`idle`, `wheel`, `playing`). `InputManager` reports Z only when the player is not typing and `canCapture()` is true. The wheel is a HUD overlay. It releases pointer lock while it is open and asks for it again on close. Primary-hand presses are swallowed for the whole session. Movement is zeroed only while the wheel is open, so a later WASD, jump, sneak, or descend intent can cancel playback. Look yaw and pitch are not an intent.
+
+Playback writes one reused pose into `PlayerVisualAnimator` and hides `rig.heldItem`. Armor stays parented to the existing pivots. The camera uses `thirdPersonBack`, `availableThirdPersonDistance`, and a small upward bias on that same ray. The stored perspective preference is restored when the emote ends.
+
+Other clients see `presentation.emote` and `presentation.emoteSeq` on the existing player snapshot. The client sends one `emote` start and one stop. The server ignores a second start, clears the id on a newer movement command, on death, on disconnect, and when the duration elapses. It does not move the player.
+
 ## Donate ranks — 2026-10-13
 
 `DonationRankService` is the only timed rank store (`plugin-data/donation/ranks.json`). A player has one grant: rank, `grantedAt`, `expiresAt`, optional source, and a short history. `effectiveRank` is `default` when `expiresAt` is in the past, including for an offline player after restart. `PermissionService.setExtraNodes` adds that rank's nodes on every `has()` call. The nodes are cumulative and do not include `server.*`, `plugins.manage`, or `*`. OP still returns true before those nodes are read, so a donate rank cannot become OP.

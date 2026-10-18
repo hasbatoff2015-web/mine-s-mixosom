@@ -8,6 +8,8 @@ export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, EntityUseActionDiagnostics, PlayerActionKind } from './playerActions';
+import type { EmoteId } from './emotes';
+import { isEmoteId } from './emotes';
 import type { PlayerPresentationState } from './playerPresentation';
 import {
   parseNetworkAppearance,
@@ -772,6 +774,12 @@ export interface ClientTradeActionMessage {
 
 export type DirectMessageActionKind = 'send' | 'history';
 
+export interface ClientEmoteMessage {
+  readonly type: 'emote';
+  readonly action: 'start' | 'stop';
+  readonly id?: EmoteId;
+}
+
 export interface ClientDirectMessageActionMessage {
   readonly type: 'direct_message_action';
   readonly action: DirectMessageActionKind;
@@ -810,7 +818,8 @@ export type ClientMessage =
   | ClientBuyerActionMessage
   | ClientMenuActionMessage
   | ClientTradeActionMessage
-  | ClientDirectMessageActionMessage;
+  | ClientDirectMessageActionMessage
+  | ClientEmoteMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1702,6 +1711,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'menu_action',
   'trade_action',
   'direct_message_action',
+  'emote',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -2653,6 +2663,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(tradeSlot !== undefined ? { tradeSlot } : {}),
         ...(money !== undefined ? { money } : {}),
       };
+    }
+    case 'emote': {
+      if (raw.action !== 'start' && raw.action !== 'stop') return { error: 'emote.action invalid' };
+      if (raw.action === 'stop') return { type: 'emote', action: 'stop' };
+      if (!isEmoteId(raw.id)) return { error: 'emote.id invalid' };
+      return { type: 'emote', action: 'start', id: raw.id };
     }
     default:
       return { error: `unknown message type ${raw.type}` };

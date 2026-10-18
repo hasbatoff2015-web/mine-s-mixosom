@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isEmoteId, type EmoteId } from '../../shared/emotes';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../../shared/protocol';
 import {
   IDLE_PLAYER_PRESENTATION,
@@ -65,6 +66,9 @@ export class RemotePlayerView {
   private presentationReceivedAt = 0;
   private swingSeq = 0;
   private hurtSeq = 0;
+  private emoteId: EmoteId | null = null;
+  private emoteSeq = 0;
+  private emoteElapsed = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
   private seated = false;
@@ -113,6 +117,9 @@ export class RemotePlayerView {
     this.presentationReceivedAt = _now;
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
+    this.emoteId = isEmoteId(this.presentation.emote) ? this.presentation.emote : null;
+    this.emoteSeq = this.presentation.emoteSeq ?? 0;
+    this.emoteElapsed = 0;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
@@ -173,6 +180,13 @@ export class RemotePlayerView {
     if (nextHurt > this.hurtSeq) this.visual.triggerHurtFlash();
     this.swingSeq = Math.max(this.swingSeq, next.swingSeq);
     this.hurtSeq = Math.max(this.hurtSeq, nextHurt);
+    const nextEmote = !dead && isEmoteId(next.emote) ? next.emote : null;
+    const nextEmoteSeq = next.emoteSeq ?? this.emoteSeq;
+    if (nextEmote !== this.emoteId || nextEmoteSeq !== this.emoteSeq) {
+      this.emoteId = nextEmote;
+      this.emoteSeq = nextEmoteSeq;
+      this.emoteElapsed = 0;
+    }
     this.presentation = dead
       ? {
         ...IDLE_PLAYER_PRESENTATION,
@@ -208,6 +222,9 @@ export class RemotePlayerView {
     const dying = this.deathSeconds >= 0;
     if (dying) this.deathSeconds += Math.max(0, deltaSeconds);
     const deathProgress = dying ? humanoidDeathProgress(this.deathSeconds) : 0;
+    const emote = !dying && active ? this.emoteId : null;
+    const emoteTime = emote ? this.emoteElapsed : 0;
+    if (emote) this.emoteElapsed += Math.max(0, deltaSeconds);
     if (!pose) {
       const seated = this.seated && !dying;
       const visualPose = this.visual.update(deltaSeconds, {
@@ -220,6 +237,8 @@ export class RemotePlayerView {
         verticalVelocity: 0,
         ...actionFrame,
         seated,
+        emote,
+        emoteTime,
         invisible: false,
         hurtFlash: 0,
         deathProgress,
@@ -242,6 +261,8 @@ export class RemotePlayerView {
       verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
       seated,
+      emote,
+      emoteTime,
       invisible: pose.invisible,
       hurtFlash: 0,
       deathProgress,

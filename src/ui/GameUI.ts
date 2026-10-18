@@ -119,6 +119,7 @@ import {
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
+import { EMOTE_IDS, EMOTE_LABELS, type EmoteId } from '../../shared/emotes';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
   chatScrollPinnedToBottom,
@@ -324,6 +325,21 @@ interface OverlayCloseOptions {
   keepModal?: boolean;
 }
 
+function emoteWheelHtml(): string {
+  const wedges = EMOTE_IDS.map((id) => `<div class="emote-wedge" data-wedge="${id}"></div>`).join('');
+  const labels = EMOTE_IDS.map((id) => `<span class="emote-label emote-label-${id}">${EMOTE_LABELS[id]}</span>`).join('');
+  return `<div id="emote-wheel" class="hidden" aria-hidden="true">
+    <div class="emote-wheel-dim"></div>
+    <div class="emote-disc" data-selected="">
+      ${wedges}
+      <div class="emote-dividers" aria-hidden="true"></div>
+      ${labels}
+      <div class="emote-hub"><span id="emote-wheel-title">Отмена</span></div>
+      <div class="emote-cursor" aria-hidden="true"></div>
+    </div>
+  </div>`;
+}
+
 export class GameUI {
   private screen?: HTMLElement;
   private hud: HTMLElement;
@@ -360,6 +376,10 @@ export class GameUI {
   private playerInClan = false;
   private chatLines: ChatMessage[] = [];
   private pointerLockFallback: HTMLElement;
+  private emoteWheel: HTMLElement;
+  private emoteDisc: HTMLElement;
+  private emoteWheelTitle: HTMLElement;
+  private emoteCursor: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
   private hologramPreviewTimer?: number;
@@ -533,7 +553,12 @@ export class GameUI {
             <span class="hud-corner-key">M</span>
             <span class="hud-corner-label">Меню</span>
           </button>
+          <div id="hud-emote" role="img" aria-label="Эмоции, клавиша Z">
+            <span class="hud-corner-key">Z</span>
+            <span class="hud-corner-label">Эмоции</span>
+          </div>
         </div>
+        ${emoteWheelHtml()}
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -570,6 +595,10 @@ export class GameUI {
     this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
     this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    this.emoteWheel = this.root.querySelector('#emote-wheel')!;
+    this.emoteDisc = this.root.querySelector('.emote-disc')!;
+    this.emoteWheelTitle = this.root.querySelector('#emote-wheel-title')!;
+    this.emoteCursor = this.root.querySelector('.emote-cursor')!;
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
@@ -1291,6 +1320,42 @@ export class GameUI {
 
   isBlockingOverlay(): boolean {
     return this.modal !== undefined || this.chatOpen || this.hologramEditor !== undefined;
+  }
+
+  isEmoteWheelOpen(): boolean {
+    return !this.emoteWheel.classList.contains('hidden');
+  }
+
+  showEmoteWheel(): void {
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
+    this.emoteWheel.classList.remove('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'false');
+  }
+
+  /** Highlight only. The hub label stays «Отмена». */
+  setEmoteWheelSelection(id: EmoteId | null): void {
+    this.emoteDisc.dataset.selected = id ?? '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+  }
+
+  emoteWheelRadius(): number {
+    return this.emoteDisc.getBoundingClientRect().width / 2;
+  }
+
+  placeEmoteCursor(x: number, y: number): void {
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    this.emoteCursor.style.transform = `translate(${px}px, ${py}px)`;
+  }
+
+  hideEmoteWheel(): void {
+    this.emoteWheel.classList.add('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'true');
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
   }
 
   isHologramEditorOpen(): boolean {
