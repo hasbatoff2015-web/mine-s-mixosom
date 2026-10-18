@@ -6834,6 +6834,7 @@ export class Game {
 
   private disposeSession(): void {
     this.emotes?.cancel();
+    this.input?.setEmotePointer(null);
     this.ui.hideEmoteWheel();
     this.emoteReturnSeconds = 0;
     this.polishQaDispose?.();
@@ -6992,16 +6993,19 @@ export class Game {
     this.input.releaseActions();
     this.input.consumeAttackPresses();
     this.input.consumeUsePressed();
-    this.input.releasePointerLock();
-    this.ui.showEmoteWheel((dx, dy, radius) => {
-      this.ui.setEmoteWheelSelection(this.emotes.point(dx, dy, radius));
+    this.ui.showEmoteWheel();
+    this.ui.setEmoteWheelSelection(null);
+    this.input.setEmotePointer((dx, dy) => {
+      const selected = this.emotes.nudgePointer(dx, dy, this.ui.emoteWheelRadius());
+      this.ui.setEmoteWheelSelection(selected);
+      this.ui.placeEmoteCursor(this.emotes.pointer.x, this.emotes.pointer.y);
     });
   }
 
   private releaseEmoteWheel(): void {
     if (this.emotes.phaseName !== 'wheel') return;
     const started = this.emotes.release();
-    this.ui.hideEmoteWheel();
+    this.closeEmoteWheel();
     if (started) {
       this.beginEmoteCamera();
       this.sendEmoteStart(started);
@@ -7009,9 +7013,14 @@ export class Game {
     this.restoreLookAfterEmote();
   }
 
+  private closeEmoteWheel(): void {
+    this.input.setEmotePointer?.(null);
+    this.ui.hideEmoteWheel();
+  }
+
   private cancelLocalEmote(): void {
     const was = this.emotes.cancel();
-    this.ui.hideEmoteWheel();
+    this.closeEmoteWheel();
     if (was === 'playing') {
       this.endEmoteCamera();
       this.sendEmoteStop();

@@ -34,7 +34,7 @@ const HUD_SPRITE_FILES = {
   '--hud-menu-img': 'menu.png',
   '--hud-menu-hover-img': 'menu_hover.png',
   '--hud-menu-pressed-img': 'menu_pressed.png',
-  '--hud-emote-img': 'emote_z.png',
+  '--hud-emote-img': 'emote_z.png?v=2',
 } as const;
 
 const CHAT_SPRITE_FILES = {

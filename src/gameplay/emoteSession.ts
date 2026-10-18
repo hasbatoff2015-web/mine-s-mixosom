@@ -17,6 +17,9 @@ export class EmoteSession {
   private selectedId: EmoteId | null = null;
   private playingId: EmoteId | null = null;
   private elapsedSeconds = 0;
+  /** Pixels from the wheel center. Every open starts at the hub. */
+  private pointerX = 0;
+  private pointerY = 0;
 
   get phaseName(): EmotePhase {
     return this.phase;
@@ -48,18 +51,46 @@ export class EmoteSession {
     return this.phase !== 'idle';
   }
 
+  /** Offset from the hub. Zero means the cancel circle, not a sector. */
+  get pointer(): { readonly x: number; readonly y: number } {
+    return { x: this.pointerX, y: this.pointerY };
+  }
+
   tryOpen(allowed: boolean): boolean {
     if (!allowed || this.phase !== 'idle') return false;
     this.phase = 'wheel';
     this.selectedId = null;
     this.playingId = null;
     this.elapsedSeconds = 0;
+    this.pointerX = 0;
+    this.pointerY = 0;
     return true;
   }
 
   point(dx: number, dy: number, radius: number): EmoteId | null {
     if (this.phase !== 'wheel') return null;
-    this.selectedId = emoteSectorFromPointer(dx, dy, radius);
+    this.pointerX = Number.isFinite(dx) ? dx : 0;
+    this.pointerY = Number.isFinite(dy) ? dy : 0;
+    this.selectedId = emoteSectorFromPointer(this.pointerX, this.pointerY, radius);
+    return this.selectedId;
+  }
+
+  /**
+   * One pointer-lock sample. The wheel opens at the hub, so a leftover
+   * screen coordinate cannot select a sector before the player moves.
+   */
+  nudgePointer(dx: number, dy: number, radius: number): EmoteId | null {
+    if (this.phase !== 'wheel') return null;
+    if (Number.isFinite(dx)) this.pointerX += dx;
+    if (Number.isFinite(dy)) this.pointerY += dy;
+    const limit = Number.isFinite(radius) && radius > 0 ? radius : 0;
+    const distance = Math.hypot(this.pointerX, this.pointerY);
+    if (limit > 0 && distance > limit) {
+      const scale = limit / distance;
+      this.pointerX *= scale;
+      this.pointerY *= scale;
+    }
+    this.selectedId = emoteSectorFromPointer(this.pointerX, this.pointerY, radius);
     return this.selectedId;
   }
 
@@ -72,6 +103,8 @@ export class EmoteSession {
       this.phase = 'idle';
       this.playingId = null;
       this.elapsedSeconds = 0;
+      this.pointerX = 0;
+      this.pointerY = 0;
       return null;
     }
     this.phase = 'playing';
@@ -111,5 +144,7 @@ export class EmoteSession {
     this.selectedId = null;
     this.playingId = null;
     this.elapsedSeconds = 0;
+    this.pointerX = 0;
+    this.pointerY = 0;
   }
 }

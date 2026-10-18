@@ -334,6 +334,7 @@ function emoteWheelHtml(): string {
       <div class="emote-dividers" aria-hidden="true"></div>
       ${labels}
       <div class="emote-hub"><span id="emote-wheel-title">Отмена</span></div>
+      <div class="emote-cursor" aria-hidden="true"></div>
     </div>
   </div>`;
 }
@@ -377,13 +378,7 @@ export class GameUI {
   private emoteWheel: HTMLElement;
   private emoteDisc: HTMLElement;
   private emoteWheelTitle: HTMLElement;
-  private emotePointer?: (dx: number, dy: number, radius: number) => void;
-  private readonly onEmotePointer = (event: PointerEvent): void => {
-    const ring = this.emoteDisc.getBoundingClientRect();
-    const radius = ring.width / 2;
-    if (radius <= 0) return;
-    this.emotePointer?.(event.clientX - (ring.left + radius), event.clientY - (ring.top + radius), radius);
-  };
+  private emoteCursor: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
   private hologramPreviewTimer?: number;
@@ -602,6 +597,7 @@ export class GameUI {
     this.emoteWheel = this.root.querySelector('#emote-wheel')!;
     this.emoteDisc = this.root.querySelector('.emote-disc')!;
     this.emoteWheelTitle = this.root.querySelector('#emote-wheel-title')!;
+    this.emoteCursor = this.root.querySelector('.emote-cursor')!;
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
@@ -1329,26 +1325,36 @@ export class GameUI {
     return !this.emoteWheel.classList.contains('hidden');
   }
 
-  showEmoteWheel(onPointer: (dx: number, dy: number, radius: number) => void): void {
-    this.emotePointer = onPointer;
+  showEmoteWheel(): void {
     this.emoteDisc.dataset.selected = '';
     this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
     this.emoteWheel.classList.remove('hidden');
     this.emoteWheel.setAttribute('aria-hidden', 'false');
-    window.addEventListener('pointermove', this.onEmotePointer);
   }
 
+  /** Highlight only. The hub label stays «Отмена». */
   setEmoteWheelSelection(id: EmoteId | null): void {
     this.emoteDisc.dataset.selected = id ?? '';
-    this.emoteWheelTitle.textContent = id ? EMOTE_LABELS[id] : 'Отмена';
+    this.emoteWheelTitle.textContent = 'Отмена';
+  }
+
+  emoteWheelRadius(): number {
+    return this.emoteDisc.getBoundingClientRect().width / 2;
+  }
+
+  placeEmoteCursor(x: number, y: number): void {
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    this.emoteCursor.style.transform = `translate(${px}px, ${py}px)`;
   }
 
   hideEmoteWheel(): void {
-    this.emotePointer = undefined;
-    window.removeEventListener('pointermove', this.onEmotePointer);
     this.emoteWheel.classList.add('hidden');
     this.emoteWheel.setAttribute('aria-hidden', 'true');
     this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
   }
 
   isHologramEditorOpen(): boolean {
