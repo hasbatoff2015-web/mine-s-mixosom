@@ -78,4 +78,4 @@ NOT RUN в браузере. Проверены пиксели текстуры 
 
 ## Git
 
-Feature-ветка от `origin/main` `f4e072c`. Draft PR, без merge.
+Feature-ветка `cursor/cosmetic-bee-mini-creeper-pets-e355` от `origin/main` `f4e072c`. Коммит `db35e2e`. Draft PR https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/133. Merge не делался.
