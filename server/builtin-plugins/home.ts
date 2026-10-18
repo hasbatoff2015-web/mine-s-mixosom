@@ -83,7 +83,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (args[0]?.toLowerCase() === 'config') {
             if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sender.name)) {
-              return fail('You do not have permission.');
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             if (args[1]?.toLowerCase() === 'set') {
               if (!args[2] || args[3] === undefined) return usageError('/home config set <key> <value>');

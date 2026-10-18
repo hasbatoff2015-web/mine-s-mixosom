@@ -14,7 +14,7 @@ export const CREATIVE_FLY_DOUBLE_TAP_MS = CREATIVE_FLY_DOUBLE_TAP_TICKS * (1000 
 
 /** Creative Flight is a gamemode permission, not a movement-state field. */
 export function creativeFlightAllowedForGamemode(gamemode: string | undefined): boolean {
-  return gamemode === 'creative';
+  return gamemode === 'creative' || gamemode === 'spectator';
 }
 
 /**
@@ -34,6 +34,12 @@ export function syncCreativeFlightAllowed(
   gamemode: string | undefined,
 ): void {
   player.creativeFlightAllowed = creativeFlightAllowedForGamemode(gamemode);
+  if ('noclip' in player) {
+    (player as { noclip: boolean }).noclip = gamemode === 'spectator';
+  }
+  if (gamemode === 'spectator' && 'isFlying' in player) {
+    (player as { isFlying: boolean }).isFlying = true;
+  }
 }
 
 /**

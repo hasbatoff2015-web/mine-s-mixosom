@@ -101,7 +101,10 @@ describe('command registry', () => {
       expect(dispatchChatLine(`/gamemode ${token}`, ctx).result?.ok).toBe(true);
       expect(ctx.mode).toBe('survival');
     }
-    expect(dispatchChatLine('/gamemode spectator', ctx).result?.ok).toBe(false);
+    expect(dispatchChatLine('/gamemode spectator', ctx).result?.ok).toBe(true);
+    expect(ctx.mode).toBe('spectator');
+    expect(dispatchChatLine('/gamemode 2', ctx).result?.ok).toBe(true);
+    expect(ctx.mode).toBe('spectator');
   });
 
   it('sets day, noon, night and midnight', () => {

@@ -76,7 +76,7 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
     const { world, player, sink } = await boot();
     sink.payloads.length = 0;
     world.handleChat(player, '/spawnpet wolf');
-    expect(resultLines(sink).some((line) => line.includes('You do not have permission.'))).toBe(true);
+    expect(resultLines(sink).some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
     expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'wolf')).toHaveLength(0);
   });
 

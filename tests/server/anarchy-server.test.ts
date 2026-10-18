@@ -40,6 +40,7 @@ function testConfig(dataDir: string, port = 0) {
     port,
     chunkViewRadius: 1,
     persistIntervalMs: 60_000,
+    operators: ['Ada', 'Builder'],
   };
 }
 
@@ -356,7 +357,7 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     const server = await boot();
     const a = new TestClient();
     const b = new TestClient();
-    const welcomeA = await a.connect(server.wsUrl(), { name: 'A' });
+    const welcomeA = await a.connect(server.wsUrl(), { name: 'Ada' });
     const welcomeB = await b.connect(server.wsUrl(), { name: 'B' });
     expect(welcomeB.players.some((player) => player.id === welcomeA.playerId)).toBe(true);
     await a.waitFor('player_joined');

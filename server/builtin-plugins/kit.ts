@@ -66,7 +66,7 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
         const rule = kitAccessRule(kitName);
         const operator = api.isOperator(player.name) || api.isOperator(playerId);
         if (!bypassCooldown && rule && rule.permission !== 'player' && !operator && !api.hasPermission(playerId, rule.permission)) {
-          return fail('You do not have permission.');
+          return fail('Недостаточно прав для выполнения этой команды.');
         }
         const deliver = (): boolean => {
           const live = api.getPlayer(playerId);
@@ -123,7 +123,7 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
           }
 
           if (sub === 'create') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             const name = parseKitName(args[1]);
             if (!args[1]) return usageError('/kit create <название>');
             if (!name) return fail(invalidName());
@@ -137,7 +137,7 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
           }
 
           if (sub === 'delete') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             const name = parseKitName(args[1]);
             if (!args[1]) return usageError('/kit delete <название>');
             if (!name) return fail(invalidName());
@@ -146,7 +146,7 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
           }
 
           if (sub === 'give') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             if (!args[1] || !args[2]) return usageError('/kit give <игрок> <название>');
             const name = parseKitName(args[2]);
             if (!name) return fail(invalidName());

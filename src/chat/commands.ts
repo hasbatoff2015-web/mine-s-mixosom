@@ -37,6 +37,9 @@ export const TIME_PRESETS = Object.freeze({
 });
 
 const GAMEMODE_ALIASES: Readonly<Record<string, GameMode>> = Object.freeze({
+  spectator: 'spectator',
+  sp: 'spectator',
+  '2': 'spectator',
   survival: 'survival',
   s: 'survival',
   '0': 'survival',
@@ -91,8 +94,8 @@ const helpCommand: CommandDefinition = {
 const gamemodeCommand: CommandDefinition = {
   name: 'gamemode',
   aliases: ['gm'],
-  usage: '/gamemode <survival|creative>',
-  description: 'Set survival or creative mode',
+  usage: '/gamemode <survival|creative|spectator>',
+  description: 'Set survival, creative, or spectator mode',
   execute(args, ctx) {
     const key = args[0]?.toLowerCase();
     const mode = key ? GAMEMODE_ALIASES[key] : undefined;

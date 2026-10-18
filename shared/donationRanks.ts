@@ -47,10 +47,9 @@ export function limitForRank(rank: EffectiveRank, kind: LimitKind): number {
 
 /** Nodes added by a rank. Each entry is only the new nodes; callers union lower ranks. */
 const RANK_ADDED_NODES: Record<DonationRankId, readonly string[]> = {
-  vip: ['donate.rank.vip', 'kit.use.vip', 'kit.use.food_vip'],
+  vip: ['donate.rank.vip', 'enderchest.use', 'kit.use.vip', 'kit.use.food_vip'],
   premium: [
     'donate.rank.premium',
-    'enderchest.use',
     'announce.use',
     'nick.color',
     'kit.use.prem',
@@ -274,6 +273,43 @@ export function parseRankTestDuration(raw: string | undefined): { ok: true; ms: 
     return { ok: false, error: 'Срок не длиннее 3650 дней.' };
   }
   return { ok: true, ms };
+}
+
+const RU_MONTHS = [
+  'января', 'февраля', 'марта', 'апреля', 'мая', 'июня',
+  'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря',
+] as const;
+
+function ruPlural(value: number, one: string, few: string, many: string): string {
+  const abs = Math.abs(value) % 100;
+  const last = abs % 10;
+  if (abs > 10 && abs < 20) return many;
+  if (last === 1) return one;
+  if (last >= 2 && last <= 4) return few;
+  return many;
+}
+
+/** Date and remaining time, without the clock time of expiry. */
+export function formatRankExpiry(expiresAt: number, now = Date.now()): string {
+  const date = new Date(expiresAt);
+  const day = date.getUTCDate();
+  const month = RU_MONTHS[date.getUTCMonth()] ?? '';
+  const left = Math.max(0, expiresAt - now);
+  return `До ${day} ${month} · осталось ${formatRemainingWords(left)}`;
+}
+
+export function formatRemainingWords(ms: number): string {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  const days = Math.floor(totalSeconds / 86_400);
+  const hours = Math.floor((totalSeconds % 86_400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const word = (value: number, one: string, few: string, many: string) => (
+    `${value} ${ruPlural(value, one, few, many)}`
+  );
+  if (days > 0) return `${word(days, 'день', 'дня', 'дней')} ${word(hours, 'час', 'часа', 'часов')}`;
+  if (hours > 0) return `${word(hours, 'час', 'часа', 'часов')} ${word(minutes, 'минута', 'минуты', 'минут')}`;
+  if (minutes > 0) return word(minutes, 'минута', 'минуты', 'минут');
+  return 'меньше минуты';
 }
 
 export function formatDurationMs(ms: number): string {

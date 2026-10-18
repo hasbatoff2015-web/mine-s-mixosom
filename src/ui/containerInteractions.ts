@@ -281,7 +281,7 @@ export function placeSmeltingIngredient(
   return { input: createItemStack(itemId, 1), placed: true };
 }
 
-export function showsCreativeCatalog(kind: ContainerKind, mode: 'survival' | 'creative'): boolean {
+export function showsCreativeCatalog(kind: ContainerKind, mode: 'survival' | 'creative' | 'spectator'): boolean {
   return kind === 'inventory' && mode === 'creative';
 }
 

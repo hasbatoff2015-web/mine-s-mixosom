@@ -31,7 +31,7 @@ export function attemptCoordinateTeleport(
 ): CoordinateTeleportResult {
   const operator = deps.isOperator(playerId);
   if (!operator && !deps.hasPermission(playerId)) {
-    return { ok: false, error: 'You do not have permission.' };
+    return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
   }
   if (!Number.isFinite(point.x) || !Number.isFinite(point.y) || !Number.isFinite(point.z)) {
     return { ok: false, error: 'Usage: /tp <x> <y> <z>' };

@@ -11,6 +11,7 @@ import {
   RANK_LIMITS,
   announcementLine,
   donationNodesAreNonAdmin,
+  formatRankExpiry,
   parseRankTestDuration,
   permissionNodesForRank,
   sanitizeAnnouncementText,
@@ -67,6 +68,8 @@ describe('donation rank limits and expiry', () => {
       'kit.use.vip', 'kit.use.prem', 'kit.use.boss', 'kit.use.titan',
       'kit.use.food_vip', 'kit.use.food_titan',
     ]));
+    expect(permissionNodesForRank('vip')).toContain('enderchest.use');
+    expect(permissionNodesForRank('vip')).not.toContain('announce.use');
     expect(nodes).not.toContain('invsee.edit');
     expect(donationNodesAreNonAdmin(nodes)).toBe(true);
     expect(permissions.has('ada', 'enderchest.use')).toBe(true);
@@ -317,15 +320,15 @@ describe('donation commands on the anarchy world', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const bob = join(world, 'Bob');
-    expect(chat(world, ada, '/ec').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/an hello').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/invsee Bob').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/invseeop Bob').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/tpa 8 70 8').some((line) => line.includes('not online'))).toBe(true);
+    expect(chat(world, ada, '/ec').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/an hello').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/invsee Bob').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/invseeop Bob').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/tpa 8 70 8').some((line) => line.includes('прав'))).toBe(true);
     expect(ada.player.window.kind).toBe('inventory');
-    expect(chat(world, ada, '/tpa Bob').some((line) => line.includes('Asked Bob'))).toBe(true);
+    expect(chat(world, ada, '/tpa Bob').some((line) => line.includes('прав'))).toBe(true);
     expect(world.commands.find('tp')?.usage).toBe('/tp <x> <y> <z>');
-    expect(chat(world, ada, '/tp 8 70 8').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/tp 8 70 8').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, ada, '/nickcolor aqua').some((line) => line.includes('PREMIUM'))).toBe(true);
   });
 
@@ -474,7 +477,7 @@ describe('donation commands on the anarchy world', () => {
     ada.player.controller.teleport([start.x, start.y, start.z]);
     expect(chat(world, ada, '/tp 9 70 9').some((line) => line.includes('через'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(start.x, 1);
-    expect(chat(world, ada, '/tpa not-a-player').some((line) => line.includes('not online'))).toBe(true);
+    expect(chat(world, ada, '/tpa not-a-player').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/tp 6 70 6').some((line) => line.includes('Teleported'))).toBe(true);
     expect(chat(world, op, '/tp 7 70 7').some((line) => line.includes('Teleported'))).toBe(true);
     expect(before.x).toBeTypeOf('number');
@@ -507,7 +510,7 @@ describe('donation commands on the anarchy world', () => {
     expect(ada.player.cursor).toBeNull();
     expect(ada.player.window.kind).toBe('invsee');
 
-    expect(chat(world, ada, '/invseeop Bob').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/invseeop Bob').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/invseeop Bob').some((line) => line.includes('изменения'))).toBe(true);
     expect(op.player.window.kind).toBe('invsee-op');
     world.applyInventoryAction(op.player, {
@@ -537,7 +540,7 @@ describe('donation commands on the anarchy world', () => {
     const world = await boot(true);
     const op = join(world, 'Op');
     const ada = join(world, 'Ada');
-    expect(chat(world, ada, '/ranktest set Ada titan 30s').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/ranktest set Ada titan 30s').some((line) => line.includes('прав'))).toBe(true);
     expect(world.donation.effectiveRank(ada.player.id)).toBe('default');
     expect(chat(world, op, '/ranktest set Ada titan 1s').some((line) => line.includes('titan'))).toBe(true);
     expect(world.donation.effectiveRank(ada.player.id)).toBe('titan');
@@ -575,7 +578,7 @@ describe('donation commands on the anarchy world', () => {
     expect(menuOf().donate?.actions?.find((action) => action.id === 'tp')?.available).toBe(false);
     expect(menuOf().donate?.actions?.some((action) => action.id === 'invseeop')).toBe(false);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'donate_tp', x: 8, y: 70, z: 8 });
-    expect(menuOf().message).toContain('permission');
+    expect(menuOf().message).toContain('прав');
     expect(ada.player.controller.position.x).not.toBeCloseTo(8, 0);
     expect(chat(world, op, '/ranktest set Ada titan 1h').some((line) => line.includes('titan'))).toBe(true);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'donate' });
@@ -667,5 +670,42 @@ describe('donation commands on the anarchy world', () => {
     const op2 = join(again, 'Op');
     expect(again.donation.nameStyle(op2.player.id, true)?.nameColor).toBe('dark_green');
     expect(again.donation.nameStyle(op2.player.id, true)?.prefixColor).toBe('yellow');
+  });
+
+  it('lets VIP open /ec, discounts clan creation, and keeps spectator for OP', async () => {
+    const expiry = Date.UTC(2026, 10, 15, 18, 30, 0);
+    const label = formatRankExpiry(expiry, expiry - (27 * 24 + 4) * 60 * 60 * 1000);
+    expect(label.startsWith('До 15 ноября')).toBe(true);
+    expect(label).toContain('27 дней');
+    expect(label).toContain('4 часа');
+    expect(label).not.toContain(':');
+
+    const world = await boot();
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    expect(chat(world, ada, '/ec').some((line) => line.includes('прав'))).toBe(true);
+    chat(world, op, '/donate grant Ada vip');
+    expect(chat(world, ada, '/ec').some((line) => line.includes('открыт'))).toBe(true);
+    expect(ada.player.window.kind).toBe('portal-chest');
+
+    world.economy.deposit(ada.player.id, 10_000, 'ADMIN_GIVE');
+    const created = world.clan.createClan(ada.player.id, 'VipClan', 'crown');
+    expect(created.ok).toBe(true);
+    expect(world.economy.getBalance(ada.player.id)).toBe(10_100 - 5_000);
+    const plain = join(world, 'Bob');
+    world.economy.deposit(plain.player.id, 10_000, 'ADMIN_GIVE');
+    const full = world.clan.createClan(plain.player.id, 'BobClan', 'shield');
+    expect(full.ok).toBe(true);
+    expect(world.economy.getBalance(plain.player.id)).toBe(10_100 - 10_000);
+
+    expect(chat(world, ada, '/gamemode spectator').some((line) => line.includes('прав'))).toBe(true);
+    expect(ada.player.gamemode).toBe('survival');
+    expect(chat(world, op, '/gamemode 2').some((line) => line.includes('Наблюдатель'))).toBe(true);
+    expect(op.player.gamemode).toBe('spectator');
+    expect(op.player.controller.noclip).toBe(true);
+    expect(op.player.snapshot().invisible).toBe(true);
+    expect(world.gameplay.breakBlock(op.player, 1, 70, 1).ok).toBe(false);
+    expect(chat(world, op, '/gamemode survival').some((line) => line.includes('Выживание'))).toBe(true);
+    expect(op.player.controller.noclip).toBe(false);
   });
 });

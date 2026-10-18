@@ -1,6 +1,7 @@
 import {
   RANK_LIMITS,
   formatDurationMs,
+  formatRankExpiry,
   type DonationStatus,
   type EffectiveRank,
 } from '../../shared/donationRanks';
@@ -15,8 +16,8 @@ const RANK_LABEL: Record<EffectiveRank, string> = {
 };
 
 const CATALOG: NetworkDonatePerk[] = [
-  { title: 'VIP', detail: 'Дома 4, приваты 4, лоты 10. Наборы VIP.' },
-  { title: 'PREMIUM', detail: 'Дома 5, приваты 5, лоты 15. Сундук, объявление, цвет ника.' },
+  { title: 'VIP', detail: 'Дома 4, приваты 4, лоты 10. Эндер-сундук и наборы VIP.' },
+  { title: 'PREMIUM', detail: 'Дома 5, приваты 5, лоты 15. Объявление и цвет ника.' },
   { title: 'BOSS', detail: 'Дома 6, приваты 6, лоты 20. Возврат к смерти 1 раз в 24 часа.' },
   { title: 'TITAN', detail: 'Дома 7, приваты 7, лоты 25. /tp и просмотр инвентаря по 1 разу в 24 часа.' },
 ];
@@ -168,7 +169,7 @@ export function buildDonateMenu(input: {
     ? (donateLabel ? `OP · ${donateLabel}` : 'OP')
     : RANK_LABEL[rank];
   const remainingLabel = status.expiresAt
-    ? `до ${new Date(status.expiresAt).toLocaleString('ru-RU', { hour12: false })} · ещё ${formatDurationMs(status.remainingMs)}`
+    ? formatRankExpiry(status.expiresAt)
     : input.operator
       ? 'Права оператора не истекают'
       : 'Активной донат-привилегии нет';

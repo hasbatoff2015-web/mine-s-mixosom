@@ -1,4 +1,4 @@
-export type GameMode = 'survival' | 'creative';
+export type GameMode = 'survival' | 'creative' | 'spectator';
 
 /** Serialized gameplay state schema. Independent of network protocol and schematic import version. */
 export const WORLD_SCHEMA_VERSION = 1;

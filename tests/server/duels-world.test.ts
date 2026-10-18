@@ -327,10 +327,9 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     world.handleChat(ada.player, '/rtp');
     expect(texts(ada.sink).join('\n')).toContain(DUEL_TELEPORT_DENIED);
     world.handleChat(ada.player, '/tpa Cara');
-    cara.sink.payloads.length = 0;
-    world.handleChat(cara.player, '/tpaccept');
-    expect(texts(cara.sink).join('\n')).toContain(DUEL_TELEPORT_DENIED);
     expect(ada.player.controller.position.x).toBeCloseTo(stayed.x, 3);
+    world.handleChat(cara.player, '/tpaccept');
+    expect(texts(cara.sink).join('\n')).toContain('больше не используется');
 
     world.duels.onPlayerQuit(bob.player.id);
     expect(world.duels.phaseKind()).toBe('loot');

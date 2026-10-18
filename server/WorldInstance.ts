@@ -141,6 +141,7 @@ import {
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
 import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
 import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, resolveHomeLimit } from '../shared/homes';
+import { CLAN_CREATE_COST, CLAN_DONATE_CREATE_COST } from '../shared/clans';
 import { formatDurationMs, sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
 import { attemptCoordinateTeleport } from './services/coordinateTeleport';
 import { buildDonateMenu } from './services/donateMenuView';
@@ -465,7 +466,7 @@ export class ServerPlayer implements GameplayPlayer {
       selectedSlot: this.selectedSlot,
       presentation: this.presentation(),
       equipment: playerEquipmentFromInventory(this.inventory),
-      invisible: this.survival.invisible,
+      invisible: this.survival.invisible || this.gamemode === 'spectator',
       onFire: this.survival.isOnFire,
       hunger: this.survival.hunger,
       armor: getArmorPoints(this.inventory),
@@ -833,6 +834,9 @@ export class WorldInstance {
     });
     this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
     this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
+    this.clan.setCreateCost((playerId) => (
+      this.donation.effectiveRank(playerId) === 'default' ? CLAN_CREATE_COST : CLAN_DONATE_CREATE_COST
+    ));
     this.teleportHistory = new TeleportHistoryService();
     this.teleportHistory.bindDeathStore(
       () => this.pluginStore.load('back/deaths', { deaths: {} }),
@@ -1630,7 +1634,7 @@ export class WorldInstance {
         totalPages: 1,
         totalCount: 0,
         listings: [],
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -1897,7 +1901,7 @@ export class WorldInstance {
     if (!this.hasClanPermission(player, message.action)) {
       const session = this.clan.session(player.id);
       if (session.screen !== 'closed') {
-        session.message = 'You do not have permission.';
+        session.message = 'Недостаточно прав для выполнения этой команды.';
         this.flushClan(player);
         return;
       }
@@ -1910,7 +1914,7 @@ export class WorldInstance {
         totalPages: 1,
         totalCount: 0,
         clans: [],
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -1999,7 +2003,7 @@ export class WorldInstance {
         type: 'chat',
         from: 'server',
         playerId: 'server',
-        text: 'You do not have permission.',
+        text: 'Недостаточно прав для выполнения этой команды.',
         kind: 'error',
       });
       return;
@@ -2028,7 +2032,7 @@ export class WorldInstance {
         total: 0,
         totalLabel: '',
         configured: false,
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -3129,7 +3133,7 @@ export class WorldInstance {
     const player = this.players.get(playerId);
     if (!player?.connected) return { ok: false, error: 'Player not found.' };
     if (!this.isOperator(player) && !this.permissions.has(player.id, 'enderchest.use') && !this.permissions.has(player.name, 'enderchest.use')) {
-      return { ok: false, error: 'You do not have permission.' };
+      return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
     }
     player.window = { kind: 'portal-chest' };
     player.inventoryDirty = true;
@@ -3145,9 +3149,9 @@ export class WorldInstance {
     const viewer = this.players.get(viewerId);
     if (!viewer?.connected) return { ok: false, error: 'Player not found.' };
     if (mode === 'readonly' && !this.isOperator(viewer) && !this.permissions.has(viewer.id, 'invsee.use') && !this.permissions.has(viewer.name, 'invsee.use')) {
-      return { ok: false, error: 'You do not have permission.' };
+      return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
     }
-    if (mode === 'edit' && !this.isOperator(viewer)) return { ok: false, error: 'You do not have permission.' };
+    if (mode === 'edit' && !this.isOperator(viewer)) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
     const target = this.findConnectedPlayer(targetName);
     if (!target) return { ok: false, error: 'Player is not online.' };
     if (target.id === viewer.id) return { ok: false, error: 'Нельзя открыть свой инвентарь этой командой.' };
@@ -3771,6 +3775,7 @@ export class WorldInstance {
     commandSeq?: number,
     selectedSlot?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    if (player.gamemode === 'spectator') return { ok: false, reason: 'spectator' };
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
     const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
     if (!slot.ok) return slot;
@@ -3970,13 +3975,13 @@ export class WorldInstance {
       type: 'command_result',
       ok: false,
       name: 'holograms',
-      lines: ['You do not have permission.'],
+      lines: ['Недостаточно прав для выполнения этой команды.'],
     });
     this.sendTo(player, {
       type: 'chat',
       from: 'server',
       playerId: 'server',
-      text: 'You do not have permission.',
+      text: 'Недостаточно прав для выполнения этой команды.',
       kind: 'error',
     });
   }
@@ -4149,8 +4154,10 @@ export class WorldInstance {
 
   setGameMode(player: ServerPlayer, mode: GameMode): void {
     player.gamemode = mode;
-    player.controller.creativeFlightAllowed = mode === 'creative';
-    if (mode !== 'creative') player.controller.isFlying = false;
+    player.controller.creativeFlightAllowed = mode === 'creative' || mode === 'spectator';
+    player.controller.noclip = mode === 'spectator';
+    if (mode === 'spectator') player.controller.isFlying = true;
+    else if (mode !== 'creative') player.controller.isFlying = false;
     this.sendTo(player, {
       type: 'inventory',
       inventory: player.inventory.serialize(),
@@ -4301,7 +4308,17 @@ export class WorldInstance {
     this.lastTickMetrics = metrics;
     this.finishRtpSearches();
     this.teleports.tick(dt * 1000);
+    if (this.tickNumber % 20 === 0) this.refreshOpenDonateMenus();
     if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
+
+  private refreshOpenDonateMenus(): void {
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const session = this.menuSessions.get(player.id);
+      if (!session || (session.screen !== 'donate' && !session.screen.startsWith('donate-'))) continue;
+      this.flushMenu(player);
+    }
   }
 
   private finishRtpSearches(): void {
@@ -5923,20 +5940,24 @@ export class WorldInstance {
     this.commands.register({
       name: 'gamemode',
       aliases: ['gm'],
-      usage: '/gamemode <survival|creative>',
-      description: 'Set authoritative game mode',
+      usage: '/gamemode <survival|creative|spectator>',
+      description: 'Сменить режим игры',
+      permission: 'operator',
       execute: (args, sender) => {
         const key = args[0]?.toLowerCase();
         const mode: GameMode | undefined = key === 'survival' || key === 's' || key === '0'
           ? 'survival'
           : key === 'creative' || key === 'c' || key === '1'
             ? 'creative'
-            : undefined;
-        if (!mode) return fail('Usage: /gamemode <survival|creative|s|c|0|1>');
+            : key === 'spectator' || key === 'sp' || key === '2'
+              ? 'spectator'
+              : undefined;
+        if (!mode) return fail('Использование: /gamemode <survival|creative|spectator|0|1|2>');
         const player = this.players.get(sender.playerId);
-        if (!player) return fail('Player not found.');
+        if (!player) return fail('Игрок не найден.');
         this.setGameMode(player, mode);
-        return ok(`Set game mode to ${mode}`);
+        const label = mode === 'creative' ? 'Творчество' : mode === 'spectator' ? 'Наблюдатель' : 'Выживание';
+        return ok(`Режим игры: ${label}.`);
       },
     });
     this.commands.register({

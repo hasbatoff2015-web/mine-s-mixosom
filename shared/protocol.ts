@@ -33,7 +33,7 @@ export type { ActionRejectReason, PlayerActionKind } from './playerActions';
 export type { CombatActionDiagnostics, EntityUseActionDiagnostics } from './playerActions';
 export type { BowActionDiagnostics } from './playerActions';
 
-export type GameMode = 'survival' | 'creative';
+export type GameMode = 'survival' | 'creative' | 'spectator';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 

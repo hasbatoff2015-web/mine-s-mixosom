@@ -154,31 +154,31 @@ describe('Anarchy builtin plugins', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const lines = chat(world, ada, '/tp 8 70 8');
-    expect(lines.some((line) => line.includes('permission'))).toBe(true);
+    expect(lines.some((line) => line.includes('прав'))).toBe(true);
     const op = join(world, 'Op');
     expect(chat(world, op, '/tp 8 70 8').some((line) => line.includes('Teleported to 8.0, 70.0, 8.0'))).toBe(true);
     expect(world.commands.find('tp')?.usage).toBe('/tp <x> <y> <z>');
     expect(world.commands.find('tpa')).toBeDefined();
-    expect(chat(world, ada, '/tpa help').some((line) => line.includes('TPA'))).toBe(true);
+    expect(chat(world, op, '/tpa help').some((line) => line.includes('TPA'))).toBe(true);
   });
 
   it('supports TPA request, deny, accept, and logout cleanup', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const bob = join(world, 'Bob');
-    expect(chat(world, ada, '/tpa').some((line) => line.includes('Usage: /tpa <player>'))).toBe(true);
-    expect(chat(world, ada, '/tpa Bob').some((line) => line.includes('Asked Bob'))).toBe(true);
-    expect(chat(world, bob, '/tpdeny').some((line) => line.includes('denied'))).toBe(true);
-    expect(chat(world, bob, '/tpaccept').some((line) => line.includes('no teleport request'))).toBe(true);
-    chat(world, ada, '/tpa Bob');
-    world.disconnect(ada.player.id);
-    expect(chat(world, bob, '/tpaccept').some((line) => line.includes('no teleport request'))).toBe(true);
-    const ada2 = join(world, 'Ada');
-    ada2.player.controller.teleport([12, 70, 12]);
-    chat(world, ada2, '/tpahere Bob');
-    const before = { ...bob.player.controller.position };
-    expect(chat(world, bob, '/tpaccept').some((line) => line.includes('accepted'))).toBe(true);
-    expect(bob.player.controller.position.x).not.toBe(before.x);
+    expect(chat(world, ada, '/tpa').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/tpa Bob').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, bob, '/tpaccept').some((line) => line.includes('больше не используется'))).toBe(true);
+    const op = join(world, 'Op');
+    const before = bob.player.controller.position.x;
+    bob.sink.payloads.length = 0;
+    expect(chat(world, op, '/tpa Bob').some((line) => line.includes('телепортированы'))).toBe(true);
+    expect(op.player.controller.position.x).toBeCloseTo(bob.player.controller.position.x, 1);
+    expect(bob.sink.payloads.some((payload) => {
+      const text = (payload as { text?: string }).text ?? '';
+      return text.includes('телепорт') || text.includes('asked');
+    })).toBe(false);
+    expect(bob.player.controller.position.x).toBeCloseTo(before, 1);
   });
 
   it('persists spawn, homes, back, and home limits', async () => {
@@ -225,7 +225,7 @@ describe('Anarchy builtin plugins', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const op = join(world, 'Op');
-    expect(chat(world, ada, '/op Bob').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/op Bob').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/op Ada').some((line) => line.includes('operator'))).toBe(true);
     expect(world.permissions.isOperator('Ada')).toBe(true);
     expect(chat(world, ada, '/plugins list').some((line) => line.includes('permissions'))).toBe(true);
@@ -569,7 +569,7 @@ describe('Anarchy builtin plugins', () => {
     expect(ada.sink.payloads.filter(isBoundary)).toHaveLength(0);
     expect(bob.sink.payloads.some((payload) => {
       const record = payload as { type?: string; text?: string };
-      return record.type === 'chat' && record.text === 'This land is claimed.';
+      return record.type === 'chat' && record.text === 'Здесь нельзя ломать блоки: территория занята.';
     })).toBe(true);
 
     bob.sink.payloads.length = 0;
@@ -652,7 +652,7 @@ describe('Anarchy builtin plugins', () => {
     ada.player.controller.teleport([x + 2.5, y + 2, z + 2.5]);
     chat(world, ada, '/claim pos2');
     chat(world, ada, '/claim create garden');
-    expect(chat(world, bob, '/claim priority garden 8').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, bob, '/claim priority garden 8').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, ada, '/claim priority garden -3').some((line) => line.includes("priority of 'garden' to -3"))).toBe(true);
     expect(chat(world, op, '/claim priority garden 12').some((line) => line.includes("priority of 'garden' to 12"))).toBe(true);
     expect(chat(world, ada, '/claim info garden').some((line) => line.includes('Priority: 12'))).toBe(true);
@@ -674,7 +674,7 @@ describe('Anarchy builtin plugins', () => {
     expect(chat(world, ada, '/claim flag mob-spawn false').some((line) => line.includes("Set mob-spawn=false on claim 'spawn'"))).toBe(true);
     ada.player.controller.teleport([x + 40.5, y, z + 40.5]);
     expect(chat(world, ada, '/claim flag spawn pvp true').some((line) => line.includes("Set pvp=true on claim 'spawn'"))).toBe(true);
-    expect(chat(world, bob, '/claim flag spawn block-break true').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, bob, '/claim flag spawn block-break true').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, ada, '/claim addmember spawn bob').some((line) => line.includes("Added bob to claim 'spawn'"))).toBe(true);
     expect(chat(world, ada, '/claim members spawn').some((line) => line.includes('bob'))).toBe(true);
     expect(chat(world, ada, '/claim removemember spawn bob').some((line) => line.includes("Removed bob from claim 'spawn'"))).toBe(true);

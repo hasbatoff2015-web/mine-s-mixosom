@@ -22,7 +22,7 @@ export interface PetInteractMob {
 export interface PetInteractRequest {
   readonly playerId: string;
   readonly heldItemId?: string;
-  readonly gamemode: 'survival' | 'creative';
+  readonly gamemode: 'survival' | 'creative' | 'spectator';
   readonly ownedCount: number;
   readonly petLimit: number;
   readonly tamedCount: number;

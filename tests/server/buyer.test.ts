@@ -464,7 +464,7 @@ describe('BuyerService', () => {
       edit: false, delete: false, use: true,
     });
     expect(denied.ok).toBe(false);
-    expect(denied.error).toMatch(/permission/i);
+    expect(denied.error).toMatch(/прав/);
     expect(denied.openHologramEditor).toBeUndefined();
     const opened = buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'edit_hologram' }, {
       edit: true, delete: true, use: true,

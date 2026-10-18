@@ -95,7 +95,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           const sub = args[0]?.toLowerCase();
           if (!sub) return ok(describe(sender.playerId, sender.name));
           if (sub === 'info' && !args[1]) return ok(describe(sender.playerId, sender.name));
-          if (!admin(sender.playerId, sender.name)) return fail('You do not have permission.');
+          if (!admin(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
           if (sub === 'info') {
             const target = args[1]!;
             return ok(describe(target, target));
@@ -134,7 +134,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args, sender) => {
           if (!ctx.rankTestEnabled) return fail('Команда /ranktest доступна только на DEV.');
           const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
-          if (!operator) return fail('You do not have permission.');
+          if (!operator) return fail('Недостаточно прав для выполнения этой команды.');
           const action = args[0]?.toLowerCase();
           if (action === 'status') {
             if (!args[1]) return usageError('/ranktest status <player>');
@@ -240,7 +240,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const target = args[0];
           if (!target) return usageError('/invseeop <player>');
-          if (!api.isOperator(sender.name) && !api.isOperator(sender.playerId)) return fail('You do not have permission.');
+          if (!api.isOperator(sender.name) && !api.isOperator(sender.playerId)) return fail('Недостаточно прав для выполнения этой команды.');
           const opened = ctx.openPlayerInventory(sender.playerId, target, 'edit');
           return opened.ok ? ok(`Инвентарь ${target} открыт для изменения.`) : fail(opened.error ?? 'Не удалось открыть инвентарь.');
         },

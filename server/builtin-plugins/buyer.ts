@@ -44,7 +44,7 @@ export function createBuyerPlugin(ctx: BuiltinPluginContext): Plugin {
           const sub = args[0]?.toLowerCase();
           const need = (node: string): boolean => api.hasPermission(sender.playerId, node) || api.isOperator(sender.playerId);
           if (sub === 'list') {
-            if (!need('buyer.list')) return fail('You do not have permission.');
+            if (!need('buyer.list')) return fail('Недостаточно прав для выполнения этой команды.');
             const buyers = ctx.buyer.list();
             if (buyers.length === 0) return ok('Скупщики: нет.');
             return ok([
@@ -59,7 +59,7 @@ export function createBuyerPlugin(ctx: BuiltinPluginContext): Plugin {
           if (!player) return fail('Player not found.');
           const name = args.slice(1).join(' ').trim();
           if (sub === 'create') {
-            if (!need('buyer.create')) return fail('You do not have permission.');
+            if (!need('buyer.create')) return fail('Недостаточно прав для выполнения этой команды.');
             if (!name) return usageError('/buyer create <name>');
             const pos = player.position();
             const look = player.snapshot();
@@ -78,7 +78,7 @@ export function createBuyerPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Создан скупщик «${result.buyer.name}».`);
           }
           if (sub === 'move') {
-            if (!need('buyer.move')) return fail('You do not have permission.');
+            if (!need('buyer.move')) return fail('Недостаточно прав для выполнения этой команды.');
             if (!name) return usageError('/buyer move <name>');
             const pos = player.position();
             const look = player.snapshot();
@@ -95,7 +95,7 @@ export function createBuyerPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Скупщик «${result.buyer.name}» перемещён.`);
           }
           if (sub === 'delete') {
-            if (!need('buyer.delete')) return fail('You do not have permission.');
+            if (!need('buyer.delete')) return fail('Недостаточно прав для выполнения этой команды.');
             if (!name) return usageError('/buyer delete <name>');
             const result = ctx.buyer.delete(name);
             if (!result.ok) return fail(result.error ?? 'Не удалось удалить скупщика.');
