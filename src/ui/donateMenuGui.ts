@@ -6,60 +6,28 @@ function colorHex(id: string | undefined): string {
   return '#f4f4f4';
 }
 
-function actionButton(action: NetworkDonateAction, escape: (value: string) => string): string {
+function card(action: NetworkDonateAction, escape: (value: string) => string): string {
+  const locked = action.available ? '' : ' is-locked';
   const disabled = action.available ? '' : ' disabled';
-  if (action.id === 'ec') {
-    return `<button type="button" class="mc-ah-btn" data-menu-action="donate_ec"${disabled}>${escape(action.label)}</button>`;
-  }
-  if (action.id === 'invseeop') {
-    return `<button type="button" class="mc-ah-btn" data-menu-open="donate-invsee"${disabled}>${escape(action.label)}</button>`;
-  }
-  if (action.screen) {
-    return `<button type="button" class="mc-ah-btn" data-menu-open="${action.screen}"${disabled}>${escape(action.label)}</button>`;
-  }
-  return `<button type="button" class="mc-ah-btn" disabled>${escape(action.label)}</button>`;
+  const open = action.id === 'ec'
+    ? 'data-menu-action="donate_ec"'
+    : action.screen
+      ? `data-menu-open="${action.screen}"`
+      : 'disabled';
+  return `<button type="button" class="mc-donate-card${locked}" ${open}${disabled}>
+    <strong>${escape(action.label)}</strong>
+    <span>${escape(action.detail)}</span>
+  </button>`;
 }
 
-function overview(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
-  if (donate.loadError) {
-    return `<div class="mc-menu-body" data-menu-screen="donate">
-      <div class="mc-menu-heading">Донат</div>
-      <p class="mc-menu-empty">${escape(donate.loadError)}</p>
-      <button type="button" class="mc-ah-btn" data-menu-action="donate_retry">Повторить</button>
-    </div>`;
-  }
-  const perks = donate.perks.map((perk) => `
-    <div class="mc-donate-perk">
-      <strong>${escape(perk.title)}</strong>
-      <span>${escape(perk.detail)}</span>
-    </div>`).join('');
-  const actions = donate.actions.map((action) => `
-    <div class="mc-donate-action">
-      ${actionButton(action, escape)}
-      <span>${escape(action.detail)}</span>
-    </div>`).join('');
-  const kits = donate.kits.map((kit) => `
-    <div class="mc-donate-action">
-      <button type="button" class="mc-ah-btn" data-menu-action="donate_kit" data-donate-kit="${escape(kit.name)}"${kit.available ? '' : ' disabled'}>${escape(kit.label)}</button>
-      <span>${escape(kit.detail)}</span>
-    </div>`).join('');
-  const catalog = donate.catalog.length === 0 ? '' : `
-    <div class="mc-duel-section-head"><span>Привилегии</span></div>
-    ${donate.catalog.map((row) => `<p class="mc-player-meta"><strong>${escape(row.title)}.</strong> ${escape(row.detail)}</p>`).join('')}`;
-  return `<div class="mc-menu-body" data-menu-screen="donate">
-    <div class="mc-menu-heading">Донат</div>
-    <div class="mc-donate-rank">
-      <strong>${escape(donate.rankLabel)}</strong>
-      <span>${escape(donate.remainingLabel)}</span>
-    </div>
-    <p class="mc-player-meta">${escape(donate.summary)}</p>
-    <div class="mc-donate-perks">${perks}</div>
-    ${catalog}
-    <div class="mc-duel-section-head"><span>Действия</span></div>
-    <div class="mc-donate-actions">${actions}</div>
-    <div class="mc-duel-section-head"><span>Наборы</span></div>
-    <div class="mc-donate-actions">${kits || '<p class="mc-menu-empty">Наборов нет.</p>'}</div>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
+function messageHtml(message: string, escape: (value: string) => string): string {
+  return `<div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>`;
+}
+
+function shell(screen: string, title: string, body: string): string {
+  return `<div class="mc-menu-body mc-donate" data-menu-screen="${screen}">
+    <div class="mc-menu-heading">${title}</div>
+    ${body}
   </div>`;
 }
 
@@ -67,18 +35,43 @@ export function menuDonateHtml(state: ServerMenuMessage, escape: (value: string)
   const donate = state.donate;
   const message = state.message ?? '';
   if (!donate) {
-    return `<div class="mc-menu-body" data-menu-screen="donate">
-      <div class="mc-menu-heading">Донат</div>
+    return shell('donate', 'Донат', `
       <p class="mc-menu-empty">Не удалось загрузить привилегию.</p>
-      <button type="button" class="mc-ah-btn" data-menu-action="donate_retry">Повторить</button>
-    </div>`;
+      <button type="button" class="mc-ah-btn" data-menu-action="donate_retry">Повторить</button>`);
   }
   if (state.screen === 'donate-color') return colorScreen(donate, message, escape);
   if (state.screen === 'donate-announce') return announceScreen(donate, message, escape);
-  if (state.screen === 'donate-invsee') return invseeScreen(donate, message, escape);
+  if (state.screen === 'donate-invsee') return invseeScreen(donate, message, escape, 'view');
+  if (state.screen === 'donate-invsee-op') return invseeScreen(donate, message, escape, 'edit');
   if (state.screen === 'donate-tp') return teleportScreen(donate, message, escape);
   if (state.screen === 'donate-back') return backScreen(donate, message, escape);
+  if (state.screen === 'donate-kits') return kitsScreen(donate, message, escape);
   return overview(donate, message, escape);
+}
+
+function overview(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
+  if (donate.loadError) {
+    return shell('donate', 'Донат', `
+      <p class="mc-menu-empty">${escape(donate.loadError)}</p>
+      <button type="button" class="mc-ah-btn" data-menu-action="donate_retry">Повторить</button>`);
+  }
+  const limits = donate.perks.map((perk) => `
+    <span class="mc-donate-chip"><strong>${escape(perk.title)}</strong> ${escape(perk.detail)}</span>`).join('');
+  const actions = donate.actions.map((action) => card(action, escape)).join('');
+  const catalog = donate.catalog.length === 0 ? '' : `
+    <div class="mc-donate-catalog">
+      ${donate.catalog.map((row) => `<p><strong>${escape(row.title)}.</strong> ${escape(row.detail)}</p>`).join('')}
+    </div>`;
+  return shell('donate', 'Донат', `
+    <div class="mc-donate-rank">
+      <strong>${escape(donate.rankLabel)}</strong>
+      <span>${escape(donate.remainingLabel)}</span>
+    </div>
+    <div class="mc-donate-chips">${limits}</div>
+    <div class="mc-duel-section-head"><span>Действия</span></div>
+    <div class="mc-donate-grid">${actions}</div>
+    ${catalog}
+    ${messageHtml(message, escape)}`);
 }
 
 function locked(detail: string, escape: (value: string) => string): string {
@@ -87,66 +80,56 @@ function locked(detail: string, escape: (value: string) => string): string {
 
 function colorScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
   const action = donate.actions.find((entry) => entry.id === 'nickcolor');
-  if (!action?.available) {
-    return `<div class="mc-menu-body" data-menu-screen="donate-color">
-      <div class="mc-menu-heading">Цвет ника</div>
-      ${locked(action?.detail ?? 'Доступно с привилегии PREMIUM.', escape)}
-    </div>`;
-  }
+  if (!action?.available) return shell('donate-color', 'Цвет ника', locked(action?.detail ?? 'Доступно с привилегии PREMIUM', escape));
   const swatches = donate.nickChoices.map((id) => `
     <button type="button" class="mc-donate-swatch${donate.nickColor === id ? ' is-current' : ''}" data-donate-swatch="${escape(id)}" style="background:${colorHex(id)}" aria-label="${escape(id)}"></button>`).join('');
-  return `<div class="mc-menu-body" data-menu-screen="donate-color" data-donate-color-pick>
-    <div class="mc-menu-heading">Цвет ника</div>
+  return shell('donate-color', 'Цвет ника', `
     <p class="mc-donate-preview" data-donate-preview style="color:${colorHex(donate.nickColor)}">${escape(donate.previewName)}</p>
-    <div class="mc-donate-swatches">${swatches}</div>
+    <div class="mc-donate-swatches" data-donate-color-pick>${swatches}</div>
     <div class="mc-ah-actions">
       <button type="button" class="mc-ah-btn" data-menu-action="donate_color">Применить</button>
       <button type="button" class="mc-ah-btn" data-menu-action="donate_color" data-donate-color="reset">Сбросить</button>
     </div>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
-  </div>`;
+    ${messageHtml(message, escape)}`);
 }
 
 function announceScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
   const action = donate.actions.find((entry) => entry.id === 'announce');
-  if (!action?.available) return `<div class="mc-menu-body"><div class="mc-menu-heading">Объявление</div>${locked(action?.detail ?? 'Доступно с привилегии PREMIUM.', escape)}</div>`;
-  return `<div class="mc-menu-body" data-menu-screen="donate-announce">
-    <div class="mc-menu-heading">Объявление</div>
+  if (!action?.available) return shell('donate-announce', 'Объявление', locked(action?.detail ?? 'Доступно с привилегии PREMIUM', escape));
+  return shell('donate-announce', 'Объявление', `
     <p class="mc-player-meta">${escape(action.detail)}</p>
     <textarea data-donate-field data-donate-announce maxlength="120" placeholder="Текст объявления"></textarea>
     <button type="button" class="mc-ah-btn" data-menu-action="donate_announce">Отправить</button>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
-  </div>`;
+    ${messageHtml(message, escape)}`);
 }
 
-function invseeScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
-  const action = donate.actions.find((entry) => entry.id === 'invsee');
-  const canView = action?.available === true;
-  const canEdit = donate.showInvseeOp;
-  if (!canView && !canEdit) {
-    return `<div class="mc-menu-body"><div class="mc-menu-heading">Инвентарь</div>${locked(action?.detail ?? 'Доступно с привилегии TITAN.', escape)}</div>`;
-  }
+function invseeScreen(
+  donate: NetworkDonateMenu,
+  message: string,
+  escape: (value: string) => string,
+  mode: 'view' | 'edit',
+): string {
+  const action = donate.actions.find((entry) => entry.id === (mode === 'edit' ? 'invseeop' : 'invsee'));
+  const allowed = mode === 'edit' ? donate.showInvseeOp : action?.available === true;
+  const title = mode === 'edit' ? 'Изменить чужой инвентарь' : 'Посмотреть чужой инвентарь';
+  if (!allowed) return shell(mode === 'edit' ? 'donate-invsee-op' : 'donate-invsee', title, locked(action?.detail ?? 'Недоступно', escape));
   const rows = donate.onlinePlayers.map((player) => `
-    <div class="mc-player-row">
+    <div class="mc-player-row" data-donate-player-row="${escape(player.name)}">
       <strong class="mc-player-name">${escape(player.name)}</strong>
-      <span class="mc-menu-row-actions">
-        ${canView ? `<button type="button" class="mc-ah-btn" data-menu-action="donate_invsee" data-donate-player="${escape(player.name)}">Смотреть</button>` : ''}
-        ${canEdit ? `<button type="button" class="mc-ah-btn" data-menu-action="donate_invseeop" data-donate-player="${escape(player.name)}">Изменить</button>` : ''}
-      </span>
+      <button type="button" class="mc-ah-btn" data-menu-action="${mode === 'edit' ? 'donate_invseeop' : 'donate_invsee'}" data-donate-player="${escape(player.name)}">${mode === 'edit' ? 'Изменить' : 'Смотреть'}</button>
     </div>`).join('');
-  return `<div class="mc-menu-body" data-menu-screen="donate-invsee">
-    <div class="mc-menu-heading">Инвентарь</div>
-    <p class="mc-player-meta">${escape(action?.detail ?? 'Только просмотр.')}</p>
-    <div class="mc-menu-list">${rows || '<p class="mc-menu-empty">Никого нет онлайн.</p>'}</div>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
-  </div>`;
+  return shell(mode === 'edit' ? 'donate-invsee-op' : 'donate-invsee', title, `
+    <p class="mc-player-meta">${escape(action?.detail ?? (mode === 'edit' ? 'Только для OP' : 'Только просмотр'))}</p>
+    <input data-donate-field data-donate-search type="text" maxlength="13" placeholder="Ник игрока" autocomplete="off" spellcheck="false" />
+    <div class="mc-menu-list" data-donate-player-list>${rows || '<p class="mc-menu-empty">Никого нет онлайн.</p>'}</div>
+    <p class="mc-menu-empty" data-donate-search-empty hidden>Никого с таким ником нет онлайн.</p>
+    ${messageHtml(message, escape)}`);
 }
 
 function teleportScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
   const action = donate.actions.find((entry) => entry.id === 'tp');
-  if (!action?.available) return `<div class="mc-menu-body"><div class="mc-menu-heading">Телепорт</div>${locked(action?.detail ?? 'Доступно с привилегии TITAN.', escape)}</div>`;
-  return `<div class="mc-menu-body" data-menu-screen="donate-tp">
-    <div class="mc-menu-heading">Телепорт</div>
+  if (!action?.available) return shell('donate-tp', 'Телепорт', locked(action?.detail ?? 'Доступно с привилегии TITAN', escape));
+  return shell('donate-tp', 'Телепорт', `
     <p class="mc-player-meta">${escape(action.detail)}</p>
     <div class="mc-donate-coords">
       <input data-donate-field data-donate-x type="number" inputmode="decimal" placeholder="X" />
@@ -154,25 +137,28 @@ function teleportScreen(donate: NetworkDonateMenu, message: string, escape: (val
       <input data-donate-field data-donate-z type="number" inputmode="decimal" placeholder="Z" />
     </div>
     <button type="button" class="mc-ah-btn" data-menu-action="donate_tp">Телепортироваться</button>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
-  </div>`;
+    ${messageHtml(message, escape)}`);
 }
 
 function backScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
   const action = donate.actions.find((entry) => entry.id === 'back');
   const point = donate.deathPoint;
-  if (!action?.available) return `<div class="mc-menu-body"><div class="mc-menu-heading">Смерть</div>${locked(action?.detail ?? 'Возврат недоступен.', escape)}</div>`;
-  if (!point) {
-    return `<div class="mc-menu-body" data-menu-screen="donate-back">
-      <div class="mc-menu-heading">Смерть</div>
-      <p class="mc-menu-empty">Точка смерти не сохранена.</p>
-    </div>`;
-  }
-  return `<div class="mc-menu-body" data-menu-screen="donate-back">
-    <div class="mc-menu-heading">Смерть</div>
-    <p class="mc-player-meta">Перемещение на X ${Math.round(point.x)}, Y ${Math.round(point.y)}, Z ${Math.round(point.z)}.</p>
+  if (!action?.available) return shell('donate-back', 'Смерть', locked(action?.detail ?? 'Возврат недоступен', escape));
+  if (!point) return shell('donate-back', 'Смерть', '<p class="mc-menu-empty">Точка смерти не сохранена.</p>');
+  return shell('donate-back', 'Смерть', `
+    <p class="mc-player-meta">Последняя смерть: X ${Math.round(point.x)}, Y ${Math.round(point.y)}, Z ${Math.round(point.z)}.</p>
     <p class="mc-player-meta">${escape(action.detail)}</p>
     <button type="button" class="mc-ah-btn" data-menu-action="donate_back">Вернуться</button>
-    <div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>
-  </div>`;
+    ${messageHtml(message, escape)}`);
+}
+
+function kitsScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
+  const cards = donate.kits.map((kit) => `
+    <button type="button" class="mc-donate-card${kit.available ? '' : ' is-locked'}" data-menu-action="donate_kit" data-donate-kit="${escape(kit.name)}" title="${escape(kit.detail)}">
+      <strong>${escape(kit.label)}</strong>
+      <span>${escape(kit.detail)}</span>
+    </button>`).join('');
+  return shell('donate-kits', 'Наборы', `
+    <div class="mc-donate-grid">${cards || '<p class="mc-menu-empty">Наборов нет.</p>'}</div>
+    ${messageHtml(message, escape)}`);
 }

@@ -562,14 +562,7 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   if (state.screen === 'auction-history') return menuAuctionHistoryHtml(state, escape);
   if (state.screen === 'rating') return menuRatingHtml(state, escape);
   if (state.screen === 'duels') return menuDuelsHtml(state, escape);
-  if (
-    state.screen === 'donate'
-    || state.screen === 'donate-color'
-    || state.screen === 'donate-announce'
-    || state.screen === 'donate-invsee'
-    || state.screen === 'donate-tp'
-    || state.screen === 'donate-back'
-  ) return menuDonateHtml(state, escape);
+  if (state.screen === 'donate' || state.screen.startsWith('donate-')) return menuDonateHtml(state, escape);
   return menuRootHtml(state);
 }
 

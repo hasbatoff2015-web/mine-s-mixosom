@@ -7,26 +7,18 @@ import {
 import type { NetworkDonateAction, NetworkDonateKit, NetworkDonateMenu, NetworkDonatePerk } from '../../shared/protocol';
 
 const RANK_LABEL: Record<EffectiveRank, string> = {
-  default: 'Обычный игрок',
+  default: 'Без привилегии',
   vip: 'VIP',
   premium: 'PREMIUM',
   boss: 'BOSS',
   titan: 'TITAN',
 };
 
-const RANK_SUMMARY: Record<EffectiveRank, string> = {
-  default: 'Активной донат-привилегии нет. Дома, приваты и лоты остаются в базовых лимитах.',
-  vip: 'Префикс [VIP], наборы VIP и еды. Более высокие ранги добавляют команды.',
-  premium: 'Всё от VIP, плюс портальный сундук, объявление в чат и цвет ника.',
-  boss: 'Всё от PREMIUM, плюс возврат на место смерти раз в сутки.',
-  titan: 'Всё от BOSS, плюс телепорт по координатам и просмотр чужого инвентаря.',
-};
-
 const CATALOG: NetworkDonatePerk[] = [
-  { title: 'VIP', detail: 'Дома 4, приваты 4, лоты 10. Наборы VIP и еды. Префикс [VIP].' },
-  { title: 'PREMIUM', detail: 'Дома 5, приваты 5, лоты 15. Сундук, объявление и цвет ника.' },
+  { title: 'VIP', detail: 'Дома 4, приваты 4, лоты 10. Наборы VIP.' },
+  { title: 'PREMIUM', detail: 'Дома 5, приваты 5, лоты 15. Сундук, объявление, цвет ника.' },
   { title: 'BOSS', detail: 'Дома 6, приваты 6, лоты 20. Возврат к смерти 1 раз в 24 часа.' },
-  { title: 'TITAN', detail: 'Дома 7, приваты 7, лоты 25. /tp и просмотр инвентаря по 1 разу в 24 часа. Возврат к смерти 2 раза.' },
+  { title: 'TITAN', detail: 'Дома 7, приваты 7, лоты 25. /tp и просмотр инвентаря по 1 разу в 24 часа.' },
 ];
 
 const KIT_LABELS: Record<string, string> = {
@@ -41,9 +33,9 @@ const KIT_LABELS: Record<string, string> = {
   food_titan: 'Еда TITAN',
 };
 
-function cooldownDetail(remainingMs: number, fallback: string): string {
-  if (remainingMs > 0) return `Следующее использование через ${formatDurationMs(remainingMs)}.`;
-  return fallback;
+function again(remainingMs: number, ready: string): string {
+  if (remainingMs > 0) return `Можно снова через ${formatDurationMs(remainingMs)}`;
+  return ready;
 }
 
 export function buildDonateMenu(input: {
@@ -60,8 +52,8 @@ export function buildDonateMenu(input: {
   if (status.loadError) {
     return {
       rankLabel: 'Нет данных',
-      summary: status.loadError,
-      remainingLabel: '',
+      summary: '',
+      remainingLabel: status.loadError,
       loadError: status.loadError,
       perks: [],
       actions: [],
@@ -83,29 +75,26 @@ export function buildDonateMenu(input: {
   const back = command('back-death');
   const tp = command('tp');
   const ec = command('ec');
+  const opNote = 'Без ограничений для OP';
   const perks: NetworkDonatePerk[] = [
     { title: 'Дома', detail: `${input.homes}/${status.limits.homes.max}` },
     { title: 'Приваты', detail: `${input.claims}/${status.limits.claims.max}` },
-    { title: 'Лоты аукциона', detail: `${input.auction}/${status.limits.auction.max}` },
-    {
-      title: 'Возврат к смерти',
-      detail: input.operator || limits.deathBackPerDay === null
-        ? 'Без донатного ограничения'
-        : `${limits.deathBackPerDay} раз в 24 часа`,
-    },
+    { title: 'Лоты', detail: `${input.auction}/${status.limits.auction.max}` },
   ];
-  if (rank !== 'default') {
-    perks.push({ title: 'Префикс', detail: `[${RANK_LABEL[rank]}]` });
-  }
+  const deathDetail = input.operator
+    ? opNote
+    : limits.deathBackPerDay === null
+      ? 'Возврат к последней смерти'
+      : again(back?.cooldownRemainingMs ?? 0, limits.deathBackPerDay === 1 ? '1 возврат в 24 часа' : `${limits.deathBackPerDay} возврата в 24 часа`);
   const actions: NetworkDonateAction[] = [
     {
       id: 'nickcolor',
       label: 'Цвет ника',
       screen: 'donate-color',
-      available: nick?.available === true && (nick.cooldownRemainingMs ?? 0) <= 0,
+      available: nick?.available === true,
       detail: nick?.available
-        ? (status.nick.color ? `Сейчас: ${status.nick.color}` : 'Цвет ещё не выбран')
-        : 'Доступно с привилегии PREMIUM.',
+        ? (status.nick.color ? `Сейчас: ${status.nick.color}` : 'Изменить цвет своего имени')
+        : 'Доступно с привилегии PREMIUM',
     },
     {
       id: 'announce',
@@ -113,26 +102,24 @@ export function buildDonateMenu(input: {
       screen: 'donate-announce',
       available: announce?.available === true,
       detail: announce?.available
-        ? cooldownDetail(announce.cooldownRemainingMs, '1 объявление в 24 часа. OP без ограничения.')
-        : 'Доступно с привилегии PREMIUM.',
+        ? (input.operator ? opNote : again(announce.cooldownRemainingMs, '1 объявление в 24 часа'))
+        : 'Доступно с привилегии PREMIUM',
     },
     {
       id: 'invsee',
-      label: 'Инвентарь игрока',
+      label: 'Посмотреть чужой инвентарь',
       screen: 'donate-invsee',
       available: invsee?.available === true,
       detail: invsee?.available
-        ? cooldownDetail(invsee.cooldownRemainingMs, 'Только просмотр. 1 раз в 24 часа, OP без ограничения.')
-        : 'Доступно с привилегии TITAN.',
+        ? (input.operator ? opNote : again(invsee.cooldownRemainingMs, '1 просмотр в 24 часа'))
+        : 'Доступно с привилегии TITAN',
     },
     {
       id: 'back',
-      label: 'Вернуться на место смерти',
+      label: 'Вернуться в место последней смерти',
       screen: 'donate-back',
       available: back?.available === true,
-      detail: input.deathPoint
-        ? cooldownDetail(back?.cooldownRemainingMs ?? 0, `X ${Math.round(input.deathPoint.x)}  Y ${Math.round(input.deathPoint.y)}  Z ${Math.round(input.deathPoint.z)}`)
-        : 'Точка смерти не сохранена.',
+      detail: input.deathPoint ? deathDetail : 'Точка смерти не сохранена',
     },
     {
       id: 'tp',
@@ -140,23 +127,30 @@ export function buildDonateMenu(input: {
       screen: 'donate-tp',
       available: tp?.available === true,
       detail: tp?.available
-        ? cooldownDetail(tp.cooldownRemainingMs, '1 успешный /tp в 24 часа. OP без ограничения.')
-        : 'Доступно с привилегии TITAN.',
+        ? (input.operator ? opNote : again(tp.cooldownRemainingMs, '1 успешный телепорт в 24 часа'))
+        : 'Доступно с привилегии TITAN',
     },
     {
       id: 'ec',
       label: 'Портальный сундук',
       available: ec?.available === true,
-      detail: ec?.available ? 'Тот же сундук, что открывает /ec.' : 'Доступно с привилегии PREMIUM.',
+      detail: ec?.available ? 'Открыть эндер-сундук' : 'Доступно с привилегии PREMIUM',
+    },
+    {
+      id: 'kits',
+      label: 'Наборы',
+      screen: 'donate-kits',
+      available: true,
+      detail: 'Стартовые и ранговые наборы',
     },
   ];
   if (invseeOp?.available) {
-    actions.push({
+    actions.splice(3, 0, {
       id: 'invseeop',
-      label: 'Изменить инвентарь',
-      screen: 'donate-invsee',
+      label: 'Изменить чужой инвентарь',
+      screen: 'donate-invsee-op',
       available: true,
-      detail: 'Только для OP. Обычный просмотр остаётся отдельным.',
+      detail: opNote,
     });
   }
   const kits: NetworkDonateKit[] = status.kits.map((kit) => ({
@@ -164,20 +158,24 @@ export function buildDonateMenu(input: {
     label: KIT_LABELS[kit.name] ?? kit.name,
     available: kit.available,
     detail: kit.available
-      ? (kit.once ? 'Один раз.' : 'Можно получить.')
+      ? (kit.once ? 'Один раз' : 'Можно получить')
       : (kit.cooldownRemainingMs > 0
-        ? `Через ${formatDurationMs(kit.cooldownRemainingMs)}.`
-        : 'Уже получен.'),
+        ? `Можно получить через ${formatDurationMs(kit.cooldownRemainingMs)}`
+        : 'Уже получен'),
   }));
-  const until = status.expiresAt
-    ? `Ещё ${formatDurationMs(status.remainingMs)}`
-    : 'Без срока донат-ранга';
+  const donateLabel = rank === 'default' ? '' : RANK_LABEL[rank];
+  const rankLabel = input.operator
+    ? (donateLabel ? `OP · ${donateLabel}` : 'OP')
+    : RANK_LABEL[rank];
+  const remainingLabel = status.expiresAt
+    ? `до ${new Date(status.expiresAt).toLocaleString('ru-RU', { hour12: false })} · ещё ${formatDurationMs(status.remainingMs)}`
+    : input.operator
+      ? 'Права оператора не истекают'
+      : 'Активной донат-привилегии нет';
   return {
-    rankLabel: input.operator ? 'OP' : RANK_LABEL[rank],
-    summary: input.operator
-      ? `Оператор. ${rank === 'default' ? 'Донат-ранга нет.' : `Донат-ранг ${RANK_LABEL[rank]}.`} ${RANK_SUMMARY[rank]}`
-      : RANK_SUMMARY[rank],
-    remainingLabel: input.operator && rank === 'default' ? 'Права оператора не истекают' : until,
+    rankLabel,
+    summary: '',
+    remainingLabel,
     perks,
     actions,
     kits,

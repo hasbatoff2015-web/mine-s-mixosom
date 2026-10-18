@@ -69,6 +69,12 @@ No payment shop. No merge to `main`.
 
 Deploy this branch to the DEV host only, set `FC_RANK_TEST` on that unit, restart only that unit, then `/ranktest` as OP.
 
+## Follow-up the same day
+
+Death points were missing because `/kill`, lava, hunger and drowning never emitted `entityDeath`, while a mob kill wrote the killer's position into the same slot. Deaths now go to `plugin-data/back/deaths.json` from the corpse position. `/back` uses that point while it is still the latest location. The donate window is wider, actions are cards, kits are a nested screen, and the scrollbar is hidden. An operator without a donate rank gets a nick color that does not recolor `[ADMIN]` or the message text.
+
+`npm run test:server` after this pass: 852 passed, 1 skipped, 4 failed. The four failures are the same ones on `origin/main`.
+
 ## Git
 
 Branch `cursor/donation-ranks-fb58`. Draft PR #131. Not merged.

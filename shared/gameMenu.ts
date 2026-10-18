@@ -36,8 +36,10 @@ export type GameMenuScreen =
   | 'donate-color'
   | 'donate-announce'
   | 'donate-invsee'
+  | 'donate-invsee-op'
   | 'donate-tp'
   | 'donate-back'
+  | 'donate-kits'
   | 'closed';
 
 export function showsMenuBack(screen: GameMenuScreen): boolean {

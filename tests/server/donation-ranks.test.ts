@@ -571,7 +571,7 @@ describe('donation commands on the anarchy world', () => {
     };
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'donate' });
     expect(menuOf().screen).toBe('donate');
-    expect(menuOf().donate?.rankLabel).toBe('Обычный игрок');
+    expect(menuOf().donate?.rankLabel).toBe('Без привилегии');
     expect(menuOf().donate?.actions?.find((action) => action.id === 'tp')?.available).toBe(false);
     expect(menuOf().donate?.actions?.some((action) => action.id === 'invseeop')).toBe(false);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'donate_tp', x: 8, y: 70, z: 8 });
@@ -590,9 +590,82 @@ describe('donation commands on the anarchy world', () => {
     expect(menuOf().screen).toBe('root');
     world.handleMenuAction(op.player, { type: 'menu_action', action: 'open', screen: 'donate' });
     const opMenu = op.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').at(-1) as {
-      donate?: { rankLabel?: string; showInvseeOp?: boolean };
+      donate?: { rankLabel?: string; showInvseeOp?: boolean; remainingLabel?: string };
     };
     expect(opMenu.donate?.rankLabel).toBe('OP');
     expect(opMenu.donate?.showInvseeOp).toBe(true);
+    expect(opMenu.donate?.remainingLabel).toBe('Права оператора не истекают');
+    expect(JSON.stringify(opMenu.donate)).not.toContain('Оператор. Донат-ранга нет');
+  });
+
+  it('remembers a real death for /back after respawn and restart', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const origin = ada.player.controller.position.x;
+    ada.player.controller.teleport([origin + 24, ada.player.controller.position.y, ada.player.controller.position.z]);
+    const diedX = ada.player.controller.position.x;
+    expect(chat(world, ada, '/kill').every((line) => !line.includes('Teleported'))).toBe(true);
+    expect(ada.player.survival.dead).toBe(true);
+    expect(world.teleportHistory.peekDeath(ada.player.id)?.x).toBeCloseTo(diedX, 1);
+    world.events.emit('entityDeath', {
+      entityId: 'mob-1',
+      cause: 'melee',
+      playerId: ada.player.id,
+      attackerId: ada.player.id,
+      mobKind: 'zombie',
+    });
+    expect(world.teleportHistory.peekDeath(ada.player.id)?.x).toBeCloseTo(diedX, 1);
+    expect(world.respawn(ada.player)).toBe(true);
+    expect(ada.player.controller.position.x).not.toBeCloseTo(diedX, 0);
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'donate' });
+    const menu = ada.sink.payloads.filter((payload) => (payload as { type?: string }).type === 'menu').at(-1) as {
+      donate?: { deathPoint?: { x: number }; actions?: { id: string; label: string; detail: string }[] };
+    };
+    expect(menu.donate?.deathPoint?.x).toBeCloseTo(diedX, 1);
+    expect(menu.donate?.actions?.find((action) => action.id === 'back')?.label).toBe('Вернуться в место последней смерти');
+    expect(menu.donate?.actions?.find((action) => action.id === 'back')?.detail).toBe('Возврат к последней смерти');
+    expect(chat(world, ada, '/back').some((line) => line.includes('death'))).toBe(true);
+    expect(ada.player.controller.position.x).toBeCloseTo(diedX, 1);
+
+    const id = ada.player.id;
+    const dir = world.config.dataDir;
+    await world.stop();
+    worlds.splice(worlds.indexOf(world), 1);
+    const again = new WorldInstance(testConfig(dir));
+    worlds.push(again);
+    await again.initialize();
+    await again.loadPlugins();
+    await again.plugins.enableAll();
+    expect(again.teleportHistory.peekDeath(id)?.x).toBeCloseTo(diedX, 1);
+  });
+
+  it('colors an operator name without a donate rank and leaves the message text plain', async () => {
+    const world = await boot();
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    expect(chat(world, ada, '/nickcolor dark_green').some((line) => line.includes('PREMIUM'))).toBe(true);
+    expect(chat(world, op, '/nickcolor dark_green').some((line) => line.includes('dark_green'))).toBe(true);
+    op.sink.payloads.length = 0;
+    world.handleChat(op.player, 'привет');
+    const said = op.sink.payloads.find((payload) => {
+      const record = payload as { type?: string; kind?: string };
+      return record.type === 'chat' && record.kind === 'player';
+    }) as { text?: string; nameStyle?: { prefix?: string; prefixColor?: string; nameColor?: string } };
+    expect(said.text).toBe('привет');
+    expect(said.nameStyle?.prefix).toBe('[ADMIN]');
+    expect(said.nameStyle?.prefixColor).toBe('yellow');
+    expect(said.nameStyle?.nameColor).toBe('dark_green');
+    await world.save();
+    const dir = world.config.dataDir;
+    await world.stop();
+    worlds.splice(worlds.indexOf(world), 1);
+    const again = new WorldInstance(testConfig(dir));
+    worlds.push(again);
+    await again.initialize();
+    await again.loadPlugins();
+    await again.plugins.enableAll();
+    const op2 = join(again, 'Op');
+    expect(again.donation.nameStyle(op2.player.id, true)?.nameColor).toBe('dark_green');
+    expect(again.donation.nameStyle(op2.player.id, true)?.prefixColor).toBe('yellow');
   });
 });

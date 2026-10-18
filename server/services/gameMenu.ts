@@ -67,6 +67,8 @@ export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
     || screen === 'donate-invsee'
     || screen === 'donate-tp'
     || screen === 'donate-back'
+    || screen === 'donate-kits'
+    || screen === 'donate-invsee-op'
   ) return 'donate';
   if (screen === 'claim-settings' || screen === 'claim-delete-confirm') {
     return screen === 'claim-delete-confirm' ? 'claim-settings' : 'claims';

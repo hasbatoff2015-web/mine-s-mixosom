@@ -193,7 +193,12 @@ export function playerNameStyle(
   nickColor: NickColorId | undefined,
 ): PlayerNameStyle | undefined {
   if (operator) {
-    return { prefix: RANK_PREFIX.admin.text, prefixColor: RANK_PREFIX.admin.color, bold: true };
+    return {
+      prefix: RANK_PREFIX.admin.text,
+      prefixColor: RANK_PREFIX.admin.color,
+      bold: true,
+      ...(nickColor ? { nameColor: nickColor } : {}),
+    };
   }
   if (rank === 'default') return undefined;
   const prefix = RANK_PREFIX[rank];

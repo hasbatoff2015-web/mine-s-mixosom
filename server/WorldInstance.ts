@@ -834,6 +834,10 @@ export class WorldInstance {
     this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
     this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
     this.teleportHistory = new TeleportHistoryService();
+    this.teleportHistory.bindDeathStore(
+      () => this.pluginStore.load('back/deaths', { deaths: {} }),
+      (value) => { this.pluginStore.save('back/deaths', value); this.dirty = true; },
+    );
     this.teleports = new TeleportService(config.worldId, this.teleportHistory, (playerId) => {
       const player = this.players.get(playerId);
       if (!player) return undefined;
@@ -1015,6 +1019,12 @@ export class WorldInstance {
     this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
     this.gameplay.onDeathLoot = (player, ids) => {
       this.duels.finalizeDeath(player.id, ids);
+      this.teleportHistory.recordDeath(player.id, {
+        worldId: this.worldId,
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+      });
     };
     this.teleports.setExternalDeny((playerId, reason) => (
       reason === 'duel' ? undefined : this.duels.externalTeleportError(playerId)
@@ -2141,8 +2151,8 @@ export class WorldInstance {
         this.donation.load();
       },
       deathPoint: (entry) => {
-        const last = this.teleportHistory.peek(entry.id);
-        if (!last || last.reason !== 'death') return undefined;
+        const last = this.teleportHistory.peekDeath(entry.id);
+        if (!last || last.worldId !== this.worldId) return undefined;
         return { x: last.x, y: last.y, z: last.z };
       },
     };
@@ -2505,18 +2515,11 @@ export class WorldInstance {
         ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
       };
     }
-    if (
-      session.screen === 'donate'
-      || session.screen === 'donate-color'
-      || session.screen === 'donate-announce'
-      || session.screen === 'donate-invsee'
-      || session.screen === 'donate-tp'
-      || session.screen === 'donate-back'
-    ) {
+    if (session.screen === 'donate' || session.screen.startsWith('donate-')) {
       const owner = player.name.toLowerCase();
       const claims = this.loadClaimStore().claims.filter((claim) => claim.owner === owner).length;
-      const last = this.teleportHistory.peek(player.id);
-      const deathPoint = last?.reason === 'death' ? { x: last.x, y: last.y, z: last.z } : undefined;
+      const last = this.teleportHistory.peekDeath(player.id);
+      const deathPoint = last && last.worldId === this.worldId ? { x: last.x, y: last.y, z: last.z } : undefined;
       return {
         ...base,
         donate: buildDonateMenu({

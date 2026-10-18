@@ -27,12 +27,22 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'back.use',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
-          const last = api.lastTeleport(sender.playerId);
-          if (!last) return fail('No previous location.');
+          const death = ctx.history.peekDeath(sender.playerId);
+          const last = ctx.history.peek(sender.playerId);
+          const deathIsLatest = Boolean(
+            death
+            && death.worldId === ctx.worldId()
+            && (!last || last.reason === 'death' || last.at <= death.at),
+          );
+          const target = deathIsLatest && death ? death : last;
+          if (!target) return fail('Точка смерти не сохранена.');
+          if (death && death.worldId !== ctx.worldId() && !last) {
+            return fail('Точка смерти сохранена в другом мире.');
+          }
           const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
           const cap = operator ? null : RANK_LIMITS[ctx.donation.effectiveRank(sender.playerId)].deathBackPerDay;
-          const go = (): { ok: boolean; error?: string } => api.teleport(sender.playerId, last.x, last.y, last.z, 'back', { warmupMs: 0 });
-          if (last.reason === 'death' && cap !== null) {
+          const go = (): { ok: boolean; error?: string } => api.teleport(sender.playerId, target.x, target.y, target.z, 'back', { warmupMs: 0 });
+          if (target.reason === 'death' && cap !== null) {
             let failure = 'Teleport failed.';
             const used = ctx.donation.consumeIf(sender.playerId, 'deathBack', cap, () => {
               const moved = go();
@@ -44,11 +54,11 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
               if (used.error === 'Не удалось выполнить команду.') return fail(failure);
               return fail(used.error);
             }
-            return ok(`Returned to your previous ${last.reason} location.`);
+            return ok(`Returned to your previous ${target.reason} location.`);
           }
           const result = go();
           return result.ok
-            ? ok(`Returned to your previous ${last.reason} location.`)
+            ? ok(`Returned to your previous ${target.reason} location.`)
             : fail(result.error ?? 'Teleport failed.');
         },
       });

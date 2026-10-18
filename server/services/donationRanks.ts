@@ -253,9 +253,8 @@ export class DonationRankService {
 
   nameStyle(playerIdOrName: string, operator: boolean, now = Date.now()): PlayerNameStyle | undefined {
     const rank = this.effectiveRank(playerIdOrName, now);
-    const color = rank === 'premium' || rank === 'boss' || rank === 'titan'
-      ? this.nickColor(playerIdOrName)
-      : undefined;
+    const canColor = operator || rank === 'premium' || rank === 'boss' || rank === 'titan';
+    const color = canColor ? this.nickColor(playerIdOrName) : undefined;
     return playerNameStyle(rank, operator, color);
   }
 

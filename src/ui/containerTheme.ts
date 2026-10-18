@@ -94,6 +94,7 @@ export function containerUiScale(
 
 /** In-game social menu: compact dark panel, not a fullscreen overlay. */
 export const MC_MENU_WIDTH = 248;
+export const MC_MENU_DONATE_WIDTH = 440;
 export const MC_MENU_ROOT_HEIGHT = 300;
 export const MC_MENU_MAX_SCALE = 3;
 
@@ -106,7 +107,7 @@ export function menuLogicalHeight(screen: string): number {
   if (screen === 'auction-history') return 248;
   if (screen === 'rating') return 292;
   if (screen === 'duels') return 292;
-  if (screen === 'donate' || screen.startsWith('donate-')) return 320;
+  if (screen === 'donate' || screen.startsWith('donate-')) return 360;
   return 216;
 }
 

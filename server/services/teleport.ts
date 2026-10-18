@@ -68,13 +68,56 @@ export interface TeleportActor {
 
 export class TeleportHistoryService {
   private readonly last = new Map<string, TeleportHistoryEntry>();
+  private readonly deaths = new Map<string, TeleportHistoryEntry>();
+  private persistDeaths: ((value: unknown) => void) | undefined;
+
+  /** Death points survive reconnect. Other teleport history stays in memory. */
+  bindDeathStore(load: () => unknown, save: (value: unknown) => void): void {
+    this.persistDeaths = save;
+    this.deaths.clear();
+    const raw = load();
+    const rows = raw && typeof raw === 'object' && 'deaths' in raw
+      ? (raw as { deaths?: unknown }).deaths
+      : undefined;
+    if (!rows || typeof rows !== 'object') return;
+    for (const [playerId, entry] of Object.entries(rows as Record<string, unknown>)) {
+      if (!entry || typeof entry !== 'object') continue;
+      const value = entry as { worldId?: unknown; x?: unknown; y?: unknown; z?: unknown; at?: unknown };
+      if (typeof value.worldId !== 'string' || value.worldId.length === 0) continue;
+      if (typeof value.x !== 'number' || typeof value.y !== 'number' || typeof value.z !== 'number') continue;
+      if (!Number.isFinite(value.x) || !Number.isFinite(value.y) || !Number.isFinite(value.z)) continue;
+      const at = typeof value.at === 'number' && Number.isFinite(value.at) ? value.at : 0;
+      this.deaths.set(playerId, { worldId: value.worldId, x: value.x, y: value.y, z: value.z, reason: 'death', at });
+    }
+  }
 
   record(playerId: string, location: TeleportLocation, reason: TeleportReason): void {
     this.last.set(playerId, { ...location, reason, at: Date.now() });
   }
 
+  /**
+   * Last place this player actually died. Later homes and mob kills do not replace it.
+   */
+  recordDeath(playerId: string, location: TeleportLocation, at = Date.now()): void {
+    this.deaths.set(playerId, { ...location, reason: 'death', at });
+    this.last.set(playerId, { ...location, reason: 'death', at });
+    this.persistDeaths?.(this.exportDeaths());
+  }
+
+  peekDeath(playerId: string): TeleportHistoryEntry | undefined {
+    return this.deaths.get(playerId);
+  }
+
   peek(playerId: string): TeleportHistoryEntry | undefined {
     return this.last.get(playerId);
+  }
+
+  private exportDeaths(): { deaths: Record<string, { worldId: string; x: number; y: number; z: number; at: number }> } {
+    const deaths: Record<string, { worldId: string; x: number; y: number; z: number; at: number }> = {};
+    for (const [playerId, entry] of this.deaths) {
+      deaths[playerId] = { worldId: entry.worldId, x: entry.x, y: entry.y, z: entry.z, at: entry.at };
+    }
+    return { deaths };
   }
 
   consume(playerId: string): TeleportHistoryEntry | undefined {
@@ -118,11 +161,11 @@ export class TeleportService {
       this.cancel(event.playerId, 'Teleport cancelled because you took damage.');
     });
     events.on('entityDeath', (event) => {
-      if (!event.playerId) return;
+      if (!event.playerId || event.mobKind || event.entityId !== event.playerId) return;
       const actor = this.getActor(event.playerId);
       if (!actor) return;
       const pos = actor.position();
-      this.history.record(event.playerId, { worldId: this.worldId, ...pos }, 'death');
+      this.history.recordDeath(event.playerId, { worldId: this.worldId, ...pos });
     });
   }
 

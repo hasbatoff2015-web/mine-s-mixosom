@@ -39,6 +39,7 @@ import {
   containerStageSize,
   containerUiScaleWithClose,
   cursorStackClientPosition,
+  MC_MENU_DONATE_WIDTH,
   MC_MENU_WIDTH,
   menuLogicalHeight,
   menuUiScale,
@@ -4772,7 +4773,9 @@ export class GameUI {
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = MC_MENU_WIDTH;
+    const logicalWidth = state.screen === 'donate' || state.screen.startsWith('donate-')
+      ? MC_MENU_DONATE_WIDTH
+      : MC_MENU_WIDTH;
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -5029,6 +5032,20 @@ export class GameUI {
       field.addEventListener('keydown', (event) => event.stopPropagation());
       field.addEventListener('keyup', (event) => event.stopPropagation());
     }
+    const search = this.modal!.querySelector<HTMLInputElement>('[data-donate-search]');
+    const playerList = this.modal!.querySelector<HTMLElement>('[data-donate-player-list]');
+    const searchEmpty = this.modal!.querySelector<HTMLElement>('[data-donate-search-empty]');
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of playerList?.querySelectorAll<HTMLElement>('[data-donate-player-row]') ?? []) {
+        const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
+        const match = query.length === 0 || name.includes(query);
+        row.hidden = !match;
+        if (match) shown += 1;
+      }
+      if (searchEmpty) searchEmpty.hidden = shown > 0 || query.length === 0;
+    });
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
     for (const list of lists) {

@@ -129,13 +129,14 @@ describe('main menu HUD and chrome', () => {
       screen: 'donate',
       title: 'Донат',
       donate: {
-        rankLabel: 'Обычный игрок',
-        summary: 'Активной донат-привилегии нет.',
+        rankLabel: 'Без привилегии',
+        summary: '',
         remainingLabel: 'Без срока донат-ранга',
         perks: [{ title: 'Дома', detail: '0/3' }],
         actions: [
           { id: 'tp', label: 'Телепорт по координатам', available: false, detail: 'Доступно с привилегии TITAN.', screen: 'donate-tp' },
           { id: 'ec', label: 'Портальный сундук', available: false, detail: 'Доступно с привилегии PREMIUM.' },
+          { id: 'kits', label: 'Наборы', available: true, detail: 'Стартовые и ранговые наборы', screen: 'donate-kits' },
         ],
         kits: [],
         catalog: [{ title: 'VIP', detail: 'Дома 4' }],
@@ -145,8 +146,11 @@ describe('main menu HUD and chrome', () => {
         showInvseeOp: false,
       },
     }, (value) => value);
-    expect(donate).toContain('Обычный игрок');
-    expect(donate).toContain('Доступно с привилегии TITAN.');
+    expect(donate).toContain('Без привилегии');
+    expect(donate).toContain('Доступно с привилегии TITAN');
+    expect(donate).toContain('mc-donate-card');
+    expect(donate).toContain('Наборы');
+    expect(donate).not.toContain('Оператор. Донат-ранга нет');
     expect(donate).toContain('disabled');
     expect(donate).toContain('VIP');
     expect(donate).not.toContain('invseeop');
@@ -164,7 +168,8 @@ describe('main menu HUD and chrome', () => {
     expect(MC_MENU_WIDTH).toBe(248);
     expect(MC_MENU_ROOT_HEIGHT).toBe(300);
     expect(menuLogicalHeight('root')).toBe(300);
-    expect(menuLogicalHeight('donate')).toBe(320);
+    expect(menuLogicalHeight('donate')).toBe(360);
+    expect(cssRule('.mc-menu-panel')).toContain('scrollbar-width: none;');
     expect(menuLogicalHeight('duels')).toBe(292);
     expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, MC_MENU_ROOT_HEIGHT)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
     for (const [width, height] of [[1920, 1080], [1366, 768], [844, 390]] as const) {

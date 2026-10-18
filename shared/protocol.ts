@@ -753,8 +753,10 @@ export type GameMenuScreenKind =
   | 'donate-color'
   | 'donate-announce'
   | 'donate-invsee'
+  | 'donate-invsee-op'
   | 'donate-tp'
   | 'donate-back'
+  | 'donate-kits'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -1886,7 +1888,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
-  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-tp', 'donate-back', 'closed',
+  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {
