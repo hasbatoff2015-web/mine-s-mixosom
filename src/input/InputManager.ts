@@ -98,6 +98,8 @@ export interface InputCallbacks {
   onPointerLockReleased(reason: PointerUnlockReason): void;
   onPointerLockRequestFailed(): void;
   isChatOpen?(): boolean;
+  /** `down` / `up` for Z. `cancel` when focus or the tab is lost while Z may still be down. */
+  onEmoteKey?(phase: 'down' | 'up' | 'cancel'): void;
 }
 
 export function shouldCyclePerspectiveOnKey(input: {
@@ -155,6 +157,8 @@ export class InputManager {
   private swallowEscapeKeyup = false;
   private escapePressed = false;
   private readonly pointerMotion = new PointerMotionFilter();
+  /** While set, locked look deltas aim the emote wheel instead of the camera. */
+  private emotePointer?: (dx: number, dy: number) => void;
   private lockAttempt?: PointerLockAttempt;
   private lockChanges = 0;
   private lockErrors = 0;
@@ -198,7 +202,17 @@ export class InputManager {
 
   /** Same `rotate` already used by pointer-lock mouse and by touch after its scale. */
   applyLookDelta(dx: number, dy: number): void {
+    if (this.emotePointer) return;
     this.rotate(dx, dy);
+  }
+
+  /**
+   * Keep the existing pointer-lock stream, but spend it on the wheel.
+   * Passing null returns the next sample to the camera and drops a quarantined spike.
+   */
+  setEmotePointer(handler: ((dx: number, dy: number) => void) | null): void {
+    this.emotePointer = handler ?? undefined;
+    this.pointerMotion.reset();
   }
 
   isTouchLayout(): boolean {
@@ -458,6 +472,11 @@ export class InputManager {
         this.callbacks.toggleMenu?.();
         return;
       }
+      if (event.code === 'KeyZ' && !event.repeat && !event.ctrlKey && !event.metaKey && !event.altKey && !typing && this.callbacks.canCapture()) {
+        event.preventDefault();
+        this.callbacks.onEmoteKey?.('down');
+        return;
+      }
       if (event.code === 'KeyQ' && !event.repeat) {
         this.callbacks.dropItem();
         return;
@@ -469,6 +488,7 @@ export class InputManager {
     });
     window.addEventListener('keyup', (event) => {
       if (event.code === 'Escape') this.swallowEscapeKeyup = false;
+      if (event.code === 'KeyZ') this.callbacks.onEmoteKey?.('up');
       this.keys.delete(event.code);
     });
     window.addEventListener('blur', () => {
@@ -476,6 +496,7 @@ export class InputManager {
       this.lockAttempt?.finish();
       this.requestPending = false;
       this.clearHeldKeys();
+      this.callbacks.onEmoteKey?.('cancel');
     });
     document.addEventListener('visibilitychange', () => {
       this.resetPointerSession();
@@ -483,18 +504,25 @@ export class InputManager {
         this.clearHeldKeys();
         this.lockAttempt?.finish();
         this.requestPending = false;
+        this.callbacks.onEmoteKey?.('cancel');
       }
     });
 
     this.canvas.addEventListener('click', () => this.tryRequestPointerLock());
     document.addEventListener('mousemove', (event) => {
-      if (document.pointerLockElement !== this.canvas) return;
-      if (this.inputDebug) {
+      const locked = document.pointerLockElement === this.canvas;
+      if (!locked && !this.emotePointer) return;
+      if (this.inputDebug && locked) {
         this.inputEvents++;
         this.recentDeltas.push([event.movementX, event.movementY]);
         if (this.recentDeltas.length > 16) this.recentDeltas.shift();
       }
       const [dx, dy] = this.pointerMotion.accept(event.movementX, event.movementY);
+      if (this.emotePointer) {
+        this.emotePointer(dx, dy);
+        return;
+      }
+      if (!locked) return;
       this.rotate(dx, dy);
     });
     this.canvas.addEventListener('mousedown', (event) => {
@@ -661,7 +689,7 @@ export class InputManager {
     if (next.phase === 'swipe') {
       this.clearHoldTimer();
       const delta = swipeLookDelta(previous, x, y);
-      if (delta) this.rotate(delta.dx * TOUCH_LOOK_SCALE, delta.dy * TOUCH_LOOK_SCALE);
+      if (delta && !this.emotePointer) this.rotate(delta.dx * TOUCH_LOOK_SCALE, delta.dy * TOUCH_LOOK_SCALE);
       next = { ...next, lastX: x, lastY: y };
       if (previous.phase !== 'swipe') this.interactionAim = null;
       this.activeHoldIntent = null;
@@ -688,7 +716,7 @@ export class InputManager {
         : null,
       interactionAim: this.interactionAim,
     });
-    if (effect.lookDx !== 0 || effect.lookDy !== 0) {
+    if (!this.emotePointer && (effect.lookDx !== 0 || effect.lookDy !== 0)) {
       this.rotate(effect.lookDx * TOUCH_LOOK_SCALE, effect.lookDy * TOUCH_LOOK_SCALE);
     }
     this.interactionAim = effect.interactionAim;
