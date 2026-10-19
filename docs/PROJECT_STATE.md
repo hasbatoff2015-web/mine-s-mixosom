@@ -1,5 +1,14 @@
 # Состояние проекта
 
+## Последний проход: автоматический каталог скинов — 2026-10-19
+
+- Новый PNG 64×64 в `public/textures/player/skins/` становится игровым скином без ручной правки `builtinSkins.ts`. Каталог пишет `scripts/generate-player-skins.mjs` в `src/player/appearance/generatedPlayerSkins.ts`. Этот файл импортируют клиент и сервер.
+- В папке 66 PNG: 65 игровых и NPC `buyer_merchant`. Плюс DEV `player_uv_test` вне папки. В меню 65 скинов. `buyer_merchant` и `player_uv_test` в выбор не входят. `frontier_explorer` остаётся скином по умолчанию.
+- Модели уже выпущенных 45 скинов и NPC зафиксированы в `playerSkinModelOverrides.json` и совпадают с классификатором. 20 новых PNG классифицированы по островам рук: 7 classic, 13 slim, неоднозначных нет.
+- Промежуточная альфа на внешнем слое по-прежнему даёт `outerLayerAlpha: 'translucent'`. К прежним четырём таким скинам добавились `10126ef69e2cdfdf`, `1e8fa3ce56f39d6c`, `6fdcd3bc5850aeed`, `b834368ba96d6574`. У скупщика один промежуточный пиксель, материал оставлен binary.
+- `npm run skins:check` входит в `npm run check` и ловит устаревший generated-файл. Push сам игру не обновляет: нужны новые сборки клиента и сервера.
+- Подробности: `docs/reports/2026-10-19_automatic-player-skin-catalog.md`.
+
 ## Последний проход: декоративные пчела и мини-крипер — 2026-10-18
 
 - Операторская команда `/spawnpet` больше не создаёт дикого волка или кота. Синтаксис: `/spawnpet bee`, `/spawnpet creeper`, `/spawnpet off`. Алиас `petspawn`. Право по-прежнему только у оператора.

@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PLAYER_APPEARANCE,
@@ -45,9 +46,11 @@ function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage 
 }
 
 describe('player skin selector', () => {
-  it('exposes all 45 production skins with Classic/Slim metadata', () => {
-    expect(PRODUCTION_PLAYER_SKINS).toHaveLength(45);
-    expect(new Set(PRODUCTION_PLAYER_SKINS.map((skin) => skin.id)).size).toBe(45);
+  it('exposes every production skin PNG with Classic/Slim metadata', () => {
+    const playerPngs = readdirSync('public/textures/player/skins')
+      .filter((name) => name.endsWith('.png') && name !== 'buyer_merchant.png');
+    expect(PRODUCTION_PLAYER_SKINS).toHaveLength(playerPngs.length);
+    expect(new Set(PRODUCTION_PLAYER_SKINS.map((skin) => skin.id)).size).toBe(playerPngs.length);
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === QA_PLAYER_SKIN_ID)).toBe(false);
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === BUYER_NPC_SKIN_ID)).toBe(false);
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === DEFAULT_PLAYER_APPEARANCE.skinId)).toBe(true);
@@ -57,10 +60,24 @@ describe('player skin selector', () => {
     }
     const classic = PRODUCTION_PLAYER_SKINS.filter((skin) => skin.defaultModel === 'classic').length;
     const slim = PRODUCTION_PLAYER_SKINS.filter((skin) => skin.defaultModel === 'slim').length;
-    expect(classic + slim).toBe(45);
+    expect(classic + slim).toBe(playerPngs.length);
     expect(classic).toBeGreaterThan(0);
     expect(slim).toBeGreaterThan(0);
-    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(47);
+    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(playerPngs.length + 2);
+    const discovered = skinDescriptor('14fcedd090af47a4');
+    expect(discovered?.defaultModel).toBe('slim');
+    expect(playerPngs).toContain('14fcedd090af47a4.png');
+  });
+
+  it('selects a discovered skin with its catalog model and restores it on cancel', () => {
+    const session = new PlayerSkinSelectorSession(DEFAULT_PLAYER_APPEARANCE);
+    const preview = session.selectSkin('14fcedd090af47a4');
+    expect(preview.skinId).toBe('14fcedd090af47a4');
+    expect(preview.model).toBe('slim');
+    expect(session.committed.skinId).toBe(DEFAULT_PLAYER_APPEARANCE.skinId);
+    expect(session.cancel().skinId).toBe(DEFAULT_PLAYER_APPEARANCE.skinId);
+    session.selectSkin('5a90d9efb3029994');
+    expect(session.confirm()).toMatchObject({ skinId: '5a90d9efb3029994', model: 'classic' });
   });
 
   it('changes only the temporary preview until confirm', () => {
