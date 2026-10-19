@@ -63,4 +63,4 @@
 
 ## Git
 
-Ветка `cursor/automatic-player-skin-catalog-b3b8` от `origin/main` `9bd569e2e1768cc1cbe5258da5e669deb9630dde`.
+Ветка `cursor/automatic-player-skin-catalog-b3b8` от `origin/main` `9bd569e2e1768cc1cbe5258da5e669deb9630dde`. HEAD `aa58c8d52233f21864ed9ef6ad61aca4e20c7976`. Draft PR #134: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/134. В main не влито.
