@@ -1,4 +1,5 @@
 import { readdirSync } from 'node:fs';
+import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import {
   DEFAULT_PLAYER_APPEARANCE,
@@ -27,13 +28,30 @@ import previewSource from '../src/rendering/player/PlayerAppearancePreview.ts?ra
 import {
   PREVIEW_AUTO_YAW_PER_SECOND,
   PREVIEW_DRAG_RADIANS_PER_PIXEL,
+  PREVIEW_CAMERA_X,
   PREVIEW_CAMERA_Z,
+  PREVIEW_INITIAL_YAW,
   PREVIEW_LOOK_AT_Y,
   PREVIEW_NEUTRAL_VIEW_YAW,
   PreviewRotation,
+  normalizePreviewYaw,
 } from '../src/rendering/player/PlayerAppearancePreview';
+import { playerSkinPartSize } from '../src/rendering/player/PlayerSkinGeometry';
 import { SkinPreviewDragTracker } from '../src/ui/skinPreviewDrag';
 import buyerNpcSource from '../src/net/BuyerNpcView.ts?raw';
+
+/** Turntable yaw of the skin's local −Z front, using the same Three.js Y rotation as the preview. */
+function frontFacesCamera(yaw: number): number {
+  const turntable = new THREE.Group();
+  const marker = new THREE.Object3D();
+  marker.position.set(0, 0, -1);
+  turntable.add(marker);
+  turntable.rotation.y = yaw;
+  turntable.updateMatrixWorld(true);
+  const front = marker.getWorldPosition(new THREE.Vector3()).normalize();
+  const towardCamera = new THREE.Vector3(PREVIEW_CAMERA_X, 0, PREVIEW_CAMERA_Z).normalize();
+  return front.dot(towardCamera);
+}
 
 function memoryStorage(initial: Record<string, string> = {}): AppearanceStorage & { data: Record<string, string> } {
   const data = { ...initial };
@@ -218,11 +236,68 @@ describe('player skin selector', () => {
     expect(previewSource).not.toContain('viewYaw: this.rotation.read()');
     expect(previewSource).toContain('viewYaw: PREVIEW_NEUTRAL_VIEW_YAW');
     expect(PREVIEW_NEUTRAL_VIEW_YAW).toBe(0);
+    expect(PREVIEW_CAMERA_X).toBe(1.35);
     expect(PREVIEW_CAMERA_Z).toBeGreaterThan(3.05);
     expect(PREVIEW_CAMERA_Z).toBe(4.2);
     expect(PREVIEW_LOOK_AT_Y).toBe(0.9);
-    expect(previewSource).toContain('this.camera.position.set(1.35, 1.15, PREVIEW_CAMERA_Z)');
+    expect(previewSource).toContain('this.camera.position.set(PREVIEW_CAMERA_X, 1.15, PREVIEW_CAMERA_Z)');
     expect(previewSource).toContain('this.camera.lookAt(0, PREVIEW_LOOK_AT_Y, 0)');
+  });
+
+  it('starts the preview with the model front aimed at the camera', () => {
+    const yaw = new PreviewRotation().read();
+    expect(yaw).toBeCloseTo(PREVIEW_INITIAL_YAW, 12);
+    expect(yaw).toBeCloseTo(Math.atan2(-PREVIEW_CAMERA_X, -PREVIEW_CAMERA_Z), 12);
+    expect(frontFacesCamera(yaw)).toBeGreaterThan(0.98);
+    expect(frontFacesCamera(0.45)).toBeLessThan(0);
+  });
+
+  it('keeps auto spin, pauses it while dragging, and wraps full turns', () => {
+    const rotation = new PreviewRotation();
+    const start = rotation.read();
+    rotation.advance(1, true);
+    expect(rotation.read()).toBe(start);
+    rotation.rotate(0.4);
+    const dragged = rotation.read();
+    expect(dragged).not.toBe(start);
+    rotation.advance(1, false);
+    expect(rotation.read()).toBeCloseTo(normalizePreviewYaw(dragged + PREVIEW_AUTO_YAW_PER_SECOND), 6);
+
+    const wrapped = new PreviewRotation();
+    for (let turn = 0; turn < 30; turn += 1) wrapped.rotate(Math.PI * 2);
+    expect(wrapped.read()).toBeCloseTo(PREVIEW_INITIAL_YAW, 6);
+    for (let turn = 0; turn < 12; turn += 1) wrapped.advance((Math.PI * 2) / PREVIEW_AUTO_YAW_PER_SECOND, false);
+    expect(Number.isFinite(wrapped.read())).toBe(true);
+    expect(Math.abs(wrapped.read())).toBeLessThanOrEqual(Math.PI);
+    expect(wrapped.read()).toBeCloseTo(PREVIEW_INITIAL_YAW, 5);
+
+    const poisoned = new PreviewRotation();
+    poisoned.rotate(0.2);
+    const safe = poisoned.read();
+    poisoned.rotate(Number.NaN);
+    poisoned.rotate(Number.POSITIVE_INFINITY);
+    poisoned.advance(Number.NaN, false);
+    poisoned.advance(Number.POSITIVE_INFINITY, false);
+    expect(poisoned.read()).toBeCloseTo(safe, 12);
+    expect(normalizePreviewYaw(Number.NaN)).toBe(PREVIEW_INITIAL_YAW);
+  });
+
+  it('reopens at the same facing yaw and does not reset that yaw when the skin changes', () => {
+    expect(new PreviewRotation().read()).toBeCloseTo(new PreviewRotation().read(), 12);
+    const live = new PreviewRotation();
+    live.rotate(-0.7);
+    const duringSpin = live.read();
+    expect(previewSource).toContain('this.visual.setAppearance(createPlayerAppearance(appearance))');
+    expect(previewSource).not.toContain('this.rotation = new PreviewRotation');
+    expect(gameSource).toContain('this.characterPreview?.setAppearance(next)');
+    expect(gameSource).toContain('this.disposeCharacterPreview()');
+    expect(live.read()).toBeCloseTo(duringSpin, 12);
+    expect(new PreviewRotation().read()).toBeCloseTo(PREVIEW_INITIAL_YAW, 12);
+    expect(playerSkinPartSize('rightArm', 'classic')[0]).toBe(4);
+    expect(playerSkinPartSize('rightArm', 'slim')[0]).toBe(3);
+    expect(skinDescriptor('10126ef69e2cdfdf')?.defaultModel).toBe('classic');
+    expect(skinDescriptor('14fcedd090af47a4')?.defaultModel).toBe('slim');
+    expect(skinDescriptor('6fdcd3bc5850aeed')?.outerLayerAlpha).toBe('translucent');
   });
 
   it('tracks one primary pointer for the skin preview drag', () => {

@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-10-19: Skin preview faces the camera
+
+- [x] Initial preview yaw aims the skin's local −Z front at the menu camera.
+- [x] Auto-spin, drag pause, and skin changes keep the existing turntable.
+- [ ] Not merged. Owner still checks the face, a classic arm, a slim arm, and a translucent outer layer in the browser.
+
 ## 2026-10-19: Automatic player skin catalog
 
 - [x] One build-time catalog from `public/textures/player/skins/*.png` for the client and the Node server.
