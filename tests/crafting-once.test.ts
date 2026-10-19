@@ -71,10 +71,10 @@ describe('atomic craft-once', () => {
 
   it('returns remainders with the result when the recipe defines them', () => {
     const inventory = new Inventory();
-    inventory.addItem(ItemId.Arrow, 1);
+    inventory.addItem(ItemId.Arrow, 8);
     inventory.addItem(ItemId.LavaBucket, 1);
     expect(craftOnceByRecipeId(inventory, 'fire_arrow').ok).toBe(true);
-    expect(inventory.count(ItemId.FireArrow)).toBe(1);
+    expect(inventory.count(ItemId.FireArrow)).toBe(8);
     expect(inventory.count(ItemId.Bucket)).toBe(1);
     expect(inventory.count(ItemId.LavaBucket)).toBe(0);
     expect(inventory.count(ItemId.Arrow)).toBe(0);

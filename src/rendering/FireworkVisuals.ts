@@ -51,6 +51,7 @@ export class FireworkVisuals {
   private readonly burstIds = new Set<string>();
   private readonly ordinary: ParticleLayer;
   private readonly compact: ParticleLayer;
+  private readonly particleTint = new THREE.Color();
 
   constructor() {
     this.group.name = 'firework-visuals';
@@ -164,10 +165,10 @@ export class FireworkVisuals {
     color: number,
   ): void {
     if (layer.particles.length >= layer.cap) layer.particles.shift();
-    const tint = new THREE.Color(color);
+    this.particleTint.set(color);
     layer.particles.push({
       x, y, z, vx, vy, vz, life, maxLife: life,
-      r: tint.r, g: tint.g, b: tint.b,
+      r: this.particleTint.r, g: this.particleTint.g, b: this.particleTint.b,
     });
   }
 

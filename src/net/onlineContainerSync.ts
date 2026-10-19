@@ -9,6 +9,19 @@ export interface AuthoritativeWindowPayload {
   readonly y?: number;
   readonly z?: number;
   readonly slots?: unknown;
+  readonly burnTime?: number;
+  readonly burnTotal?: number;
+  readonly cookTime?: number;
+}
+
+export interface FurnaceSyncPayload {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly slots: unknown;
+  readonly burnTime: number;
+  readonly burnTotal: number;
+  readonly cookTime: number;
 }
 
 export function parseNetworkItemStack(value: unknown): ItemStack | null {
@@ -54,8 +67,44 @@ export function applyAuthoritativeContainerSlots(
     return true;
   }
   const furnace = world.getFurnace(window.x, window.y, window.z);
+  const wasBurning = furnace.burnTime > 0;
   const parsed = slots.map((entry) => parseStack(entry));
   furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
+  applyFurnaceTimers(furnace, window);
+  world.syncFurnaceBurnBit(window.x, window.y, window.z, wasBurning);
+  return true;
+}
+
+function finiteTick(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : undefined;
+}
+
+function applyFurnaceTimers(
+  furnace: { burnTime: number; burnTotal: number; cookTime: number },
+  source: { readonly burnTime?: unknown; readonly burnTotal?: unknown; readonly cookTime?: unknown },
+): void {
+  const burnTime = finiteTick(source.burnTime);
+  const burnTotal = finiteTick(source.burnTotal);
+  const cookTime = finiteTick(source.cookTime);
+  if (burnTime !== undefined) furnace.burnTime = burnTime;
+  if (burnTotal !== undefined) furnace.burnTotal = burnTotal;
+  if (cookTime !== undefined) furnace.cookTime = cookTime;
+}
+
+/** Copy an authoritative furnace tick onto the world object the open GUI reads. */
+export function applyFurnaceSync(
+  world: VoxelWorld,
+  message: FurnaceSyncPayload,
+  parseStack: (value: unknown) => ItemStack | null = parseNetworkItemStack,
+): boolean {
+  if (!Number.isInteger(message.x) || !Number.isInteger(message.y) || !Number.isInteger(message.z)) return false;
+  if (!Array.isArray(message.slots)) return false;
+  const furnace = world.getFurnace(message.x, message.y, message.z);
+  const wasBurning = furnace.burnTime > 0;
+  const parsed = message.slots.map((entry) => parseStack(entry));
+  furnace.slots = [parsed[0] ?? null, parsed[1] ?? null, parsed[2] ?? null];
+  applyFurnaceTimers(furnace, message);
+  world.syncFurnaceBurnBit(message.x, message.y, message.z, wasBurning);
   return true;
 }
 

@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
-import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
+import { TICK_RATE, PLAYER_NET_REACH, WORLDGEN_VERSION, blockKey, chunkKey, floorDiv, isValidWorldY } from '../src/core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../src/world/worldBorder';
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
@@ -16,6 +16,8 @@ import {
 } from '../src/inventory';
 import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
 import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
+import { emoteDurationTicks, emoteMovementInterrupts } from '../shared/emotes';
+import type { EmoteId } from '../shared/emotes';
 import { equippedArmorFromInventory, type PlayerPresentationState } from '../shared/playerPresentation';
 import { PlayerController } from '../src/player';
 import { manualJumpLevel } from '../src/player/creativeFlight';
@@ -41,6 +43,13 @@ import {
 import { VoxelWorld } from '../src/world/World';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { collectMinecartPassengers } from '../src/entities/minecartOccupancy';
+import {
+  cosmeticKindForSelection,
+  isCosmeticPetKind,
+  parseCosmeticPetSelection,
+  type CosmeticPetSelection,
+} from '../src/entities/cosmeticPets';
+import { findCosmeticSpawnSpot } from '../src/entities/cosmeticPetMotion';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
@@ -58,6 +67,7 @@ import type {
   ClientMenuActionMessage,
   ClientTradeActionMessage,
   ClientDirectMessageActionMessage,
+  ClientEmoteMessage,
   GameMenuScreenKind,
   ClientBookUpdateMessage,
   ClientSignUpdateMessage,
@@ -145,6 +155,8 @@ import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
 import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
+import { MegaZombieService, bossLootStacks } from './services/megaZombie';
+import { MEGA_ZOMBIE_ENTITY_ID_PREFIX, resolveMegaZombieSpawn } from '../src/entities/megaZombie';
 import {
   DUEL_COUNTDOWN_HOLOGRAM,
   DUEL_COUNTDOWN_HOLOGRAM_SIZE,
@@ -332,6 +344,11 @@ export class ServerPlayer implements GameplayPlayer {
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
   private presentationSwingSeq = 0;
   private presentationHurtSeq = 0;
+  emoteId: EmoteId | null = null;
+  emoteSeq = 0;
+  emoteTicksRemaining = 0;
+  /** Last input seq observed when the emote was accepted. Older commands cannot cancel it. */
+  emoteArmedSeq = -1;
   miningProgress = 0;
   miningStartCommandSeq?: number;
   bowUseTicks = 0;
@@ -348,10 +365,14 @@ export class ServerPlayer implements GameplayPlayer {
   totemActivated = false;
   pendingSignEdit?: { x: number; y: number; z: number };
   deathLootDropped = false;
+  /** Last furnace_sync payload sent while this player's furnace GUI is open. */
+  furnaceSyncSignature?: string;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
   healthSignature = '';
   effectSignature = '';
   appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  /** Decorative pet for this world. Null means the player has none. */
+  cosmeticPet: CosmeticPetSelection | null = null;
   /**
    * Interact/use can advertise a newer hotbar slot than the command snapshot
    * captured before the 1–9 key. Keep that slot when the matching command applies.
@@ -418,6 +439,8 @@ export class ServerPlayer implements GameplayPlayer {
       swingSeq: this.presentationSwingSeq,
       armor: equippedArmorFromInventory(this.inventory),
       hurtSeq: this.presentationHurtSeq,
+      emote: alive ? this.emoteId : null,
+      emoteSeq: this.emoteSeq,
     };
   }
 
@@ -610,6 +633,7 @@ export class WorldInstance {
   readonly notifications: NotificationService;
   readonly holograms: HologramNetwork;
   readonly duels: DuelService;
+  readonly megaZombie: MegaZombieService;
   readonly claimBoundaries: ClaimBoundaryNetwork;
   readonly selection = new PlayerSelectionService();
   private readonly menuSessions = new Map<string, GameMenuSession>();
@@ -625,6 +649,7 @@ export class WorldInstance {
   private dirty = false;
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
+  private cosmeticEnsureTicks = 0;
   private createdAt = Date.now();
   private loadedWorldgenVersion?: number;
   private readonly generatedChunks = new Set<string>();
@@ -667,10 +692,15 @@ export class WorldInstance {
   private readonly debugTickMs = process.env.FC_DEBUG_TICK_MS === '1';
   private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
+  /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
+  private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
 
   constructor(readonly config: ServerConfig) {
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
+    this.world.onFurnaceLitChanged = (change) => {
+      this.pendingFurnaceLit.push(change);
+    };
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
     }, () => this.spawn, (x, y, z) => {
@@ -953,6 +983,11 @@ export class WorldInstance {
     this.holograms = new HologramNetwork((list) => {
       this.broadcast({ type: 'holograms', holograms: [...list] });
     });
+    this.holograms.setAutomineSchedule((name) => {
+      const mine = this.autoMine.get(name);
+      if (!mine || mine.worldId !== this.worldId) return undefined;
+      return mine.nextResetAt;
+    });
     this.duels = new DuelService({
       worldId: config.worldId,
       store: {
@@ -987,6 +1022,102 @@ export class WorldInstance {
     this.events.on('itemPickup', (event) => {
       if (!this.duels.allowsPickup(event.playerId, event.entityId)) event.cancel();
     });
+    let megaZombieSerial = 1;
+    this.megaZombie = new MegaZombieService({
+      broadcast: (text) => this.broadcastChat('system', 'server', text),
+      log: (message) => serverLog(`mega-zombie ${message}`),
+      load: () => this.pluginStore.load('mega-zombie/config', {
+        spawn: null,
+        pos1: null,
+        pos2: null,
+        cycleSeconds: 0,
+        warned: false,
+      }),
+      save: (state) => { this.pluginStore.save('mega-zombie/config', state); },
+      findBoss: () => {
+        const mob = this.gameplay.mobs.entities.find((entry) => entry.kind === 'mega_zombie');
+        if (!mob) return undefined;
+        return {
+          id: mob.id,
+          alive: mob.alive,
+          dying: mob.state === 'die',
+          ageSeconds: mob.ageSeconds,
+          health: mob.health,
+          maxHealth: mob.definition.maxHealth,
+          x: mob.position.x,
+          y: mob.position.y,
+          z: mob.position.z,
+          lastAttackerName: mob.boss?.lastPlayerAttackerName ?? null,
+        };
+      },
+      spawnBoss: (position, arena) => {
+        if (this.gameplay.mobs.entities.some((entry) => entry.kind === 'mega_zombie')) {
+          return { ok: false, message: 'Мега-зомби уже на арене.' };
+        }
+        const resolved = resolveMegaZombieSpawn(this.world, position, arena);
+        if (!resolved.ok) return { ok: false, message: resolved.message ?? 'Не удалось создать Мега-зомби.' };
+        const mob = this.gameplay.mobs.spawn('mega_zombie', { x: resolved.x, y: resolved.y, z: resolved.z }, {
+          force: true,
+          id: `${MEGA_ZOMBIE_ENTITY_ID_PREFIX}${megaZombieSerial}`,
+          bossArena: arena,
+          bossSpawn: position,
+        });
+        megaZombieSerial += 1;
+        if (!mob?.boss) return { ok: false, message: 'Не удалось создать Мега-зомби.' };
+        mob.boss.arena = arena;
+        mob.boss.configuredSpawn = { x: position.x, y: position.y, z: position.z };
+        return { ok: true };
+      },
+      rememberSpawn: (position) => {
+        for (const mob of this.gameplay.mobs.entities) {
+          if (mob.kind === 'mega_zombie' && mob.boss) {
+            mob.boss.configuredSpawn = { x: position.x, y: position.y, z: position.z };
+          }
+        }
+      },
+      killBoss: (attacker) => {
+        const mob = this.gameplay.mobs.entities.find((entry) => entry.kind === 'mega_zombie' && entry.alive);
+        if (!mob) return false;
+        if (attacker && mob.boss) {
+          mob.boss.lastPlayerAttackerId = attacker.id;
+          mob.boss.lastPlayerAttackerName = attacker.name;
+        }
+        return this.gameplay.mobs.damage(mob, Math.max(1, mob.health), {
+          source: attacker ? 'player' : 'environment',
+          lethal: true,
+          ...(attacker ? { attackerId: attacker.id } : {}),
+        });
+      },
+      despawnBoss: () => {
+        for (const mob of [...this.gameplay.mobs.entities]) {
+          if (mob.kind === 'mega_zombie') this.gameplay.mobs.remove(mob.id);
+        }
+      },
+      dropLoot: (x, y, z) => {
+        this.gameplay.scatterBossLoot(bossLootStacks(this.gameplay.random), { x, y, z });
+      },
+      launchFireworks: (x, y, z) => {
+        this.gameplay.launchBossFireworks({ x, y, z });
+      },
+      random: () => this.gameplay.random(),
+    });
+    this.gameplay.mobDeathListener = (mob) => {
+      if (mob.kind !== 'mega_zombie') return;
+      const name = mob.boss?.lastPlayerAttackerName
+        ?? (mob.boss?.lastPlayerAttackerId
+          ? this.findPlayerIdentity(mob.boss.lastPlayerAttackerId)?.name
+          : undefined)
+        ?? null;
+      this.megaZombie.onBossKilled(name);
+    };
+    this.gameplay.mobRemovedListener = (mob, reason) => {
+      if (mob.kind !== 'mega_zombie') return;
+      this.megaZombie.onBossRemoved(reason === 'death' ? 'death' : 'other', {
+        x: mob.position.x,
+        y: mob.position.y,
+        z: mob.position.z,
+      });
+    };
     this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
@@ -1127,6 +1258,7 @@ export class WorldInstance {
         friends: this.friends,
         trade: this.trade,
         duels: this.duels,
+        megaZombie: this.megaZombie,
         openAuction: (playerId, view) => this.openAuction(playerId, view),
         openClan: (playerId, view, extra) => this.openClan(playerId, view, extra),
         openBuyerAdmin: (playerId, buyerId) => this.openBuyerAdmin(playerId, buyerId),
@@ -1353,9 +1485,10 @@ export class WorldInstance {
           + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
           + `resumeCount=${existing.resumeCount}`,
         );
-        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name });
+        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name, firstJoin: false });
         this.buyer.restoreOverflow(existing.id, existing.inventory);
         if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
+        this.ensureCosmeticPet(existing);
         return { player: existing, resumed: true, previousConnectionId };
       }
       const stored = existingId ? this.storedPlayers[existingId] : undefined;
@@ -1369,9 +1502,10 @@ export class WorldInstance {
           `player joined: ${restored.name} (${restored.id}, resume) `
           + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
         );
-        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name });
+        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name, firstJoin: false });
         this.buyer.restoreOverflow(restored.id, restored.inventory);
         this.notifyFriendsOfPresence(restored, 'joined');
+        this.ensureCosmeticPet(restored);
         return { player: restored, resumed: true };
       }
     }
@@ -1407,10 +1541,11 @@ export class WorldInstance {
       `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
       + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
     );
-    this.events.emit('playerJoin', { playerId: player.id, name: player.name });
+    this.events.emit('playerJoin', { playerId: player.id, name: player.name, firstJoin: true });
     this.buyer.restoreOverflow(player.id, player.inventory);
     this.dirty = true;
     this.notifyFriendsOfPresence(player, 'joined');
+    this.ensureCosmeticPet(player);
     return { player, resumed: false };
   }
 
@@ -2457,6 +2592,8 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    this.removeCosmeticPetRuntime(player.id);
+    this.clearPlayerEmote(player);
     this.gameplay.forceReleaseVehicle(player, false);
     player.restingBed = undefined;
     this.gameplay.whMarks.clearPlayer(player.id);
@@ -3804,6 +3941,11 @@ export class WorldInstance {
     return this.world.serializeBlockStates();
   }
 
+  /** Burning furnaces for welcome, or for one column when chunk coordinates are set. */
+  networkFurnaceLit(chunkX?: number, chunkZ?: number) {
+    return this.world.networkFurnaceLit(chunkX, chunkZ);
+  }
+
   tick(): void {
     this.lastPhysicsTicksThisLoop = 1;
     this.clearAppliedSteps();
@@ -3879,14 +4021,21 @@ export class WorldInstance {
     }
     this.recordCombatPoses();
     this.gameplay.mobs.recordPoseHistory(this.tickNumber);
+    this.cosmeticEnsureTicks += 1;
+    if (this.cosmeticEnsureTicks >= 20) {
+      this.cosmeticEnsureTicks = 0;
+      this.refreshCosmeticPets();
+    }
     this.processPendingBowReleases();
     this.processPendingAttacks();
     this.processPendingEntityUses();
     this.lastTickMs = performance.now() - started;
     this.maxTickMs = Math.max(this.maxTickMs, this.lastTickMs, metrics.maxTickMs);
     this.autoMine.tick();
+    this.holograms.noteAutomineSchedule();
     this.worldEvents.tick();
     this.duels.tick();
+    this.megaZombie.tick(dt);
     this.flushBlockChanges();
     const wallMs = performance.now() - started;
     if (this.debugTickMs && wallMs >= 16) {
@@ -3944,6 +4093,7 @@ export class WorldInstance {
   private flushTickNetwork(): void {
     const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
+    this.flushFurnaceLit();
     const snapshots = this.connectedPlayers().map((player) => player.snapshot());
     for (const player of this.connectedPlayers()) player.commandQueue.clearNotifiedSkips();
     if (snapshots.length > 0) {
@@ -4013,6 +4163,7 @@ export class WorldInstance {
       this.flushPlayerInventory(player, false);
       this.flushHealth(player);
     }
+    this.flushOpenFurnaceViews();
     const entityEvents = this.gameplay.consumeEntityEvents();
     if (entityEvents.length > 0) {
       this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
@@ -4192,6 +4343,7 @@ export class WorldInstance {
       }
       if (player.survival.dead) {
         player.restingBed = undefined;
+        this.clearPlayerEmote(player);
         player.controller.velocity.set(0, 0, 0);
         this.flushHealthIfDeadThenRespawn(player);
         const position = player.controller.position;
@@ -4225,6 +4377,7 @@ export class WorldInstance {
           player.controller.velocity.set(0, 0, 0);
         }
       }
+      this.tickPlayerEmote(player, command);
       const jump = input.jump && !exitedRest;
       const using = input.use === true;
       const heldItemId = player.inventory.getSlot(player.selectedSlot)?.itemId;
@@ -4484,6 +4637,23 @@ export class WorldInstance {
     }
   }
 
+  /** One `furnace_lit` per lit edge, to every connected player. No slots. */
+  private flushFurnaceLit(): void {
+    if (this.pendingFurnaceLit.length === 0) return;
+    const pending = this.pendingFurnaceLit.splice(0);
+    const players = this.connectedPlayers();
+    for (const change of pending) {
+      const message = {
+        type: 'furnace_lit' as const,
+        x: change.x,
+        y: change.y,
+        z: change.z,
+        burning: change.burning,
+      };
+      for (const player of players) this.sendTo(player, message);
+    }
+  }
+
   private flushBlockChanges(): void {
     const changes = this.gameplay.consumeBlockChanges();
     if (changes.length === 0) return;
@@ -4519,8 +4689,47 @@ export class WorldInstance {
         y: player.window.y,
         z: player.window.z,
         slots: chest?.slots ?? furnace?.slots,
+        ...(furnace ? {
+          burnTime: furnace.burnTime,
+          burnTotal: furnace.burnTotal,
+          cookTime: furnace.cookTime,
+        } : {}),
       },
     });
+  }
+
+  /**
+   * Players with a furnace GUI open need the server tick's burn/cook/slots.
+   * This is not a full inventory flush and does not touch chest viewers.
+   */
+  private flushOpenFurnaceViews(): void {
+    for (const player of this.connectedPlayers()) {
+      const window = player.window;
+      if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+        player.furnaceSyncSignature = undefined;
+        continue;
+      }
+      const furnace = this.world.furnaces.get(blockKey(window.x, window.y, window.z));
+      const slots = furnace?.slots ?? [null, null, null];
+      const burnTime = furnace?.burnTime ?? 0;
+      const burnTotal = furnace?.burnTotal ?? 0;
+      const cookTime = furnace?.cookTime ?? 0;
+      const signature = `${burnTime}|${burnTotal}|${cookTime}|${slots.map((stack) => (
+        stack ? `${stack.itemId}:${stack.count}` : ''
+      )).join(',')}`;
+      if (player.furnaceSyncSignature === signature) continue;
+      player.furnaceSyncSignature = signature;
+      this.sendTo(player, {
+        type: 'furnace_sync',
+        x: window.x,
+        y: window.y,
+        z: window.z,
+        slots,
+        burnTime,
+        burnTotal,
+        cookTime,
+      });
+    }
   }
 
   /** Other clients with the same chest/furnace open must see the mutation immediately. */
@@ -4540,8 +4749,39 @@ export class WorldInstance {
     const respawned = this.gameplay.respawnPlayer(player);
     if (!respawned) return false;
     player.restingBed = undefined;
+    this.clearPlayerEmote(player);
     this.rebaseAfterHardRelocation(player);
+    this.snapCosmeticPet(player);
     return true;
+  }
+
+  /** Cosmetic only. Rejects a second start and never writes position, health, or inventory. */
+  setPlayerEmote(player: ServerPlayer, message: ClientEmoteMessage): void {
+    if (!player.connected) return;
+    if (message.action === 'stop') {
+      this.clearPlayerEmote(player);
+      return;
+    }
+    if (player.survival.dead || player.emoteId || !message.id) return;
+    player.emoteId = message.id;
+    player.emoteSeq += 1;
+    player.emoteTicksRemaining = emoteDurationTicks(message.id);
+    player.emoteArmedSeq = player.lastInputSeq;
+  }
+
+  private clearPlayerEmote(player: ServerPlayer): void {
+    player.emoteId = null;
+    player.emoteTicksRemaining = 0;
+  }
+
+  private tickPlayerEmote(player: ServerPlayer, command: PlayerCommand | null): void {
+    if (!player.emoteId) return;
+    if (command && command.commandSeq > player.emoteArmedSeq && emoteMovementInterrupts(command)) {
+      this.clearPlayerEmote(player);
+      return;
+    }
+    player.emoteTicksRemaining -= 1;
+    if (player.emoteTicksRemaining <= 0) this.clearPlayerEmote(player);
   }
 
   refreshGameMenu(playerId: string): void {
@@ -4851,6 +5091,7 @@ export class WorldInstance {
     if (look?.yaw !== undefined && Number.isFinite(look.yaw)) player.controller.yaw = look.yaw;
     if (look?.pitch !== undefined && Number.isFinite(look.pitch)) player.controller.pitch = look.pitch;
     this.rebaseAfterHardRelocation(player);
+    this.snapCosmeticPet(player);
     return true;
   }
 
@@ -5061,7 +5302,14 @@ export class WorldInstance {
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
           const mods = this.networkChunkModifications(x, z);
-          this.sendTo(player, { type: 'chunk_data', cx: x, cz: z, modifications: mods, signs: this.world.signsForChunk(x, z) });
+          this.sendTo(player, {
+            type: 'chunk_data',
+            cx: x,
+            cz: z,
+            modifications: mods,
+            signs: this.world.signsForChunk(x, z),
+            furnacesLit: this.world.networkFurnaceLit(x, z),
+          });
           this.lastChunkSends += 1;
         }
       }
@@ -5147,15 +5395,37 @@ export class WorldInstance {
           kind: 'system',
         });
       },
-      give: (itemId: string, count: number) => {
+      give: (itemId: string, count: number, options?: { readonly durability?: number }) => {
         if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
-        const leftover = player.inventory.addItem(itemId, count);
+        const durability = options?.durability;
+        const addOptions = durability !== undefined ? { durability } : {};
+        const leftover = player.inventory.addItem(itemId, count, addOptions);
         const given = count - leftover;
         player.inventoryDirty = true;
-        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
+        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, addOptions));
         instance.flushPlayerInventory(player);
         instance.flushBlockChanges();
         return { given, leftover };
+      },
+      contents: () => {
+        const stacks = [
+          ...player.inventory.slots,
+          player.inventory.armor.head,
+          player.inventory.armor.chest,
+          player.inventory.armor.legs,
+          player.inventory.armor.feet,
+          player.inventory.offhand,
+        ];
+        const items: { itemId: string; count: number; durability?: number }[] = [];
+        for (const stack of stacks) {
+          if (!stack || stack.count < 1 || !isKnownItemId(stack.itemId)) continue;
+          items.push({
+            itemId: stack.itemId,
+            count: stack.count,
+            ...(stack.durability !== undefined ? { durability: stack.durability } : {}),
+          });
+        }
+        return items;
       },
       removeItem: (itemId: string, count: number) => {
         const removed = player.inventory.remove(itemId, count);
@@ -5256,6 +5526,7 @@ export class WorldInstance {
       }
     }
     player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
+    player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     this.players.set(player.id, player);
@@ -5271,7 +5542,7 @@ export class WorldInstance {
     try {
       if (raw) return Inventory.deserialize(raw);
     } catch {
-      serverLog('player inventory save was invalid; using starter kit', 'warn');
+      serverLog('player inventory save was invalid; using an empty inventory', 'warn');
     }
     return createStarterInventory();
   }
@@ -5296,6 +5567,7 @@ export class WorldInstance {
       cursor: player.cursor,
       portalChest: player.portalChest.slots,
       appearance: toNetworkAppearance(player.appearance),
+      ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
     };
   }
 
@@ -5335,35 +5607,93 @@ export class WorldInstance {
     });
   }
 
-  private spawnPetForOperator(player: ServerPlayer, kind: 'wolf' | 'cat') {
-    const pos = player.controller.position;
-    const yaw = player.controller.yaw;
-    const forwardX = -Math.sin(yaw);
-    const forwardZ = -Math.cos(yaw);
-    const trySpawn = (x: number, y: number, z: number) => {
-      if (!isValidWorldY(y)) return undefined;
-      const bx = Math.floor(x);
-      const by = Math.floor(y);
-      const bz = Math.floor(z);
-      if (this.world.getBlock(bx, by, bz) !== BlockId.Air) return undefined;
-      if (this.world.getBlock(bx, by + 1, bz) !== BlockId.Air) return undefined;
-      const below = getBlockDefinition(this.world.getBlock(bx, by - 1, bz));
-      if (!below.solid || below.liquid) return undefined;
-      const mob = this.gameplay.mobs.spawn(kind, { x, y, z }, { force: true });
-      if (!mob) return undefined;
-      this.dirty = true;
-      return mob;
-    };
-    for (const dist of [3, 2, 4]) {
-      const bx = Math.floor(pos.x + forwardX * dist);
-      const bz = Math.floor(pos.z + forwardZ * dist);
-      const x = bx + 0.5;
-      const z = bz + 0.5;
-      const spawned = trySpawn(x, this.world.surfaceY(bx, bz) + 1, z)
-        ?? trySpawn(x, Math.floor(pos.y), z);
-      if (spawned) return spawned;
+  private ownedCosmeticPets(playerId: string) {
+    return this.gameplay.mobs.entities.filter((mob) => mob.ownerId === playerId && isCosmeticPetKind(mob.kind));
+  }
+
+  private removeCosmeticPetRuntime(playerId: string, keepId?: string): void {
+    for (const mob of this.ownedCosmeticPets(playerId)) {
+      if (mob.id === keepId) continue;
+      this.gameplay.mobs.remove(mob.id);
     }
-    return undefined;
+  }
+
+  private rememberCosmeticSelection(player: ServerPlayer): void {
+    this.storedPlayers[player.id] = this.toStored(player);
+    this.dirty = true;
+  }
+
+  private ensureCosmeticPet(player: ServerPlayer): void {
+    if (!player.connected || player.survival.dead) return;
+    const selection = player.cosmeticPet;
+    const owned = this.ownedCosmeticPets(player.id);
+    if (!selection) {
+      this.removeCosmeticPetRuntime(player.id);
+      return;
+    }
+    const kind = cosmeticKindForSelection(selection);
+    const matches = owned.filter((mob) => mob.alive && mob.kind === kind);
+    const keep = matches[0];
+    this.removeCosmeticPetRuntime(player.id, keep?.id);
+    if (keep) return;
+    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    if (!spot) return;
+    this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+  }
+
+  private snapCosmeticPet(player: ServerPlayer): void {
+    if (!player.connected || player.survival.dead || !player.cosmeticPet) return;
+    const kind = cosmeticKindForSelection(player.cosmeticPet);
+    const owned = this.ownedCosmeticPets(player.id);
+    const keep = owned.find((mob) => mob.alive && mob.kind === kind);
+    this.removeCosmeticPetRuntime(player.id, keep?.id);
+    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    if (!spot) return;
+    if (!keep) {
+      this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+      return;
+    }
+    keep.position.set(spot.x, spot.y, spot.z);
+    keep.velocity.set(0, 0, 0);
+    keep.poseEpoch += 1;
+    keep.poseHistory.length = 0;
+    keep.previousPosition.copy(keep.position);
+    keep.previousFacingYaw = keep.facingYaw;
+  }
+
+  private refreshCosmeticPets(): void {
+    const connected = new Set<string>();
+    for (const player of this.connectedPlayers()) {
+      connected.add(player.id);
+      if (!player.survival.dead) this.ensureCosmeticPet(player);
+    }
+    for (const mob of [...this.gameplay.mobs.entities]) {
+      if (!isCosmeticPetKind(mob.kind) || !mob.ownerId) continue;
+      if (!connected.has(mob.ownerId)) this.gameplay.mobs.remove(mob.id);
+    }
+  }
+
+  private setCosmeticPet(player: ServerPlayer, selection: CosmeticPetSelection | null) {
+    if (selection === null) {
+      this.removeCosmeticPetRuntime(player.id);
+      player.cosmeticPet = null;
+      this.rememberCosmeticSelection(player);
+      return ok('Декоративный питомец отключён.');
+    }
+    const kind = cosmeticKindForSelection(selection);
+    const current = this.ownedCosmeticPets(player.id).filter((mob) => mob.alive && mob.kind === kind);
+    if (player.cosmeticPet === selection && current.length >= 1) {
+      this.removeCosmeticPetRuntime(player.id, current[0]!.id);
+      return ok(selection === 'bee' ? 'Пчела уже рядом.' : 'Мини-крипер уже рядом.');
+    }
+    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    if (!spot) return fail('Не удалось найти безопасное место для питомца.');
+    const spawned = this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+    if (!spawned) return fail('Не удалось создать питомца.');
+    player.cosmeticPet = selection;
+    this.removeCosmeticPetRuntime(player.id, spawned.id);
+    this.rememberCosmeticSelection(player);
+    return ok(selection === 'bee' ? 'Рядом появилась пчела.' : 'Рядом появился мини-крипер.');
   }
 
   private registerBuiltinCommands(): void {
@@ -5435,8 +5765,8 @@ export class WorldInstance {
       name: 'spawnpet',
       aliases: ['petspawn'],
       permission: 'operator',
-      usage: '/spawnpet <wolf|cat>',
-      description: 'Operator QA: spawn a wild wolf or cat in front of you',
+      usage: '/spawnpet <bee|creeper|off>',
+      description: 'Operator: choose a decorative bee or mini creeper',
       execute: (args, sender) => {
         if (isConsoleSender(sender) || sender.kind !== 'player') {
           return fail('This command can only be used by a player.');
@@ -5444,12 +5774,9 @@ export class WorldInstance {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('This command can only be used by a player.');
         const kind = args[0]?.trim().toLowerCase();
-        if (kind !== 'wolf' && kind !== 'cat') return fail('Usage: /spawnpet <wolf|cat>');
-        const spawned = this.spawnPetForOperator(player, kind);
-        if (!spawned) return fail('Could not spawn pet in front of you.');
-        return ok(
-          `Spawned ${kind} at ${spawned.position.x.toFixed(1)}, ${spawned.position.y.toFixed(1)}, ${spawned.position.z.toFixed(1)} id=${spawned.id}`,
-        );
+        if (kind === 'off') return this.setCosmeticPet(player, null);
+        if (kind === 'bee' || kind === 'creeper') return this.setCosmeticPet(player, kind);
+        return fail('Usage: /spawnpet <bee|creeper|off>');
       },
     });
     this.commands.register({
@@ -5549,15 +5876,9 @@ export class WorldInstance {
   }
 }
 
+/** New online players start with an empty inventory. The one-time grant is `/kit start`. */
 export function createStarterInventory(): Inventory {
-  const inventory = new Inventory();
-  inventory.addItem('dirt', 64);
-  inventory.addItem('cobblestone', 64);
-  inventory.addItem('oak_planks', 64);
-  inventory.addItem('stone', 64);
-  inventory.addItem('oak_log', 32);
-  inventory.addItem('apple', 8);
-  return inventory;
+  return new Inventory();
 }
 
 export { ANARCHY_WORLD_ID, TICK_RATE };

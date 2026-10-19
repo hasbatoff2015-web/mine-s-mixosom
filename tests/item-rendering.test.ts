@@ -53,6 +53,7 @@ import {
 import { IRON_PICKAXE_SILHOUETTE, maskFromSilhouette } from './ironPickaxeSilhouette';
 
 const ITEM_TEXTURES = import.meta.glob('../public/textures/item/*.png');
+const PAINTING_TEXTURES = import.meta.glob('../public/textures/painting/collectibles/*.png');
 const BLOCK_TEXTURES = import.meta.glob('../public/textures/block/*.png');
 const FULL_TILE = Object.freeze({ u0: 0, v0: 0, u1: 1, v1: 1 });
 
@@ -250,7 +251,7 @@ describe('item render profiles and assets', () => {
   });
 
   it('maps every registered item and every block face texture to an imported PNG', () => {
-    const itemPaths = Object.keys(ITEM_TEXTURES);
+    const itemPaths = [...Object.keys(ITEM_TEXTURES), ...Object.keys(PAINTING_TEXTURES)];
     const blockPaths = Object.keys(BLOCK_TEXTURES);
     for (const item of ITEMS) {
       if (item.kind !== 'block' || item.texture.startsWith('item/')) {

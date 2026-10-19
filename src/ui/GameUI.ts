@@ -1,4 +1,4 @@
-import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
+import { craftOnceByRecipeId, matchCraftingRecipe, canCraftOnce, craftCatalogEntries, craftIngredientLines, findPrimaryRecipeForItem, furnaceBurnRatio, furnaceCookRatio, CRAFT_INVENTORY_FULL_MESSAGE, CRAFT_UNCRAFTABLE_HINT } from '../crafting';
 import {
   Inventory,
   createItemStack,
@@ -6,7 +6,7 @@ import {
   parseSerializedItemStack,
   type ItemStack,
 } from '../inventory';
-import { creativeCatalogItems, getItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
+import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionClaimableClass, auctionClaimHint, auctionIconStack, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionClaimableClass, auctionIconStack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -118,6 +118,7 @@ import {
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
+import { EMOTE_IDS, EMOTE_LABELS, type EmoteId } from '../../shared/emotes';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
   chatScrollPinnedToBottom,
@@ -302,6 +303,8 @@ export interface HudState {
   debug?: string;
   /** "Игроков" plus floored XYZ. Omitted updates leave the previous text. */
   playInfo?: string;
+  /** Active mega zombie. Null hides the bar. Omitted updates leave the previous bar. */
+  boss?: { readonly health: number; readonly maxHealth: number } | null;
 }
 
 export interface InventoryContext {
@@ -319,6 +322,21 @@ export interface InventoryContext {
 
 interface OverlayCloseOptions {
   keepModal?: boolean;
+}
+
+function emoteWheelHtml(): string {
+  const wedges = EMOTE_IDS.map((id) => `<div class="emote-wedge" data-wedge="${id}"></div>`).join('');
+  const labels = EMOTE_IDS.map((id) => `<span class="emote-label emote-label-${id}">${EMOTE_LABELS[id]}</span>`).join('');
+  return `<div id="emote-wheel" class="hidden" aria-hidden="true">
+    <div class="emote-wheel-dim"></div>
+    <div class="emote-disc" data-selected="">
+      ${wedges}
+      <div class="emote-dividers" aria-hidden="true"></div>
+      ${labels}
+      <div class="emote-hub"><span id="emote-wheel-title">Отмена</span></div>
+      <div class="emote-cursor" aria-hidden="true"></div>
+    </div>
+  </div>`;
 }
 
 export class GameUI {
@@ -357,6 +375,10 @@ export class GameUI {
   private playerInClan = false;
   private chatLines: ChatMessage[] = [];
   private pointerLockFallback: HTMLElement;
+  private emoteWheel: HTMLElement;
+  private emoteDisc: HTMLElement;
+  private emoteWheelTitle: HTMLElement;
+  private emoteCursor: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
   private hologramPreviewTimer?: number;
@@ -435,6 +457,10 @@ export class GameUI {
   private offhandHtml = '';
   private selectedItemText = '';
   private heartsHtml = '';
+  private bossBar?: HTMLElement;
+  private bossFill?: HTMLElement;
+  private bossPercent?: HTMLElement;
+  private bossKey = '';
   private hungerHtml = '';
   private airHtml = '';
   private airVisible = false;
@@ -457,6 +483,11 @@ export class GameUI {
         <div id="hurt-flash" aria-hidden="true"></div>
         <div id="totem-flash" aria-hidden="true"><img src="${TextureAtlas.url('item/totem_of_undying')}" alt="" />${Array.from({ length: 12 }, (_, i) => `<span style="--spark-angle:${i * 30}deg"></span>`).join('')}</div>
         <div id="crosshair"></div>
+        <div id="boss-bar" class="hidden" aria-live="polite">
+          <div class="boss-bar-name">МЕГА-ЗОМБИ</div>
+          <div class="boss-bar-track"><span></span></div>
+          <div class="boss-bar-percent">100%</div>
+        </div>
         <div id="mining-progress" class="hidden"><span></span></div>
         <div id="status-bars">
           <div class="status-left">
@@ -521,7 +552,12 @@ export class GameUI {
             <span class="hud-corner-key">M</span>
             <span class="hud-corner-label">Меню</span>
           </button>
+          <div id="hud-emote" role="img" aria-label="Эмоции, клавиша Z">
+            <span class="hud-corner-key">Z</span>
+            <span class="hud-corner-label">Эмоции</span>
+          </div>
         </div>
+        ${emoteWheelHtml()}
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -534,6 +570,9 @@ export class GameUI {
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.hearts = this.root.querySelector('.hearts')!;
+    this.bossBar = this.root.querySelector('#boss-bar') ?? undefined;
+    this.bossFill = this.root.querySelector('#boss-bar .boss-bar-track > span') ?? undefined;
+    this.bossPercent = this.root.querySelector('#boss-bar .boss-bar-percent') ?? undefined;
     this.hunger = this.root.querySelector('.hunger')!;
     this.air = this.root.querySelector('.air')!;
     this.armor = this.root.querySelector('.armor')!;
@@ -555,6 +594,10 @@ export class GameUI {
     this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
     this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    this.emoteWheel = this.root.querySelector('#emote-wheel')!;
+    this.emoteDisc = this.root.querySelector('.emote-disc')!;
+    this.emoteWheelTitle = this.root.querySelector('#emote-wheel-title')!;
+    this.emoteCursor = this.root.querySelector('.emote-cursor')!;
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
@@ -1044,6 +1087,28 @@ export class GameUI {
     this.pointerLockFallback.onclick = null;
   }
 
+  private renderBossBar(boss: { readonly health: number; readonly maxHealth: number } | null): void {
+    const bar = this.bossBar;
+    const fill = this.bossFill;
+    const percent = this.bossPercent;
+    if (!bar || !fill || !percent) return;
+    if (!boss || boss.maxHealth <= 0) {
+      if (this.bossKey !== 'hidden') {
+        this.bossKey = 'hidden';
+        bar.classList.add('hidden');
+      }
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, boss.health / boss.maxHealth));
+    const shown = Math.round(ratio * 100);
+    const key = `${shown}:${ratio.toFixed(4)}`;
+    if (key === this.bossKey) return;
+    this.bossKey = key;
+    bar.classList.remove('hidden');
+    fill.style.width = `${(ratio * 100).toFixed(2)}%`;
+    percent.textContent = `${shown}%`;
+  }
+
   updateHud(state: HudState): void {
     const offhandHtml = this.slotHtml(state.inventory.offhand, 'offhand-hud');
     if (offhandHtml !== this.offhandHtml) {
@@ -1065,6 +1130,7 @@ export class GameUI {
       this.selectedItemText = selectedItemText;
       this.selectedItem.textContent = selectedItemText;
     }
+    if (state.boss !== undefined) this.renderBossBar(state.boss);
     const heartsHtml = [
       ...heartHudIcons(state.health).icons.map((icon) => this.heartIconHtml(icon)),
       ...absorptionHudIcons(state.absorption ?? 0).icons.map((icon) => this.absorptionHeartIconHtml(icon)),
@@ -1253,6 +1319,42 @@ export class GameUI {
 
   isBlockingOverlay(): boolean {
     return this.modal !== undefined || this.chatOpen || this.hologramEditor !== undefined;
+  }
+
+  isEmoteWheelOpen(): boolean {
+    return !this.emoteWheel.classList.contains('hidden');
+  }
+
+  showEmoteWheel(): void {
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
+    this.emoteWheel.classList.remove('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'false');
+  }
+
+  /** Highlight only. The hub label stays «Отмена». */
+  setEmoteWheelSelection(id: EmoteId | null): void {
+    this.emoteDisc.dataset.selected = id ?? '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+  }
+
+  emoteWheelRadius(): number {
+    return this.emoteDisc.getBoundingClientRect().width / 2;
+  }
+
+  placeEmoteCursor(x: number, y: number): void {
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    this.emoteCursor.style.transform = `translate(${px}px, ${py}px)`;
+  }
+
+  hideEmoteWheel(): void {
+    this.emoteWheel.classList.add('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'true');
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
   }
 
   isHologramEditorOpen(): boolean {
@@ -3382,8 +3484,8 @@ export class GameUI {
   }
 
   private furnaceHtml(furnace: FurnaceState): string {
-    const burn = furnace.burnTotal > 0 ? furnace.burnTime / furnace.burnTotal : 0;
-    const cook = furnace.cookTime / 200;
+    const burn = furnaceBurnRatio(furnace);
+    const cook = furnaceCookRatio(furnace);
     const cookWidth = `${Math.max(0, Math.min(1, cook)) * 100}%`;
     return `<div class="mc-label">${CONTAINER_STRINGS.furnace}</div>
       <div class="mc-furnace">
@@ -3551,7 +3653,7 @@ export class GameUI {
       if (!listing) return this.slotHtml(null, `ah-${index}`);
       const stack = this.auctionStack(listing.item);
       const extra = auctionClaimableClass(listing.status);
-      const hint = auctionClaimHint(listing.status);
+      const hint = auctionSlotHint(listing.status, stack ? tryGetItemDefinition(stack.itemId)?.description : undefined);
       const wrapClass = extra ? ` class="${extra}"` : '';
       return `<div data-ah-listing="${this.escape(listing.listingId)}"${wrapClass}>${this.slotHtml(stack, `ah-${index}`, false, listing.tooltip, hint, 'auction')}</div>`;
     }).join('');

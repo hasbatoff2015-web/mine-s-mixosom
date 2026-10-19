@@ -495,6 +495,43 @@ textarea,
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
 }
 
+#boss-bar {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top)) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 24px));
+  pointer-events: none;
+  text-align: center;
+  color: #f6f3ea;
+  font: 700 13px/1.2 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-shadow: 0 2px 0 #000;
+  z-index: 6;
+}
+
+#boss-bar.hidden { display: none; }
+
+.boss-bar-track {
+  margin-top: 6px;
+  height: 14px;
+  border: 2px solid #140b0b;
+  background: #2a1214;
+  box-shadow: inset 0 0 0 1px #6a2424;
+}
+
+.boss-bar-track > span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(#f04545, #8d1414);
+}
+
+.boss-bar-percent {
+  margin-top: 4px;
+  font-size: 12px;
+}
+
 #status-bars {
   position: absolute;
   bottom: calc(max(10px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + 9px);
@@ -816,7 +853,7 @@ textarea,
   display: flex;
   flex-direction: column;
   gap: calc(6px * var(--hud-scale));
-  pointer-events: auto;
+  pointer-events: none;
 }
 
 #hud-corner button {
@@ -837,12 +874,33 @@ textarea,
   box-shadow: none;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
+  pointer-events: auto;
   cursor: pointer;
 }
 
 #hud-pause { background-image: var(--hud-pause-img); }
 #hud-chat { background-image: var(--hud-chat-img); }
 #hud-menu { background-image: var(--hud-menu-img); }
+
+#hud-emote {
+  box-sizing: border-box;
+  position: relative;
+  display: block;
+  width: calc(76px * var(--hud-scale));
+  height: calc(76px * var(--hud-scale));
+  aspect-ratio: 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background-color: transparent;
+  background-image: var(--hud-emote-img);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  pointer-events: none;
+}
 
 #hud-pause:hover,
 #hud-pause:focus-visible { background-image: var(--hud-pause-hover-img); }
@@ -869,6 +927,143 @@ textarea,
 
 #chat.open ~ #hud-corner {
   display: none;
+}
+
+#emote-wheel {
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  pointer-events: auto;
+  cursor: none;
+}
+
+.emote-wheel-dim {
+  position: absolute;
+  inset: 0;
+  background: rgba(4, 8, 10, 0.46);
+}
+
+.emote-disc {
+  position: relative;
+  width: min(440px, 72vmin);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 3px solid #8ea0ae;
+  background: conic-gradient(
+    from -45deg,
+    #31424c 0deg 90deg,
+    #243038 90deg 180deg,
+    #31424c 180deg 270deg,
+    #243038 270deg 360deg
+  );
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.35);
+}
+
+.emote-wedge {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 90ms ease-out;
+}
+
+.emote-wedge[data-wedge="wave"] {
+  background: conic-gradient(from -45deg, rgba(215, 230, 184, 0.96) 0deg 90deg, transparent 90deg);
+}
+.emote-wedge[data-wedge="celebrate"] {
+  background: conic-gradient(from -45deg, transparent 0deg 90deg, rgba(215, 230, 184, 0.96) 90deg 180deg, transparent 180deg);
+}
+.emote-wedge[data-wedge="point"] {
+  background: conic-gradient(from -45deg, transparent 0deg 180deg, rgba(215, 230, 184, 0.96) 180deg 270deg, transparent 270deg);
+}
+.emote-wedge[data-wedge="bow"] {
+  background: conic-gradient(from -45deg, transparent 0deg 270deg, rgba(215, 230, 184, 0.96) 270deg 360deg);
+}
+
+.emote-disc[data-selected="wave"] .emote-wedge[data-wedge="wave"],
+.emote-disc[data-selected="celebrate"] .emote-wedge[data-wedge="celebrate"],
+.emote-disc[data-selected="point"] .emote-wedge[data-wedge="point"],
+.emote-disc[data-selected="bow"] .emote-wedge[data-wedge="bow"] {
+  opacity: 1;
+}
+
+.emote-dividers {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  background:
+    linear-gradient(#10181c, #10181c) center / 2px 100% no-repeat,
+    linear-gradient(#10181c, #10181c) center / 100% 2px no-repeat;
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+.emote-label {
+  position: absolute;
+  z-index: 1;
+  max-width: 22%;
+  color: #f4f7ea;
+  font: 700 calc(13px * var(--hud-scale)) / 1.2 var(--font-ui);
+  text-align: center;
+  text-shadow: 0 1px 0 #000;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.emote-label-wave { left: 50%; top: 18%; }
+.emote-label-celebrate { left: 82%; top: 50%; }
+.emote-label-point { left: 50%; top: 82%; }
+.emote-label-bow { left: 18%; top: 50%; }
+
+.emote-disc[data-selected="wave"] .emote-label-wave,
+.emote-disc[data-selected="celebrate"] .emote-label-celebrate,
+.emote-disc[data-selected="point"] .emote-label-point,
+.emote-disc[data-selected="bow"] .emote-label-bow {
+  color: #1c2614;
+  text-shadow: none;
+}
+
+.emote-hub {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  display: grid;
+  width: 34%;
+  aspect-ratio: 1;
+  place-items: center;
+  padding: 8%;
+  border: 3px solid #9aafbc;
+  border-radius: 50%;
+  background: rgba(74, 34, 38, 0.94);
+  color: #f4f7ea;
+  font: 700 calc(16px * var(--hud-scale)) / 1.25 var(--font-ui);
+  text-align: center;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+}
+
+.emote-cursor {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 4;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  pointer-events: none;
+  background:
+    linear-gradient(#f4f7ea, #f4f7ea) center / 2px 100% no-repeat,
+    linear-gradient(#f4f7ea, #f4f7ea) center / 100% 2px no-repeat;
+  filter: drop-shadow(0 0 1px #10181c);
+}
+
+@media (max-width: 720px) {
+  .emote-label { font-size: 12px; }
+  .emote-hub { font-size: 13px; }
 }
 
 .toast {
@@ -4404,11 +4599,15 @@ textarea,
     top: max(8px, env(safe-area-inset-top));
     right: max(8px, env(safe-area-inset-right));
     flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: flex-end;
     align-items: flex-start;
+    width: calc(48px * 3 + 6px * 2);
     gap: 6px;
   }
 
-  #hud-corner button {
+  #hud-corner button,
+  #hud-emote {
     width: 48px;
     height: 48px;
   }
@@ -4613,7 +4812,9 @@ textarea,
     --touch-action-right-offset: 40px;
     --touch-action-bottom-offset: 38px;
   }
-  #hud-corner button { width: 44px; height: 44px; }
+  #hud-corner { width: calc(44px * 3 + 6px * 2); }
+  #hud-corner button,
+  #hud-emote { width: 44px; height: 44px; }
   #play-info {
     bottom: max(4px, env(safe-area-inset-bottom));
     font-size: 12px;

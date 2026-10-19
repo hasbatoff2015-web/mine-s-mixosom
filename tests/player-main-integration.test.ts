@@ -19,11 +19,12 @@ describe('player visuals on the server-authoritative main integration', () => {
     expect(online.indexOf('this.syncLocalCreativeFlight(session)')).toBeLessThan(online.indexOf('predictLocalMove'));
     expect(online).toContain('flushPendingLocalSnapshot');
     expect(online).toContain('session.playerVisual.setHeldItem(selected?.itemId)');
-    expect(online).toContain('this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed)');
-    expect(online.indexOf('this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed)'))
+    expect(online).toContain('const handsAllowed = gameplayAllowed && this.emotes?.blocksPrimaryHand !== true');
+    expect(online).toContain('this.syncLocalCombatUse(session, selected?.itemId, handsAllowed)');
+    expect(online.indexOf('this.syncLocalCombatUse(session, selected?.itemId, handsAllowed)'))
       .toBeLessThan(online.indexOf('this.firstPerson?.setHeldItems(selected?.itemId)'));
     const players = section('tickPlayers: () => {', 'tickPlayerActions: () => {');
-    expect(players).toContain('this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed)');
+    expect(players).toContain('this.syncLocalCombatUse(session, selected?.itemId, handsAllowed)');
     const helper = section('private syncLocalCombatUse(', 'private tickOnline(');
     expect(helper).toContain('session.combat.setHeldItem(selectedItemId)');
     expect(helper).toContain('session.combat.setOffhand(session.inventory.offhand?.itemId)');

@@ -73,6 +73,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'friends.*',
     'trade.*',
     'duels.admin',
+    'kit.*',
   ],
   vip: [
     'home.multiple',

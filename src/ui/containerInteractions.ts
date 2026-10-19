@@ -11,6 +11,7 @@ import { getItemDefinition } from '../items';
 import {
   consumeCraftingGrid,
   matchCraftingRecipe,
+  type Ingredient,
   type Recipe,
   type SmeltingRecipe,
 } from '../crafting';
@@ -53,6 +54,12 @@ function cloneRequired(stack: ItemStack): ItemStack {
   return cloneStack(stack)!;
 }
 
+function ingredientAmount(ingredient: Ingredient): number {
+  if (typeof ingredient === 'string') return 1;
+  const count = ingredient.count ?? 1;
+  return Number.isInteger(count) && count > 0 ? count : 1;
+}
+
 export function craftingTemplate(
   recipe: Recipe,
   gridSize: 2 | 3,
@@ -62,7 +69,7 @@ export function craftingTemplate(
   if (recipe.type === 'shapeless') {
     recipe.ingredients.forEach((ingredient, index) => {
       if (index >= cells.length) return;
-      cells[index] = createItemStack(pickIngredientItem(ingredient, counts), 1);
+      cells[index] = createItemStack(pickIngredientItem(ingredient, counts), ingredientAmount(ingredient));
     });
     return cells;
   }
@@ -76,7 +83,10 @@ export function craftingTemplate(
       if (char === ' ') continue;
       const ingredient = recipe.key[char];
       if (!ingredient) continue;
-      cells[y * gridSize + x] = createItemStack(pickIngredientItem(ingredient, counts), 1);
+      cells[y * gridSize + x] = createItemStack(
+        pickIngredientItem(ingredient, counts),
+        ingredientAmount(ingredient),
+      );
     }
   }
   return cells;
@@ -97,7 +107,7 @@ export function ghostFromRecipe(recipe: Recipe, gridSize: 2 | 3, counts: Readonl
   const cells = craftingTemplate(recipe, gridSize, counts);
   const missing = cells.map((stack) => {
     if (!stack) return false;
-    return (counts.get(stack.itemId) ?? 0) < 1;
+    return (counts.get(stack.itemId) ?? 0) < stack.count;
   });
   return { recipeId: recipe.id, cells, missing };
 }
@@ -138,7 +148,7 @@ export function placeCraftingRecipe(
   for (let index = 0; index < template.length; index += 1) {
     const cell = template[index];
     if (!cell) continue;
-    const want = Math.min(getItemDefinition(cell.itemId).maxStack, fill);
+    const want = Math.min(getItemDefinition(cell.itemId).maxStack, cell.count * fill);
     const removed = inventory.remove(cell.itemId, want);
     if (removed <= 0) {
       inventory.restore(snapshot);
@@ -167,10 +177,14 @@ export function takeCraftOutput(
     while (true) {
       const current = matchCraftingRecipe(nextGrid, gridSize, gridSize);
       if (!current) break;
+      const snapshot = inventory.serialize();
       const remainder = inventory.add(cloneRequired(current.output));
       if (remainder) {
-        if (remainder.count === current.output.count) break;
-        nextCursor = nextCursor === null ? remainder : nextCursor;
+        if (remainder.count === current.output.count || nextCursor !== null) {
+          inventory.restore(snapshot);
+          break;
+        }
+        nextCursor = remainder;
         nextGrid = [...consumeCraftingGrid(nextGrid, current)];
         break;
       }

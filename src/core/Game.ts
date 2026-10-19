@@ -81,11 +81,13 @@ import {
   type WorldLoadSnapshot,
 } from './worldLoading';
 import {
+  BLOCKED_MOVE_INPUT,
   openingPauseMenuPausesSimulation,
   playerGameplayAllowed,
   resolvePlayerMoveInput,
   worldSimulationActive,
 } from './gameplayModal';
+import { EmoteSession } from '../gameplay/emoteSession';
 import { GameLifecycleManager } from './Lifecycle';
 import type { LifecycleState } from './lifecycleTypes';
 import { RollingTimingWindow } from './PerformanceStats';
@@ -150,7 +152,8 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { ItemId, collectiblePaintingDropItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { megaZombieHealthBarVisible } from '../entities/megaZombie';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
 import {
@@ -204,6 +207,12 @@ import {
   type CameraPerspective,
 } from '../rendering/player/ThirdPersonCamera';
 import {
+  EMOTE_CAMERA_ENTER_DISTANCE,
+  EMOTE_CAMERA_LIFT,
+  EMOTE_CAMERA_RETURN_SECONDS,
+} from '../rendering/player/emotePose';
+import type { EmoteId } from '../../shared/emotes';
+import {
   categoryColor,
   chebyshev,
   chunkKey as inspectChunkKey,
@@ -250,7 +259,7 @@ import { processDeferredLighting } from '../world/LightingAdapter';
 import { stoneCapY } from '../world/Generator';
 import { estimateWorldSpawn } from '../world/spawn';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStandingPoseInsidePlayableWorld } from '../world/worldBorder';
-import { VoxelWorld, type VoxelHit } from '../world/World';
+import { VoxelWorld, furnaceRecordsFromLit, type VoxelHit } from '../world/World';
 import {
   ANARCHY_WORLD_ID,
   createAnarchySummary,
@@ -309,6 +318,7 @@ import { angularError, type BlockTargetIntent } from '../../shared/playerActions
 import { IDLE_PLAYER_PRESENTATION, presentationHurtSeq } from '../../shared/playerPresentation';
 import {
   applyAuthoritativeContainerSlots,
+  applyFurnaceSync,
   parseNetworkItemStack,
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
@@ -374,11 +384,13 @@ import {
   shouldHandleOnlineClientEvent,
 } from './onlineSession';
 import {
+  applesForBrokenLeaves,
   clearDoorBlocks,
   daylightFactor,
   dropScatterVelocity,
   dropScatterOrigin,
   formatGameplayKernelTrace,
+  isLeafBlock,
   performUseHeld,
   movementDuringItemUse,
   resolveHologramUseTarget,
@@ -454,6 +466,8 @@ export interface GameSession {
   bowUseTicks: number;
   playTicks: number;
   lastAutosaveTick: number;
+  /** Leaves broken toward the next apple. Authoritative singleplayer counter. */
+  leafBreaksTowardApple: number;
   serverWorld?: SerializedServerWorld;
   online?: OnlineAnarchySession;
 }
@@ -682,6 +696,9 @@ export class Game {
   private skinSelector?: PlayerSkinSelectorSession;
   private cameraPerspective: CameraPerspective = 'firstPerson';
   private thirdPersonCameraDistance = THIRD_PERSON_CAMERA_DISTANCE;
+  private readonly emotes = new EmoteSession();
+  private readonly emoteReturnFrom = new THREE.Vector3();
+  private emoteReturnSeconds = 0;
   private renderDeltaSeconds = 0;
   private session?: GameSession;
   private readonly explosionQueue = new ExplosionQueue();
@@ -823,6 +840,7 @@ export class Game {
         this.showPointerLockFallbackIfNeeded();
       },
       isChatOpen: () => this.ui.isChatOpen(),
+      onEmoteKey: (phase) => this.onEmoteKey(phase),
       classifyWorldTouch: (clientX, clientY, phase) => this.classifyWorldTouch(clientX, clientY, phase),
       aimAtClientPoint: (clientX, clientY) => this.aimAtClientPoint(clientX, clientY),
     });
@@ -1040,7 +1058,7 @@ export class Game {
       timeOfDay: welcome.timeOfDay,
       modifications: welcome.modifications,
       chests: {},
-      furnaces: {},
+      furnaces: furnaceRecordsFromLit(welcome.furnacesLit),
       blockStates: welcome.blockStates,
     });
     const restoreMs = performance.now() - restoreStart;
@@ -1332,14 +1350,17 @@ export class Game {
         // `getChunk(true)` applies those deltas in `finishGeneratedChunk`.
         // `message.modifications` is the same effective network overlay for
         // this column (persistent + active event); the client does not replay
-        // it here because restore() already installed the map. Signs are the
-        // payload unique to this packet.
+        // it here because restore() already installed the map. Signs and the
+        // burning-furnace set are the payloads unique to this packet.
         session.world.getChunk(message.cx, message.cz, true);
         for (const [key, lines] of Object.entries(message.signs ?? {})) {
           const [x, y, z] = key.split(',').map(Number);
           if (Number.isInteger(x) && Number.isInteger(y) && Number.isInteger(z) && lines.length === 4) {
             session.world.setSignText(x!, y!, z!, lines as [string, string, string, string]);
           }
+        }
+        if (message.furnacesLit) {
+          session.world.replaceChunkFurnaceLit(message.cx, message.cz, message.furnacesLit);
         }
         motionProbe.noteChunkUpdate();
         if (session.player && chunkOverlapsPlayerColumn(session.player, message.cx, message.cz)) {
@@ -1435,6 +1456,13 @@ export class Game {
           this.openOnlineContainer(session, message.window.kind, message.window);
         }
         this.refreshHud();
+        return;
+      case 'furnace_sync':
+        applyFurnaceSync(session.world, message, parseNetworkItemStack);
+        if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
+        return;
+      case 'furnace_lit':
+        session.world.applyFurnaceLit(message.x, message.y, message.z, message.burning);
         return;
       case 'error':
         if (message.code === 'session_taken') this.ui.toast('Сессия открыта в другой вкладке');
@@ -3413,6 +3441,7 @@ export class Game {
       bowUseTicks: 0,
       playTicks: Math.floor(summary.playTimeSeconds * TICK_RATE),
       lastAutosaveTick: 0,
+      leafBreaksTowardApple: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
       online: options?.online,
     };
@@ -4088,6 +4117,7 @@ export class Game {
   }
 
   private enterPlaying(): void {
+    this.cancelLocalEmote();
     this.session?.worldRenderer.setOpenChest(undefined);
     this.ui.closeAuction();
     this.ui.closeClan();
@@ -4148,6 +4178,7 @@ export class Game {
   }
 
   private openPauseMenu(): void {
+    this.cancelLocalEmote();
     this.ui.hidePointerLockFallback();
     if (openingPauseMenuPausesSimulation()) this.lifecycle.setState('PAUSED');
     const session = this.session;
@@ -4191,6 +4222,7 @@ export class Game {
   }
 
   private toggleInventory(): void {
+    this.cancelLocalEmote();
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU') return;
     if (this.ui.isChatOpen()) this.ui.closeChat();
@@ -4292,6 +4324,7 @@ export class Game {
   }
 
   private togglePause(): void {
+    this.cancelLocalEmote();
     if (!this.session || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD') return;
     if (this.ui.isChatOpen()) {
       this.closeChatAndResumeLook();
@@ -4332,6 +4365,7 @@ export class Game {
   }
 
   private toggleGameMenu(): void {
+    this.cancelLocalEmote();
     const session = this.session;
     if (!session || this.lifecycle.state === 'DEAD' || this.lifecycle.state === 'MENU' || this.lifecycle.state === 'LOADING' || this.lifecycle.state === 'LOADING_WORLD' || this.lifecycle.state === 'PAUSED') {
       return;
@@ -4647,10 +4681,21 @@ export class Game {
     session.playTicks += 1;
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
-    const movementBeforeUse = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    const handsAllowed = gameplayAllowed && this.emotes?.blocksPrimaryHand !== true;
+    if (this.emotes?.blocksPrimaryHand) {
+      this.input.consumeAttackPresses();
+      this.input.consumeUsePressed();
+      this.input.mining = false;
+      this.input.using = false;
+      this.input.miningReleased = false;
+      this.input.useReleased = false;
+    }
+    const movementBeforeUse = this.emotes?.blocksMovement
+      ? BLOCKED_MOVE_INPUT
+      : resolvePlayerMoveInput(overlayOpen, this.input.movement());
     this.input.armAutoJump(false);
     const riding = Boolean(session.ridingCartId);
-    const using = gameplayAllowed && this.input.using;
+    const using = handsAllowed && this.input.using;
     const selected = this.selectedStack();
     const movement = movementDuringItemUse(movementBeforeUse, selected?.itemId, using);
     if (this.bowDiag && using !== this.lastOnlineUsing) {
@@ -4691,7 +4736,7 @@ export class Game {
         pitch: inputIntent.pitch,
         selectedSlot: session.selectedSlot,
         movementEpoch: online.movementEpoch,
-        ...inputMiningField(gameplayAllowed && shouldHoldServerMining({
+        ...inputMiningField(handsAllowed && shouldHoldServerMining({
           buttonDown: this.input.mining,
           finishKey: online.miningFinishKey,
           miningLocked: online.miningLocked,
@@ -4716,10 +4761,10 @@ export class Game {
         session.player.position.z - prevZ,
       ));
     }
-    this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
+    this.syncLocalCombatUse(session, selected?.itemId, handsAllowed);
     this.firstPerson?.setHeldItems(selected?.itemId);
     session.playerVisual.setHeldItem(selected?.itemId);
-    if (gameplayAllowed) this.updateTargetAndActions();
+    if (handsAllowed) this.updateTargetAndActions();
     else {
       this.input.consumeAttackPressed();
       this.input.consumeUsePressed();
@@ -4792,7 +4837,18 @@ export class Game {
 
     const overlayOpen = this.ui.isBlockingOverlay();
     const gameplayAllowed = playerGameplayAllowed(this.lifecycle.state, overlayOpen);
-    const movementBefore = resolvePlayerMoveInput(overlayOpen, this.input.movement());
+    const handsAllowed = gameplayAllowed && this.emotes?.blocksPrimaryHand !== true;
+    if (this.emotes?.blocksPrimaryHand) {
+      this.input.consumeAttackPresses();
+      this.input.consumeUsePressed();
+      this.input.mining = false;
+      this.input.using = false;
+      this.input.miningReleased = false;
+      this.input.useReleased = false;
+    }
+    const movementBefore = this.emotes?.blocksMovement
+      ? BLOCKED_MOVE_INPUT
+      : resolvePlayerMoveInput(overlayOpen, this.input.movement());
     this.input.armAutoJump(false);
     const riding = Boolean(session.ridingCartId);
     let entityStart = 0;
@@ -4823,7 +4879,7 @@ export class Game {
           exitedRest = true;
         }
         const selected = this.selectedStack();
-        this.syncLocalCombatUse(session, selected?.itemId, gameplayAllowed);
+        this.syncLocalCombatUse(session, selected?.itemId, handsAllowed);
         this.firstPerson?.setHeldItems(selected?.itemId);
         simMark = this.addSimPart('combat', simMark);
         const drawingBow = session.bowUseTicks > 0;
@@ -4877,7 +4933,7 @@ export class Game {
         simMark = this.addSimPart('player', simMark);
       },
       tickPlayerActions: () => {
-        if (gameplayAllowed) {
+        if (handsAllowed) {
           this.updateTargetAndActions();
           this.updateFoodUse();
           if (!session.online) this.input.consumeReleaseAim();
@@ -5270,12 +5326,14 @@ export class Game {
             attackerSprinting: session.player.sprinting,
             attackerYaw: session.player.yaw,
           });
-          const accepted = session.mobs.damage(mobTarget.mob, result.damage, {
+          const godSwordHit = stack?.itemId === ItemId.GodSword;
+          const accepted = session.mobs.damage(mobTarget.mob, godSwordHit ? Math.max(result.damage, 1) : result.damage, {
             source: 'player',
             attackerPosition: session.player.position,
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
             attackerId: LOCAL_PLAYER_FOCUS_ID,
+            ...(godSwordHit ? { lethal: true } : {}),
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {
@@ -5425,23 +5483,32 @@ export class Game {
     this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
-      const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
-      if (farmingDrops !== undefined && harvestable) {
-        for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
-          createItemStack(drop.item, drop.count),
+      const paintingItemId = collectiblePaintingDropItemId(hit.block, blockState);
+      if (paintingItemId) {
+        this.spawnDroppedStack(
+          createItemStack(paintingItemId, 1),
           new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
         );
       } else {
-        const drop = definition.drop;
-        if (drop && harvestable) {
-          const doubleSlab = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double';
-          for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
-            const count = doubleSlab && rolled.item === drop.item ? rolled.count * 2 : rolled.count;
-            if (count > 0) this.spawnDroppedStack(
-              createItemStack(rolled.item, count),
-              new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
-            );
+        const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
+        if (farmingDrops !== undefined && harvestable) {
+          for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
+            createItemStack(drop.item, drop.count),
+            new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+          );
+        } else {
+          const drop = definition.drop;
+          if (drop && harvestable) {
+            const doubleSlab = isSlabBlock(hit.block) && defaultSlabType(blockState) === 'double';
+            for (const rolled of rollBrokenBlockDrops(drop, this.simRandom)) {
+              const count = doubleSlab && rolled.item === drop.item ? rolled.count * 2 : rolled.count;
+              if (count > 0) this.spawnDroppedStack(
+                createItemStack(rolled.item, count),
+                new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+              );
+            }
           }
+          if (harvestable) this.dropLeafApple(session, hit);
         }
       }
       if (toolStack && losesDurabilityWhenBreakingBlocks(item)) {
@@ -5450,6 +5517,17 @@ export class Game {
       session.survival.addExhaustion(0.005);
     }
     this.releaseBlockEntityContents(hit);
+  }
+
+  private dropLeafApple(session: GameSession, hit: VoxelHit): void {
+    if (!isLeafBlock(hit.block)) return;
+    const award = applesForBrokenLeaves(session.leafBreaksTowardApple, 1);
+    session.leafBreaksTowardApple = award.next;
+    if (award.apples <= 0) return;
+    this.spawnDroppedStack(
+      createItemStack(ItemId.Apple, award.apples),
+      new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
+    );
   }
 
   private breakMinecart(cart: MinecartEntity): void {
@@ -5727,6 +5805,14 @@ export class Game {
     for (const event of events) {
       // Environmental drops also exist in Creative; lava destroys without loot.
       if (event.reason === 'lava') continue;
+      const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
+      if (paintingItemId) {
+        this.spawnDroppedStack(
+          createItemStack(paintingItemId, 1),
+          new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5),
+        );
+        continue;
+      }
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.simRandom);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
@@ -5835,6 +5921,13 @@ export class Game {
           normal: new Vec3(),
           point: new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
+        const paintingItemId = collectiblePaintingDropItemId(block.previous, block.previousState);
+        if (paintingItemId) {
+          this.spawnDroppedStack(
+            createItemStack(paintingItemId, 1),
+            new THREE.Vector3(block.x + 0.5, block.y + 0.3, block.z + 0.5),
+          );
+        }
       },
       onChainedTnt: (tnt) => {
         session.redstone.primeTnt(tnt.x, tnt.y, tnt.z, tnt.fuseSeconds, {
@@ -6025,6 +6118,7 @@ export class Game {
   }
 
   private openChat(prefix = ''): void {
+    this.cancelLocalEmote();
     if (!this.session || this.lifecycle.state !== 'PLAYING') return;
     if (this.ui.isInventoryOpen() || this.ui.isChatOpen() || this.ui.isHologramEditorOpen()
       || this.ui.isAuctionOpen() || this.ui.isClanOpen() || this.ui.isGameMenuOpen() || this.ui.isTradeOpen()) return;
@@ -6277,6 +6371,7 @@ export class Game {
   private handleDeath(source?: DamageSource): void {
     const session = this.session;
     if (!session || this.deathShown) return;
+    this.cancelLocalEmote();
     session.restingBed = undefined;
     this.clearMinecartRide(session);
     this.deathShown = true;
@@ -6403,7 +6498,8 @@ export class Game {
   }
 
   private updatePlayerPresentation(session: GameSession, position: THREE.Vector3, now: number): void {
-    const perspective = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed));
+    this.advanceLocalEmote(this.renderDeltaSeconds);
+    const perspective = this.renderCameraPerspective(session);
     const thirdPerson = perspective !== 'firstPerson';
     const equipment = playerEquipmentFromInventory(session.inventory);
     session.playerVisual.setArmor(equipment);
@@ -6428,6 +6524,8 @@ export class Game {
       bowCharge: session.bowUseTicks > 0 ? session.combat.bowCharge(session.bowUseTicks).power : 0,
       swordBlocking: session.combat.swordBlocking,
       foodUseProgress: session.foodUseTicks > 0 ? clamp(session.foodUseTicks / 32, 0, 1) : 0,
+      emote: this.emotes?.playing ?? null,
+      emoteTime: this.emotes?.elapsed ?? 0,
       invisible: session.survival.invisible,
       hurtFlash: this.hurt.modelIntensity(now),
       onFire: session.survival.isOnFire,
@@ -6455,6 +6553,15 @@ export class Game {
     } else this.cameraPivot.set(position.x, position.y + session.player.eyeHeight, position.z);
     const roll = this.hurt.cameraRoll(now);
     if (!thirdPerson) {
+      if (this.emoteReturnSeconds > 0) {
+        this.emoteReturnSeconds = Math.max(0, this.emoteReturnSeconds - this.renderDeltaSeconds);
+        const t = 1 - this.emoteReturnSeconds / EMOTE_CAMERA_RETURN_SECONDS;
+        const blend = t * t * (3 - 2 * t);
+        this.camera.position.lerpVectors(this.emoteReturnFrom, this.cameraPivot, blend);
+        applyImmediateRenderLook(this.camera, this.input, roll);
+        motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
+        return;
+      }
       this.camera.position.copy(this.cameraPivot);
       applyImmediateRenderLook(this.camera, this.input, roll);
       motionProbe.noteCamera(this.camera.position, this.cameraPivot, 'interpolated-local');
@@ -6468,6 +6575,11 @@ export class Game {
       -Math.cos(this.input.yaw) * cosPitch,
     );
     if (perspective === 'thirdPersonBack') this.cameraTravelDirection.multiplyScalar(-1);
+    if (this.emotes?.forcesThirdPerson && perspective === 'thirdPersonBack') {
+      this.cameraTravelDirection.y += EMOTE_CAMERA_LIFT;
+      const length = this.cameraTravelDirection.length();
+      if (length > 1e-5) this.cameraTravelDirection.multiplyScalar(1 / length);
+    }
     const available = availableThirdPersonDistance(
       this.cameraPivot,
       this.cameraTravelDirection,
@@ -6513,7 +6625,7 @@ export class Game {
     state.visible = session !== undefined
       && this.lifecycle.state === 'PLAYING'
       && !this.ui.isBlockingOverlay()
-      && effectiveCameraPerspective(this.cameraPerspective, Boolean(session?.restingBed)) === 'firstPerson';
+      && this.renderCameraPerspective(session) === 'firstPerson';
     if (session) {
       state.movementSpeed = Math.hypot(session.player.velocity.x, session.player.velocity.z);
       state.onGround = session.player.onGround;
@@ -6666,6 +6778,7 @@ export class Game {
       miningProgress: session.miningProgress,
       effects: potionHudEntries((id) => session.survival.effectTicks(id)),
       ...(debug ? { debug } : {}),
+      boss: this.megaZombieHud(session),
       playInfo: formatPlayInfo(
         session.online ? session.online.remotes.size + 1 : 1,
         session.player.position.x,
@@ -6677,7 +6790,7 @@ export class Game {
 
   private formatLocalAimDebug(session: GameSession): string {
     const aim = this.lastLocalAim ?? this.sampleLocalAim(session);
-    const camera = effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed)) === 'thirdPersonFront'
+    const camera = this.renderCameraPerspective(session) === 'thirdPersonFront'
       ? this.frontCameraLook : this.input;
     const hit = session.target;
     return formatLocalAimHud({
@@ -6720,6 +6833,10 @@ export class Game {
   }
 
   private disposeSession(): void {
+    this.emotes?.cancel();
+    this.input?.setEmotePointer(null);
+    this.ui.hideEmoteWheel();
+    this.emoteReturnSeconds = 0;
     this.polishQaDispose?.();
     this.polishQaDispose = undefined;
     if (!this.session) return;
@@ -6784,6 +6901,24 @@ export class Game {
     this.input.releaseActions();
   }
 
+  private megaZombieHud(session: GameSession): { health: number; maxHealth: number } | null {
+    let boss: { health: number; maxHealth: number; spawn: { x: number; y: number; z: number } | null } | undefined;
+    for (const mob of session.mobs.entities) {
+      if (mob.kind !== 'mega_zombie') continue;
+      if (mob.state !== 'die' && !mob.alive) continue;
+      boss = {
+        health: mob.health,
+        maxHealth: mob.definition.maxHealth,
+        spawn: mob.boss?.configuredSpawn ?? null,
+      };
+      break;
+    }
+    if (!boss) return null;
+    const player = session.player.position;
+    if (!megaZombieHealthBarVisible(player, boss.spawn)) return null;
+    return { health: boss.health, maxHealth: boss.maxHealth };
+  }
+
   private chunkDebugLine(session: GameSession): string {
     const x = Math.floor(session.player.position.x);
     const y = Math.floor(session.player.position.y);
@@ -6836,8 +6971,117 @@ export class Game {
   }
 
   private cycleCameraPerspective(): void {
-    if (this.session?.restingBed) return;
+    if (this.session?.restingBed || this.emotes?.forcesThirdPerson) return;
     this.setCameraPerspective(nextCameraPerspective(this.cameraPerspective));
+  }
+
+  private onEmoteKey(phase: 'down' | 'up' | 'cancel'): void {
+    if (phase === 'down') this.beginEmoteWheel();
+    else if (phase === 'up') this.releaseEmoteWheel();
+    else this.cancelLocalEmote();
+  }
+
+  private emoteAllowed(): boolean {
+    return this.lifecycle.state === 'PLAYING'
+      && !this.ui.isBlockingOverlay()
+      && !this.session?.survival.dead
+      && !this.session?.restingBed;
+  }
+
+  private beginEmoteWheel(): void {
+    if (!this.emotes.tryOpen(this.emoteAllowed())) return;
+    this.input.releaseActions();
+    this.input.consumeAttackPresses();
+    this.input.consumeUsePressed();
+    this.ui.showEmoteWheel();
+    this.ui.setEmoteWheelSelection(null);
+    this.input.setEmotePointer((dx, dy) => {
+      const selected = this.emotes.nudgePointer(dx, dy, this.ui.emoteWheelRadius());
+      this.ui.setEmoteWheelSelection(selected);
+      this.ui.placeEmoteCursor(this.emotes.pointer.x, this.emotes.pointer.y);
+    });
+  }
+
+  private releaseEmoteWheel(): void {
+    if (this.emotes.phaseName !== 'wheel') return;
+    const started = this.emotes.release();
+    this.closeEmoteWheel();
+    if (started) {
+      this.beginEmoteCamera();
+      this.sendEmoteStart(started);
+    }
+    this.restoreLookAfterEmote();
+  }
+
+  private closeEmoteWheel(): void {
+    this.input.setEmotePointer?.(null);
+    this.ui.hideEmoteWheel();
+  }
+
+  private cancelLocalEmote(): void {
+    const was = this.emotes.cancel();
+    this.closeEmoteWheel();
+    if (was === 'playing') {
+      this.endEmoteCamera();
+      this.sendEmoteStop();
+    }
+  }
+
+  private completeLocalEmote(): void {
+    this.endEmoteCamera();
+    this.sendEmoteStop();
+    this.restoreLookAfterEmote();
+  }
+
+  private advanceLocalEmote(deltaSeconds: number): void {
+    if (!this.emotes || this.emotes.phaseName === 'idle') return;
+    if (!this.emoteAllowed()) {
+      this.cancelLocalEmote();
+      return;
+    }
+    if (this.emotes.phaseName !== 'playing') return;
+    const status = this.emotes.advance(deltaSeconds, this.input.movement());
+    if (status === 'finished' || status === 'interrupted') this.completeLocalEmote();
+  }
+
+  private beginEmoteCamera(): void {
+    this.emoteReturnSeconds = 0;
+    const session = this.session;
+    const current = session
+      ? effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed))
+      : 'firstPerson';
+    if (current === 'firstPerson') this.thirdPersonCameraDistance = EMOTE_CAMERA_ENTER_DISTANCE;
+  }
+
+  private endEmoteCamera(): void {
+    const session = this.session;
+    const restoreFirst = !session
+      || effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed)) === 'firstPerson';
+    if (!restoreFirst) {
+      this.emoteReturnSeconds = 0;
+      return;
+    }
+    this.emoteReturnFrom.copy(this.camera.position);
+    this.emoteReturnSeconds = EMOTE_CAMERA_RETURN_SECONDS;
+  }
+
+  private restoreLookAfterEmote(): void {
+    if (!this.emoteAllowed()) return;
+    if (typeof document !== 'undefined' && (document.hidden || !document.hasFocus())) return;
+    this.input.tryRequestPointerLock();
+  }
+
+  private sendEmoteStart(id: EmoteId): void {
+    this.session?.online?.client.send({ type: 'emote', action: 'start', id });
+  }
+
+  private sendEmoteStop(): void {
+    this.session?.online?.client.send({ type: 'emote', action: 'stop' });
+  }
+
+  private renderCameraPerspective(session: GameSession): CameraPerspective {
+    if (this.emotes?.forcesThirdPerson && !session.restingBed) return 'thirdPersonBack';
+    return effectiveCameraPerspective(this.cameraPerspective, Boolean(session.restingBed));
   }
 
   private bindLifecycle(): void {

@@ -5,8 +5,9 @@ import { rayAabbDistance, blockCollisionBoxes } from './collision';
 import { blockSelectionBoxes } from './selection';
 import { needsBlockSupport, supportCellForBlock, isBlockStillSupported } from './placement';
 import { CHUNK_SIZE, LATERAL_SKY_RADIUS, LIGHTING_HALO_CHUNKS, MAX_GENERATED_SURFACE, WORLD_HEIGHT, blockKey, chunkKey, floorDiv, parseBlockKey, positiveMod } from '../core/constants';
-import { findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
+import { consumeFurnaceFuel, findSmeltingRecipe, getFuelBurnTicks } from '../crafting';
 import type { ItemStack } from '../inventory';
+import { sanitizeBlockRenderState } from './painting';
 import { sanitizeSignLines, type SignLines } from './sign';
 import { bedOtherCell, isMatchingBedHalf } from './bed';
 import { getItemDefinition } from '../items';
@@ -125,6 +126,7 @@ export const EDIT_LIGHT_MAX_WAIT_MS = 150;
 interface ScheduledLightJob extends PendingLightJob {
   enqueuedAt: number;
   coalesced: number;
+  tokens: number[];
 }
 
 function regionsIntersect(a: LightRegion, b: LightRegion): boolean {
@@ -178,6 +180,41 @@ export interface FurnaceState {
   burnTime: number;
   burnTotal: number;
   cookTime: number;
+  /**
+   * Item the current cookTime belongs to.
+   * Missing on older saves: that cookTime is not valid for whatever is in the input slot.
+   */
+  cookInputId?: string;
+}
+
+/** World-space lit bit. `burning: true` only. No slots and no fuel countdown. */
+export interface FurnaceLitMarker {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly burning: true;
+}
+
+/**
+ * Welcome restore records. `burnTime > 0` is the existing `isFurnaceBurning`
+ * proxy. The online client does not decrement it.
+ */
+export function furnaceRecordsFromLit(
+  cells: readonly { x: number; y: number; z: number; burning?: boolean }[] | undefined,
+): Record<string, FurnaceState> {
+  const records: Record<string, FurnaceState> = {};
+  if (!cells) return records;
+  for (const cell of cells) {
+    if (cell.burning !== true) continue;
+    if (!Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue;
+    records[blockKey(cell.x, cell.y, cell.z)] = {
+      slots: [null, null, null],
+      burnTime: 1,
+      burnTotal: 1,
+      cookTime: 0,
+    };
+  }
+  return records;
 }
 
 interface ScheduledBlockTick {
@@ -222,6 +259,8 @@ export class VoxelWorld {
   readonly furnaces = new Map<string, FurnaceState>();
   readonly signs = new Map<string, SignLines>();
   signVersion = 0;
+  /** Bumped only when a painting cell or its state changes. Fluids do not touch it. */
+  paintingVersion = 0;
   readonly blockStates = new Map<string, BlockRenderState>();
   /** Planted-sapling timestamps. Restored with block states; not a second save file. */
   readonly saplingPlantedAt = new Map<string, number>();
@@ -252,6 +291,8 @@ export class VoxelWorld {
   lightOriginCounts: LightOriginHudCounts = { stream: 0, fluid: 0, edit: 0, other: 0 };
   readonly pendingMesh = new Set<string>();
   private readonly lightJobs: ScheduledLightJob[] = [];
+  private nextEditLightToken = 1;
+  private readonly settledEditLightTokens = new Set<number>();
   lightJobCommits = 0;
   lightJobMerges = 0;
   lightJobEnqueued = 0;
@@ -283,6 +324,11 @@ export class VoxelWorld {
     z: number;
     block: BlockId;
   }) => void;
+  /**
+   * Fired only when a furnace crosses `burnTime > 0`. The server broadcasts
+   * `furnace_lit`. Singleplayer leaves this unset. The client does not tick fuel.
+   */
+  onFurnaceLitChanged?: (change: { x: number; y: number; z: number; burning: boolean }) => void;
   private readonly committedBlockObservers = new Set<(changes: readonly CommittedBlockChange[]) => void>();
   private pendingEmitters: Array<readonly [number, number, number]> = [];
   private readonly pendingEmitterKeys = new Set<string>();
@@ -343,7 +389,8 @@ export class VoxelWorld {
     }
     if (state.blockStates) {
       for (const [key, value] of Object.entries(state.blockStates)) {
-        this.blockStates.set(key, value as BlockRenderState);
+        if (!value || typeof value !== 'object') continue;
+        this.blockStates.set(key, sanitizeBlockRenderState(value as BlockRenderState));
       }
     }
     this.saplingPlantedAt.clear();
@@ -356,6 +403,7 @@ export class VoxelWorld {
       if (lines) this.signs.set(key, lines);
     }
     this.signVersion += 1;
+    this.paintingVersion += 1;
   }
 
   setSignText(x: number, y: number, z: number, lines: SignLines): boolean {
@@ -559,15 +607,29 @@ export class VoxelWorld {
     return this.blockStates.get(blockKey(x, y, z));
   }
 
+  private notePaintingVersion(
+    block: BlockId,
+    previous: BlockRenderState | undefined,
+    next: BlockRenderState | undefined,
+  ): void {
+    if (block === BlockId.CollectiblePainting
+      || previous?.paintingItemId !== undefined
+      || next?.paintingItemId !== undefined) {
+      this.paintingVersion += 1;
+    }
+  }
+
   setBlockState(x: number, y: number, z: number, state: BlockRenderState): boolean {
-    if (this.fluidStateUnchanged(this.getBlockState(x, y, z), state)) {
+    const clean = sanitizeBlockRenderState(state);
+    const previous = this.getBlockState(x, y, z);
+    if (this.fluidStateUnchanged(previous, clean)) {
       this.noteFluidNoop();
       return false;
     }
     const key = blockKey(x, y, z);
-    this.blockStates.set(key, state);
-    syncSaplingClock(this.saplingPlantedAt, key, state);
-    if (state.fluidLevel === undefined) this.queueSupportAround(x, y, z);
+    this.blockStates.set(key, clean);
+    syncSaplingClock(this.saplingPlantedAt, key, clean);
+    if (clean.fluidLevel === undefined) this.queueSupportAround(x, y, z);
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
     const localX = positiveMod(x, CHUNK_SIZE);
@@ -578,9 +640,11 @@ export class VoxelWorld {
     for (const [dx, dz] of neighborFluidMeshOffsets(localX, localZ)) {
       this.dirtyNeighbor(chunkX + dx, chunkZ + dz, dirty);
     }
+    const block = this.getBlock(x, y, z, false);
+    this.notePaintingVersion(block, previous, clean);
     this.onCommittedBlockState?.({
       x, y, z,
-      block: this.getBlock(x, y, z, false),
+      block,
     });
     return true;
   }
@@ -593,13 +657,16 @@ export class VoxelWorld {
    */
   replaceBlockState(x: number, y: number, z: number, state: BlockRenderState | undefined): void {
     const key = blockKey(x, y, z);
-    if (state === undefined) {
+    const previous = this.blockStates.get(key);
+    const clean = state === undefined ? undefined : sanitizeBlockRenderState(state);
+    if (clean === undefined) {
       if (!this.blockStates.delete(key)) return;
       syncSaplingClock(this.saplingPlantedAt, key, undefined);
     } else {
-      this.blockStates.set(key, state);
-      syncSaplingClock(this.saplingPlantedAt, key, state);
+      this.blockStates.set(key, clean);
+      syncSaplingClock(this.saplingPlantedAt, key, clean);
     }
+    this.notePaintingVersion(this.getBlock(x, y, z, false), previous, clean);
     this.markBlockDirty(x, z);
   }
 
@@ -907,6 +974,9 @@ export class VoxelWorld {
     syncSaplingClock(this.saplingPlantedAt, clearedKey, undefined);
     if (previous === BlockId.OakSign && block !== BlockId.OakSign
       && this.signs.delete(blockKey(x, y, z))) this.signVersion += 1;
+    if (previous === BlockId.CollectiblePainting || block === BlockId.CollectiblePainting) {
+      this.paintingVersion += 1;
+    }
     if (!skipSupport) this.queueSupportAround(x, y, z);
     if ((block === BlockId.Water || block === BlockId.Lava)
       && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid
@@ -990,14 +1060,16 @@ export class VoxelWorld {
    * A flood that has already started is left running against the block ids it
    * began with; the new edit becomes the next job and cannot commit a mix.
    */
-  queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): void {
+  queueLight(region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin = 'edit'): number {
     this.lightQueueMarks += 1;
     this.noteRegionLightDirty(region);
+    const token = this.nextEditLightToken;
+    this.nextEditLightToken += 1;
     const active = activeRegionLightJob(this);
     for (const job of this.lightJobs) {
       if (job === active || !regionsIntersect(job.region, region)) continue;
-      this.mergeLightJob(job, region, sky, block, origin);
-      return;
+      this.mergeLightJob(job, region, sky, block, origin, token);
+      return token;
     }
     if (this.lightJobs.length >= EDIT_LIGHT_QUEUE_LIMIT) {
       let best: ScheduledLightJob | undefined;
@@ -1010,8 +1082,8 @@ export class VoxelWorld {
         bestGap = gap;
       }
       if (best) {
-        this.mergeLightJob(best, region, sky, block, origin);
-        return;
+        this.mergeLightJob(best, region, sky, block, origin, token);
+        return token;
       }
     }
     this.lightJobs.push({
@@ -1021,11 +1093,33 @@ export class VoxelWorld {
       origin,
       enqueuedAt: performance.now(),
       coalesced: 1,
+      tokens: [token],
     });
     this.lightJobEnqueued += 1;
+    return token;
   }
 
-  private mergeLightJob(job: ScheduledLightJob, region: LightRegion, sky: boolean, block: boolean, origin: LightJobOrigin): void {
+  /** True after the queued region that returned `token` has committed. */
+  isEditLightTokenSettled(token: number): boolean {
+    return this.settledEditLightTokens.has(token);
+  }
+
+  private settleEditLightTokens(tokens: readonly number[]): void {
+    for (const token of tokens) this.settledEditLightTokens.add(token);
+    if (this.settledEditLightTokens.size <= 1024) return;
+    const sorted = [...this.settledEditLightTokens].sort((a, b) => a - b);
+    const drop = sorted.length - 512;
+    for (let index = 0; index < drop; index += 1) this.settledEditLightTokens.delete(sorted[index]!);
+  }
+
+  private mergeLightJob(
+    job: ScheduledLightJob,
+    region: LightRegion,
+    sky: boolean,
+    block: boolean,
+    origin: LightJobOrigin,
+    token: number,
+  ): void {
     const current = job.region;
     job.region = {
       minX: Math.min(current.minX, region.minX),
@@ -1039,6 +1133,7 @@ export class VoxelWorld {
     job.block = job.block || block;
     job.origin = mergeLightOrigin(job.origin, origin);
     job.coalesced += 1;
+    job.tokens.push(token);
     this.lightJobMerges += 1;
   }
 
@@ -1086,6 +1181,7 @@ export class VoxelWorld {
       const job = this.lightJobs[0]!;
       const done = continuePendingLight(this, job, deadline);
       if (!done) return;
+      this.settleEditLightTokens(job.tokens);
       this.lightJobs.shift();
       this.lightJobCommits += 1;
       this.commitLightChanges();
@@ -1627,6 +1723,135 @@ export class VoxelWorld {
     return (this.furnaces.get(blockKey(x, y, z))?.burnTime ?? 0) > 0;
   }
 
+  /**
+   * Burning furnaces only. Does not generate chunks and does not copy slots.
+   * Omit the chunk coordinates to list the whole world (welcome).
+   */
+  networkFurnaceLit(chunkX?: number, chunkZ?: number): FurnaceLitMarker[] {
+    const cells: FurnaceLitMarker[] = [];
+    const limited = chunkX !== undefined && chunkZ !== undefined;
+    for (const [key, furnace] of this.furnaces) {
+      if (furnace.burnTime <= 0) continue;
+      const { x, y, z } = parseBlockKey(key);
+      if (limited && (floorDiv(x, CHUNK_SIZE) !== chunkX || floorDiv(z, CHUNK_SIZE) !== chunkZ)) continue;
+      if (!this.furnaceBlockPresent(x, y, z)) continue;
+      cells.push({ x, y, z, burning: true });
+    }
+    return cells;
+  }
+
+  /**
+   * Authoritative lit bit for a client that does not simulate the furnace.
+   * A positive `burnTime` is only a proxy. Slots and an already-positive timer stay.
+   * Returns false when the lit bit is unchanged, so steady burning does not remesh.
+   */
+  applyFurnaceLit(x: number, y: number, z: number, burning: boolean): boolean {
+    if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return false;
+    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    const key = blockKey(x, y, z);
+    const existing = this.furnaces.get(key);
+    const wasBurning = (existing?.burnTime ?? 0) > 0;
+    if (wasBurning === burning) return false;
+    if (burning) {
+      const furnace: FurnaceState = existing ?? {
+        slots: [null, null, null],
+        burnTime: 0,
+        burnTotal: 0,
+        cookTime: 0,
+      };
+      furnace.burnTime = 1;
+      furnace.burnTotal = Math.max(1, furnace.burnTotal);
+      this.furnaces.set(key, furnace);
+    } else if (existing) {
+      existing.burnTime = 0;
+      existing.burnTotal = 0;
+      if (existing.cookTime === 0 && !existing.cookInputId && existing.slots.every((slot) => !slot)) {
+        this.furnaces.delete(key);
+      }
+    }
+    this.syncFurnaceLitVisual(x, y, z, wasBurning);
+    return true;
+  }
+
+  /**
+   * Replace lit bits in one column with the server set. Furnaces absent from
+   * the set lose `burnTime`. Other chunks stay. Unchanged bits do not remesh.
+   */
+  replaceChunkFurnaceLit(
+    chunkX: number,
+    chunkZ: number,
+    burning: readonly { x: number; y: number; z: number }[],
+  ): number {
+    const wanted = new Set<string>();
+    for (const cell of burning) {
+      if (!Number.isInteger(cell.x) || !Number.isInteger(cell.y) || !Number.isInteger(cell.z)) continue;
+      if (cell.y < 0 || cell.y >= WORLD_HEIGHT) continue;
+      if (floorDiv(cell.x, CHUNK_SIZE) !== chunkX || floorDiv(cell.z, CHUNK_SIZE) !== chunkZ) continue;
+      wanted.add(blockKey(cell.x, cell.y, cell.z));
+    }
+    const changed: Array<{ x: number; y: number; z: number; wasBurning: boolean }> = [];
+    const remove: string[] = [];
+    for (const [key, furnace] of this.furnaces) {
+      const pos = parseBlockKey(key);
+      if (floorDiv(pos.x, CHUNK_SIZE) !== chunkX || floorDiv(pos.z, CHUNK_SIZE) !== chunkZ) continue;
+      const shouldBurn = wanted.has(key);
+      const wasBurning = furnace.burnTime > 0;
+      if (shouldBurn) {
+        wanted.delete(key);
+        if (wasBurning) continue;
+        furnace.burnTime = 1;
+        furnace.burnTotal = Math.max(1, furnace.burnTotal);
+        changed.push({ ...pos, wasBurning: false });
+      } else if (wasBurning) {
+        furnace.burnTime = 0;
+        furnace.burnTotal = 0;
+        if (furnace.cookTime === 0 && !furnace.cookInputId && furnace.slots.every((slot) => !slot)) remove.push(key);
+        changed.push({ ...pos, wasBurning: true });
+      }
+    }
+    for (const key of remove) this.furnaces.delete(key);
+    for (const key of wanted) {
+      const pos = parseBlockKey(key);
+      this.furnaces.set(key, {
+        slots: [null, null, null],
+        burnTime: 1,
+        burnTotal: 1,
+        cookTime: 0,
+      });
+      changed.push({ ...pos, wasBurning: false });
+    }
+    for (const change of changed) this.syncFurnaceLitVisual(change.x, change.y, change.z, change.wasBurning);
+    return changed.length;
+  }
+
+  /**
+   * After an external `burnTime` write (open-GUI `furnace_sync`, snapshot restore,
+   * breaking a burning furnace). Remesh only when the lit bit changed.
+   * Does not broadcast; the server callback is `onFurnaceLitChanged`.
+   */
+  syncFurnaceBurnBit(x: number, y: number, z: number, wasBurning: boolean): void {
+    const isBurning = (this.furnaces.get(blockKey(x, y, z))?.burnTime ?? 0) > 0;
+    if (wasBurning === isBurning) return;
+    this.syncFurnaceLitVisual(x, y, z, wasBurning);
+    this.onFurnaceLitChanged?.({ x, y, z, burning: isBurning });
+  }
+
+  private furnaceBlockPresent(x: number, y: number, z: number): boolean {
+    const chunkX = floorDiv(x, CHUNK_SIZE);
+    const chunkZ = floorDiv(z, CHUNK_SIZE);
+    const localX = positiveMod(x, CHUNK_SIZE);
+    const localZ = positiveMod(z, CHUNK_SIZE);
+    const chunk = this.chunks.get(chunkKey(chunkX, chunkZ));
+    if (chunk) return chunk.get(localX, y, localZ) === BlockId.Furnace;
+    const delta = this.modifications.get(chunkKey(chunkX, chunkZ));
+    return delta?.get(Chunk.index(localX, y, localZ)) === BlockId.Furnace;
+  }
+
+  private syncFurnaceLitVisual(x: number, y: number, z: number, wasBurning: boolean): void {
+    if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z, wasBurning);
+    else this.markBlockDirty(x, z);
+  }
+
   /** Emission including lit-furnace torch strength. Does not allocate furnace state. */
   blockEmissionAt(x: number, y: number, z: number): number {
     const block = this.getBlock(x, y, z, false);
@@ -1713,37 +1938,52 @@ export class VoxelWorld {
     for (const [key, furnace] of this.furnaces) {
       const wasBurning = furnace.burnTime > 0;
       const input = furnace.slots[0];
+      const inputId = input?.itemId;
+      const legacyCook = furnace.cookInputId === undefined && furnace.cookTime > 0;
+      if (legacyCook || (furnace.cookInputId !== undefined && furnace.cookInputId !== inputId)) {
+        furnace.cookTime = 0;
+      }
+      furnace.cookInputId = inputId;
+
       const recipe = input ? findSmeltingRecipe(input.itemId) : undefined;
       const outputId = recipe?.output.item;
       const outputCount = recipe?.output.count ?? 1;
-      if (furnace.burnTime <= 0 && recipe) {
+      const output = furnace.slots[2];
+      const maxOutput = outputId ? getItemDefinition(outputId).maxStack : 0;
+      const canSmelt = outputId !== undefined
+        && (!output || (output.itemId === outputId && output.count + outputCount <= maxOutput));
+
+      if (furnace.burnTime <= 0 && canSmelt) {
         const fuel = furnace.slots[1];
         const fuelTicks = fuel ? getFuelBurnTicks(fuel.itemId) : 0;
         if (fuel && fuelTicks > 0) {
           furnace.burnTime = fuelTicks;
           furnace.burnTotal = fuelTicks;
-          furnace.slots[1] = fuel.count <= 1 ? null : { ...fuel, count: fuel.count - 1 };
+          furnace.slots[1] = consumeFurnaceFuel(fuel);
         }
       }
-      if (furnace.burnTime > 0) furnace.burnTime -= 1;
-      const output = furnace.slots[2];
-      const maxOutput = outputId ? getItemDefinition(outputId).maxStack : 0;
-      const canOutput = outputId !== undefined
-        && (!output || (output.itemId === outputId && output.count + outputCount <= maxOutput));
-      if (furnace.burnTime > 0 && canOutput) {
+
+      if (furnace.burnTime > 0 && canSmelt && recipe && input && outputId) {
         furnace.cookTime += 1;
-        if (recipe && furnace.cookTime >= recipe.cookingTimeTicks && input && outputId) {
-          furnace.slots[0] = input.count <= 1 ? null : { ...input, count: input.count - 1 };
-          furnace.slots[2] = output
-            ? { ...output, count: output.count + outputCount }
-            : { itemId: outputId, count: outputCount };
-          furnace.cookTime = 0;
+        if (furnace.cookTime >= recipe.cookingTimeTicks) {
+          const currentInput = furnace.slots[0];
+          if (currentInput && currentInput.itemId === input.itemId) {
+            furnace.slots[0] = currentInput.count <= 1 ? null : { ...currentInput, count: currentInput.count - 1 };
+            const currentOutput = furnace.slots[2];
+            furnace.slots[2] = currentOutput
+              ? { ...currentOutput, count: currentOutput.count + outputCount }
+              : { itemId: outputId, count: outputCount };
+            furnace.cookTime = 0;
+            furnace.cookInputId = furnace.slots[0]?.itemId;
+          }
         }
       } else furnace.cookTime = 0;
+
+      if (furnace.burnTime > 0) furnace.burnTime -= 1;
       const isBurning = furnace.burnTime > 0;
       if (wasBurning === isBurning) continue;
       const { x, y, z } = parseBlockKey(key);
-      if (this.getBlock(x, y, z, false) === BlockId.Furnace) this.syncFurnaceEmission(x, y, z, wasBurning);
+      this.syncFurnaceBurnBit(x, y, z, wasBurning);
     }
   }
 

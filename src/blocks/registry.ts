@@ -537,6 +537,21 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     drop: { item: key, count: 1 },
     textures: { all: `block/${key}` },
   })),
+  block(BlockId.CollectiblePainting, 'collectible_painting', {
+    category: 'decoration',
+    hardness: 0,
+    solid: false,
+    opaque: false,
+    occludesFaces: false,
+    renderLayer: 'cutout',
+    renderShape: 'painting',
+    breakable: true,
+    drop: false,
+    hasItem: false,
+    hiddenFromGameplay: true,
+    soundGroup: 'wood',
+    textures: { all: 'block/oak_planks' },
+  }),
 ]);
 
 function buildRegistry<K>(keyOf: (definition: BlockDefinition) => K): ReadonlyMap<K, BlockDefinition> {

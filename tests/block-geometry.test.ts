@@ -61,7 +61,12 @@ describe('simulation block geometry import boundary', () => {
     const text = source('src/world/blockGeometry.ts');
     expect(text).not.toMatch(/from ['"]three['"]/);
     expect(text).not.toMatch(/from ['"][^'"]*rendering\//);
-    expect(importSpecifiers(text).every((specifier) => specifier.startsWith('../blocks'))).toBe(true);
+    expect(importSpecifiers(text).every((specifier) =>
+      specifier.startsWith('../blocks') || specifier === './painting',
+    )).toBe(true);
+    const painting = source('src/world/painting.ts');
+    expect(painting).not.toMatch(/from ['"]three['"]/);
+    expect(painting).not.toMatch(/from ['"][^'"]*rendering\//);
   });
 
   it('keeps collision / selection / placement / use / rails / ladders off specialBlockGeometry', () => {

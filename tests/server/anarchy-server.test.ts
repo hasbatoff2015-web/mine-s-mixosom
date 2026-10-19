@@ -1021,6 +1021,7 @@ describe('WorldInstance foundation simulation', () => {
 
     world.world.setBlock(ox, oy, oz, BlockId.Air);
     world.setGameMode(player, 'survival');
+    player.inventory.setSlot(0, createItemStack('dirt', 16));
     const beforeCount = player.inventory.getSlot(0)?.count ?? 0;
     expect(beforeCount).toBeGreaterThan(0);
     expect(world.tryPlace(player, ox, oy, oz)).toEqual({ ok: true });

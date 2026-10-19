@@ -133,6 +133,7 @@ export class PlayerVisual {
   private skinHandle: SkinTextureHandle;
   private heldModel?: THREE.Group;
   private heldItemId?: string;
+  private suppressHeldItem = false;
   private heldBaseTransform?: ThirdPersonHeldItemTransform;
   private lastBlockingProgress = 0;
   private offhandModel?: THREE.Group;
@@ -314,6 +315,7 @@ export class PlayerVisual {
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
     const dying = (state.deathProgress ?? 0) > 0;
     const resting = !dying && Boolean(state.bedRest);
+    this.suppressHeldItem = Boolean(state.emote) && !dying && !resting;
     if (dying || resting) this.animator.snapBlockingProgress(0);
     const blocking = !dying && !resting && state.swordBlocking && isSwordItem(this.heldItemId);
     const pose = this.animator.advance(deltaSeconds, dying || resting
@@ -326,6 +328,7 @@ export class PlayerVisual {
         bowCharge: 0,
         swordBlocking: false,
         foodUseProgress: 0,
+        emote: null,
       }
       : { ...state, swordBlocking: blocking });
     this.applyPose(resting ? {
@@ -502,7 +505,7 @@ export class PlayerVisual {
       meshes.base.visible = !this.invisible;
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
-    this.rig.heldItem.visible = this.heldModel !== undefined;
+    this.rig.heldItem.visible = this.heldModel !== undefined && !this.suppressHeldItem;
     this.rig.offhandItem.visible = this.offhandModel !== undefined;
   }
 

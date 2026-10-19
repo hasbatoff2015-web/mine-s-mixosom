@@ -30,7 +30,8 @@ export type BlockRenderShape =
   | 'chain'
   | 'farmland'
   | 'bed'
-  | 'sign';
+  | 'sign'
+  | 'painting';
 
 export type RailShape =
   | 'north_south'
@@ -86,6 +87,11 @@ export interface BlockRenderState {
    * Missing on older saves and on every non-sapling state.
    */
   readonly plantedAtMs?: number;
+  /**
+   * Canonical collectible item id. Only the twenty catalog ids are stored.
+   * Missing on every non-painting state and on older saves.
+   */
+  readonly paintingItemId?: string;
 }
 
 export interface BlockTextures {
@@ -312,4 +318,5 @@ export enum BlockId {
   OakSapling = 167,
   BirchSapling = 168,
   SpruceSapling = 169,
+  CollectiblePainting = 170,
 }

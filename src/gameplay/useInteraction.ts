@@ -47,7 +47,7 @@ import {
   type MinecartEntity,
 } from '../entities';
 import { damageItem, type Inventory, type ItemStack } from '../inventory';
-import { ItemId, tryGetItemDefinition } from '../items';
+import { ItemId, isCollectiblePaintingItemId, tryGetItemDefinition } from '../items';
 import { MAX_CROP_AGE, cropAge, isCropBlock, plantingDefinition } from '../farming';
 import { systemRandomFn, type RandomFn } from './random';
 import { pickupFluidSource, placeBucketFluid } from '../items/bucketInteraction';
@@ -551,6 +551,28 @@ export function placeBlockAt(
     ctx.world.setBlockState(x, y, z, floor
       ? { attachment: 'floor', facing: 'south', signRotation: ((Math.round(ctx.yaw / (Math.PI / 8)) % 16) + 16) % 16 }
       : { attachment: 'wall', facing: horizontalFacingFromXZ(attachmentNormal.x, attachmentNormal.z) });
+    return { ok: true };
+  }
+  if (blockId === BlockId.CollectiblePainting) {
+    const held = ctx.inventory.getSlot(ctx.selectedSlot);
+    const paintingItemId = held && isCollectiblePaintingItemId(held.itemId) ? held.itemId : undefined;
+    if (!paintingItemId) return { ok: false, reason: 'inventory' };
+    const nx = attachmentNormal.x;
+    const ny = attachmentNormal.y;
+    const nz = attachmentNormal.z;
+    const verticalFace = Math.abs(ny) <= 0.5 && (Math.abs(nx) > 0.5 || Math.abs(nz) > 0.5);
+    if (!verticalFace) return { ok: false, reason: 'no-anchor' };
+    if (existingDef.liquid === true) return { ok: false, reason: 'occupied' };
+    if (!canAttachToFace(ctx.world, x - nx, y - ny, z - nz, attachmentNormal)) {
+      return { ok: false, reason: 'no-anchor' };
+    }
+    if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
+    if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
+    ctx.world.setBlockState(x, y, z, {
+      attachment: 'wall',
+      facing: horizontalFacingFromXZ(nx, nz),
+      paintingItemId,
+    });
     return { ok: true };
   }
 

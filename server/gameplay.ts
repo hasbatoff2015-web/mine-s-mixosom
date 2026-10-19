@@ -1,3 +1,5 @@
+import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src/entities/megaZombie';
+import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
 import {
@@ -28,11 +30,13 @@ import {
 } from '../src/core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../src/world/worldBorder';
 import {
+  applesForBrokenLeaves,
   clearDoorBlocks,
   daylightFactor,
   DEATH_DROP_SCATTER_MULTIPLIER,
   dropScatterVelocity,
   dropScatterOrigin,
+  isLeafBlock,
   performUseHeld,
   placeBlockAt,
   rollBrokenBlockDrops,
@@ -56,11 +60,12 @@ import {
   isPetKind,
   raycastMobTarget,
   type MobEntity,
+  type MobRemovalReason,
   type RewoundMobPose,
 } from '../src/entities';
 import { Inventory, createItemStack, damageItem, type ItemStack, type PortalChestInventory } from '../src/inventory';
 import { applyInventoryUiAction, isManualDropAction, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { ItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
+import { ItemId, collectiblePaintingDropItemId, losesDurabilityWhenBreakingBlocks, tryGetItemDefinition } from '../src/items';
 import { fillBucketWithMilk } from '../src/items/bucketInteraction';
 import { WhMarks } from '../src/combat/WhMarks';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
@@ -127,6 +132,7 @@ export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 export interface GameplayPlayer {
   restingBed?: BedRestState;
   readonly id: string;
+  readonly name?: string;
   connected: boolean;
   readonly controller: PlayerController;
   readonly inventory: Inventory;
@@ -160,6 +166,11 @@ export interface GameplayPlayer {
   combatPoseHistory?: CombatPoseSample[];
   /** True after death loot has been emitted for the current death. */
   deathLootDropped?: boolean;
+  /**
+   * Leaves broken toward the next apple, in 0..4.
+   * Per player, authoritative, not a client prediction counter.
+   */
+  leafBreaksTowardApple?: number;
   pendingSignEdit?: { x: number; y: number; z: number };
 }
 
@@ -218,6 +229,8 @@ export class ServerGameplay {
   readonly minecarts: MinecartManager;
   readonly arrows: PlayerArrowManager;
   readonly fireworks: FireworkManager;
+  mobDeathListener?: (mob: MobEntity) => void;
+  mobRemovedListener?: (mob: MobEntity, reason: MobRemovalReason) => void;
   readonly whMarks = new WhMarks();
   readonly redstone: RedstoneSystem;
   readonly farming: FarmingSystem;
@@ -281,7 +294,13 @@ export class ServerGameplay {
       random: this.random,
       ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
-      onDeath: (mob) => this.pushEntityEvent(mob.id, 'death'),
+      onDeath: (mob) => {
+        this.pushEntityEvent(mob.id, 'death');
+        this.mobDeathListener?.(mob);
+      },
+      onRemove: (mob, reason) => {
+        this.mobRemovedListener?.(mob, reason);
+      },
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
       onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
@@ -461,6 +480,7 @@ export class ServerGameplay {
             alive: !player.survival.dead,
             targetable: player.gamemode === 'survival' && !player.survival.invisible,
             heldItemId: player.inventory.getSlot(player.selectedSlot)?.itemId,
+            ...(player.name ? { name: player.name } : {}),
           })),
           daylight: daylightFactor(this.world.timeOfDay),
         });
@@ -698,7 +718,7 @@ export class ServerGameplay {
     }
     const mobs: EntitySnapshot[] = [];
     for (const mob of this.mobs.entities) {
-      if (!inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
+      if (mob.kind !== 'mega_zombie' && !inRange(mob.position.x, mob.position.y, mob.position.z)) continue;
       mobs.push({
         id: mob.id, kind: 'mob',
         x: mob.position.x, y: mob.position.y, z: mob.position.z, yaw: mob.facingYaw,
@@ -710,7 +730,17 @@ export class ServerGameplay {
         ...(mob.kind === 'cat' ? { variant: fallbackCatVariant(mob.catVariant) } : {}),
         ...(mob.angry ? { angry: true } : {}),
         ...(mob.kind === 'creeper' ? { fuse: mob.fuseSeconds } : {}),
+        ...(mob.kind === 'mega_zombie' && mob.boss?.configuredSpawn ? {
+          anchorX: mob.boss.configuredSpawn.x,
+          anchorY: mob.boss.configuredSpawn.y,
+          anchorZ: mob.boss.configuredSpawn.z,
+        } : {}),
       });
+    }
+    const bossIndex = mobs.findIndex((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (bossIndex > 0) {
+      const [boss] = mobs.splice(bossIndex, 1);
+      if (boss) mobs.unshift(boss);
     }
     const items: EntitySnapshot[] = [];
     for (const item of this.drops.entities) {
@@ -722,7 +752,39 @@ export class ServerGameplay {
         itemId: item.stack.itemId, count: item.stack.count,
       });
     }
-    return packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const packed = packEntitySnapshots({ arrows, fireworks, tnt, falling, minecarts, mobs, items });
+    const boss = mobs.find((snapshot) => snapshot.mobKind === 'mega_zombie');
+    if (boss && !packed.some((snapshot) => snapshot.id === boss.id)) {
+      return [boss, ...packed.slice(0, ENTITY_SNAPSHOT_CAP - 1)];
+    }
+    return packed;
+  }
+
+  scatterBossLoot(stacks: readonly ItemStack[], origin: Vec3Like): string[] {
+    const ids: string[] = [];
+    for (const stack of splitMegaZombieStacks(stacks, this.random)) {
+      const motion = megaZombieLootMotion(this.random);
+      const position = new Vec3(origin.x + motion.x, origin.y + motion.y, origin.z + motion.z);
+      const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z);
+      this.events.emit('itemDrop', event);
+      if (event.cancelled) continue;
+      ids.push(this.drops.spawn(stack, position, {
+        velocity: new Vec3(motion.vx, motion.vy, motion.vz),
+        merge: false,
+        lockMerge: true,
+        pickupDelaySeconds: 0.8,
+      }).id);
+    }
+    return ids;
+  }
+
+  launchBossFireworks(origin: Vec3Like): void {
+    const spreads: readonly (readonly [number, number])[] = [[0, 0], [-1.25, 0.55], [1.05, -0.7]];
+    for (let index = 0; index < spreads.length; index += 1) {
+      const spread = spreads[index]!;
+      const flight = MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS[index] ?? 1;
+      this.fireworks.spawn(new Vec3(origin.x + spread[0], origin.y + 1.5, origin.z + spread[1]), flight);
+    }
   }
 
   persistEntities(): Pick<
@@ -812,20 +874,26 @@ export class ServerGameplay {
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
     this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
     if (player.gamemode === 'survival' && harvestable) {
-      const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
-      if (farmingDrops !== undefined) {
-        for (const drop of farmingDrops) if (drop.count > 0) {
-          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-        }
-      } else if (definition.drop) {
-        const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
-        for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
-          const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
-          if (count > 0) {
-            this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+      const paintingItemId = collectiblePaintingDropItemId(block, blockState);
+      if (paintingItemId) {
+        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+      } else {
+        const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
+        if (farmingDrops !== undefined) {
+          for (const drop of farmingDrops) if (drop.count > 0) {
+            this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+          }
+        } else if (definition.drop) {
+          const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
+          for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
+            const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
+            if (count > 0) {
+              this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+            }
           }
         }
       }
+      this.dropLeafApple(player, block, x, y, z);
     }
     if (player.gamemode === 'survival') {
       const tool = player.inventory.getSlot(player.selectedSlot);
@@ -1631,6 +1699,23 @@ export class ServerGameplay {
     return dx * dx + dy * dy + dz * dz <= PLAYER_NET_REACH * PLAYER_NET_REACH;
   }
 
+  /**
+   * One apple on every 5th leaf this player breaks. The same counter is used
+   * for a single break and for a counted batch, so a batch cannot mint one
+   * apple per leaf or skip the cycle.
+   */
+  private dropLeafApple(player: GameplayPlayer, block: number, x: number, y: number, z: number): void {
+    if (!isLeafBlock(block)) return;
+    const award = applesForBrokenLeaves(player.leafBreaksTowardApple ?? 0, 1);
+    player.leafBreaksTowardApple = award.next;
+    if (award.apples <= 0) return;
+    this.spawnDroppedStack(
+      createItemStack(ItemId.Apple, award.apples),
+      new Vec3(x + 0.5, y + 0.3, z + 0.5),
+      player.id,
+    );
+  }
+
   private removeDoor(x: number, y: number, z: number): void {
     clearDoorBlocks(this.world, x, y, z);
   }
@@ -1645,8 +1730,10 @@ export class ServerGameplay {
       // Personal storage is player-owned; breaking the block never drops or wipes it.
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
+      const wasBurning = (furnace?.burnTime ?? 0) > 0;
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
       this.world.furnaces.delete(key);
+      if (wasBurning) this.world.syncFurnaceBurnBit(x, y, z, true);
     }
   }
 
@@ -1655,6 +1742,11 @@ export class ServerGameplay {
     if (events.length) this.redstone.notifyBlocksChanged(events);
     for (const event of events) {
       if (event.reason === 'lava') continue;
+      const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
+      if (paintingItemId) {
+        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        continue;
+      }
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) {
@@ -1756,6 +1848,12 @@ export class ServerGameplay {
         z: entry.z,
         blockId: entry.previous,
       });
+      const paintingItemId = collectiblePaintingDropItemId(entry.previous, entry.previousState);
+      if (!paintingItemId) continue;
+      this.spawnDroppedStack(
+        createItemStack(paintingItemId, 1),
+        new Vec3(entry.x + 0.5, entry.y + 0.3, entry.z + 0.5),
+      );
     }
   }
 
@@ -1838,12 +1936,14 @@ export class ServerGameplay {
     const attackerPosition = pose
       ? new Vec3(pose.positionX, pose.positionY, pose.positionZ)
       : attacker.controller.position;
-    const accepted = this.mobs.damage(mob, result.damage, {
+    const godSwordHit = stack?.itemId === ItemId.GodSword;
+    const accepted = this.mobs.damage(mob, godSwordHit ? Math.max(result.damage, 1) : result.damage, {
       source: 'player',
       attackerPosition,
       attackerYaw: result.attackerYaw,
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerId: attacker.id,
+      ...(godSwordHit ? { lethal: true } : {}),
     });
     if (accepted) {
       this.events.emit('entityDamaged', { entityId: mob.id, amount: result.damage, cause: 'melee' });

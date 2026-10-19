@@ -174,6 +174,7 @@ import {
   type BlockNeighborView,
   type LocalBox,
 } from '../world/blockGeometry';
+import { paintingSelectionLocalBox } from '../world/painting';
 
 export type { BlockNeighborView, GeometryVec3, LocalBox } from '../world/blockGeometry';
 
@@ -611,6 +612,8 @@ export function selectionBoxesForBlock(
       }]);
     case 'sign':
       return selectionBoxesFromLocal(x, y, z, signLocalBoxes(state));
+    case 'painting':
+      return selectionBoxesFromLocal(x, y, z, [paintingSelectionLocalBox(state?.facing ?? 'south')]);
     case 'cube': return [cubeSelectionBox(x, y, z)];
   }
 }

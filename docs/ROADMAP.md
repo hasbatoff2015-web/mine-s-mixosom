@@ -1,5 +1,79 @@
 # Roadmap
 
+## 2026-10-18: Decorative bee and mini creeper
+
+- [x] Separate runtime kinds `pet_bee` and `pet_creeper`. They are not `isPetKind()` wolves or cats.
+- [x] Original bee rig, 64×64 sheet, render-clock wing flap and server flight follow.
+- [x] Bee head texels sit on -Z and each wing tip points outward. The sheet bytes are unchanged.
+- [x] Mini creeper reuses the creeper rig at scale 0.49 and never runs creeper fuse.
+- [x] `/spawnpet bee|creeper|off` for the calling operator. `wolf` and `cat` no longer spawn.
+- [x] Player `cosmeticPet` survives reconnect and restart. The runtime mob is not in the world mob list.
+- [ ] Not merged. Browser DEV QA of the 3D bee was not run in this environment.
+
+## 2026-10-17: Emotes
+
+- [x] Hold Z for a four-sector wheel. Release plays the sector. The center plays nothing.
+- [x] One-shot procedural poses on the existing player rig. Third-person back camera, hidden main-hand item, armor stays attached.
+- [x] Movement, death, blur, and other UI cancel the emote. Mouse look does not.
+- [x] Server `emote` start/stop on the existing presentation snapshot. No position or damage change. Protocol stays 4.
+- [ ] Not merged. Wait for an explicit merge command.
+
+## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback
+
+- [x] Settled swim speed is 0.8× ground speed. Land, sneak, air, and lava caps stay on their previous constants.
+- [x] Automine logs are halved; stone is 45%; iron ore matches coal at 5%. Weights still sum to 10 000.
+- [x] An automine reset finishes on its own light token. A full region-light queue no longer holds `RESETTING`.
+- [x] Player Q throws travel about twice as far horizontally. The vertical hop is unchanged.
+- [x] Builtin `/kit` copies the creator inventory and gives `start` once.
+- [x] `/holograms automine` counts down to that mine's real `nextResetAt`.
+- [x] Mega Zombie ignores attack knockback. Other mobs do not.
+- [ ] Not merged. Wait for an explicit merge command.
+
+## 2026-10-08: Mega Zombie boss
+
+- [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.
+- [x] 3D AABB, one scheduler, revenge, fixed loot copy, Mutant Zombie model.
+- [x] HP 1500, melee 5, god-sword lethal hit, no sunlight burn, HP bar within 30 blocks of spawn, `/boss kill`, upward loot toss, safe spawn snap.
+- [x] Retuned loot, server-side pile split, doubled horizontal scatter, staggered item meshes and firework flights.
+- [ ] Not merged. Draft PR **#128**.
+
+## 2026-10-08: Collectible painting display names
+
+- [x] Russian names are `Коллекционная картина #1` through `#20`. English names are `Collectible Painting #1` through `#20`.
+- [x] Every painting uses the description `коллекционный предмет` through the existing yellow hint.
+- [x] Item ids, textures, placement, drops, and auction identity stay the same. No uniqueness ledger.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
+## 2026-10-08: Collectible paintings at 64×64, explosion drop
+
+- [x] Nearest-neighbor resize of all twenty PNGs to 64×64. No new runtime dependency.
+- [x] `DestroyedBlock.previousState` is snapshotted in `resolveExplosion` before the batch clear.
+- [x] Direct blast, support-only, and support-plus-painting each emit one exact item. A denied cell emits none.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
+## 2026-10-08: Collectible paintings
+
+- [x] Twenty hidden Creative resource items and one generic wall block. Survival has no recipe, mob drop, loot, or worldgen source.
+- [x] Hand placement on a vertical solid face. The held stack is the only variant. Creative does not consume. Survival drops that exact item once.
+- [x] `PaintingRenderer` draws one oak frame outside the 32px atlas. Save and network keep only the twenty known ids.
+- [x] Auction lists them as ordinary stacks. The yellow description reuses the existing hint. Claim text still wins.
+- [ ] No automatic world distribution, now or as a hook for a later pass. Admins hang copies themselves.
+- [ ] Not merged. Draft PR **#126**. Wait for an explicit merge command.
+
+## 2026-10-08: Furnace world-space lit sync
+
+- [x] `furnace_lit` goes to every connected player when burn state crosses zero. No slots.
+- [x] `welcome.furnacesLit` and `chunk_data.furnacesLit` carry only burning furnaces. Chunk reload replaces that column's lit bit.
+- [x] The client does not tick fuel. `ChunkMesher` still reads `isFurnaceBurning`.
+- [x] Checked in the DEV browser: a furnace shows lit without an open GUI.
+
+## 2026-10-05: Apples, crafting and furnace
+
+- [x] Every fifth leaf broken by a player drops one apple. The counter is per player and resets after the fifth.
+- [x] Golden apple is 8 gold ingots around an apple. Fire arrows are 8 arrows plus a lava bucket, returning the bucket.
+- [x] Cobblestone smelts to stone. A lava bucket burns for 16000 ticks and leaves an empty bucket in the fuel slot.
+- [x] An open furnace keeps ticking. Online viewers receive `furnace_sync`. The arrow uses the smelting recipe time.
+
 ## 2026-10-07: Online shift bulk transfer and mobile drop zone
 
 - [x] Shift+double-click sends a merge-identity hint so the server can finish the bulk after the origin slot is empty.

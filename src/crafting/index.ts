@@ -4,3 +4,5 @@ export * from './matcher';
 export * from './needs';
 export * from './craftOnce';
 export * from './craftCatalog';
+export * from './furnaceFuel';
+export * from './furnaceProgress';

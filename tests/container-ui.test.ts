@@ -124,7 +124,8 @@ describe('furnace slot rules', () => {
     expect(isSmeltableItem('iron_ore')).toBe(true);
     expect(isFuelItem('coal')).toBe(true);
     expect(furnaceAccepts(0, createItemStack('iron_ore'))).toBe(true);
-    expect(furnaceAccepts(0, createItemStack('cobblestone'))).toBe(false);
+    expect(furnaceAccepts(0, createItemStack('cobblestone'))).toBe(true);
+    expect(furnaceAccepts(0, createItemStack('dirt'))).toBe(false);
     expect(furnaceAccepts(1, createItemStack('coal'))).toBe(true);
     expect(furnaceAccepts(2, createItemStack('iron_ingot'))).toBe(false);
     const clicked = clickFurnaceSlot([null, null, createItemStack('iron_ingot')], 2, createItemStack('dirt'), 'left');

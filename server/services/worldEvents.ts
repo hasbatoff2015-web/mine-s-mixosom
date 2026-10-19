@@ -455,6 +455,7 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
     } else {
       world.chests.delete(key);
     }
+    const wasBurning = (world.furnaces.get(key)?.burnTime ?? 0) > 0;
     if (cell.furnace) {
       world.furnaces.set(key, {
         slots: [
@@ -469,6 +470,7 @@ export function restoreSnapshot(world: VoxelWorld, snapshot: readonly WorldSnaps
     } else {
       world.furnaces.delete(key);
     }
+    world.syncFurnaceBurnBit(cell.x, cell.y, cell.z, wasBurning);
     if (cell.sign) {
       world.signs.set(key, cell.sign);
       world.signVersion += 1;

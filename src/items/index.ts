@@ -3,3 +3,4 @@ export * from './registry';
 export * from './itemRenderProfiles';
 export * from './itemIcons';
 export * from './book';
+export * from './collectiblePaintings';

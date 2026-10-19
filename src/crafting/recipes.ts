@@ -142,10 +142,15 @@ const recipes: Recipe[] = [
   },
   {
     id: 'fire_arrow', type: 'shapeless',
-    ingredients: [exact(ItemId.Arrow), exact(ItemId.LavaBucket)],
-    output: { item: ItemId.FireArrow, count: 1 },
+    ingredients: [{ item: ItemId.Arrow, count: 8 }, exact(ItemId.LavaBucket)],
+    output: { item: ItemId.FireArrow, count: 8 },
     remainders: { [ItemId.LavaBucket]: ItemId.Bucket },
     gridSize: 2,
+  },
+  {
+    id: 'golden_apple', type: 'shaped', pattern: ['GGG', 'GAG', 'GGG'],
+    key: { G: exact(ItemId.GoldIngot), A: exact(ItemId.Apple) },
+    output: { item: ItemId.GoldenApple, count: 1 }, gridSize: 3,
   },
   {
     id: 'wh_arrow', type: 'shapeless', gridSize: 3,
@@ -382,16 +387,22 @@ const smeltingRecipes: SmeltingRecipe[] = [
   { id: 'cooked_porkchop', input: exact(ItemId.Porkchop), output: { item: ItemId.CookedPorkchop, count: 1 }, cookingTimeTicks: 200 },
   { id: 'cooked_chicken', input: exact(ItemId.Chicken), output: { item: ItemId.CookedChicken, count: 1 }, cookingTimeTicks: 200 },
   { id: 'baked_potato', input: exact(ItemId.Potato), output: { item: ItemId.BakedPotato, count: 1 }, cookingTimeTicks: 200 },
+  { id: 'stone', input: exact('cobblestone'), output: { item: 'stone', count: 1 }, cookingTimeTicks: 200 },
 ];
 
 export const SMELTING_RECIPES: readonly SmeltingRecipe[] = Object.freeze(
   smeltingRecipes.map((recipe): SmeltingRecipe => Object.freeze(recipe)),
 );
 
+/** Furnace burn duration at 20 ticks per second. Coal is the reference unit. */
+const COAL_BURN_TICKS = 1_600;
+
 /** Furnace burn duration at 20 ticks per second. */
 export const FUEL_BURN_TICKS: Readonly<Record<string, number>> = Object.freeze({
-  [ItemId.Coal]: 1_600,
-  [ItemId.Charcoal]: 1_600,
+  [ItemId.Coal]: COAL_BURN_TICKS,
+  [ItemId.Charcoal]: COAL_BURN_TICKS,
+  /** One lava bucket burns as long as ten coal. The empty bucket is a remainder, not fuel. */
+  [ItemId.LavaBucket]: COAL_BURN_TICKS * 10,
   oak_log: 300,
   birch_log: 300,
   spruce_log: 300,
@@ -406,3 +417,24 @@ export const FUEL_BURN_TICKS: Readonly<Record<string, number>> = Object.freeze({
   spruce_stairs: 300,
   [ItemId.Stick]: 100,
 });
+
+/**
+ * Item left in the fuel slot when a single fuel item is consumed.
+ * Only max-stack-1 fuels may have a remainder, so the slot can hold it
+ * without a second inventory insert (full player inventories cannot drop it).
+ */
+export const FUEL_REMAINDERS: Readonly<Record<string, string>> = Object.freeze({
+  [ItemId.LavaBucket]: ItemId.Bucket,
+});
+
+for (const [itemId, ticks] of Object.entries(FUEL_BURN_TICKS)) {
+  getItemDefinition(itemId);
+  if (!Number.isInteger(ticks) || ticks < 1) throw new Error(`Invalid fuel duration for ${itemId}`);
+}
+for (const [itemId, remainderId] of Object.entries(FUEL_REMAINDERS)) {
+  if ((FUEL_BURN_TICKS[itemId] ?? 0) < 1) throw new Error(`Fuel remainder without burn time: ${itemId}`);
+  getItemDefinition(remainderId);
+  if (getItemDefinition(itemId).maxStack !== 1) {
+    throw new Error(`Fuel remainder requires max stack 1: ${itemId}`);
+  }
+}

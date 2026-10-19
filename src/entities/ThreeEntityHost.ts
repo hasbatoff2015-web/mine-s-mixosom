@@ -28,6 +28,10 @@ import { createMobModel } from './mobModels';
 import { VoxelVisualFactory } from './voxelVisuals';
 import { petAppearanceKey, petBodyTexturePath, WOLF_COLLAR_COLOR } from './petAppearance';
 import { applyCatVisualPose, applyWolfVisualPose } from './petPoses';
+import { PET_BEE_MODEL_SCALE, PET_CREEPER_MODEL_SCALE } from './cosmeticPets';
+import { beeBodyPitch, beeBobOffset, beeLegRadians, beeWingRadians } from './beeVisual';
+import { MEGA_ZOMBIE_FOOT_LIFT, MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
+import { applyMegaZombiePose } from './megaZombiePose';
 import { PRIMED_TNT_TEXTURE_KEY } from '../blocks/tnt';
 
 export interface ThreeEntityHostOptions {
@@ -258,6 +262,8 @@ export class ThreeEntityHost implements EntityHost {
 
   syncMob(state: MobVisualState): EntityVisual | undefined {
     const visual = asObject3D(state.visual);
+    if (state.kind === 'mega_zombie') return this.syncMegaZombie(state, visual);
+    if (state.kind === 'pet_bee') return this.syncBee(state, visual);
     const model = state.model;
     const legs = model.legs.map(asObject3D);
     const arms = model.arms.map(asObject3D);
@@ -330,6 +336,9 @@ export class ThreeEntityHost implements EntityHost {
       const [scaleX, scaleY, scaleZ] = creeperFuseVisualScale(state.fuseSeconds);
       visual.scale.set(scaleX, scaleY, scaleZ);
       visual.rotation.z = 0;
+    } else if (state.kind === 'pet_creeper') {
+      visual.scale.setScalar(PET_CREEPER_MODEL_SCALE);
+      visual.rotation.z = 0;
     } else {
       visual.scale.setScalar(1);
       visual.rotation.z = 0;
@@ -341,9 +350,11 @@ export class ThreeEntityHost implements EntityHost {
 
   disposeVisual(visual: EntityVisual, options?: { readonly materials?: boolean }): void {
     const object = asObject3D(visual);
-    if (object instanceof THREE.Mesh && object.name === 'fire-overlay') {
-      object.geometry.dispose();
-    }
+    object.traverse((child) => {
+      if (child instanceof THREE.Mesh && (child.name === 'fire-overlay' || child.name === 'fire-overlay-plane')) {
+        child.geometry.dispose();
+      }
+    });
     if (options?.materials) disposeOwnedEntityMaterials(object);
     object.removeFromParent();
   }
@@ -362,10 +373,64 @@ export class ThreeEntityHost implements EntityHost {
     this.tntMaterials.length = 0;
   }
 
+  private syncBee(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
+    const model = state.model;
+    const previousAge = Number(visual.userData.beeVisualAge ?? state.visualAge);
+    let delta = state.visualAge - previousAge;
+    if (delta < 0) delta += 60;
+    if (!Number.isFinite(delta) || delta < 0) delta = 0;
+    visual.userData.beeVisualAge = state.visualAge;
+    const previousPitch = Number(visual.userData.beeTilt ?? 0);
+    const pitch = beeBodyPitch(state.locomotionSpeed, previousPitch, delta);
+    visual.userData.beeTilt = pitch;
+    visual.rotation.set(0, state.yaw, 0);
+    visual.scale.setScalar(PET_BEE_MODEL_SCALE);
+    const body = model.parts.get('body');
+    if (body) {
+      const bodyObject = asObject3D(body);
+      bodyObject.rotation.x = Number(bodyObject.userData.baseRotationX ?? 0) + pitch;
+      bodyObject.rotation.y = Number(bodyObject.userData.baseRotationY ?? 0);
+      bodyObject.rotation.z = Number(bodyObject.userData.baseRotationZ ?? 0);
+    }
+    model.wings.forEach((wing, index) => {
+      const wingObject = asObject3D(wing);
+      const side = index === 0 ? 'right' : 'left';
+      wingObject.rotation.x = Number(wingObject.userData.baseRotationX ?? 0);
+      wingObject.rotation.y = Number(wingObject.userData.baseRotationY ?? 0);
+      wingObject.rotation.z = Number(wingObject.userData.baseRotationZ ?? 0) + beeWingRadians(state.visualAge, side);
+    });
+    model.legs.forEach((leg, index) => {
+      const legObject = asObject3D(leg);
+      legObject.rotation.x = Number(legObject.userData.baseRotationX ?? 0) + beeLegRadians(state.visualAge, index);
+      legObject.rotation.y = Number(legObject.userData.baseRotationY ?? 0);
+      legObject.rotation.z = Number(legObject.userData.baseRotationZ ?? 0);
+    });
+    visual.position.set(state.x, state.y + beeBobOffset(state.visualAge), state.z);
+    return this.syncFireOverlay(state, visual);
+  }
+
+  private syncMegaZombie(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
+    const pose = applyMegaZombiePose(state.model.parts, state);
+    const fallRadians = pose.fall * (80 * Math.PI / 180);
+    visual.rotation.x = 0;
+    visual.rotation.y = state.yaw;
+    visual.rotation.z = -fallRadians;
+    visual.scale.setScalar(MEGA_ZOMBIE_MODEL_SCALE);
+    const hurtJolt = state.state === 'hurt' ? Math.sin(state.stateSeconds * 45) * 0.06 : 0;
+    visual.position.set(state.x + hurtJolt + pose.shake, state.y + MEGA_ZOMBIE_FOOT_LIFT, state.z);
+    visual.userData.megaDeathTint = pose.tint;
+    return this.syncFireOverlay(state, visual);
+  }
+
   private syncFireOverlay(state: MobVisualState, visual: THREE.Object3D): EntityVisual | undefined {
     if (state.onFire) {
       if (!state.fireOverlay) {
-        const overlay = SharedFireTexture.instance().createScaledOverlay(state.width, state.height);
+        const overlay = state.kind === 'mega_zombie'
+          ? SharedFireTexture.instance().createMegaZombieFireOverlay(
+            state.width / MEGA_ZOMBIE_MODEL_SCALE,
+            state.height / MEGA_ZOMBIE_MODEL_SCALE,
+          )
+          : SharedFireTexture.instance().createScaledOverlay(state.width, state.height);
         visual.add(overlay);
         state.fireOverlay = overlay;
       }

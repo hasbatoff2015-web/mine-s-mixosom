@@ -1,5 +1,13 @@
 # Тестирование
 
+## 2026-10-18 Decorative bee and mini creeper
+
+```text
+npx vitest run tests/cosmetic-pets.test.ts tests/cosmetic-bee-visual.test.ts tests/server/cosmetic-pets-world.test.ts tests/server/spawnpet-command.test.ts tests/entities.test.ts tests/visual-models.test.ts tests/hostile-mob-balance.test.ts tests/pets.test.ts tests/server/pets-anarchy.test.ts
+```
+
+Contracts: `pet_bee` stays airborne and does not cross a solid wall; a gap over 16 blocks relocates it. `pet_creeper` stops inside 2 blocks and walks after 3. Its fuse stays 0 while a hostile creeper still explodes. Damage, melee, and arrows skip cosmetic pets. They are absent from `serialize()` / natural weights / the wolf-cat tame count. `/spawnpet wolf|cat` does not spawn. Reconnect and restart restore one pet from `cosmeticPet`. An invalid saved value restores none. Rendered mini-creeper height is 0.75–0.85 and stays scaled across `syncMob`. Bee wings mirror at 6.5 Hz from render time.
+
 ## 2026-09-29 Saplings, flint, footsteps, fall damage, chat
 
 ```text

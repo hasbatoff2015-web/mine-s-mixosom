@@ -24,6 +24,18 @@ import {
   type MobKind,
   type MobState,
 } from './mobDefinitions';
+import {
+  clampBossToArena,
+  createMegaZombieRuntime,
+  MEGA_ZOMBIE_DEATH_SECONDS,
+  noteMegaZombieHit,
+  pointInArena,
+  selectMegaZombieTarget,
+  type ArenaAabb,
+  type ArenaPoint,
+  type BossFocus,
+  type MegaZombieRuntime,
+} from './megaZombie';
 import { hasVoxelLineOfSight, isSpaceClear, moveVoxelBody } from './voxelPhysics';
 import { interpolatePose, interpolateVec3, shouldSnapPose } from '../core/entityInterpolation';
 import {
@@ -58,6 +70,9 @@ import {
   WILD_WOLF_ANGER_SECONDS,
   WOLF_ATTACK_DAMAGE,
 } from './petConstants';
+import { COSMETIC_PET_WORLD_CAP, isCosmeticPetKind } from './cosmeticPets';
+import { stepBeeFlight, stepMiniCreeperFollow } from './cosmeticPetMotion';
+import { advanceBeeAnimSeconds } from './beeVisual';
 import { fallbackCatVariant, isPetKind, samePetOwner, type CatVariant, type PetCombatPriority, type PetCombatTargetKind } from './petTypes';
 import { petBodyTexturePath } from './petAppearance';
 import { findSafePetTeleport, lastPetTeleportSearchStats, resetPetTeleportSearchStats } from './petTeleport';
@@ -140,6 +155,10 @@ export interface MobSpawnOptions {
   readonly angry?: boolean;
   readonly tameProgress?: number;
   readonly tameProgressPlayerId?: string;
+  /** Arena for a mega zombie. Ignored by every other kind. */
+  readonly bossArena?: ArenaAabb;
+  /** Configured `/boss setspawn` point. HP-bar range uses this. */
+  readonly bossSpawn?: ArenaPoint;
 }
 
 export interface MobDamageOptions {
@@ -151,6 +170,8 @@ export interface MobDamageOptions {
   readonly knockback?: number;
   readonly igniteTicks?: number;
   readonly attackerId?: string;
+  /** Authoritative god-sword hit. Ignores i-frames and starts the normal death. */
+  readonly lethal?: boolean;
 }
 
 export interface MobPlayerDamageEvent {
@@ -194,6 +215,7 @@ export interface MobPlayerFocus {
   /** False keeps the player in spawn/despawn interest but disables hostile targeting. */
   readonly targetable?: boolean;
   readonly heldItemId?: string;
+  readonly name?: string;
 }
 
 export interface MobUpdateContext {
@@ -397,6 +419,8 @@ export class MobEntity {
   catVariant?: CatVariant;
   angry = false;
   angrySeconds = 0;
+  /** Server-only mega zombie combat memory. Not serialized. */
+  boss?: MegaZombieRuntime;
   combatTargetId?: string;
   combatTargetKind?: PetCombatTargetKind;
   combatPriority?: PetCombatPriority;
@@ -406,6 +430,14 @@ export class MobEntity {
   poseEpoch = 0;
   petHomeX?: number;
   petHomeZ?: number;
+  /** Hysteresis for the mini creeper. Not serialized. */
+  cosmeticFollowActive = false;
+  cosmeticAnchorX?: number;
+  cosmeticAnchorY?: number;
+  cosmeticAnchorZ?: number;
+  /** Render-only bee clock. Not part of the 20 TPS snapshot. */
+  beeAnimSeconds = 0;
+  beeClockMs?: number;
 
   constructor(
     readonly id: string,
@@ -471,6 +503,9 @@ export class MobManager {
   private spawnTimer = 0;
   private disposed = false;
   private playerById = new Map<string, MobPlayerFocus>();
+  private readonly bossFocusScratch: BossFocus[] = [];
+  private readonly bossEye = new Vec3();
+  private readonly bossTargetEye = new Vec3();
   teleportCandidateChecks = 0;
   teleportSearches = 0;
   lastSeparationPairChecks = 0;
@@ -569,7 +604,9 @@ export class MobManager {
 
   shouldKeepRemoteDeath(id: string): boolean {
     const mob = this.mobsById.get(id);
-    return Boolean(mob && mob.state === 'die' && mob.deathSeconds < MOB_DEATH_ANIMATION_SECONDS);
+    if (!mob || mob.state !== 'die') return false;
+    const limit = mob.kind === 'mega_zombie' ? MEGA_ZOMBIE_DEATH_SECONDS : MOB_DEATH_ANIMATION_SECONDS;
+    return mob.deathSeconds < limit;
   }
 
   setNetworkRenderPose(id: string, x?: number, y?: number, z?: number, yaw?: number, tick?: number): void {
@@ -598,6 +635,8 @@ export class MobManager {
       }
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
+      } else if (mob.kind === 'mega_zombie') {
+        mob.stateSeconds += delta;
       }
     }
   }
@@ -644,7 +683,16 @@ export class MobManager {
   countTamedPets(): number {
     let count = 0;
     for (const mob of this.mobsById.values()) {
-      if (mob.ownerId) count += 1;
+      if (!mob.ownerId || isCosmeticPetKind(mob.kind)) continue;
+      count += 1;
+    }
+    return count;
+  }
+
+  countCosmeticPets(): number {
+    let count = 0;
+    for (const mob of this.mobsById.values()) {
+      if (mob.alive && isCosmeticPetKind(mob.kind)) count += 1;
     }
     return count;
   }
@@ -674,21 +722,27 @@ export class MobManager {
   ): MobEntity | undefined {
     this.assertActive();
     const definition = getMobDefinition(kind);
-    const tamed = Boolean(spawnOptions.ownerId);
+    const cosmetic = isCosmeticPetKind(kind);
+    if (cosmetic && !spawnOptions.ownerId) return undefined;
+    if (cosmetic && this.countCosmeticPets() >= COSMETIC_PET_WORLD_CAP) return undefined;
+    const tamed = Boolean(spawnOptions.ownerId) && !cosmetic;
     if (!spawnOptions.force && tamed && this.countTamedPets() >= this.maxTamedPets) {
       return undefined;
     }
-    if (!spawnOptions.force && !tamed && !this.hasPopulationRoom(definition.disposition)) {
+    if (!spawnOptions.force && !tamed && !cosmetic && !this.hasPopulationRoom(definition.disposition)) {
       return undefined;
     }
     if (!spawnOptions.force && this.options.allowSpawn
       && !this.options.allowSpawn(kind, position.x, position.y, position.z)) {
       return undefined;
     }
-    if (!spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
+    if (!cosmetic && !spawnOptions.force && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
       return undefined;
     }
-    if (!tamed && this.countWildMobs() >= this.maxMobs) {
+    if (cosmetic && !isInsidePlayableBlock(Math.floor(position.x), Math.floor(position.z))) {
+      return undefined;
+    }
+    if (!tamed && !cosmetic && this.countWildMobs() >= this.maxMobs) {
       if (!spawnOptions.force) return undefined;
       this.evictFarthestOrOldest(position);
       if (this.countWildMobs() >= this.maxMobs) return undefined;
@@ -744,6 +798,12 @@ export class MobManager {
       mob.velocity.x = 0;
       mob.velocity.z = 0;
     }
+    if (kind === 'mega_zombie') {
+      mob.boss = createMegaZombieRuntime(spawnOptions.bossArena ?? null, spawnOptions.bossSpawn ?? null);
+      if (mob.boss.arena) {
+        clampBossToArena(mob.position, mob.velocity, mob.boss.arena, mob.definition.width, mob.definition.height);
+      }
+    }
     this.mobsById.set(id, mob);
     this.syncVisual(mob, 0, 1);
     this.applyMobLight(mob);
@@ -795,7 +855,8 @@ export class MobManager {
       if (mob.state === 'die') {
         mob.deathSeconds += delta;
         this.snapMobRender(mob);
-        if (mob.deathSeconds >= MOB_DEATH_ANIMATION_SECONDS) this.finishDeath(mob);
+        const deathLimit = mob.kind === 'mega_zombie' ? MEGA_ZOMBIE_DEATH_SECONDS : MOB_DEATH_ANIMATION_SECONDS;
+        if (mob.deathSeconds >= deathLimit) this.finishDeath(mob);
         continue;
       }
 
@@ -804,7 +865,9 @@ export class MobManager {
       if (mob.hurtSeconds > 0) {
         mob.hurtSeconds = Math.max(0, mob.hurtSeconds - delta);
         if (mob.hurtSeconds === 0 && mob.alive) this.changeState(mob, mob.resumeState);
-      } else if (!mob.meleeKnockback) {
+      }
+      // Mega Zombie stays in its attack cycle while hurt. Other mobs still pause.
+      if (mob.kind === 'mega_zombie' || (mob.hurtSeconds <= 0 && !mob.meleeKnockback)) {
         this.updateAi(mob, delta, nearestTarget, context, daylight);
       }
       if (mob.hurtFlashSeconds > 0) {
@@ -817,6 +880,9 @@ export class MobManager {
         continue;
       }
       this.simulateMobPhysics(mob, delta);
+      if (mob.kind === 'mega_zombie' && mob.boss?.arena) {
+        clampBossToArena(mob.position, mob.velocity, mob.boss.arena, mob.definition.width, mob.definition.height);
+      }
       const speed = mob.sitting ? 0 : mob.locomotionSpeed;
       if (speed > 0.05) {
         mob.walkPhase += delta * Math.max(3, speed * 4.5);
@@ -833,9 +899,10 @@ export class MobManager {
    * Render-only interpolation. Gameplay/AI/physics keep using simulation transforms.
    * Interaction raycasts may opt into `networkRenderPose` so the hitbox matches the model.
    */
-  interpolateVisuals(alpha: number): void {
+  interpolateVisuals(alpha: number, nowMs = typeof performance === 'undefined' ? 0 : performance.now()): void {
     const t = Math.max(0, Math.min(1, alpha));
     for (const mob of this.mobsById.values()) {
+      if (mob.kind === 'pet_bee') this.advanceBeeClock(mob, nowMs);
       this.syncVisual(mob, 0, t);
     }
     for (const projectile of this.projectiles.values()) {
@@ -879,10 +946,11 @@ export class MobManager {
   private applyBoundedSeparation(delta: number): void {
     let checked = 0;
     for (const first of this.mobsById.values()) {
-      if (!first.alive) continue;
+      if (!first.alive || isCosmeticPetKind(first.kind)) continue;
       for (const second of this.mobsById.values()) {
         if (second === first) break;
-        if (!second.alive || checked >= MAX_SEPARATION_PAIRS) {
+        if (!second.alive || isCosmeticPetKind(second.kind)) continue;
+        if (checked >= MAX_SEPARATION_PAIRS) {
           this.lastSeparationPairChecks = checked;
           return;
         }
@@ -919,6 +987,13 @@ export class MobManager {
     if (!mob || !this.mobsById.has(mob.id) || !mob.alive || !Number.isFinite(amount) || amount <= 0) {
       return false;
     }
+    if (isCosmeticPetKind(mob.kind)) return false;
+    if (damageOptions.lethal === true) {
+      this.noteBossAttacker(mob, damageOptions);
+      mob.health = 0;
+      this.beginDeath(mob);
+      return true;
+    }
     const hurt = mob.hurtResistance.receive(amount);
     if (!hurt.accepted) return false;
     mob.health = Math.max(0, mob.health - hurt.rawDamage);
@@ -936,7 +1011,7 @@ export class MobManager {
     ) {
       this.assignOwnedWolfTarget(damageOptions.attackerId, mob.id, 'mob', 'assist');
     }
-    if (damageOptions.attackerPosition) {
+    if (damageOptions.attackerPosition && mob.kind !== 'mega_zombie') {
       const dx = mob.position.x - damageOptions.attackerPosition.x;
       const dz = mob.position.z - damageOptions.attackerPosition.z;
       const length = Math.hypot(dx, dz);
@@ -960,13 +1035,14 @@ export class MobManager {
         mob.fleeSeconds = CAT_FEAR_SECONDS;
       }
     }
-    if (damageOptions.source === 'player') {
+    if (damageOptions.source === 'player' && mob.kind !== 'mega_zombie') {
       applyExtraKnockback(mob.velocity, damageOptions.attackerYaw ?? 0, damageOptions.extraKnockbackLevel ?? 0);
       if ((damageOptions.extraKnockbackLevel ?? 0) > 0) mob.meleeKnockback = true;
     }
     if (damageOptions.igniteTicks) {
       mob.fireTicks = Math.max(mob.fireTicks, damageOptions.igniteTicks);
     }
+    this.noteBossAttacker(mob, damageOptions);
     if (mob.health <= 0) {
       if (hurt.fullHurt && damageOptions.source !== 'fire') {
         mob.hurtFlashSeconds = MOB_HURT_FLASH_SECONDS;
@@ -1009,7 +1085,7 @@ export class MobManager {
     const poseMode = options?.pose ?? 'sim';
     let closest: MobRaycastHit | undefined;
     for (const mob of this.mobsById.values()) {
-      if (!mob.alive) continue;
+      if (!mob.alive || isCosmeticPetKind(mob.kind)) continue;
       const pose = poseMode === 'render' && mob.networkRenderPose
         ? mob.networkRenderPose
         : {
@@ -1157,7 +1233,7 @@ export class MobManager {
     if (!ownerId || ownerId === targetId) return;
     if (kind === 'mob') {
       const target = this.mobsById.get(targetId);
-      if (target && target.ownerId === ownerId) return;
+      if (target && (target.ownerId === ownerId || isCosmeticPetKind(target.kind))) return;
     }
     for (const mob of this.mobsById.values()) {
       if (!mob.alive || mob.kind !== 'wolf' || mob.ownerId !== ownerId || mob.sitting) continue;
@@ -1191,7 +1267,7 @@ export class MobManager {
   }
 
   serialize(): SerializedMob[] {
-    return [...this.mobsById.values()].map((mob) => ({
+    return [...this.mobsById.values()].filter((mob) => mob.kind !== 'mega_zombie' && !isCosmeticPetKind(mob.kind)).map((mob) => ({
       id: mob.id,
       kind: mob.kind,
       position: [mob.position.x, mob.position.y, mob.position.z],
@@ -1230,6 +1306,7 @@ export class MobManager {
   }
 
   private restoreOne(entry: SerializedMob, force: boolean): boolean {
+    if (entry.kind === 'mega_zombie' || isCosmeticPetKind(entry.kind)) return false;
     if (!(entry.kind in MOB_DEFINITIONS)) return false;
     if (!this.validTuple(entry.position) || !this.validTuple(entry.velocity)) return false;
     if (!Number.isFinite(entry.health) || entry.health <= 0) return false;
@@ -1303,6 +1380,14 @@ export class MobManager {
     context: MobUpdateContext,
     daylight: number,
   ): void {
+    if (mob.kind === 'mega_zombie') {
+      this.updateMegaZombie(mob, delta, context);
+      return;
+    }
+    if (isCosmeticPetKind(mob.kind)) {
+      this.updateCosmeticPet(mob, delta);
+      return;
+    }
     if (isPetKind(mob.kind)) {
       this.updatePetAi(mob, delta, target, context);
       return;
@@ -1352,6 +1437,104 @@ export class MobManager {
 
     // Spiders become mostly neutral in full daylight unless already close enough to fight.
     if (mob.kind === 'spider' && daylight > 0.8 && distance > 5) this.updateWander(mob, delta, 0.65);
+  }
+
+  private updateMegaZombie(mob: MobEntity, delta: number, context: MobUpdateContext): void {
+    const runtime = mob.boss;
+    if (!runtime) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      this.changeState(mob, 'idle');
+      return;
+    }
+    if (runtime.revengeSeconds > 0) {
+      runtime.revengeSeconds = Math.max(0, runtime.revengeSeconds - delta);
+      if (runtime.revengeSeconds === 0) runtime.revengePlayerId = null;
+    }
+    let count = 0;
+    for (const focus of this.playerById.values()) {
+      let slot = this.bossFocusScratch[count];
+      if (!slot) {
+        slot = { id: '', x: 0, y: 0, z: 0, eyeY: 0, alive: true, targetable: true };
+        this.bossFocusScratch[count] = slot;
+      }
+      slot.id = focus.id;
+      slot.x = focus.position.x;
+      slot.y = focus.position.y;
+      slot.z = focus.position.z;
+      slot.eyeY = focus.eyePosition?.y ?? focus.position.y + 1.62;
+      slot.alive = focus.alive !== false;
+      slot.targetable = focus.targetable !== false;
+      count += 1;
+    }
+    this.bossFocusScratch.length = count;
+    const chosen = selectMegaZombieTarget(
+      mob.position.x,
+      mob.position.y,
+      mob.position.z,
+      runtime.arena,
+      this.bossFocusScratch,
+      runtime.revengePlayerId,
+      runtime.revengeSeconds > 0,
+    );
+    if (runtime.revengePlayerId && chosen?.id !== runtime.revengePlayerId) {
+      runtime.revengePlayerId = null;
+      runtime.revengeSeconds = 0;
+    }
+    if (!chosen) {
+      mob.velocity.x = 0;
+      mob.velocity.z = 0;
+      mob.locomotionSpeed = 0;
+      this.changeState(mob, 'idle');
+      return;
+    }
+    mob.wanderDirection.set(chosen.x - mob.position.x, 0, chosen.z - mob.position.z);
+    this.bossEye.set(mob.position.x, mob.position.y + mob.definition.eyeHeight, mob.position.z);
+    this.bossTargetEye.set(chosen.x, chosen.eyeY, chosen.z);
+    const distance = this.bossEye.distanceTo(this.bossTargetEye);
+    const lineOfSight = hasVoxelLineOfSight(this.world, this.bossEye, this.bossTargetEye);
+    if (distance <= mob.definition.attackRange && lineOfSight) {
+      if (mob.wanderDirection.lengthSq() > 1e-8) {
+        mob.facingYaw = Math.atan2(mob.wanderDirection.x, mob.wanderDirection.z) + Math.PI;
+      }
+      this.changeState(mob, 'attack');
+      mob.velocity.x *= 0.25;
+      mob.velocity.z *= 0.25;
+      if (mob.attackCooldownSeconds <= 0) {
+        const focus = this.playerById.get(chosen.id);
+        if (focus) this.emitPlayerDamage(mob, focus, mob.definition.attackDamage, 'melee', context);
+        mob.attackCooldownSeconds = mob.definition.attackCooldownSeconds;
+      }
+      return;
+    }
+    this.changeState(mob, 'chase');
+    this.steerToward(mob, mob.wanderDirection, mob.definition.speed);
+  }
+
+  private updateCosmeticPet(mob: MobEntity, delta: number): void {
+    const owner = mob.ownerId ? this.playerById.get(mob.ownerId) : undefined;
+    const result = mob.kind === 'pet_bee'
+      ? stepBeeFlight(mob, owner, this.world, delta)
+      : stepMiniCreeperFollow(mob, owner, this.world, delta);
+    if (result.teleported) {
+      mob.previousPosition.copy(mob.position);
+      mob.previousFacingYaw = mob.facingYaw;
+      mob.poseHistory.length = 0;
+      this.snapMobRender(mob);
+    }
+    mob.fuseSeconds = 0;
+    this.changeState(mob, mob.locomotionSpeed > 0.2 ? 'wander' : 'idle');
+  }
+
+  private advanceBeeClock(mob: MobEntity, nowMs: number): void {
+    if (!Number.isFinite(nowMs)) return;
+    if (mob.beeClockMs === undefined) {
+      mob.beeClockMs = nowMs;
+      return;
+    }
+    const deltaSeconds = (nowMs - mob.beeClockMs) / 1000;
+    mob.beeClockMs = nowMs;
+    mob.beeAnimSeconds = advanceBeeAnimSeconds(mob.beeAnimSeconds, deltaSeconds);
   }
 
   private updatePassiveAi(mob: MobEntity, delta: number): void {
@@ -1476,7 +1659,7 @@ export class MobManager {
       return true;
     }
     const targetMob = this.mobsById.get(mob.combatTargetId);
-    if (!targetMob || !targetMob.alive || targetMob.id === mob.id || samePetOwner(mob, targetMob)) {
+    if (!targetMob || !targetMob.alive || targetMob.id === mob.id || samePetOwner(mob, targetMob) || isCosmeticPetKind(targetMob.kind)) {
       this.clearCombatTarget(mob);
       return false;
     }
@@ -1575,7 +1758,7 @@ export class MobManager {
     if (targetId === mob.ownerId || targetId === mob.id) return;
     if (kind === 'mob') {
       const target = this.mobsById.get(targetId);
-      if (target && samePetOwner(mob, target)) return;
+      if (target && (samePetOwner(mob, target) || isCosmeticPetKind(target.kind))) return;
     }
     mob.combatTargetId = targetId;
     mob.combatTargetKind = kind;
@@ -1668,6 +1851,7 @@ export class MobManager {
   }
 
   private simulateMobPhysics(mob: MobEntity, delta: number): void {
+    if (mob.kind === 'pet_bee') return;
     const substeps = Math.max(1, Math.ceil(delta / 0.05));
     const step = delta / substeps;
     for (let index = 0; index < substeps; index += 1) {
@@ -1731,6 +1915,13 @@ export class MobManager {
     delta: number,
     daylight: number,
   ): void {
+    if (isCosmeticPetKind(mob.kind)) {
+      mob.fireTicks = 0;
+      mob.contactBurning = false;
+      mob.sunlightBurning = false;
+      mob.fireDamageTimer = 0;
+      return;
+    }
     const box = aabbFromBody(
       mob.position.x, mob.position.y, mob.position.z,
       mob.definition.width, mob.definition.height,
@@ -1744,7 +1935,8 @@ export class MobManager {
       const skyX = Math.floor(mob.position.x);
       const skyY = Math.floor(mob.position.y + mob.definition.height * 0.9);
       const skyZ = Math.floor(mob.position.z);
-      mob.sunlightBurning = isHostileMob(mob.kind)
+      mob.sunlightBurning = mob.kind !== 'mega_zombie'
+        && isHostileMob(mob.kind)
         && isSunHighEnough(daylight)
         && hasDirectSkyLight(this.world, skyX, skyY, skyZ);
     }
@@ -1768,11 +1960,12 @@ export class MobManager {
     delta: number,
     playerPosition: Readonly<Vec3> | undefined,
   ): void {
+    if (isCosmeticPetKind(mob.kind)) return;
     if (mob.position.y < -32) {
       this.removeMob(mob, 'despawn');
       return;
     }
-    if (mob.ownerId) return;
+    if (mob.kind === 'mega_zombie' || mob.ownerId) return;
     if (!playerPosition) return;
     const distanceSquared = mob.position.distanceToSquared(playerPosition);
     if (distanceSquared > 72 * 72) mob.farSeconds += delta;
@@ -1816,7 +2009,7 @@ export class MobManager {
       z: pose.z,
       yaw: pose.yaw,
       walkPhase: pose.walkPhase,
-      visualAge: mob.ageSeconds - FIXED_DT * (1 - alpha),
+      visualAge: mob.kind === 'pet_bee' ? mob.beeAnimSeconds : mob.ageSeconds - FIXED_DT * (1 - alpha),
       locomotionSpeed: mob.locomotionSpeed,
       state: mob.state,
       stateSeconds: mob.stateSeconds,
@@ -1849,7 +2042,8 @@ export class MobManager {
     const px = x ?? mob.position.x;
     const py = y ?? mob.position.y;
     const pz = z ?? mob.position.z;
-    const flash = mobHurtFlashIntensity(mob.hurtFlashSeconds);
+    const deathTint = Number(mob.visual.userData.megaDeathTint ?? 0);
+    const flash = Math.max(mobHurtFlashIntensity(mob.hurtFlashSeconds), Number.isFinite(deathTint) ? deathTint : 0);
     if (flash > 0) {
       this.host.applyMobHurtLight(
         mob.visual,
@@ -2307,6 +2501,23 @@ export class MobManager {
     context.onExplosion?.(event);
     this.options.onExplosion?.(event);
     this.removeMob(mob, 'explosion');
+  }
+
+  private noteBossAttacker(mob: MobEntity, damageOptions: MobDamageOptions): void {
+    if (mob.kind !== 'mega_zombie' || !mob.boss) return;
+    const focus = damageOptions.attackerId ? this.playerById.get(damageOptions.attackerId) : undefined;
+    const inside = Boolean(
+      focus
+      && mob.boss.arena
+      && pointInArena(mob.boss.arena, focus.position.x, focus.position.y, focus.position.z),
+    );
+    noteMegaZombieHit(
+      mob.boss,
+      damageOptions.source,
+      damageOptions.attackerId,
+      inside,
+      focus?.name,
+    );
   }
 
   private beginDeath(mob: MobEntity): void {
