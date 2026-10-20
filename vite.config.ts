@@ -1,24 +1,16 @@
-import { createHash } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
+import { generatePlayerSkinCatalog } from './scripts/generate-player-skins.mjs';
+import { readPlayerSkinContentHashes } from './scripts/player-skin-content-hashes.mjs';
 
 const PLAYER_SKIN_PUBLIC_DIR = resolve('public/textures/player/skins');
+const PLAYER_SKIN_OVERRIDES = resolve('src/player/appearance/playerSkinModelOverrides.json');
 const PLAYER_SKIN_HASH_MODULE = 'virtual:player-skin-content-hashes';
 const PLAYER_SKIN_HASH_MODULE_RESOLVED = `\0${PLAYER_SKIN_HASH_MODULE}`;
 
 /** First 16 hex chars of sha256 for each `public/textures/player/skins/*.png`. */
 function playerSkinContentHashes(): Record<string, string> {
-  const hashes: Record<string, string> = {};
-  for (const name of readdirSync(PLAYER_SKIN_PUBLIC_DIR).sort()) {
-    if (!name.endsWith('.png')) continue;
-    const digest = createHash('sha256')
-      .update(readFileSync(join(PLAYER_SKIN_PUBLIC_DIR, name)))
-      .digest('hex')
-      .slice(0, 16);
-    hashes[`player/skins/${name.slice(0, -'.png'.length)}`] = digest;
-  }
-  return hashes;
+  return readPlayerSkinContentHashes(PLAYER_SKIN_PUBLIC_DIR);
 }
 
 function playerSkinHashPlugin(): Plugin {
@@ -31,13 +23,23 @@ function playerSkinHashPlugin(): Plugin {
       if (id !== PLAYER_SKIN_HASH_MODULE_RESOLVED) return;
       return `export default ${JSON.stringify(playerSkinContentHashes())};`;
     },
+    buildStart() {
+      generatePlayerSkinCatalog();
+    },
     configureServer(server) {
+      generatePlayerSkinCatalog();
       server.watcher.add(PLAYER_SKIN_PUBLIC_DIR);
+      server.watcher.add(PLAYER_SKIN_OVERRIDES);
     },
     handleHotUpdate(ctx) {
-      if (!ctx.file.startsWith(PLAYER_SKIN_PUBLIC_DIR) || !ctx.file.endsWith('.png')) return;
-      const mod = ctx.server.moduleGraph.getModuleById(PLAYER_SKIN_HASH_MODULE_RESOLVED);
-      if (mod) ctx.server.moduleGraph.invalidateModule(mod);
+      const isSkinPng = ctx.file.startsWith(PLAYER_SKIN_PUBLIC_DIR) && ctx.file.endsWith('.png');
+      const isOverride = ctx.file === PLAYER_SKIN_OVERRIDES;
+      if (!isSkinPng && !isOverride) return;
+      generatePlayerSkinCatalog();
+      if (isSkinPng) {
+        const mod = ctx.server.moduleGraph.getModuleById(PLAYER_SKIN_HASH_MODULE_RESOLVED);
+        if (mod) ctx.server.moduleGraph.invalidateModule(mod);
+      }
       ctx.server.ws.send({ type: 'full-reload' });
       return [];
     },

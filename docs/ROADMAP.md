@@ -1,5 +1,19 @@
 # Roadmap
 
+## 2026-10-19: Skin preview faces the camera
+
+- [x] Initial preview yaw aims the skin's local −Z front at the menu camera.
+- [x] Auto-spin, drag pause, and skin changes keep the existing turntable.
+- [ ] Not merged. Owner still checks the face, a classic arm, a slim arm, and a translucent outer layer in the browser.
+
+## 2026-10-19: Automatic player skin catalog
+
+- [x] One build-time catalog from `public/textures/player/skins/*.png` for the client and the Node server.
+- [x] Keep the 45 shipped Classic/Slim models, `frontier_explorer`, `buyer_merchant`, and `player_uv_test`.
+- [x] Classify new 64×64 skins from the arm UV islands. Ambiguous sheets fall back to classic and still register.
+- [x] Reuse the outer-alpha scan. `npm run skins:check` fails when the generated module is stale.
+- [ ] Not merged. Owner QA of the selector, a slim arm, a translucent outer layer, and a second online client is still open.
+
 ## 2026-10-18: Decorative bee and mini creeper
 
 - [x] Separate runtime kinds `pet_bee` and `pet_creeper`. They are not `isPetKind()` wolves or cats.
