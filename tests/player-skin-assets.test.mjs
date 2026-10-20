@@ -53,7 +53,8 @@ describe('bundled player skin assets', () => {
       'dce095dc5bddc925': { base: 0, outer: 0, unused: 27 },
       'dee6149d4583a54b': { base: 0, outer: 0, unused: 12 },
     });
-    expect(intermediate['10126ef69e2cdfdf']).toMatchObject({ outer: 2 });
+    expect(intermediate['10126ef69e2cdfdf']).toBeUndefined();
+    expect(results.some((result) => result.skinId === '10126ef69e2cdfdf')).toBe(false);
     expect(intermediate['6fdcd3bc5850aeed']?.outer).toBeGreaterThan(0);
     expect(intermediate['c026b7f8552098de'].outer).toBe(0);
     for (const result of results) {

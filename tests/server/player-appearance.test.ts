@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -333,5 +333,56 @@ describe('authoritative player appearance', () => {
     expect(resumedJoin).toMatchObject({
       player: { appearance: discovered },
     });
+  });
+
+  it('restores frontier_explorer when a saved player still has a removed skin id', async () => {
+    const removedSkinId = '10126ef69e2cdfdf';
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const joined = world.join({
+      sink: new MemorySink(),
+      name: 'Misha',
+      appearance: DEFAULT_PLAYER_APPEARANCE,
+    });
+    if ('error' in joined) throw new Error(joined.error);
+    const token = joined.player.sessionToken;
+    const id = joined.player.id;
+    await world.save();
+    await world.stop();
+    worlds.pop();
+
+    const playersPath = join(dir, 'anarchy', 'players.json');
+    const saved = JSON.parse(await readFile(playersPath, 'utf8')) as {
+      players: Record<string, { appearance?: { skinId?: string } }>;
+    };
+    expect(saved.players[id]?.appearance?.skinId).toBe(DEFAULT_PLAYER_APPEARANCE.skinId);
+    saved.players[id]!.appearance!.skinId = removedSkinId;
+    await writeFile(playersPath, `${JSON.stringify(saved, null, 2)}\n`);
+
+    const restarted = new WorldInstance(testConfig(dir));
+    worlds.push(restarted);
+    await restarted.initialize();
+    const resumed = restarted.join({
+      sink: new MemorySink(),
+      sessionToken: token,
+      appearance: {
+        skinId: removedSkinId,
+        model: 'classic',
+        layers: DEFAULT_PLAYER_APPEARANCE.layers,
+      },
+    });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(id);
+    expect(resumed.player.appearance).toEqual(DEFAULT_PLAYER_APPEARANCE);
+    const rejected = restarted.setAppearance(resumed.player, {
+      skinId: removedSkinId,
+      model: 'classic',
+      layers: DEFAULT_PLAYER_APPEARANCE.layers,
+    });
+    expect(rejected.ok).toBe(false);
+    expect(resumed.player.appearance.skinId).toBe('frontier_explorer');
   });
 });

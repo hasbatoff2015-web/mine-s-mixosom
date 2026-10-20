@@ -295,7 +295,23 @@ describe('player skin selector', () => {
     expect(new PreviewRotation().read()).toBeCloseTo(PREVIEW_INITIAL_YAW, 12);
     expect(playerSkinPartSize('rightArm', 'classic')[0]).toBe(4);
     expect(playerSkinPartSize('rightArm', 'slim')[0]).toBe(3);
-    expect(skinDescriptor('10126ef69e2cdfdf')?.defaultModel).toBe('classic');
+    const removedSkinId = '10126ef69e2cdfdf';
+    expect(skinDescriptor(removedSkinId)).toBeUndefined();
+    expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === removedSkinId)).toBe(false);
+    expect(BUILTIN_MINECRAFT_SKINS.some((skin) => skin.id === removedSkinId)).toBe(false);
+    const storedRemoved = memoryStorage({
+      [PLAYER_APPEARANCE_STORAGE_KEY]: JSON.stringify({
+        skinId: removedSkinId,
+        model: 'classic',
+        layers: DEFAULT_PLAYER_APPEARANCE.layers,
+      }),
+    });
+    expect(loadPlayerAppearance(storedRemoved)).toEqual(DEFAULT_PLAYER_APPEARANCE);
+    expect(sanitizeRegisteredAppearance({
+      skinId: removedSkinId,
+      model: 'classic',
+      layers: DEFAULT_PLAYER_APPEARANCE.layers,
+    })).toBeUndefined();
     expect(skinDescriptor('14fcedd090af47a4')?.defaultModel).toBe('slim');
     expect(skinDescriptor('6fdcd3bc5850aeed')?.outerLayerAlpha).toBe('translucent');
   });

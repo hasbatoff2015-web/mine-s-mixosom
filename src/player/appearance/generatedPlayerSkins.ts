@@ -9,7 +9,6 @@ export const GENERATED_MINECRAFT_SKINS: readonly {
   { id: '00f6338deb336a6e', texturePath: 'player/skins/00f6338deb336a6e', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
   { id: '0edde60fa266fac7', texturePath: 'player/skins/0edde60fa266fac7', defaultModel: 'slim' },
   { id: '0f15ad5e5c148f40', texturePath: 'player/skins/0f15ad5e5c148f40', defaultModel: 'slim', outerLayerAlpha: 'translucent' },
-  { id: '10126ef69e2cdfdf', texturePath: 'player/skins/10126ef69e2cdfdf', defaultModel: 'classic', outerLayerAlpha: 'translucent' },
   { id: '134f7844391b9382', texturePath: 'player/skins/134f7844391b9382', defaultModel: 'slim' },
   { id: '14fcedd090af47a4', texturePath: 'player/skins/14fcedd090af47a4', defaultModel: 'slim' },
   { id: '1e8fa3ce56f39d6c', texturePath: 'player/skins/1e8fa3ce56f39d6c', defaultModel: 'slim', outerLayerAlpha: 'translucent' },

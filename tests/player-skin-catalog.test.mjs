@@ -78,8 +78,9 @@ const HISTORICAL_MODELS = {
 };
 
 /** PNGs that were on disk but absent from the old static catalog. */
+const REMOVED_PLAYER_SKIN_ID = '10126ef69e2cdfdf';
+
 const DISCOVERED_MODELS = {
-  '10126ef69e2cdfdf': 'classic',
   '14fcedd090af47a4': 'slim',
   '1e8fa3ce56f39d6c': 'slim',
   '211085684a03470a': 'slim',
@@ -102,7 +103,6 @@ const DISCOVERED_MODELS = {
 };
 
 const DISCOVERED_TRANSLUCENT = [
-  '10126ef69e2cdfdf',
   '1e8fa3ce56f39d6c',
   '6fdcd3bc5850aeed',
   'b834368ba96d6574',
@@ -488,6 +488,10 @@ describe('shipped player skin catalog', () => {
     });
     expect(skinDescriptor(BUILTIN_NPC_ID)?.outerLayerAlpha).toBeUndefined();
     expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === 'buyer_merchant' || skin.id === 'player_uv_test')).toBe(false);
+    expect(files).not.toContain(REMOVED_PLAYER_SKIN_ID);
+    expect(PRODUCTION_PLAYER_SKINS.some((skin) => skin.id === REMOVED_PLAYER_SKIN_ID)).toBe(false);
+    expect(BUILTIN_MINECRAFT_SKINS.some((skin) => skin.id === REMOVED_PLAYER_SKIN_ID)).toBe(false);
+    expect(skinDescriptor(REMOVED_PLAYER_SKIN_ID)).toBeUndefined();
     expect(DEFAULT_PLAYER_APPEARANCE.skinId).toBe('frontier_explorer');
     expect(DEFAULT_PLAYER_APPEARANCE.model).toBe('classic');
     expect(PRODUCTION_PLAYER_SKINS[0]?.id).not.toBe(DEFAULT_PLAYER_APPEARANCE.skinId);
