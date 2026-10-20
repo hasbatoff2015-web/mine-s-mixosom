@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-20: Skin rarity catalog and store UI
+
+- [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
+- [x] Sort the selector by rarity, with `frontier_explorer` first, and keep the PNG generator as the texture source.
+- [x] Show rarity frames, category headings, target pack prices, and disabled ad/purchase/legendary actions.
+- [x] Keep preview separate from equip. Stage 1 does not grant ownership or call the Yandex ad/purchase SDK.
+- [x] Fail the production build when a new gameplay PNG has no rarity metadata.
+- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Owner QA of the selector is still open.
+
 ## 2026-10-19: Skin preview faces the camera
 
 - [x] Initial preview yaw aims the skin's local −Z front at the menu camera.

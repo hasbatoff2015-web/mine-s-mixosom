@@ -197,8 +197,24 @@ import {
 import { SkinPreviewDragTracker } from './skinPreviewDrag';
 import type { LocalServerName } from '../../shared/config';
 import { clientUrlForServer, endpointLabel, selectedLocalServer } from '../net/AnarchyClient';
-import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
+import { skinDescriptor } from '../player/appearance/builtinSkins';
 import type { PlayerAppearance } from '../player/appearance/PlayerAppearance';
+import {
+  resolveSkinActionState,
+  skinCardLocked,
+  STAGE1_MONETIZATION,
+  type MonetizationAvailability,
+  type SkinAccessSnapshot,
+} from '../player/appearance/skinActionState';
+import {
+  SKIN_RARITY_HEADINGS,
+  SKIN_RARITY_LABELS,
+  SKIN_RARITY_ORDER,
+  orderedPlayerSkins,
+  skinAcquisition,
+  skinPackForRarity,
+  skinRarity,
+} from '../player/appearance/skinStoreCatalog';
 import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
 
 export interface MainMenuActions {
@@ -216,6 +232,14 @@ export interface SkinSelectorActions {
   rotatePreview(deltaPixels: number): void;
   setPreviewRotationActive(active: boolean): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
+  /** Equipped skin at open. Defaults to the appearance passed into the screen. */
+  equippedSkinId?: string;
+  /**
+   * Read-only UI reflection. The live game does not invent this from storage.
+   * A bad snapshot cannot unlock a skin.
+   */
+  accessSnapshot?: SkinAccessSnapshot | null;
+  monetizationAvailability?: MonetizationAvailability;
 }
 
 export interface HologramEditorActions {
@@ -782,10 +806,10 @@ export class GameUI {
     appearance: PlayerAppearance,
     actions: SkinSelectorActions,
   ): void {
-    const cards = PRODUCTION_PLAYER_SKINS.map((skin) => `
-      <button type="button" class="skin-card${skin.id === appearance.skinId ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" aria-pressed="${skin.id === appearance.skinId}">
-        <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(skin.id)}" data-skin-model="${skin.defaultModel}" aria-hidden="true"></canvas>
-      </button>`).join('');
+    const equippedSkinId = actions.equippedSkinId ?? appearance.skinId;
+    const accessSnapshot = actions.accessSnapshot;
+    const monetizationAvailability = actions.monetizationAvailability ?? STAGE1_MONETIZATION;
+    const cards = this.skinCatalogMarkup(appearance.skinId, accessSnapshot);
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window skin-selector-window">
         <header class="menu-heading"><div><span class="eyebrow">Персонаж</span><h1>Выбор скина</h1></div></header>
@@ -794,15 +818,71 @@ export class GameUI {
             <canvas class="character-preview-canvas large" data-skin-preview width="320" height="420" aria-hidden="true"></canvas>
             <p class="skin-preview-hint">Потяните модель, чтобы повернуть</p>
           </aside>
-          <div class="skin-card-grid" role="listbox" aria-label="Доступные скины">${cards}</div>
+          <div class="skin-card-grid" role="listbox" aria-label="Каталог скинов">${cards}</div>
         </div>
-        <footer class="menu-footer">
-          <button class="game-button" data-action="cancel">Отмена</button>
-          <button class="game-button primary" data-action="confirm">Подтвердить</button>
+        <footer class="menu-footer skin-selector-footer">
+          <button type="button" class="game-button" data-action="cancel">Отмена</button>
+          <div class="skin-confirm-slot">
+            <p class="skin-action-note" data-skin-action-note hidden></p>
+            <button type="button" class="game-button" data-action="confirm"></button>
+          </div>
         </footer>
       </div></section>`, actions.cancel);
     this.bindAction('cancel', actions.cancel);
-    this.bindAction('confirm', actions.confirm);
+    const applyAction = (skinId: string): void => {
+      const state = resolveSkinActionState({
+        selectedSkinId: skinId,
+        equippedSkinId,
+        accessSnapshot,
+        monetizationAvailability,
+      });
+      const button = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+      const note = this.screen?.querySelector<HTMLElement>('[data-skin-action-note]');
+      if (!button) return;
+      button.textContent = state.label;
+      button.disabled = !state.enabled;
+      button.tabIndex = state.enabled ? 0 : -1;
+      button.classList.toggle('primary', state.emphasis === 'primary');
+      button.dataset.actionState = state.kind;
+      button.setAttribute('aria-disabled', String(!state.enabled));
+      if (note) {
+        note.hidden = state.detail.length === 0;
+        note.textContent = state.detail;
+        if (state.targetPriceLabel) note.dataset.priceSource = 'target';
+        else delete note.dataset.priceSource;
+      }
+    };
+    applyAction(appearance.skinId);
+    const confirm = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+    confirm?.addEventListener('click', (event) => {
+      const selectedId = this.screen?.querySelector<HTMLButtonElement>('[data-skin-id].selected')?.dataset.skinId
+        ?? appearance.skinId;
+      const state = resolveSkinActionState({
+        selectedSkinId: selectedId,
+        equippedSkinId,
+        accessSnapshot,
+        monetizationAvailability,
+      });
+      if (!state.enabled || confirm.disabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      actions.confirm();
+    });
+    this.screen?.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter') return;
+      const button = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+      if (!button?.disabled) return;
+      event.preventDefault();
+      event.stopPropagation();
+    });
+    for (const packButton of this.screen?.querySelectorAll<HTMLButtonElement>('[data-pack-action]') ?? []) {
+      packButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
     const preview = this.screen?.querySelector<HTMLCanvasElement>('[data-skin-preview]');
     if (preview) {
       actions.onPreviewCanvas?.(preview);
@@ -818,9 +898,41 @@ export class GameUI {
           card.setAttribute('aria-pressed', String(selected));
         }
         actions.preview(skinId);
+        applyAction(skinId);
       });
     }
     this.paintSkinThumbs();
+  }
+
+  private skinCatalogMarkup(selectedSkinId: string, accessSnapshot?: SkinAccessSnapshot | null): string {
+    const parts: string[] = [];
+    for (const rarity of SKIN_RARITY_ORDER) {
+      const skins = orderedPlayerSkins().filter((skin) => skinRarity(skin.id) === rarity);
+      parts.push(`<h2 class="skin-rarity-heading" data-rarity="${rarity}">${SKIN_RARITY_HEADINGS[rarity]}</h2>`);
+      const pack = skinPackForRarity(rarity);
+      if (pack) {
+        parts.push(`<div class="skin-pack-offer" data-rarity="${rarity}" data-pack-sku="${this.escape(pack.sku)}">
+          <span class="skin-pack-copy"><strong>${this.escape(pack.title)}</strong><span>${pack.skinIds.length} шт.</span></span>
+          <span class="skin-pack-price" data-price-source="target">${this.escape(pack.targetPriceLabel)}</span>
+          <button type="button" class="game-button" data-pack-action="${this.escape(pack.sku)}" disabled tabindex="-1" aria-disabled="true">Покупки скоро</button>
+        </div>`);
+      }
+      for (const skin of skins) {
+        const descriptor = skinDescriptor(skin.id) ?? skin;
+        const acquisition = skinAcquisition(skin.id);
+        if (!acquisition) continue;
+        const selected = skin.id === selectedSkinId;
+        const label = `${SKIN_RARITY_LABELS[rarity]} скин`;
+        const lock = skinCardLocked(skin.id, accessSnapshot)
+          ? '<span class="skin-card-lock" aria-hidden="true"></span>'
+          : '';
+        parts.push(`<button type="button" role="option" class="skin-card rarity-${rarity}${selected ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" data-rarity="${rarity}" data-acquisition="${acquisition}" aria-pressed="${selected}" aria-label="${this.escape(label)}" title="${this.escape(label)}">
+          <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(descriptor.id)}" data-skin-model="${descriptor.defaultModel}" aria-hidden="true"></canvas>
+          ${lock}
+        </button>`);
+      }
+    }
+    return parts.join('');
   }
 
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {

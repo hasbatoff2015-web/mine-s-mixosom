@@ -182,7 +182,9 @@ describe('player skin selector', () => {
     expect(gameUiSource).toContain('skin-card-grid');
     expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
     expect(gameSource).toContain('new PlayerSkinSelectorSession');
-    expect(gameSource).toContain('this.setPlayerAppearance(next)');
+    expect(gameSource).toContain('commitSelectedSkinAppearance');
+    expect(gameSource).toContain('STAGE1_MONETIZATION');
+    expect(gameSource).toContain('if (committed) this.setPlayerAppearance(committed)');
     expect(gameSource).toContain('new PlayerAppearancePreview');
     expect(gameSource).toContain('new PlayerVisual(');
     expect(previewSource).toContain('this.visual = new PlayerVisual(');

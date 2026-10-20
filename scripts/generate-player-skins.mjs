@@ -25,6 +25,7 @@ export const SKIN_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const DEFAULT_SKINS_DIR = 'public/textures/player/skins';
 const DEFAULT_OVERRIDES = 'src/player/appearance/playerSkinModelOverrides.json';
 const DEFAULT_OUTPUT = 'src/player/appearance/generatedPlayerSkins.ts';
+const DEFAULT_STORE_CATALOG = 'src/player/appearance/skinStoreCatalog.ts';
 
 const GENERATED_LINE = /^  \{ id: '([a-zA-Z0-9_-]+)', texturePath: '(player\/skins\/[a-zA-Z0-9_-]+)', defaultModel: '(classic|slim)'(?:, outerLayerAlpha: 'translucent')? \},$/;
 
@@ -376,6 +377,62 @@ export function generatePlayerSkinCatalog(options = {}) {
   };
 }
 
+const RARITY_GROUP_NAMES = ['COMMON', 'RARE', 'EPIC', 'LEGENDARY'];
+
+/**
+ * Read the rarity id lists from skinStoreCatalog.ts.
+ * NPC and DEV sheets are not part of these lists.
+ * @param {string} source
+ */
+export function readSkinRarityAssignments(source) {
+  /** @type {Record<string, string[]>} */
+  const groups = {};
+  for (const rarity of RARITY_GROUP_NAMES) {
+    const match = source.match(new RegExp(`const ${rarity}_SKIN_IDS = \\[([\\s\\S]*?)\\] as const;`));
+    if (!match) throw new Error(`Skin rarity group ${rarity} is missing from skinStoreCatalog.ts.`);
+    const ids = [...match[1].matchAll(/'([A-Za-z0-9_-]+)'/g)].map((found) => found[1]);
+    if (ids.length === 0) throw new Error(`Skin rarity group ${rarity} is empty.`);
+    groups[rarity.toLowerCase()] = ids;
+  }
+  return groups;
+}
+
+/**
+ * A gameplay PNG with no rarity entry fails the build.
+ * It is not treated as a free common skin.
+ * @param {readonly string[]} playerIds
+ * @param {Record<string, readonly string[]>} groups
+ */
+export function assertPlayerSkinsHaveRarity(playerIds, groups) {
+  /** @type {Map<string, string>} */
+  const assigned = new Map();
+  for (const [rarity, ids] of Object.entries(groups)) {
+    for (const id of ids) {
+      if (assigned.has(id)) throw new Error(`Skin ${id} is listed in more than one rarity.`);
+      assigned.set(id, rarity);
+    }
+  }
+  for (const id of playerIds) {
+    if (!assigned.has(id)) throw new Error(`Skin ${id} has no rarity metadata.`);
+  }
+  for (const id of assigned.keys()) {
+    if (!playerIds.includes(id)) {
+      throw new Error(`Skin ${id} has rarity metadata but is not a production player skin.`);
+    }
+  }
+}
+
+/**
+ * @param {string} [catalogPath]
+ * @param {readonly { id: string, role: 'player' | 'npc' }[]} [descriptors]
+ */
+export function assertGeneratedSkinsHaveRarity(catalogPath = DEFAULT_STORE_CATALOG, descriptors = []) {
+  const groups = readSkinRarityAssignments(readFileSync(resolve(catalogPath), 'utf8'));
+  const playerIds = descriptors.filter((skin) => skin.role === 'player').map((skin) => skin.id);
+  assertPlayerSkinsHaveRarity(playerIds, groups);
+  return groups;
+}
+
 const entryUrl = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : '';
 if (import.meta.url === entryUrl) {
   const check = process.argv.includes('--check');
@@ -386,6 +443,12 @@ if (import.meta.url === entryUrl) {
     const ambiguous = result.descriptors.filter((skin) => skin.modelSource === 'fallback').length;
     console.log(`[player-skins] ${result.descriptors.length} PNG, ${players} player, ${npcs} npc, ${ambiguous} ambiguous model`);
     for (const warning of result.warnings) console.warn(`[player-skins] ${warning}`);
+    const groups = assertGeneratedSkinsHaveRarity(
+      resolve(process.cwd(), DEFAULT_STORE_CATALOG),
+      result.descriptors,
+    );
+    const covered = Object.values(groups).reduce((sum, ids) => sum + ids.length, 0);
+    console.log(`[player-skins] rarity metadata covers ${covered} player skins`);
     console.log(check
       ? '[player-skins] generated catalog matches the PNG directory'
       : `[player-skins] ${result.changed ? 'updated' : 'unchanged'} ${result.outFile}`);
