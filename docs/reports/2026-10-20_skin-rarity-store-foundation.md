@@ -139,4 +139,4 @@
 
 ## Git
 
-Ветка `cursor/skin-rarity-store-foundation`. База `origin/main` `8dc33012eaf506775384bcede488ababe0ce6099`. Draft PR #135: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/135. В main не влито.
+Ветка `cursor/skin-rarity-store-foundation`. База `origin/main` `8dc33012eaf506775384bcede488ababe0ce6099`. Каталог: `ebf849d782bb1cb453049e06fa59028c711ce9be`. Вёрстка и этот отчёт: `d3f7cd5f3b5dd3cb9b6d8facfcbc35e3faf6b017`. Draft PR #135: https://github.com/hasbatoff2015-web/mine-s-mixosom/pull/135. В main не влито.
