@@ -7,7 +7,7 @@
 - [x] Show rarity frames, category headings, target pack prices, and disabled ad/purchase/legendary actions.
 - [x] Keep preview separate from equip. Stage 1 does not grant ownership or call the Yandex ad/purchase SDK.
 - [x] Fail the production build when a new gameplay PNG has no rarity metadata.
-- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Owner QA of the selector is still open.
+- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Desktop 1920 and 1366, phone landscape, and the portrait rotate overlay were checked in this environment. A real phone is still for the owner.
 
 ## 2026-10-19: Skin preview faces the camera
 

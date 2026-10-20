@@ -347,10 +347,16 @@ describe('skin action and server entitlement', () => {
     const body = worldSource.slice(worldSource.indexOf('setAppearance('), worldSource.indexOf('private broadcastChat'));
     expect(body).toContain('sanitizeRegisteredAppearance');
     expect(body).not.toContain('evaluateServerSkinEquip');
+    const opener = gameSource.slice(gameSource.indexOf('showSkinSelector(this.skinSelector.preview'), gameSource.indexOf('confirm: () =>'));
+    expect(opener).toContain('equippedSkinId: this.skinSelector.committed.skinId');
+    expect(opener).not.toContain('localStorage');
+    expect(opener).not.toContain('isAdmin');
     const confirm = gameSource.slice(gameSource.indexOf('confirm: () =>'), gameSource.indexOf('cancel: () =>'));
     expect(confirm).toContain('undefined');
     expect(confirm).toContain('STAGE1_MONETIZATION');
     expect(confirm).not.toContain('localStorage');
     expect(confirm).not.toContain('isAdmin');
+    expect(confirm).not.toContain('showRewardedVideo');
+    expect(confirm).not.toContain('payments');
   });
 });

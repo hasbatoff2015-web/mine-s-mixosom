@@ -972,6 +972,7 @@ export class Game {
     this.disposeCharacterPreview();
     this.skinSelector = new PlayerSkinSelectorSession(this.playerAppearance);
     this.ui.showSkinSelector(this.skinSelector.preview, {
+      equippedSkinId: this.skinSelector.committed.skinId,
       preview: (skinId) => {
         const next = this.skinSelector?.selectSkin(skinId);
         if (!next) return;
