@@ -821,11 +821,9 @@ export class GameUI {
           <div class="skin-card-grid" role="listbox" aria-label="Каталог скинов">${cards}</div>
         </div>
         <footer class="menu-footer skin-selector-footer">
+          <p class="skin-action-note" data-skin-action-note aria-hidden="true"></p>
           <button type="button" class="game-button" data-action="cancel">Отмена</button>
-          <div class="skin-confirm-slot">
-            <p class="skin-action-note" data-skin-action-note hidden></p>
-            <button type="button" class="game-button" data-action="confirm"></button>
-          </div>
+          <button type="button" class="game-button" data-action="confirm"></button>
         </footer>
       </div></section>`, actions.cancel);
     this.bindAction('cancel', actions.cancel);
@@ -846,8 +844,9 @@ export class GameUI {
       button.dataset.actionState = state.kind;
       button.setAttribute('aria-disabled', String(!state.enabled));
       if (note) {
-        note.hidden = state.detail.length === 0;
         note.textContent = state.detail;
+        if (state.detail.length === 0) note.setAttribute('aria-hidden', 'true');
+        else note.removeAttribute('aria-hidden');
         if (state.targetPriceLabel) note.dataset.priceSource = 'target';
         else delete note.dataset.priceSource;
       }
@@ -869,13 +868,6 @@ export class GameUI {
         return;
       }
       actions.confirm();
-    });
-    this.screen?.addEventListener('keydown', (event) => {
-      if (event.key !== 'Enter') return;
-      const button = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
-      if (!button?.disabled) return;
-      event.preventDefault();
-      event.stopPropagation();
     });
     for (const packButton of this.screen?.querySelectorAll<HTMLButtonElement>('[data-pack-action]') ?? []) {
       packButton.addEventListener('click', (event) => {

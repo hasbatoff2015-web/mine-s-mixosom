@@ -5188,27 +5188,51 @@ textarea,
   border-bottom: 0;
 }
 
-.skin-selector-footer {
-  align-items: center;
-}
-
-.skin-confirm-slot {
+/* The note sits in its own grid row, above the confirm button only.
+   Both buttons share the next row, so a long explanation cannot push
+   Confirm below Cancel. The row keeps one line even when the note is empty,
+   so switching skins does not move the buttons. */
+.menu-footer.skin-selector-footer {
   display: grid;
-  gap: 4px;
-  align-content: center;
+  grid-auto-flow: row;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: stretch;
+  column-gap: 10px;
+  row-gap: 4px;
 }
 
-.skin-action-note {
+.skin-selector-footer .skin-action-note {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  min-height: 1.4em;
+  min-width: 0;
   margin: 0;
   color: #d8d8d8;
   font-family: var(--font-ui);
   font-size: 12px;
   line-height: 1.3;
   text-align: center;
+  overflow-wrap: break-word;
 }
 
-.skin-action-note[hidden] {
-  display: none;
+.skin-selector-footer .skin-action-note[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.skin-selector-footer > .game-button {
+  grid-row: 2;
+  height: 48px;
+  min-height: 48px;
+}
+
+.skin-selector-footer > [data-action="cancel"] {
+  grid-column: 1;
+}
+
+.skin-selector-footer > [data-action="confirm"] {
+  grid-column: 2;
 }
 
 .skin-card-preview {

@@ -222,6 +222,88 @@ describe('skin store selector', () => {
     view.close();
   });
 
+  it('does not swallow Enter while a locked skin is selected', async () => {
+    const view = mountSelector();
+    view.card(RARE_ID).click();
+    const confirm = view.confirmButton();
+    const cancel = view.root.querySelector<HTMLButtonElement>('[data-action="cancel"]')!;
+    const screen = view.root.querySelector('.screen')!;
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.tabIndex).toBe(-1);
+    confirm.click();
+    expect(view.confirmed).toBe(0);
+
+    const onScreen = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    screen.dispatchEvent(onScreen);
+    expect(onScreen.defaultPrevented).toBe(false);
+    expect(view.confirmed).toBe(0);
+
+    cancel.focus();
+    const onCancel = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    const reachedScreen = new Promise<boolean>((resolve) => {
+      screen.addEventListener('keydown', (event) => resolve(event.defaultPrevented), { once: true });
+    });
+    cancel.dispatchEvent(onCancel);
+    expect(onCancel.defaultPrevented).toBe(false);
+    expect(await reachedScreen).toBe(false);
+    view.close();
+  });
+
+  it('lets a focused skin card receive Enter while Confirm is disabled', () => {
+    const view = mountSelector();
+    view.card(LEGENDARY_ID).click();
+    const confirm = view.confirmButton();
+    expect(confirm.disabled).toBe(true);
+    expect(confirm.textContent).toBe('Недоступно');
+    const next = view.card(COMMON_ID);
+    next.focus();
+    const onCard = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    next.dispatchEvent(onCard);
+    expect(onCard.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(next);
+    next.click();
+    expect(view.previews).toEqual([LEGENDARY_ID, COMMON_ID]);
+    expect(next.classList.contains('selected')).toBe(true);
+    expect(view.confirmButton().textContent).toBe('Реклама скоро');
+    expect(view.confirmButton().disabled).toBe(true);
+    expect(view.confirmed).toBe(0);
+
+    const cancel = view.root.querySelector<HTMLButtonElement>('[data-action="cancel"]')!;
+    cancel.focus();
+    const onCancel = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    cancel.dispatchEvent(onCancel);
+    expect(onCancel.defaultPrevented).toBe(false);
+    expect(view.confirmed).toBe(0);
+    view.close();
+  });
+
+  it('leaves the free Confirm button activatable and skips a disabled one in Tab order', () => {
+    const equippedRare = mountSelector(DEFAULT_PLAYER_APPEARANCE, { equippedSkinId: RARE_ID });
+    const confirm = equippedRare.confirmButton();
+    expect(confirm.textContent).toBe('Подтвердить');
+    expect(confirm.disabled).toBe(false);
+    expect(confirm.tabIndex).toBe(0);
+    confirm.focus();
+    const onConfirm = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true });
+    confirm.dispatchEvent(onConfirm);
+    expect(onConfirm.defaultPrevented).toBe(false);
+    expect(document.activeElement).toBe(confirm);
+    confirm.click();
+    expect(equippedRare.confirmed).toBe(1);
+    equippedRare.close();
+
+    const locked = mountSelector();
+    locked.card(LEGENDARY_ID).click();
+    const disabled = locked.confirmButton();
+    const focusable = [...locked.root.querySelectorAll<HTMLButtonElement>('button')]
+      .filter((button) => !button.disabled && button.tabIndex >= 0);
+    expect(disabled.disabled).toBe(true);
+    expect(disabled.tabIndex).toBe(-1);
+    expect(focusable).not.toContain(disabled);
+    expect(focusable.some((button) => button.dataset.action === 'cancel')).toBe(true);
+    locked.close();
+  });
+
   it('reflects a future owned or admin grant without treating the other legendary as free', () => {
     const owned = mountSelector(DEFAULT_PLAYER_APPEARANCE, {
       accessSnapshot: { ownedSkinIds: [RARE_ID], adminLegendarySkinIds: [LEGENDARY_ID] },
