@@ -5002,18 +5002,38 @@ textarea,
   width: min(1100px, calc(100vw - 32px));
 }
 
+/* Later `.menu-window` width must not shrink this screen back to 920px.
+   A definite height keeps the footer on screen and scrolls the card grid. */
+.menu-window.skin-selector-window {
+  width: min(1100px, calc(100vw - 32px));
+  height: min(760px, calc(100dvh - 28px));
+  max-height: calc(100dvh - 28px);
+  min-height: 0;
+}
+
 .skin-selector-body {
   display: grid;
-  grid-template-columns: minmax(240px, 340px) minmax(0, 1fr);
+  grid-template-columns: minmax(220px, 320px) minmax(0, 1fr);
   gap: 16px;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   padding: 12px 16px;
 }
 
 .skin-selector-preview {
   display: grid;
-  align-content: start;
+  grid-template-rows: minmax(0, 1fr) auto;
+  align-content: stretch;
   gap: 8px;
+  min-height: 0;
+  height: 100%;
+}
+
+.skin-selector-window .character-preview-canvas.large {
+  height: 100%;
+  min-height: 0;
+  max-height: none;
 }
 
 .skin-card-grid {
@@ -5021,28 +5041,198 @@ textarea,
   grid-template-columns: repeat(auto-fill, minmax(92px, 1fr));
   gap: 8px;
   overflow: auto;
+  overflow-x: hidden;
   min-height: 0;
-  max-height: min(560px, calc(100dvh - 220px));
-  padding: 4px;
+  height: 100%;
+  max-height: none;
+  padding: 4px 6px 8px 4px;
+  align-content: start;
+  scrollbar-color: #bcbcbc #1b1b1b;
+  scrollbar-width: thin;
+}
+
+.skin-rarity-heading,
+.skin-pack-offer {
+  grid-column: 1 / -1;
+}
+
+.skin-rarity-heading {
+  margin: 8px 0 0;
+  padding: 2px 2px 0;
+  color: #d5d5d5;
+  font-family: var(--font-display);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  letter-spacing: 0.04em;
+  text-shadow: 2px 2px #111;
+}
+
+.skin-rarity-heading[data-rarity="rare"] { color: #9ecbff; }
+.skin-rarity-heading[data-rarity="epic"] { color: #d7b6f6; }
+.skin-rarity-heading[data-rarity="legendary"] { color: #f3d48a; }
+
+.skin-pack-offer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 2px solid #3a3a3a;
+  background: rgba(0, 0, 0, 0.28);
+  color: #f4f4f4;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.skin-pack-offer[data-rarity="rare"] { border-color: #439bef; }
+.skin-pack-offer[data-rarity="epic"] { border-color: #aa65e8; }
+
+.skin-pack-copy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+
+.skin-pack-copy strong {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 400;
+}
+
+.skin-pack-price {
+  color: #ffe9a8;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.skin-pack-offer .game-button {
+  min-height: 32px;
+  padding: 4px 8px;
+  font-size: 9px;
 }
 
 .skin-card {
+  position: relative;
   display: grid;
   gap: 0;
   justify-items: center;
   padding: 6px;
-  border: 2px solid var(--menu-edge);
+  border: 2px solid #8a8a8a;
   color: var(--menu-ink);
   background: linear-gradient(var(--menu-face-light), var(--menu-face-dark));
-  box-shadow: inset 2px 2px rgba(255, 255, 255, 0.28), inset -2px -2px rgba(0, 0, 0, 0.38);
+  box-shadow: inset 0 0 0 2px var(--skin-rarity, #8a8a8a), inset 2px 2px rgba(255, 255, 255, 0.28), inset -2px -2px rgba(0, 0, 0, 0.38);
   cursor: pointer;
+  --skin-rarity: #8a8a8a;
+}
+
+.skin-card[data-rarity="common"] {
+  --skin-rarity: #8d8d8d;
+  border-color: #8d8d8d;
+}
+
+.skin-card[data-rarity="rare"] {
+  --skin-rarity: #439bef;
+  border-color: #439bef;
+}
+
+.skin-card[data-rarity="epic"] {
+  --skin-rarity: #aa65e8;
+  border-color: #aa65e8;
+}
+
+.skin-card[data-rarity="legendary"] {
+  --skin-rarity: #e9b345;
+  border-color: #e9b345;
+}
+
+.skin-card::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: 3px;
+  height: 3px;
+  background: var(--skin-rarity);
+  pointer-events: none;
 }
 
 .skin-card.selected {
-  border-color: #ffe65a;
-  box-shadow:
-    inset 2px 2px rgba(255, 255, 255, 0.34),
-    0 0 0 2px #ffe65a;
+  outline: 2px solid #ffe65a;
+  outline-offset: 2px;
+}
+
+.skin-card-lock {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 8px;
+  height: 6px;
+  border: 2px solid #f4f4f4;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+.skin-card-lock::before {
+  content: '';
+  position: absolute;
+  left: 1px;
+  top: -6px;
+  width: 2px;
+  height: 3px;
+  border: 2px solid #f4f4f4;
+  border-bottom: 0;
+}
+
+/* The note sits in its own grid row, above the confirm button only.
+   Both buttons share the next row, so a long explanation cannot push
+   Confirm below Cancel. The row keeps one line even when the note is empty,
+   so switching skins does not move the buttons. */
+.menu-footer.skin-selector-footer {
+  display: grid;
+  grid-auto-flow: row;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  align-items: stretch;
+  column-gap: 10px;
+  row-gap: 4px;
+}
+
+.skin-selector-footer .skin-action-note {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+  min-height: 1.4em;
+  min-width: 0;
+  margin: 0;
+  color: #d8d8d8;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: center;
+  overflow-wrap: break-word;
+}
+
+.skin-selector-footer .skin-action-note[aria-hidden="true"] {
+  visibility: hidden;
+}
+
+.skin-selector-footer > .game-button {
+  grid-row: 2;
+  height: 48px;
+  min-height: 48px;
+}
+
+.skin-selector-footer > [data-action="cancel"] {
+  grid-column: 1;
+}
+
+.skin-selector-footer > [data-action="confirm"] {
+  grid-column: 2;
 }
 
 .skin-card-preview {
@@ -5087,15 +5277,30 @@ textarea,
   filter: brightness(0.84);
 }
 
-.menu-screen .game-button:disabled {
+.menu-screen .game-button:disabled,
+.menu-screen .game-button:disabled:hover,
+.menu-screen .game-button:disabled:focus,
+.menu-screen .game-button:disabled:focus-visible,
+.menu-screen .game-button:disabled:active {
   cursor: default;
   border-color: #222;
   color: #8f8f8f;
   background: linear-gradient(#4d4d4d, #383838);
-  box-shadow: inset 1px 1px rgba(255, 255, 255, 0.1), inset -2px -2px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 2px 2px rgba(0, 0, 0, 0.45), inset -1px -1px rgba(255, 255, 255, 0.08);
   text-shadow: 1px 1px #222;
   transform: none;
   filter: none;
+  outline: none;
+}
+
+.menu-screen .skin-pack-offer .game-button,
+.menu-screen .skin-pack-offer .game-button:disabled,
+.menu-screen .skin-pack-offer .game-button:disabled:hover {
+  min-height: 28px;
+  padding: 2px 8px;
+  font-size: 10px;
+  line-height: 1.35;
+  white-space: nowrap;
 }
 
 .menu-screen .game-button.danger {
@@ -6020,6 +6225,13 @@ textarea,
     max-height: calc((100dvh - 20px) / var(--menu-fit));
   }
 
+  .menu-window.skin-selector-window {
+    width: min(1100px, calc((100vw - 32px) / var(--menu-fit)));
+    height: auto;
+    min-height: min(620px, calc((100dvh - 20px) / var(--menu-fit)));
+    max-height: calc((100dvh - 20px) / var(--menu-fit));
+  }
+
   .skin-selector-window .skin-selector-body {
     height: 100%;
     min-height: 0;
@@ -6045,6 +6257,51 @@ textarea,
     min-height: 0;
     align-content: start;
     overflow-y: auto;
+  }
+}
+
+@media (min-width: 900px) {
+  .skin-selector-window .skin-card-grid {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 800px) and (orientation: portrait) {
+  .menu-window.skin-selector-window {
+    width: min(560px, calc(100vw - 16px));
+    height: min(760px, calc(100dvh - 16px));
+  }
+
+  .skin-selector-window .skin-selector-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .skin-selector-window .skin-selector-preview {
+    height: auto;
+  }
+
+  .skin-selector-window .character-preview-canvas.large {
+    width: 100%;
+    height: min(200px, 28vh);
+    min-height: 140px;
+    max-height: 220px;
+  }
+
+  .skin-selector-window .skin-card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(76px, 1fr));
+    height: 100%;
+    max-height: none;
+    min-height: 0;
+  }
+
+  .skin-pack-offer {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .skin-pack-offer .game-button {
+    grid-column: 1 / -1;
   }
 }
 

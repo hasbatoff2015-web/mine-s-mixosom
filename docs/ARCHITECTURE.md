@@ -1145,9 +1145,12 @@ Future UI: панель «Персонаж / Скин» в главном мен
 Как добавить скин:
 
 1. Положить Minecraft Java PNG 64×64 в `public/textures/player/skins/`. Имя файла без `.png` — это `skinId`: 1–64 символа из `A–Z a–z 0–9 _ -`. Расширение только строчными `.png`.
-2. Закоммитить PNG вместе с обновлённым `generatedPlayerSkins.ts`.
-3. Запушить изменения.
-4. Пересобрать и развернуть **и клиент, и сервер**. `git push` сам по себе не обновляет уже запущенную production-игру. Пока серверная сборка старая, новый id будет отвергнут whitelist.
+2. Назначить этому `skinId` редкость в `src/player/appearance/skinStoreCatalog.ts`. Пока записи нет, `npm run skins:check` и production build падают с `Skin <id> has no rarity metadata.` Новый скин не становится бесплатным обычным сам.
+3. Закоммитить PNG вместе с обновлённым `generatedPlayerSkins.ts` и строкой редкости.
+4. Запушить изменения.
+5. Пересобрать и развернуть **и клиент, и сервер**. `git push` сам по себе не обновляет уже запущенную production-игру. Пока серверная сборка старая, новый id будет отвергнут whitelist.
+
+Редкость, целевые цены и будущие SKU живут отдельно от PNG-каталога. Порядок меню — `orderedPlayerSkins()`, не алфавит файлов. `resolveSkinActionState` решает только подпись кнопки. Серверная проверка `evaluateServerSkinEquip` описана, но `WorldInstance.setAppearance` её пока не вызывает: прямой пакет appearance по-прежнему проходит по whitelist зарегистрированных id. Покупки этим UI не защищены. См. `docs/SKIN_STORE.md`.
 
 `npm run dev`, `npm run build`, `npm run build:server`, typecheck и test сами запускают генератор. `npm run skins:generate` перезаписывает каталог. `npm run skins:check` падает, если закоммиченный каталог не совпадает с папкой PNG; `npm run check` вызывает его до того, как остальные шаги перезапишут файл. В `npm run dev` новый или изменённый PNG обновляет каталог и content-hash URL, затем страница перезагружается. Если вотчер не сработал, перезапустите `npm run dev`.
 

@@ -5571,6 +5571,12 @@ export class WorldInstance {
     };
   }
 
+  /**
+   * Registered production skin ids are still accepted here.
+   * A direct appearance packet can equip a rare, epic, or legendary skin.
+   * `evaluateServerSkinEquip` is the future fail-closed check and is not wired
+   * in, so existing saves are left untouched. UI locks are not this check.
+   */
   setAppearance(
     player: ServerPlayer,
     raw: unknown,
