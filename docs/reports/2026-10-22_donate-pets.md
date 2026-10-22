@@ -42,7 +42,7 @@
 
 ## Known issues
 
-Прежние падения `origin/main`, если они воспроизведутся: `tests/server/god-sword.test.ts` (трата меча), два теста `tests/server/pet-hit-registration.test.ts` по таймингу `entity_use`, `tests/server/player-actions.test.ts` (лук FIFO).
+На чистом `origin/main` `d3491a6` падают те же четыре теста: God Sword тратит меч на мобе, два теста `entity_use` в `pet-hit-registration` (`tameProgress` становится 1), и лук FIFO в `player-actions` (`bowUseTicks` 2 вместо 1). Это не связано с правами питомцев.
 
 ## Deferred
 

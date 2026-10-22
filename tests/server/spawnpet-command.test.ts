@@ -140,7 +140,9 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
     expect(say('/spawnpet bee').some((line) => line.includes('пчела'))).toBe(true);
     expect(say('/spawnpet creeper').some((line) => line.includes('мини-крипер'))).toBe(true);
     expect(world.donation.grant(player.id, 'vip').ok).toBe(true);
-    expect(say('/spawnpet creeper').some((line) => line.includes('мини-крипер'))).toBe(true);
+    const vipOp = say('/spawnpet creeper');
+    expect(vipOp.some((line) => line.includes('TITAN'))).toBe(false);
+    expect(cosmetic().some((mob) => mob.kind === 'pet_creeper')).toBe(true);
     expect(world.permissions.deop(player.name).ok).toBe(true);
     world.tick();
     expect(cosmetic()).toHaveLength(0);
