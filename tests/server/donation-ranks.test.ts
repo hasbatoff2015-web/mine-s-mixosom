@@ -65,9 +65,14 @@ describe('donation rank limits and expiry', () => {
     const nodes = permissionNodesForRank('titan');
     expect(nodes).toEqual(expect.arrayContaining([
       'enderchest.use', 'announce.use', 'back.death', 'tp.coords', 'invsee.use', 'nick.color',
+      'pet.bee', 'pet.creeper',
       'kit.use.vip', 'kit.use.prem', 'kit.use.boss', 'kit.use.titan',
       'kit.use.food_vip', 'kit.use.food_titan',
     ]));
+    expect(permissionNodesForRank('premium')).not.toContain('pet.bee');
+    expect(permissionNodesForRank('boss')).toContain('pet.bee');
+    expect(permissionNodesForRank('boss')).not.toContain('pet.creeper');
+    expect(permissionNodesForRank('titan')).toContain('pet.creeper');
     expect(permissionNodesForRank('vip')).toContain('enderchest.use');
     expect(permissionNodesForRank('vip')).not.toContain('announce.use');
     expect(nodes).not.toContain('invsee.edit');

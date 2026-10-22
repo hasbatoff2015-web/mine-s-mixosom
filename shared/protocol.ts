@@ -732,7 +732,8 @@ export type MenuActionKind =
   | 'donate_back'
   | 'donate_tp'
   | 'donate_ec'
-  | 'donate_kit';
+  | 'donate_kit'
+  | 'donate_pet';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -758,6 +759,7 @@ export type GameMenuScreenKind =
   | 'donate-tp'
   | 'donate-back'
   | 'donate-kits'
+  | 'donate-pets'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -1606,6 +1608,13 @@ export interface NetworkDonateKit {
   readonly detail: string;
 }
 
+export interface NetworkDonatePet {
+  readonly id: 'bee' | 'creeper';
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+}
+
 export interface NetworkDonatePlayer {
   readonly playerId: string;
   readonly name: string;
@@ -1619,6 +1628,7 @@ export interface NetworkDonateMenu {
   readonly perks: readonly NetworkDonatePerk[];
   readonly actions: readonly NetworkDonateAction[];
   readonly kits: readonly NetworkDonateKit[];
+  readonly pets?: readonly NetworkDonatePet[];
   readonly catalog: readonly NetworkDonatePerk[];
   readonly nickChoices: readonly string[];
   readonly nickColor?: string;
@@ -1883,13 +1893,13 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'rating_set', 'rating_page',
   'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
   'donate_retry', 'donate_color', 'donate_announce', 'donate_invsee', 'donate_invseeop',
-  'donate_back', 'donate_tp', 'donate_ec', 'donate_kit',
+  'donate_back', 'donate_tp', 'donate_ec', 'donate_kit', 'donate_pet',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
-  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'closed',
+  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {

@@ -8,7 +8,7 @@ The saved choice is `ServerPlayer.cosmeticPet`: `'bee' | 'creeper' | null`. `Wor
 
 Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` for other mobs. The root Y is `ownerFeet + 1.22 - bodyCenterLocalY * 0.5`, so the body center, not the root, sits at shoulder height. Wing flap, bob, and body tilt are render-only in `ThreeEntityHost.syncBee()` from a wrapped clock advanced in `interpolateVisuals()`. `syncBee` sets scale `0.5` every frame. The mini creeper reuses `CREEPER_MODEL` and `entity/creeper`. `syncMob()` sets scale `0.49` every frame. `updateCreeper()` is not called for it.
 
-`/spawnpet` remains operator-only. There is no rank grant in this change.
+`/spawnpet` is a player command. `setCosmeticPet`, `ensureCosmeticPet`, and `snapCosmeticPet` call the same check: `pet.bee` for the bee and `pet.creeper` for the mini creeper. OP passes `PermissionService.has` before donate nodes are read. A lost rank removes the live entity on the next gameplay tick and keeps the saved choice. The donate card «Питомцы» sends `donate_pet`, which runs `/spawnpet`. Wolf and cat commands stay rejected.
 
 ## Emotes — 2026-10-17
 

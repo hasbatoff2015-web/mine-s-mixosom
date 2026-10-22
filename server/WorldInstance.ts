@@ -46,12 +46,14 @@ import { VoxelWorld } from '../src/world/World';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { collectMinecartPassengers } from '../src/entities/minecartOccupancy';
 import {
+  COSMETIC_PET_WORLD_CAP,
   cosmeticKindForSelection,
   isCosmeticPetKind,
   parseCosmeticPetSelection,
   type CosmeticPetSelection,
 } from '../src/entities/cosmeticPets';
 import { findCosmeticSpawnSpot } from '../src/entities/cosmeticPetMotion';
+import { playerText } from '../shared/playerText';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
@@ -4301,6 +4303,7 @@ export class WorldInstance {
     }
     this.recordCombatPoses();
     this.gameplay.mobs.recordPoseHistory(this.tickNumber);
+    this.enforceCosmeticPetRights();
     this.cosmeticEnsureTicks += 1;
     if (this.cosmeticEnsureTicks >= 20) {
       this.cosmeticEnsureTicks = 0;
@@ -5938,11 +5941,30 @@ export class WorldInstance {
     this.dirty = true;
   }
 
+  private cosmeticPetAllowed(player: ServerPlayer, selection: CosmeticPetSelection): boolean {
+    const node = selection === 'bee' ? 'pet.bee' : 'pet.creeper';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  /** Drop a live pet in the same tick the rank or operator right disappears. The saved choice stays. */
+  private enforceCosmeticPetRights(): void {
+    for (const player of this.connectedPlayers()) {
+      const selection = player.cosmeticPet;
+      if (!selection || this.cosmeticPetAllowed(player, selection)) continue;
+      if (this.ownedCosmeticPets(player.id).length === 0) continue;
+      this.removeCosmeticPetRuntime(player.id);
+    }
+  }
+
   private ensureCosmeticPet(player: ServerPlayer): void {
     if (!player.connected || player.survival.dead) return;
     const selection = player.cosmeticPet;
     const owned = this.ownedCosmeticPets(player.id);
     if (!selection) {
+      this.removeCosmeticPetRuntime(player.id);
+      return;
+    }
+    if (!this.cosmeticPetAllowed(player, selection)) {
       this.removeCosmeticPetRuntime(player.id);
       return;
     }
@@ -5958,6 +5980,10 @@ export class WorldInstance {
 
   private snapCosmeticPet(player: ServerPlayer): void {
     if (!player.connected || player.survival.dead || !player.cosmeticPet) return;
+    if (!this.cosmeticPetAllowed(player, player.cosmeticPet)) {
+      this.removeCosmeticPetRuntime(player.id);
+      return;
+    }
     const kind = cosmeticKindForSelection(player.cosmeticPet);
     const owned = this.ownedCosmeticPets(player.id);
     const keep = owned.find((mob) => mob.alive && mob.kind === kind);
@@ -5995,6 +6021,9 @@ export class WorldInstance {
       this.rememberCosmeticSelection(player);
       return ok('Декоративный питомец отключён.');
     }
+    if (!this.cosmeticPetAllowed(player, selection)) {
+      return fail(selection === 'bee' ? playerText.petBeeDenied : playerText.petCreeperDenied);
+    }
     const kind = cosmeticKindForSelection(selection);
     const current = this.ownedCosmeticPets(player.id).filter((mob) => mob.alive && mob.kind === kind);
     if (player.cosmeticPet === selection && current.length >= 1) {
@@ -6004,7 +6033,10 @@ export class WorldInstance {
     const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
     if (!spot) return fail('Не удалось найти безопасное место для питомца.');
     const spawned = this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
-    if (!spawned) return fail('Не удалось создать питомца.');
+    if (!spawned) {
+      const atCap = this.gameplay.mobs.entities.filter((mob) => mob.alive && isCosmeticPetKind(mob.kind)).length >= COSMETIC_PET_WORLD_CAP;
+      return fail(atCap ? playerText.petWorldCap : 'Не удалось создать питомца.');
+    }
     player.cosmeticPet = selection;
     this.removeCosmeticPetRuntime(player.id, spawned.id);
     this.rememberCosmeticSelection(player);
@@ -6084,9 +6116,9 @@ export class WorldInstance {
     this.commands.register({
       name: 'spawnpet',
       aliases: ['petspawn'],
-      permission: 'operator',
+      permission: 'player',
       usage: '/spawnpet <bee|creeper|off>',
-      description: 'Operator: choose a decorative bee or mini creeper',
+      description: 'Призвать декоративную пчелу или мини-крипера',
       execute: (args, sender) => {
         if (isConsoleSender(sender) || sender.kind !== 'player') {
           return fail('This command can only be used by a player.');
@@ -6096,7 +6128,7 @@ export class WorldInstance {
         const kind = args[0]?.trim().toLowerCase();
         if (kind === 'off') return this.setCosmeticPet(player, null);
         if (kind === 'bee' || kind === 'creeper') return this.setCosmeticPet(player, kind);
-        return fail('Usage: /spawnpet <bee|creeper|off>');
+        return fail(playerText.spawnpetUsage);
       },
     });
     this.commands.register({

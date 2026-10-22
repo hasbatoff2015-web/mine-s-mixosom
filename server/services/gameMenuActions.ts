@@ -17,6 +17,8 @@ import { isRankingKind } from '../../shared/ranking';
 import type { DuelService } from './duels';
 import { ANNOUNCE_TEXT_MAX, isNickColorId, sanitizeAnnouncementText } from '../../shared/donationRanks';
 import { parseKitName } from './kit';
+import { isCosmeticPetSelection } from '../../src/entities/cosmeticPets';
+import { playerText } from '../../shared/playerText';
 import type { GameMenuScreen } from '../../shared/gameMenu';
 
 export interface MenuPlayer {
@@ -479,6 +481,15 @@ export function applyGameMenuAction(
       return { kind: 'flush' };
     }
     return { kind: 'donate-command', command: `/kit ${kit}`, screen: 'donate', closeOnSuccess: false };
+  }
+  if (action === 'donate_pet') {
+    session.screen = 'donate-pets';
+    const pet = message.name?.trim().toLowerCase();
+    if (!isCosmeticPetSelection(pet)) {
+      session.message = playerText.spawnpetUsage;
+      return { kind: 'flush' };
+    }
+    return { kind: 'donate-command', command: `/spawnpet ${pet}`, screen: 'donate-pets', closeOnSuccess: false };
   }
   void (message.screen as GameMenuScreenKind | undefined);
   return { kind: 'flush' };

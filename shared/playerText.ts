@@ -12,6 +12,12 @@ export const playerText = {
   movedByOperator: 'Оператор телепортировал вас к себе.',
   commandRetired: 'Эта команда больше не используется.',
   spectatorDenied: 'В режиме наблюдателя это действие недоступно.',
+  petBeeDenied: 'Для призыва пчёлки нужна привилегия BOSS.',
+  petCreeperDenied: 'Для призыва мини-крипера нужна привилегия TITAN.',
+  petBeeReady: 'Летает рядом.',
+  petCreeperReady: 'Ходит рядом.',
+  petWorldCap: 'На сервере уже максимум декоративных питомцев.',
+  spawnpetUsage: 'Usage: /spawnpet <bee|creeper|off>',
   gamemodeSet: (label: string) => `Режим игры: ${label}.`,
 } as const;
 

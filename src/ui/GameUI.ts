@@ -5380,6 +5380,12 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'donate_kit', name });
         return;
       }
+      if (kind === 'donate_pet') {
+        const name = button?.dataset.donatePet;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_pet', name });
+        return;
+      }
       actions.send({ type: 'menu_action', action: kind });
     });
   }

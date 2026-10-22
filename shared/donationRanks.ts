@@ -55,8 +55,8 @@ const RANK_ADDED_NODES: Record<DonationRankId, readonly string[]> = {
     'kit.use.prem',
     'kit.use.food_prem',
   ],
-  boss: ['donate.rank.boss', 'back.death', 'kit.use.boss', 'kit.use.food_boss'],
-  titan: ['donate.rank.titan', 'tp.coords', 'invsee.use', 'kit.use.titan', 'kit.use.food_titan'],
+  boss: ['donate.rank.boss', 'back.death', 'pet.bee', 'kit.use.boss', 'kit.use.food_boss'],
+  titan: ['donate.rank.titan', 'tp.coords', 'invsee.use', 'pet.creeper', 'kit.use.titan', 'kit.use.food_titan'],
 };
 
 const ADMIN_NODE_PREFIXES = ['admin', 'server.', 'plugins.manage', 'server.admin'];

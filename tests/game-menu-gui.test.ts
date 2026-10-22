@@ -150,6 +150,40 @@ describe('main menu HUD and chrome', () => {
     expect(donate).toContain('Доступно с привилегии TITAN');
     expect(donate).toContain('mc-donate-card');
     expect(donate).toContain('Наборы');
+    const pets = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-pets',
+      title: 'Питомцы',
+      message: 'Для призыва мини-крипера нужна привилегия TITAN.',
+      donate: {
+        rankLabel: 'BOSS',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [
+          { id: 'pets', label: 'Питомцы', available: true, detail: 'Пчёлка и мини-крипер', screen: 'donate-pets' },
+        ],
+        kits: [],
+        pets: [
+          { id: 'bee', label: 'Пчёлка', available: true, detail: 'Летает рядом.' },
+          { id: 'creeper', label: 'Мини-крипер', available: false, detail: 'Для призыва мини-крипера нужна привилегия TITAN.' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(pets).toContain('data-menu-screen="donate-pets"');
+    expect(pets).toContain('Пчёлка');
+    expect(pets).toContain('Мини-крипер');
+    expect(pets).toContain('data-donate-pet="bee"');
+    expect(pets).toContain('Призвать');
+    expect(pets).toContain('data-donate-pet="creeper"');
+    expect(pets).toContain('disabled');
+    expect(pets).toContain('Для призыва мини-крипера нужна привилегия TITAN.');
+    expect(gameUi).toContain("action: 'donate_pet', name");
     expect(donate).not.toContain('Оператор. Донат-ранга нет');
     expect(donate).toContain('disabled');
     expect(donate).not.toContain('Эндер-сундук и наборы');

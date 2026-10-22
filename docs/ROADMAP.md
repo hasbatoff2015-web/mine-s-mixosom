@@ -29,7 +29,7 @@
 - [x] Original bee rig, 64×64 sheet, render-clock wing flap and server flight follow.
 - [x] Bee head texels sit on -Z and each wing tip points outward. The sheet bytes are unchanged.
 - [x] Mini creeper reuses the creeper rig at scale 0.49 and never runs creeper fuse.
-- [x] `/spawnpet bee|creeper|off` for the calling operator. `wolf` and `cat` no longer spawn.
+- [x] `/spawnpet bee|creeper|off`. `wolf` and `cat` no longer spawn. Bee is BOSS, mini creeper is TITAN, and OP can summon both.
 - [x] Player `cosmeticPet` survives reconnect and restart. The runtime mob is not in the world mob list.
 - [ ] Not merged. Browser DEV QA of the 3D bee was not run in this environment.
 
@@ -47,6 +47,7 @@
 - [x] `/ec`, `/an`, `/invsee`, `/invseeop`, `/nickcolor`, and `/tp` share the rank service. Player `/tpa` stays a request.
 - [x] Kit periods and command cooldowns survive restart. The stamp is saved before the action.
 - [x] Menu tab «Донат» reads `DonationRankService.status()` and calls the same commands.
+- [x] Card «Питомцы» lists the bee and the mini creeper and calls `/spawnpet`.
 - [ ] Not merged. Draft PR **#131**. Wait for an explicit merge command.
 
 ## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback

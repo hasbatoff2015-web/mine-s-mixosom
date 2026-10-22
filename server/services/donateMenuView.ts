@@ -5,7 +5,8 @@ import {
   type DonationStatus,
   type EffectiveRank,
 } from '../../shared/donationRanks';
-import type { NetworkDonateAction, NetworkDonateKit, NetworkDonateMenu, NetworkDonatePerk } from '../../shared/protocol';
+import type { NetworkDonateAction, NetworkDonateKit, NetworkDonateMenu, NetworkDonatePerk, NetworkDonatePet } from '../../shared/protocol';
+import { playerText } from '../../shared/playerText';
 
 const RANK_LABEL: Record<EffectiveRank, string> = {
   default: 'Без привилегии',
@@ -52,6 +53,7 @@ export function buildDonateMenu(input: {
       perks: [],
       actions: [],
       kits: [],
+      pets: [],
       catalog: [],
       nickChoices: [],
       previewName: input.playerName,
@@ -69,6 +71,8 @@ export function buildDonateMenu(input: {
   const back = command('back-death');
   const tp = command('tp');
   const ec = command('ec');
+  const petBee = command('pet-bee');
+  const petCreeper = command('pet-creeper');
   const opNote = 'Без ограничений для OP';
   const perks: NetworkDonatePerk[] = [
     { title: 'Дома', detail: `${input.homes}/${status.limits.homes.max}` },
@@ -139,6 +143,13 @@ export function buildDonateMenu(input: {
       available: true,
       detail: 'Стартовые и ранговые наборы',
     },
+    {
+      id: 'pets',
+      label: 'Питомцы',
+      screen: 'donate-pets',
+      available: true,
+      detail: 'Пчёлка и мини-крипер',
+    },
   ];
   if (invseeOp?.available) {
     actions.splice(3, 0, {
@@ -149,6 +160,20 @@ export function buildDonateMenu(input: {
       detail: opNote,
     });
   }
+  const pets: NetworkDonatePet[] = [
+    {
+      id: 'bee',
+      label: 'Пчёлка',
+      available: petBee?.available === true,
+      detail: petBee?.available === true ? playerText.petBeeReady : playerText.petBeeDenied,
+    },
+    {
+      id: 'creeper',
+      label: 'Мини-крипер',
+      available: petCreeper?.available === true,
+      detail: petCreeper?.available === true ? playerText.petCreeperReady : playerText.petCreeperDenied,
+    },
+  ];
   const kits: NetworkDonateKit[] = status.kits.map((kit) => ({
     name: kit.name,
     label: KIT_LABELS[kit.name] ?? kit.name,
@@ -175,6 +200,7 @@ export function buildDonateMenu(input: {
     perks,
     actions,
     kits,
+    pets,
     catalog: [],
     nickChoices: [...status.nick.choices],
     ...(status.nick.color ? { nickColor: status.nick.color } : {}),

@@ -46,6 +46,7 @@ export function menuDonateHtml(state: ServerMenuMessage, escape: (value: string)
   if (state.screen === 'donate-tp') return teleportScreen(donate, message, escape);
   if (state.screen === 'donate-back') return backScreen(donate, message, escape);
   if (state.screen === 'donate-kits') return kitsScreen(donate, message, escape);
+  if (state.screen === 'donate-pets') return petsScreen(donate, message, escape);
   return overview(donate, message, escape);
 }
 
@@ -144,6 +145,18 @@ function backScreen(donate: NetworkDonateMenu, message: string, escape: (value: 
     <p class="mc-player-meta">Последняя смерть: X ${Math.round(point.x)}, Y ${Math.round(point.y)}, Z ${Math.round(point.z)}.</p>
     <p class="mc-player-meta">${escape(action.detail)}</p>
     <button type="button" class="mc-ah-btn" data-menu-action="donate_back">Вернуться</button>
+    ${messageHtml(message, escape)}`);
+}
+
+function petsScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
+  const cards = (donate.pets ?? []).map((pet) => `
+    <button type="button" class="mc-donate-card${pet.available ? '' : ' is-locked'}" data-menu-action="donate_pet" data-donate-pet="${escape(pet.id)}"${pet.available ? '' : ' disabled'}>
+      <strong>${escape(pet.label)}</strong>
+      <span>${escape(pet.detail)}</span>
+      ${pet.available ? '<span>Призвать</span>' : ''}
+    </button>`).join('');
+  return shell('donate-pets', 'Питомцы', `
+    <div class="mc-donate-grid">${cards || '<p class="mc-menu-empty">Питомцев нет.</p>'}</div>
     ${messageHtml(message, escape)}`);
 }
 

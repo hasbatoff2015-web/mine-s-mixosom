@@ -519,6 +519,8 @@ export class DonationRankService {
       row('invsee', '/invsee <игрок>', operator || nodes.has('invsee.use'), 'invsee', operator ? 0 : (limits.invseePerDay || 1)),
       row('invseeop', '/invseeop <игрок>', operator),
       row('nickcolor', '/nickcolor <цвет>', operator || nodes.has('nick.color')),
+      row('pet-bee', '/spawnpet bee', operator || nodes.has('pet.bee')),
+      row('pet-creeper', '/spawnpet creeper', operator || nodes.has('pet.creeper')),
     ];
   }
 
