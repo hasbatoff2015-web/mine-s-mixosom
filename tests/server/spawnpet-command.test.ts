@@ -3,8 +3,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
-import { ItemId } from '../../src/items';
-import { createItemStack } from '../../src/inventory';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
@@ -75,48 +73,21 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
   it('rejects a non-operator player', async () => {
     const { world, player, sink } = await boot();
     sink.payloads.length = 0;
-    world.handleChat(player, '/spawnpet wolf');
+    world.handleChat(player, '/spawnpet bee');
     expect(resultLines(sink).some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
-    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'wolf')).toHaveLength(0);
+    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_bee')).toHaveLength(0);
   });
 
-  it('spawns exactly one wild cat and one wild wolf for an operator', async () => {
+  it('rejects wolf, cat, and console use without creating an animal', async () => {
     const { world, player, sink } = await boot();
-    player.inventory.setSlot(0, createItemStack(ItemId.Bone, 16));
     world.permissions.op(player.name);
     world.permissions.op(player.id);
     sink.payloads.length = 0;
+    world.handleChat(player, '/spawnpet wolf');
     world.handleChat(player, '/spawnpet cat');
-    const cats = world.gameplay.mobs.entities.filter((mob) => mob.kind === 'cat');
-    expect(cats).toHaveLength(1);
-    expect(cats[0]?.ownerId).toBeUndefined();
-    expect(cats[0]?.tameProgress).toBe(0);
-    expect(cats[0]?.sitting).toBe(false);
-    expect(Number.isFinite(cats[0]?.position.x)).toBe(true);
-    expect(Number.isFinite(cats[0]?.position.y)).toBe(true);
-    expect(Number.isFinite(cats[0]?.position.z)).toBe(true);
-    expect(resultLines(sink).some((line) => line.includes('Spawned cat') && line.includes(`id=${cats[0]!.id}`))).toBe(true);
-
-    sink.payloads.length = 0;
-    world.handleChat(player, '/petspawn wolf');
-    const wolves = world.gameplay.mobs.entities.filter((mob) => mob.kind === 'wolf');
-    expect(wolves).toHaveLength(1);
-    expect(wolves[0]?.ownerId).toBeUndefined();
-    expect(wolves[0]?.tameProgress).toBe(0);
-    expect(wolves[0]?.sitting).toBe(false);
-    expect(resultLines(sink).some((line) => line.includes('Spawned wolf'))).toBe(true);
-    expect(player.inventory.getSlot(0)?.count).toBe(16);
-  });
-
-  it('rejects an invalid kind and console use without a player position', async () => {
-    const { world, player, sink } = await boot();
-    world.permissions.op(player.name);
-    world.permissions.op(player.id);
-    sink.payloads.length = 0;
-    world.handleChat(player, '/spawnpet chicken');
-    expect(resultLines(sink).some((line) => line.includes('Usage: /spawnpet <wolf|cat>'))).toBe(true);
-    expect(world.gameplay.mobs.entities).toHaveLength(0);
-    const consoleResult = world.dispatchConsole('spawnpet wolf');
+    expect(resultLines(sink).some((line) => line.includes('Usage: /spawnpet <bee|creeper|off>'))).toBe(true);
+    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'wolf' || mob.kind === 'cat')).toHaveLength(0);
+    const consoleResult = world.dispatchConsole('spawnpet bee');
     expect(consoleResult.ok).toBe(false);
     expect(consoleResult.lines.some((line) => line.toLowerCase().includes('player'))).toBe(true);
     expect(world.gameplay.mobs.entities).toHaveLength(0);

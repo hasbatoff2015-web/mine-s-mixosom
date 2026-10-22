@@ -1,4 +1,5 @@
 import type { MobKind } from './mobDefinitions';
+import { BEE_MODEL } from './beeModel';
 import { MEGA_ZOMBIE_MODEL_SCALE } from './megaZombie';
 import { MUTANT_ZOMBIE_MODEL } from './megaZombieModel';
 import {
@@ -45,6 +46,16 @@ export const MOB_MODEL_DESCRIPTORS: Readonly<Record<MobKind, MobModelDescriptor>
     kind: 'mega_zombie',
     texturePath: 'entity/mutant_zombie',
     logicalTextureSize: [128, 128] as const,
+  }),
+  pet_bee: Object.freeze({
+    kind: 'pet_bee',
+    texturePath: 'entity/bee',
+    logicalTextureSize: [64, 64] as const,
+  }),
+  pet_creeper: Object.freeze({
+    kind: 'pet_creeper',
+    texturePath: 'entity/creeper',
+    logicalTextureSize: [64, 32] as const,
   }),
 });
 
@@ -266,6 +277,8 @@ export const MOB_LEGACY_MODELS: Readonly<Record<MobKind, readonly LegacyModelDef
   zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
   creeper: [CREEPER_MODEL], spider: [SPIDER_MODEL],
   mega_zombie: [MUTANT_ZOMBIE_MODEL],
+  pet_bee: [BEE_MODEL as unknown as LegacyModelDefinition],
+  pet_creeper: [CREEPER_MODEL],
 };
 
 const PART_NAMES: Readonly<Record<MobKind, {
@@ -299,6 +312,13 @@ const PART_NAMES: Readonly<Record<MobKind, {
   zombie: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
+  pet_bee: {
+    head: 'body',
+    legs: ['leg_front', 'leg_mid', 'leg_back'],
+    legSwingSigns: [1, -1, 1],
+    wings: ['rightwing_bone', 'leftwing_bone'],
+  },
+  pet_creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   spider: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4', 'leg5', 'leg6', 'leg7', 'leg8'], legSwingSigns: [] },
   mega_zombie: {
     head: 'head',

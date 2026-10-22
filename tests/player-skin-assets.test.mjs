@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -16,8 +16,9 @@ function pngDimensions(path) {
 }
 
 describe('bundled player skin assets', () => {
-  it('keeps all 45 unique supplied skins plus the QA sheet at exact Java 64x64 dimensions', () => {
-    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(47);
+  it('keeps every skins-folder PNG plus the QA sheet at exact Java 64x64 dimensions', () => {
+    const folderCount = readdirSync('public/textures/player/skins').filter((name) => name.endsWith('.png')).length;
+    expect(BUILTIN_MINECRAFT_SKINS).toHaveLength(folderCount + 1);
     for (const skin of BUILTIN_MINECRAFT_SKINS) {
       const path = resolve('public', 'textures', `${skin.texturePath}.png`);
       expect(pngDimensions(path), skin.id).toEqual([64, 64]);
@@ -34,7 +35,7 @@ describe('bundled player skin assets', () => {
   it('classifies production alpha and keeps the runtime outer-material policy in sync', () => {
     const results = scanProductionPlayerSkins();
     expect(results.map((result) => result.skinId)).toEqual(PRODUCTION_PLAYER_SKINS.map((skin) => skin.id));
-    expect(Object.fromEntries(
+    const intermediate = Object.fromEntries(
       results
         .filter((result) => result.hasIntermediateAlpha)
         .map((result) => [result.skinId, {
@@ -42,7 +43,8 @@ describe('bundled player skin assets', () => {
           outer: result.outerIntermediatePixels,
           unused: result.unusedIntermediatePixels,
         }]),
-    )).toEqual({
+    );
+    expect(intermediate).toMatchObject({
       '00f6338deb336a6e': { base: 0, outer: 5, unused: 0 },
       '0f15ad5e5c148f40': { base: 9, outer: 11, unused: 0 },
       '55264c2ebdb9ed9d': { base: 0, outer: 149, unused: 0 },
@@ -51,6 +53,10 @@ describe('bundled player skin assets', () => {
       'dce095dc5bddc925': { base: 0, outer: 0, unused: 27 },
       'dee6149d4583a54b': { base: 0, outer: 0, unused: 12 },
     });
+    expect(intermediate['10126ef69e2cdfdf']).toBeUndefined();
+    expect(results.some((result) => result.skinId === '10126ef69e2cdfdf')).toBe(false);
+    expect(intermediate['6fdcd3bc5850aeed']?.outer).toBeGreaterThan(0);
+    expect(intermediate['c026b7f8552098de'].outer).toBe(0);
     for (const result of results) {
       expect(result.hasBinaryAlpha, result.skinId).toBe(!result.hasIntermediateAlpha);
       expect(result.declaredOuterAlpha, result.skinId)

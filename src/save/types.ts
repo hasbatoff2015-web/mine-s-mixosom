@@ -61,6 +61,11 @@ export interface SerializedPersistedPlayer {
   readonly portalChest?: unknown;
   /** Authoritative online skin metadata. Missing on old saves uses the default explorer. */
   readonly appearance?: unknown;
+  /**
+   * Decorative pet chosen by this player on this world. Missing on old saves
+   * means none. The runtime entity is not stored in the mob list.
+   */
+  readonly cosmeticPet?: 'bee' | 'creeper';
 }
 
 export interface SerializedServerWorld {

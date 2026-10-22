@@ -172,6 +172,7 @@ import {
   type PlayerAppearance,
 } from '../player/appearance/PlayerAppearance';
 import { PlayerSkinSelectorSession } from '../player/appearance/PlayerSkinSelector';
+import { STAGE1_MONETIZATION, commitSelectedSkinAppearance } from '../player/appearance/skinActionState';
 import { MinecraftSkinRegistry } from '../rendering/player/MinecraftSkin';
 import { PlayerAppearancePreview, PREVIEW_DRAG_RADIANS_PER_PIXEL } from '../rendering/player/PlayerAppearancePreview';
 import { RedstoneSystem, type SerializedRedstoneState } from '../redstone';
@@ -974,6 +975,7 @@ export class Game {
     this.disposeCharacterPreview();
     this.skinSelector = new PlayerSkinSelectorSession(this.playerAppearance);
     this.ui.showSkinSelector(this.skinSelector.preview, {
+      equippedSkinId: this.skinSelector.committed.skinId,
       preview: (skinId) => {
         const next = this.skinSelector?.selectSkin(skinId);
         if (!next) return;
@@ -986,9 +988,18 @@ export class Game {
         this.characterPreview?.setAutoRotatePaused(active);
       },
       confirm: () => {
-        const next = this.skinSelector?.confirm();
+        const session = this.skinSelector;
+        const next = session?.confirm();
         this.skinSelector = undefined;
-        if (next) this.setPlayerAppearance(next);
+        if (next && session) {
+          const committed = commitSelectedSkinAppearance(
+            next,
+            session.committed.skinId,
+            undefined,
+            STAGE1_MONETIZATION,
+          );
+          if (committed) this.setPlayerAppearance(committed);
+        }
         this.showMainMenu();
       },
       cancel: () => {

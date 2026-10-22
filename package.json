@@ -7,6 +7,19 @@
     "assets:event-chest": "node scripts/paint-event-chest.mjs",
     "assets:import": "node scripts/import-assets.mjs",
     "assets:validate-player-skins": "node scripts/validate-player-skin-alpha.mjs",
+    "skins:generate": "node scripts/generate-player-skins.mjs",
+    "skins:check": "node scripts/generate-player-skins.mjs --check",
+    "predev": "node scripts/generate-player-skins.mjs",
+    "prebuild": "node scripts/generate-player-skins.mjs",
+    "prebuild:server": "node scripts/generate-player-skins.mjs",
+    "pretypecheck": "node scripts/generate-player-skins.mjs",
+    "pretypecheck:client": "node scripts/generate-player-skins.mjs",
+    "pretypecheck:server": "node scripts/generate-player-skins.mjs",
+    "pretypecheck:sim": "node scripts/generate-player-skins.mjs",
+    "pretest": "node scripts/generate-player-skins.mjs",
+    "pretest:server": "node scripts/generate-player-skins.mjs",
+    "pretest:sim": "node scripts/generate-player-skins.mjs",
+    "preassets:validate-player-skins": "node scripts/generate-player-skins.mjs",
     "audio:extract-reference": "node scripts/extract-minecraft-reference-sounds.mjs",
     "audio:generate-sfx": "node scripts/generate-core-sfx.mjs",
     "dev": "vite --host 0.0.0.0",
@@ -43,7 +56,7 @@
     "build": "tsc --noEmit && vite build",
     "check:size": "node scripts/check-build.mjs",
     "check:archive": "node scripts/check-build.mjs --archive",
-    "check": "npm run typecheck && npm run check:boundaries && npm run test && npm run build && npm run check:size && npm run check:archive"
+    "check": "npm run skins:check && npm run typecheck && npm run check:boundaries && npm run test && npm run build && npm run check:size && npm run check:archive"
   },
   "dependencies": {
     "three": "^0.179.1",

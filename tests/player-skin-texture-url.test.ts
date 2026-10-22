@@ -110,9 +110,23 @@ describe('player skin texture URLs', () => {
   });
 
   it('falls back to frontier_explorer only for an unregistered id', () => {
+    const loads: string[] = [];
+    vi.stubGlobal('document', { createElement() { return {}; } });
+    vi.spyOn(THREE.TextureLoader.prototype, 'load').mockImplementation(function (
+      this: THREE.TextureLoader,
+      url: string,
+    ) {
+      loads.push(url);
+      return new THREE.Texture();
+    });
     const registry = new MinecraftSkinRegistry();
+    const removed = registry.acquire('10126ef69e2cdfdf');
+    expect(removed.skinId).toBe('frontier_explorer');
+    expect(loads).toEqual([TextureAtlas.url('player/skins/frontier_explorer')]);
+    expect(loads[0]).not.toContain('10126ef69e2cdfdf');
     const missing = registry.acquire('not_a_registered_skin');
     expect(missing.skinId).toBe('frontier_explorer');
+    expect(loads.filter((url) => url.includes('10126ef69e2cdfdf'))).toEqual([]);
     const buyer = registry.acquire(BUYER_NPC_SKIN_ID);
     expect(buyer.skinId).toBe('buyer_merchant');
     missing.release();

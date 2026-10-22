@@ -16,6 +16,11 @@ export interface TexturedCuboidDefinition {
    * definition that omits this map keeps the historical whole-cuboid U order.
    */
   readonly faceUvFlipU?: Partial<Readonly<Record<CuboidFace, boolean>>>;
+  /**
+   * Extra vertical flip for individual faces. Independent of `mirror`, which
+   * only swaps U. Omitting the map keeps the historical V order.
+   */
+  readonly faceUvFlipV?: Partial<Readonly<Record<CuboidFace, boolean>>>;
   /** Optional authored face islands for sheets whose visible pixels do not fill the legacy cross. */
   readonly faceUvRects?: Partial<Readonly<Record<CuboidFace, LogicalUvRect>>>;
   /** Expands each side in world units, used by fur/eyes overlay layers. */
@@ -88,19 +93,22 @@ export function logicalUvToNormalized(
 function rectUvs(
   rect: LogicalUvRect,
   logicalTextureSize: TextureSize,
-  mirror: boolean,
+  flipU: boolean,
+  flipV: boolean,
 ): readonly (readonly [number, number])[] {
   const u0 = rect.u;
   const u1 = rect.u + rect.width;
   const v0 = rect.v;
   const v1 = rect.v + rect.height;
-  const left = mirror ? u1 : u0;
-  const right = mirror ? u0 : u1;
+  const left = flipU ? u1 : u0;
+  const right = flipU ? u0 : u1;
+  const vStart = flipV ? v0 : v1;
+  const vEnd = flipV ? v1 : v0;
   return [
-    logicalUvToNormalized([left, v1], logicalTextureSize),
-    logicalUvToNormalized([right, v1], logicalTextureSize),
-    logicalUvToNormalized([right, v0], logicalTextureSize),
-    logicalUvToNormalized([left, v0], logicalTextureSize),
+    logicalUvToNormalized([left, vStart], logicalTextureSize),
+    logicalUvToNormalized([right, vStart], logicalTextureSize),
+    logicalUvToNormalized([right, vEnd], logicalTextureSize),
+    logicalUvToNormalized([left, vEnd], logicalTextureSize),
   ];
 }
 
@@ -122,7 +130,8 @@ export function createTexturedCuboidGeometry(definition: TexturedCuboidDefinitio
   for (const face of FACES) {
     const base = positions.length / 3;
     const flipU = (definition.mirror === true) !== (definition.faceUvFlipU?.[face.face] === true);
-    const faceUvs = rectUvs(rects[face.face], definition.logicalTextureSize, flipU);
+    const flipV = definition.faceUvFlipV?.[face.face] === true;
+    const faceUvs = rectUvs(rects[face.face], definition.logicalTextureSize, flipU, flipV);
     for (let index = 0; index < 4; index += 1) {
       const corner = face.corners[index]!;
       positions.push(

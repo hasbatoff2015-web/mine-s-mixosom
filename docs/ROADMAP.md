@@ -1,5 +1,38 @@
 # Roadmap
 
+## 2026-10-20: Skin rarity catalog and store UI
+
+- [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
+- [x] Sort the selector by rarity, with `frontier_explorer` first, and keep the PNG generator as the texture source.
+- [x] Show rarity frames, category headings, target pack prices, and disabled ad/purchase/legendary actions.
+- [x] Keep preview separate from equip. Stage 1 does not grant ownership or call the Yandex ad/purchase SDK.
+- [x] Fail the production build when a new gameplay PNG has no rarity metadata.
+- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Desktop 1920 and 1366, phone landscape, and the portrait rotate overlay were checked in this environment. A real phone is still for the owner.
+
+## 2026-10-19: Skin preview faces the camera
+
+- [x] Initial preview yaw aims the skin's local −Z front at the menu camera.
+- [x] Auto-spin, drag pause, and skin changes keep the existing turntable.
+- [ ] Not merged. Owner still checks the face, a classic arm, a slim arm, and a translucent outer layer in the browser.
+
+## 2026-10-19: Automatic player skin catalog
+
+- [x] One build-time catalog from `public/textures/player/skins/*.png` for the client and the Node server.
+- [x] Keep the 45 shipped Classic/Slim models, `frontier_explorer`, `buyer_merchant`, and `player_uv_test`.
+- [x] Classify new 64×64 skins from the arm UV islands. Ambiguous sheets fall back to classic and still register.
+- [x] Reuse the outer-alpha scan. `npm run skins:check` fails when the generated module is stale.
+- [ ] Not merged. Owner QA of the selector, a slim arm, a translucent outer layer, and a second online client is still open.
+
+## 2026-10-18: Decorative bee and mini creeper
+
+- [x] Separate runtime kinds `pet_bee` and `pet_creeper`. They are not `isPetKind()` wolves or cats.
+- [x] Original bee rig, 64×64 sheet, render-clock wing flap and server flight follow.
+- [x] Bee head texels sit on -Z and each wing tip points outward. The sheet bytes are unchanged.
+- [x] Mini creeper reuses the creeper rig at scale 0.49 and never runs creeper fuse.
+- [x] `/spawnpet bee|creeper|off` for the calling operator. `wolf` and `cat` no longer spawn.
+- [x] Player `cosmeticPet` survives reconnect and restart. The runtime mob is not in the world mob list.
+- [ ] Not merged. Browser DEV QA of the 3D bee was not run in this environment.
+
 ## 2026-10-17: Emotes
 
 - [x] Hold Z for a four-sector wheel. Release plays the sector. The center plays nothing.

@@ -40,7 +40,7 @@ import { frontEdgeU, sideEdgeU } from './cuboidUvSample';
 import { decodeRgbaPng } from '../scripts/png-rgba.mjs';
 
 const MOB_KINDS: readonly MobKind[] = [
-  'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider', 'mega_zombie',
+  'cow', 'pig', 'chicken', 'sheep', 'wolf', 'cat', 'zombie', 'skeleton', 'creeper', 'spider', 'mega_zombie', 'pet_bee', 'pet_creeper',
 ];
 const ENTITY_TEXTURE_MODULES = import.meta.glob('../public/textures/entity/**/*.png');
 
@@ -615,4 +615,41 @@ describe('textured cuboid mirror and per-face U flip', () => {
     mirrorWithoutLocal.dispose();
     cancelled.dispose();
   });
+
+  it('flips V on one face and leaves the historical U order alone', () => {
+    const plain = createTexturedCuboidGeometry(base);
+    const flipped = createTexturedCuboidGeometry({ ...base, faceUvFlipV: { top: true } });
+    for (const yEdge of ['top', 'bottom'] as const) {
+      expect(sideEdgeU(flipped, -1, 'front', yEdge)).toBeCloseTo(sideEdgeU(plain, -1, 'front', yEdge));
+      expect(sideEdgeU(flipped, 1, 'back', yEdge)).toBeCloseTo(sideEdgeU(plain, 1, 'back', yEdge));
+    }
+    expect(topEdgeImageV(flipped, 'front')).toBeCloseTo(8);
+    expect(topEdgeImageV(flipped, 'back')).toBeCloseTo(0);
+    expect(topEdgeImageV(plain, 'front')).toBeCloseTo(0);
+    expect(topEdgeImageV(plain, 'back')).toBeCloseTo(8);
+    plain.dispose();
+    flipped.dispose();
+  });
 });
+
+function topEdgeImageV(geometry: THREE.BufferGeometry, zEdge: 'front' | 'back'): number {
+  const position = geometry.getAttribute('position');
+  const normal = geometry.getAttribute('normal');
+  const uv = geometry.getAttribute('uv');
+  let minZ = Number.POSITIVE_INFINITY;
+  let maxZ = Number.NEGATIVE_INFINITY;
+  for (let index = 0; index < position.count; index += 1) {
+    if (normal.getY(index) !== 1) continue;
+    minZ = Math.min(minZ, position.getZ(index));
+    maxZ = Math.max(maxZ, position.getZ(index));
+  }
+  const z = zEdge === 'front' ? minZ : maxZ;
+  const values: number[] = [];
+  for (let index = 0; index < position.count; index += 1) {
+    if (normal.getY(index) !== 1) continue;
+    if (Math.abs(position.getZ(index) - z) > 1e-5) continue;
+    values.push((1 - uv.getY(index)) * 64);
+  }
+  expect(new Set(values.map((value) => value.toFixed(4))).size).toBe(1);
+  return values[0]!;
+}

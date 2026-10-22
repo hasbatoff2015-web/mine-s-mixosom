@@ -5,7 +5,8 @@ import {
   type PlayerAppearance,
   type PlayerModelVariant,
 } from './PlayerAppearance';
-import { PRODUCTION_PLAYER_SKINS, isProductionSkinId, skinDescriptor } from './builtinSkins';
+import { isProductionSkinId, skinDescriptor } from './builtinSkins';
+import { orderedPlayerSkins } from './skinStoreCatalog';
 
 /** Temporary selector draft. Confirm commits; cancel restores the original appearance. */
 export class PlayerSkinSelectorSession {
@@ -21,8 +22,8 @@ export class PlayerSkinSelectorSession {
     return this.previewValue;
   }
 
-  get skins(): typeof PRODUCTION_PLAYER_SKINS {
-    return PRODUCTION_PLAYER_SKINS;
+  get skins(): ReturnType<typeof orderedPlayerSkins> {
+    return orderedPlayerSkins();
   }
 
   selectSkin(skinId: string): PlayerAppearance {
@@ -52,6 +53,10 @@ export class PlayerSkinSelectorSession {
     return !appearancesEqual(this.committed, this.previewValue);
   }
 
+  /**
+   * Returns the preview draft. It does not decide whether the skin may be worn.
+   * `commitSelectedSkinAppearance` is the gate in front of `setPlayerAppearance`.
+   */
   confirm(): PlayerAppearance {
     return this.previewValue;
   }
