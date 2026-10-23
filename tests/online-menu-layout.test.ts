@@ -3,10 +3,11 @@
  *
  * Real Chrome geometry for the online menu. happy-dom does not lay out CSS Grid.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { createServer, get as httpGet, type Server } from 'node:http';
+import { createServer as createNetServer } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join, normalize, sep } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
@@ -73,10 +74,155 @@ const VIEWPORTS = [
   [667, 375],
 ] as const;
 
-function chromeBinary(): string {
-  const candidates = ['/usr/bin/google-chrome', '/usr/local/bin/google-chrome', '/usr/bin/chromium'];
-  return candidates.find((path) => existsSync(path)) ?? 'google-chrome';
+interface LayoutChromeLookup {
+  platform: NodeJS.Platform;
+  home: string;
+  exists: (file: string) => boolean;
+  /** True when `executable --version` identifies Chrome or Chromium. No shell. */
+  probe: (executable: string) => boolean;
 }
+
+type LayoutChromeResolution =
+  | { status: 'found'; executable: string; source: string }
+  | { status: 'missing'; message: string }
+  | { status: 'invalid-path'; message: string };
+
+const LINUX_CHROME_BINS = [
+  '/usr/bin/google-chrome',
+  '/usr/local/bin/google-chrome',
+  '/usr/bin/google-chrome-stable',
+  '/usr/bin/chromium',
+  '/usr/bin/chromium-browser',
+  '/snap/bin/chromium',
+];
+
+const PATH_CHROME_COMMANDS = [
+  'google-chrome',
+  'google-chrome-stable',
+  'chromium',
+  'chromium-browser',
+  'chrome',
+  'chrome.exe',
+  'chromium.exe',
+];
+
+function chromeAcceptsVersion(executable: string): boolean {
+  try {
+    const result = spawnSync(executable, ['--version'], {
+      encoding: 'utf8',
+      timeout: 5000,
+      shell: false,
+      windowsHide: true,
+    });
+    if (result.error || result.status !== 0) return false;
+    return /Chrome|Chromium/i.test(`${result.stdout ?? ''}\n${result.stderr ?? ''}`);
+  } catch {
+    return false;
+  }
+}
+
+function windowsChromeBins(env: NodeJS.ProcessEnv): string[] {
+  const roots = [env.ProgramFiles, env['ProgramFiles(x86)'], env.LOCALAPPDATA].filter((value): value is string => Boolean(value && value.trim()));
+  const tails = [
+    join('Google', 'Chrome', 'Application', 'chrome.exe'),
+    join('Chromium', 'Application', 'chrome.exe'),
+    join('Chromium', 'Application', 'chromium.exe'),
+  ];
+  return roots.flatMap((root) => tails.map((tail) => join(root, tail)));
+}
+
+function macChromeBins(home: string): string[] {
+  const apps = [
+    join('Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome'),
+    join('Chromium.app', 'Contents', 'MacOS', 'Chromium'),
+  ];
+  return [
+    ...apps.map((app) => join('/Applications', app)),
+    ...apps.map((app) => join(home, 'Applications', app)),
+  ];
+}
+
+function explicitChrome(env: NodeJS.ProcessEnv, lookup: LayoutChromeLookup): LayoutChromeResolution | undefined {
+  const specified = [
+    ['CHROME_PATH', env.CHROME_PATH],
+    ['CHROME_BIN', env.CHROME_BIN],
+  ] as const;
+  for (const [name, value] of specified) {
+    if (value === undefined || value.trim() === '') continue;
+    const executable = value.trim();
+    if (!lookup.exists(executable)) {
+      return {
+        status: 'invalid-path',
+        message: `${name} does not point to a file (${executable}). The layout test does not switch to another browser.`,
+      };
+    }
+    if (!lookup.probe(executable)) {
+      return {
+        status: 'invalid-path',
+        message: `${name} is not a Chrome or Chromium binary that accepts --version (${executable}). The layout test does not switch to another browser.`,
+      };
+    }
+    return { status: 'found', executable, source: name };
+  }
+  return undefined;
+}
+
+function resolveLayoutChrome(env: NodeJS.ProcessEnv = process.env, lookup: Partial<LayoutChromeLookup> = {}): LayoutChromeResolution {
+  if (env.LAYOUT_CHROME_FIXTURE === 'missing' && !env.CHROME_PATH?.trim() && !env.CHROME_BIN?.trim()) {
+    return {
+      status: 'missing',
+      message: 'No Chrome or Chromium executable was found. Install one or set CHROME_PATH. Without RUN_BROWSER_LAYOUT_TESTS=1 this geometry check is skipped, not passed.',
+    };
+  }
+  const full: LayoutChromeLookup = {
+    platform: lookup.platform ?? process.platform,
+    home: lookup.home ?? homedir(),
+    exists: lookup.exists ?? existsSync,
+    probe: lookup.probe ?? chromeAcceptsVersion,
+  };
+  const explicit = explicitChrome(env, full);
+  if (explicit) return explicit;
+  const native = full.platform === 'win32'
+    ? windowsChromeBins(env)
+    : full.platform === 'darwin'
+      ? macChromeBins(full.home)
+      : LINUX_CHROME_BINS;
+  const extra = [
+    ...(full.platform === 'win32' ? [] : windowsChromeBins(env)),
+    ...(full.platform === 'darwin' ? [] : macChromeBins(full.home)),
+    ...(full.platform === 'linux' ? [] : LINUX_CHROME_BINS),
+  ];
+  const seen = new Set<string>();
+  for (const candidate of [...native, ...extra]) {
+    if (seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!full.exists(candidate)) continue;
+    if (full.probe(candidate)) return { status: 'found', executable: candidate, source: 'installed' };
+  }
+  for (const command of PATH_CHROME_COMMANDS) {
+    if (full.probe(command)) return { status: 'found', executable: command, source: 'PATH' };
+  }
+  return {
+    status: 'missing',
+    message: 'No Chrome or Chromium executable was found. Install one or set CHROME_PATH. Without RUN_BROWSER_LAYOUT_TESTS=1 this geometry check is skipped, not passed.',
+  };
+}
+
+function freeTcpPort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const probe = createNetServer();
+    probe.once('error', reject);
+    probe.listen(0, '127.0.0.1', () => {
+      const address = probe.address();
+      const port = address && typeof address === 'object' ? address.port : 0;
+      probe.close(() => resolve(port));
+    });
+  });
+}
+
+const layoutChrome = resolveLayoutChrome();
+const browserLayoutRequired = process.env.RUN_BROWSER_LAYOUT_TESTS === '1';
+const skipGeometry = layoutChrome.status === 'missing' && !browserLayoutRequired;
 
 function screenHtml(render: (ui: GameUI) => void): string {
   const root = document.createElement('div');
@@ -246,16 +392,121 @@ const MEASURE = `(() => {
   };
 })()`;
 
+describe('layout chrome discovery', () => {
+  const chromeAt = (file: string) => ({
+    exists: (candidate: string) => candidate === file,
+    probe: (candidate: string) => candidate === file,
+  });
+
+  it('uses CHROME_PATH before an installed browser', () => {
+    const explicit = join('/opt', 'Google Chrome', 'chrome');
+    const installed = '/usr/bin/google-chrome';
+    const probed: string[] = [];
+    const found = resolveLayoutChrome({
+      CHROME_PATH: explicit,
+      CHROME_BIN: '/elsewhere/chrome',
+    }, {
+      exists: (candidate) => candidate === explicit || candidate === installed,
+      probe: (candidate) => {
+        probed.push(candidate);
+        return candidate === explicit || candidate === installed;
+      },
+    });
+    expect(found).toEqual({ status: 'found', executable: explicit, source: 'CHROME_PATH' });
+    expect(probed).toEqual([explicit]);
+  });
+
+  it('uses CHROME_BIN when CHROME_PATH is unset', () => {
+    const explicit = join('/Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome');
+    const found = resolveLayoutChrome({ CHROME_BIN: explicit }, chromeAt(explicit));
+    expect(found).toEqual({ status: 'found', executable: explicit, source: 'CHROME_BIN' });
+  });
+
+  it('reports a missing CHROME_PATH instead of searching further', () => {
+    const missing = join('/missing', 'chrome with spaces');
+    const probed: string[] = [];
+    const found = resolveLayoutChrome({ CHROME_PATH: missing }, {
+      exists: () => false,
+      probe: (candidate) => {
+        probed.push(candidate);
+        return true;
+      },
+    });
+    expect(found.status).toBe('invalid-path');
+    if (found.status === 'invalid-path') expect(found.message).toContain(missing);
+    expect(probed).toEqual([]);
+  });
+
+  it('reports a CHROME_PATH that is not Chrome instead of searching further', () => {
+    const file = '/tmp/not-chrome';
+    const probed: string[] = [];
+    const found = resolveLayoutChrome({ CHROME_PATH: file }, {
+      exists: (candidate) => candidate === file || candidate === '/usr/bin/google-chrome',
+      probe: (candidate) => {
+        probed.push(candidate);
+        return candidate === '/usr/bin/google-chrome';
+      },
+    });
+    expect(found.status).toBe('invalid-path');
+    expect(probed).toEqual([file]);
+  });
+
+  it('finds Chrome under Program Files without a hardcoded user name', () => {
+    const executable = join('C:\\Program Files', 'Google', 'Chrome', 'Application', 'chrome.exe');
+    const found = resolveLayoutChrome({ ProgramFiles: 'C:\\Program Files' }, {
+      platform: 'win32',
+      exists: (candidate) => candidate === executable,
+      probe: (candidate) => candidate === executable,
+    });
+    expect(found).toEqual({ status: 'found', executable, source: 'installed' });
+  });
+
+  it('finds the macOS application binary', () => {
+    const executable = join('/Applications', 'Google Chrome.app', 'Contents', 'MacOS', 'Google Chrome');
+    const found = resolveLayoutChrome({}, {
+      platform: 'darwin',
+      home: '/Users/player',
+      exists: (candidate) => candidate === executable,
+      probe: (candidate) => candidate === executable,
+    });
+    expect(found).toEqual({ status: 'found', executable, source: 'installed' });
+  });
+
+  it('uses a browser command from PATH when no installed file answers', () => {
+    const found = resolveLayoutChrome({}, {
+      platform: 'linux',
+      exists: () => false,
+      probe: (candidate) => candidate === 'chromium',
+    });
+    expect(found).toEqual({ status: 'found', executable: 'chromium', source: 'PATH' });
+  });
+
+  it('returns missing when nothing answers --version', () => {
+    const found = resolveLayoutChrome({ ProgramFiles: 'D:\\Programs' }, {
+      platform: 'win32',
+      exists: () => false,
+      probe: () => false,
+    });
+    expect(found.status).toBe('missing');
+  });
+});
+
 describe('online menu geometry in Chrome', () => {
   let server: Server | undefined;
   let chrome: ChildProcess | undefined;
+  let socket: WebSocket | undefined;
   let userData = '';
   let cdp: Cdp | undefined;
   const shots: string[] = [];
 
   afterAll(async () => {
     server?.close();
-    chrome?.kill();
+    socket?.close();
+    try {
+      chrome?.kill();
+    } catch {
+      /* The browser may already have exited. */
+    }
     cdp = undefined;
     await new Promise((resolve) => setTimeout(resolve, 200));
     if (userData) rmSync(userData, { recursive: true, force: true });
@@ -285,9 +536,13 @@ describe('online menu geometry in Chrome', () => {
     await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('layout server has no port');
+    if (layoutChrome.status !== 'found') {
+      throw new Error(layoutChrome.message);
+    }
     userData = mkdtempSync(join(tmpdir(), 'online-menu-layout-'));
-    const port = 12000 + (process.pid % 2000);
-    chrome = spawn(chromeBinary(), [
+    const port = await freeTcpPort();
+    const executable = layoutChrome.executable;
+    chrome = spawn(executable, [
       '--headless=new',
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -300,20 +555,38 @@ describe('online menu geometry in Chrome', () => {
       '--no-first-run',
       '--no-default-browser-check',
       'about:blank',
-    ], { stdio: 'ignore' });
-    await waitForJson(`http://127.0.0.1:${port}/json/version`);
+    ], { stdio: 'ignore', shell: false, windowsHide: true });
+    let debuggerReady = false;
+    const launchFailed = new Promise<never>((_, reject) => {
+      chrome?.once('error', (error) => {
+        if (!debuggerReady) reject(new Error(`Failed to start ${executable}: ${error.message}`));
+      });
+      chrome?.once('exit', (code, signal) => {
+        if (!debuggerReady) {
+          reject(new Error(`Chrome exited before remote debugging opened (code ${code ?? 'none'}, signal ${signal ?? 'none'}, port ${port}).`));
+        }
+      });
+    });
+    await Promise.race([
+      waitForJson(`http://127.0.0.1:${port}/json/version`).then(() => {
+        debuggerReady = true;
+      }),
+      launchFailed,
+    ]);
+    debuggerReady = true;
     const pagesOnBrowser = JSON.parse(await getText(`http://127.0.0.1:${port}/json/list`)) as Array<{
       type: string;
       webSocketDebuggerUrl: string;
     }>;
     const pageInfo = pagesOnBrowser.find((entry) => entry.type === 'page');
-    if (!pageInfo) throw new Error('chrome opened no page');
-    const socket = new WebSocket(pageInfo.webSocketDebuggerUrl);
+    if (!pageInfo) throw new Error(`chrome opened no page on port ${port}`);
+    const opened = new WebSocket(pageInfo.webSocketDebuggerUrl);
+    socket = opened;
     await new Promise<void>((resolve, reject) => {
-      socket.once('open', () => resolve());
-      socket.once('error', reject);
+      opened.once('open', () => resolve());
+      opened.once('error', reject);
     });
-    cdp = new Cdp(socket);
+    cdp = new Cdp(opened);
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
     return cdp;
@@ -372,7 +645,17 @@ describe('online menu geometry in Chrome', () => {
     return value;
   }
 
-  it('keeps server-list and connection-error controls inside the window', async () => {
+  it.skipIf(skipGeometry)(skipGeometry
+    ? 'keeps server-list and connection-error controls inside the window — skipped, Chrome was not found'
+    : 'keeps server-list and connection-error controls inside the window', async () => {
+    if (layoutChrome.status !== 'found') {
+      const detail = layoutChrome.status === 'invalid-path'
+        ? layoutChrome.message
+        : 'No Chrome or Chromium executable was found. Install one or set CHROME_PATH.';
+      throw new Error(browserLayoutRequired
+        ? `${detail}\nRUN_BROWSER_LAYOUT_TESTS=1 requires a browser and does not skip this check.`
+        : detail);
+    }
     mkdirSync(artifactDir, { recursive: true });
     const results: Array<{ scene: string; width: number; height: number; snapshot: LayoutSnapshot }> = [];
     for (const [width, height] of VIEWPORTS) {

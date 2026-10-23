@@ -90,8 +90,44 @@ Chrome 156, headless, `Emulation.setDeviceMetricsOverride`. Скриншоты: 
 ## Next Steps
 
 - Draft PR готов к независимой проверке. В main не влит.
-- Новый ZIP и выкладка на VPS не нужны для этой правки.
-- Перед повторной заявкой CSP в Яндекс Играх стоит проверить в iframe: «Обновить» делает новый запрос, недоступная Анархия показывает «Не удалось связаться», неоткрывшийся WebSocket оставляет «Повторить» и «К списку серверов».
+- Это три разные операции. Коммит меняет только GitHub. VPS и игровые серверы для этого меню обновлять не нужно, сохранения миров не затрагиваются. Игра в Яндекс Играх запускается из загруженного ZIP, поэтому после merge PR #137 новый интерфейс появится только так: собрать production-клиент из нового `main`, создать новый ZIP и заменить его в черновике Яндекс Игр.
+- Перед повторной заявкой CSP в Яндекс Играх стоит проверить в iframe уже из нового ZIP: «Обновить» делает новый запрос, недоступная Анархия показывает «Не удалось связаться», неоткрывшийся WebSocket оставляет «Повторить» и «К списку серверов».
+
+## Browser Test Portability Follow-up
+
+`tests/online-menu-layout.test.ts` измеряет настоящий CSS Grid через Chrome и `getBoundingClientRect()`. happy-dom сетку не раскладывает, поэтому проверка не заменена на DOM-assertions.
+
+Раньше список браузеров состоял из `/usr/bin/google-chrome`, `/usr/local/bin/google-chrome` и `/usr/bin/chromium`. На Windows и в окружении без Chrome `spawn('google-chrome')` падал с ENOENT, и `npm test` выглядел как регрессия интерфейса.
+
+Поиск теперь такой:
+
+1. `CHROME_PATH`, затем `CHROME_BIN`. Неверный явный путь — ошибка, другой браузер не подставляется.
+2. Установленные файлы: Linux (`google-chrome`, `chromium`, в том числе `/snap/bin/chromium`), Windows (`ProgramFiles`, `ProgramFiles(x86)`, `LOCALAPPDATA`, без имени пользователя), macOS (`/Applications` и `~/Applications`).
+3. Команды из PATH: `google-chrome`, `chromium`, `chrome`, `chrome.exe`.
+
+Кандидат принимается только если `executable --version` завершается успешно и в выводе есть Chrome или Chromium. Запуск без `shell: true`, путь с пробелами передаётся одним аргументом. Отладочный порт берётся свободным.
+
+Обычный `npm test` / `npx vitest run tests/online-menu-layout.test.ts`: браузер найден — измерения выполняются и ошибка вёрстки валит тест. Браузер не найден — этот один тест **skipped**, не passed и не failed. Остальные тесты идут дальше.
+
+Строгий режим, в том числе перед релизом:
+
+```
+RUN_BROWSER_LAYOUT_TESTS=1 npx vitest run tests/online-menu-layout.test.ts
+```
+
+PowerShell:
+
+```
+$env:RUN_BROWSER_LAYOUT_TESTS = '1'
+npx vitest run tests/online-menu-layout.test.ts
+$env:CHROME_PATH = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+```
+
+В строгом режиме отсутствие браузера — failed с текстом, что проверка не пропускается. Linux запускается той же командой; типичный бинарник находится сам.
+
+`skipped` значит: геометрия в этом прогоне не измерялась. `failed` значит: браузер был обязателен и не запустился, либо измерения не совпали с вёрсткой. `passed` у геометрического теста значит, что Chrome реально измерил шесть размеров.
+
+На этой Linux-машине с установленным Chrome проверено: обычный прогон и `RUN_BROWSER_LAYOUT_TESTS=1` — геометрический тест passed. `LAYOUT_CHROME_FIXTURE=missing` без флага — skipped, код выхода 0. Тот же fixture со строгим флагом — failed с текстом, что проверка не пропускается. `CHROME_PATH=/tmp/not-a-chrome-binary` — failed и не переключается на системный Chrome. Windows и macOS здесь не запускались; их пути покрыты подстановкой в `resolveLayoutChrome`.
 
 ## Git
 
