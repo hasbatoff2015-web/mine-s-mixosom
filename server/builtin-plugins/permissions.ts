@@ -50,7 +50,7 @@ export function createPermissionsPlugin(ctx: BuiltinPluginContext): Plugin {
             ]);
           }
           const admin = api.hasPermission(sender.playerId, 'server.admin') || api.isOperator(sender.name);
-          if (!admin) return fail('You do not have permission.');
+          if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
           if (sub === 'roles') return ok(`Roles: ${ctx.permissions.listRoles().join(', ')}`);
           if (sub === 'grant') {
             if (!args[1] || !args[2]) return usageError('/permissions grant <player> <node>');

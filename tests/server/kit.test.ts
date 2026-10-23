@@ -240,7 +240,7 @@ describe('kit commands', () => {
     expect(chat(world, op, '/kit create bare').some((line) => line.includes('пуст'))).toBe(true);
 
     const ada = join(world, 'Ada');
-    expect(chat(world, ada, '/kit create tools').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/kit create tools').some((line) => line.includes('прав'))).toBe(true);
     const adaStone = countItem(ada.player, 'stone');
     expect(chat(world, ada, '/kit tools').some((line) => line.includes('Выдан набор'))).toBe(true);
     expect(countItem(ada.player, 'stone')).toBe(adaStone + 32);

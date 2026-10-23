@@ -111,7 +111,7 @@ describe('display nickname join and server console', () => {
     const ada = join(world, 'Ada');
     ada.sink.payloads.length = 0;
     world.handleChat(ada.player, '/op Misha');
-    expect(resultLines(ada.sink).some((line) => line.includes('You do not have permission.'))).toBe(true);
+    expect(resultLines(ada.sink).some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
     expect(world.permissions.isOperator('Misha')).toBe(false);
   });
 

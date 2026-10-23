@@ -61,6 +61,16 @@ export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   if (screen === 'home-delete-confirm') return 'homes';
   if (screen === 'friend-delete-confirm' || screen === 'friend-chat') return 'friends';
   if (screen === 'auction-history') return 'auction';
+  if (
+    screen === 'donate-color'
+    || screen === 'donate-announce'
+    || screen === 'donate-invsee'
+    || screen === 'donate-tp'
+    || screen === 'donate-back'
+    || screen === 'donate-kits'
+    || screen === 'donate-pets'
+    || screen === 'donate-invsee-op'
+  ) return 'donate';
   if (screen === 'claim-settings' || screen === 'claim-delete-confirm') {
     return screen === 'claim-delete-confirm' ? 'claim-settings' : 'claims';
   }
@@ -137,6 +147,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'auction-history') return 'История сделок';
   if (screen === 'rating') return 'Рейтинг';
   if (screen === 'duels') return 'Дуэли';
+  if (screen === 'donate' || screen.startsWith('donate-')) return 'Донат';
   return 'Меню';
 }
 

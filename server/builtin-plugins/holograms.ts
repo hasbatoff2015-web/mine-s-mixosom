@@ -102,7 +102,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               ...hologram.lines.map((line, index) => `  ${index + 1}. ${line}`),
             ]);
           }
-          if (!canEdit(sender.playerId, sender.name)) return fail('You do not have permission.');
+          if (!canEdit(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
           const buyerOwned = (name: string | undefined) => name && isBuyerHologramName(name);
           const player = api.getPlayer(sender.playerId);
           if (sub === 'create') {

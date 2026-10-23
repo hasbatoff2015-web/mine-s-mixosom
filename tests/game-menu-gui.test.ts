@@ -8,6 +8,7 @@ import { GAME_MENU_BUTTONS, showsMenuBack } from '../shared/gameMenu';
 import { HOME_MAX_DEFAULT } from '../shared/homes';
 import { formatMegacoinAmount } from '../shared/megacoins';
 import { friendChatMessageHtml, menuBackHtml, menuBalanceHtml, menuBodyHtml, menuRootHtml } from '../src/ui/gameMenuGui';
+import { menuDonateHtml } from '../src/ui/donateMenuGui';
 import { MC_MENU_MAX_SCALE, MC_MENU_ROOT_HEIGHT, MC_MENU_WIDTH, menuLogicalHeight, menuUiScale } from '../src/ui/containerTheme';
 import type { ServerMenuMessage } from '../shared/protocol';
 
@@ -64,10 +65,10 @@ describe('main menu HUD and chrome', () => {
 
   it('lists the required menu buttons and omits Top', () => {
     expect(GAME_MENU_BUTTONS.map((button) => button.id)).toEqual([
-      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels',
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels', 'donate',
     ]);
     expect(GAME_MENU_BUTTONS.map((button) => button.label)).toEqual([
-      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион', 'Рейтинг', 'Дуэли',
+      'Спавн', 'Дома', 'Друзья', 'Кланы', 'Приваты', 'Обмен', 'Аукцион', 'Рейтинг', 'Дуэли', 'Донат',
     ]);
     const html = menuRootHtml({ balance: 5645, balanceLabel: formatMegacoinAmount(5645) });
     expect(html).toContain('Спавн');
@@ -79,8 +80,10 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('Аукцион');
     expect(html).toContain('Рейтинг');
     expect(html).toContain('Дуэли');
+    expect(html).toContain('Донат');
+    expect(html).toContain('icon_donate.png');
     expect(html).not.toContain('Топ');
-    expect(html.match(/mc-menu-grid-row-3-full/g)).toHaveLength(3);
+    expect(html.match(/mc-menu-grid-row-3-full/g)).toHaveLength(4);
     expect(html).not.toContain('mc-menu-grid-row-4');
     expect(html).toContain('icon_spawn.png');
     expect(html).toContain('icon_auction.png');
@@ -88,7 +91,7 @@ describe('main menu HUD and chrome', () => {
     expect(html).toContain('icon_duels.png');
     const openOrder = [...html.matchAll(/data-menu-open="([^"]+)"/g)].map((match) => match[1]);
     expect(openOrder).toEqual([
-      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels',
+      'spawn', 'homes', 'friends', 'clans', 'claims', 'trade', 'auction', 'rating', 'duels', 'donate',
     ]);
     expect(html).toContain('Баланс: 5 645 монет');
     expect(html.indexOf('data-menu-open="spawn"')).toBeLessThan(html.indexOf('data-menu-open="claims"'));
@@ -106,6 +109,9 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('event.stopPropagation()');
     expect(css).toContain('.mc-menu-tile-icon');
     expect(cssRule('.mc-menu-tile-icon')).toContain('background: transparent;');
+    const donateIcon = readFileSync(new URL('../public/ui/menu/icon_donate.png', import.meta.url));
+    expect(donateIcon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
+    expect(donateIcon[25]).toBe(6);
     const icon = readFileSync(new URL('../public/ui/menu/icon_rating.png', import.meta.url));
     expect(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))).toBe(true);
     expect(icon[25]).toBe(6);
@@ -118,6 +124,132 @@ describe('main menu HUD and chrome', () => {
       "print('transparent' if zeros > 1000 and im.getpixel((0,0))[3] == 0 else 'opaque')",
     ].join('; ')], { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname.replace(/\/$/, '') });
     expect(alpha.trim()).toBe('transparent');
+    const donate = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate',
+      title: 'Донат',
+      donate: {
+        rankLabel: 'Без привилегии',
+        summary: '',
+        remainingLabel: 'Без срока донат-ранга',
+        perks: [{ title: 'Дома', detail: '0/3' }],
+        actions: [
+          { id: 'tp', label: 'Телепорт по координатам', available: false, detail: 'Доступно с привилегии TITAN.', screen: 'donate-tp' },
+          { id: 'ec', label: 'Портальный сундук', available: false, detail: 'Доступно с привилегии PREMIUM.' },
+          { id: 'kits', label: 'Наборы', available: true, detail: 'Стартовые и ранговые наборы', screen: 'donate-kits' },
+        ],
+        kits: [],
+        catalog: [{ title: 'VIP', detail: 'Дома 4' }],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(donate).toContain('Без привилегии');
+    expect(donate).toContain('Доступно с привилегии TITAN');
+    expect(donate).toContain('mc-donate-card');
+    expect(donate).toContain('Наборы');
+    const pets = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-pets',
+      title: 'Питомцы',
+      message: 'Для призыва мини-крипера нужна привилегия TITAN.',
+      donate: {
+        rankLabel: 'BOSS',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [
+          { id: 'pets', label: 'Питомцы', available: true, detail: 'Пчёлка и мини-крипер', screen: 'donate-pets' },
+        ],
+        kits: [],
+        pets: [
+          { id: 'bee', label: 'Пчёлка', available: true, summoned: true, actionLabel: 'Отозвать пчёлку', detail: 'Сейчас рядом.' },
+          { id: 'creeper', label: 'Мини-крипер', available: false, summoned: false, actionLabel: 'Призвать мини-крипера', detail: 'Для призыва мини-крипера нужна привилегия TITAN.' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(pets).toContain('data-menu-screen="donate-pets"');
+    expect(pets).toContain('Пчёлка');
+    expect(pets).toContain('Мини-крипер');
+    expect(pets).toContain('data-donate-pet="bee"');
+    expect(pets).toContain('is-dismiss');
+    expect(pets).toContain('Отозвать пчёлку');
+    expect(pets).toContain('data-donate-pet="creeper"');
+    expect(pets).toContain('is-locked');
+    expect(pets).toContain('disabled');
+    expect(pets).toContain('Для призыва мини-крипера нужна привилегия TITAN.');
+    const summon = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-pets',
+      title: 'Питомцы',
+      donate: {
+        rankLabel: 'TITAN',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [],
+        kits: [
+          { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+          { name: 'boss', label: 'Набор BOSS', available: false, detail: 'Можно получить через 2 часа' },
+        ],
+        pets: [
+          { id: 'bee', label: 'Пчёлка', available: true, summoned: false, actionLabel: 'Призвать пчёлку', detail: 'Летает рядом.' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(summon).toContain('is-summon');
+    expect(summon).toContain('Призвать пчёлку');
+    expect(summon).not.toContain('Отозвать');
+    const kits = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-kits',
+      title: 'Наборы',
+      donate: {
+        rankLabel: 'TITAN',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [],
+        kits: [
+          { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+          { name: 'boss', label: 'Набор BOSS', available: false, detail: 'Можно получить через 2 часа' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(kits).toContain('data-donate-kit="vip"');
+    expect(kits).toContain('data-donate-kit="boss" title="Можно получить через 2 часа" disabled');
+    const homeDelete = menuBodyHtml({
+      type: 'menu',
+      screen: 'home-delete-confirm',
+      title: 'Дома',
+      pendingHomeName: 'База',
+    }, (value) => value);
+    expect(homeDelete).toContain('data-menu-action="home_confirm_delete"');
+    expect(homeDelete).toContain('mc-btn-danger');
+    expect(homeDelete).toContain('data-menu-action="home_cancel_delete"');
+    expect(gameUi).toContain("action: 'donate_pet', name");
+    expect(donate).not.toContain('Оператор. Донат-ранга нет');
+    expect(donate).toContain('disabled');
+    expect(donate).not.toContain('Эндер-сундук и наборы');
+    expect(donate).not.toContain('mc-donate-catalog');
+    expect(donate).not.toContain('invseeop');
   });
 
   it('keeps a compact dark menu panel and ships pixel-art chrome assets', () => {
@@ -130,8 +262,10 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('mc-menu-stage');
     expect(gameUi).toContain('overlayStageStyle(');
     expect(MC_MENU_WIDTH).toBe(248);
-    expect(MC_MENU_ROOT_HEIGHT).toBe(238);
-    expect(menuLogicalHeight('root')).toBe(238);
+    expect(MC_MENU_ROOT_HEIGHT).toBe(300);
+    expect(menuLogicalHeight('root')).toBe(300);
+    expect(menuLogicalHeight('donate')).toBe(360);
+    expect(cssRule('.mc-menu-panel')).toContain('scrollbar-width: none;');
     expect(menuLogicalHeight('duels')).toBe(292);
     expect(menuUiScale(1920, 1080, MC_MENU_WIDTH, MC_MENU_ROOT_HEIGHT)).toBeLessThanOrEqual(MC_MENU_MAX_SCALE);
     for (const [width, height] of [[1920, 1080], [1366, 768], [844, 390]] as const) {

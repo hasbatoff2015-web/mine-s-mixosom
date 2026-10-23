@@ -36,6 +36,11 @@ export interface ServerConfig {
   readonly loadExamplePlugin: boolean;
   /** Core plugins (permissions, TPA, home, …). Default on for every server mode. */
   readonly loadBuiltinPlugins: boolean;
+  /**
+   * OP-only `/ranktest` for local DEV. Off unless `FC_RANK_TEST=1`.
+   * Production `npm run start:server` does not set this.
+   */
+  readonly rankTestEnabled: boolean;
 }
 
 /**
@@ -94,6 +99,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
+    rankTestEnabled: env.FC_RANK_TEST === '1' || env.FC_RANK_TEST === 'true',
   };
 }
 

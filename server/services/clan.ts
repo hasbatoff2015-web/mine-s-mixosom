@@ -353,6 +353,11 @@ export class ClanService {
   private readonly sessions = new Map<string, ClanSession>();
   private readonly locks = new Set<string>();
   private runtime: ClanRuntime = emptyRuntime();
+  private createCostFor: (playerId: string) => number = () => CLAN_CREATE_COST;
+
+  setCreateCost(costFor: (playerId: string) => number): void {
+    this.createCostFor = costFor;
+  }
 
   constructor(
     private readonly store: JsonFileStore,
@@ -712,7 +717,8 @@ export class ClanService {
       for (const clan of this.clans.values()) {
         if (clan.nameKey === key) return { ok: false, error: CLAN_NAME_TAKEN_ERROR };
       }
-      const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE');
+      const cost = this.createCostFor(playerId);
+      const paid = this.economy.withdraw(playerId, cost, 'CLAN_CREATE');
       if (!paid.ok) return { ok: false, error: paid.error ?? 'Недостаточно Мегакоинов.' };
       const clan: ClanRecord = {
         clanId: `clan-${this.nextClanId++}`,
@@ -1786,11 +1792,13 @@ export class ClanService {
         create: {
           nameText: session.nameText,
           icon: session.selectedIcon,
-          cost: CLAN_CREATE_COST,
-          costLabel: `${formatCompactMegacoins(CLAN_CREATE_COST)} МК`,
+          cost: this.createCostFor(playerId),
+          costLabel: this.createCostFor(playerId) < CLAN_CREATE_COST
+            ? `Создание клана: ${formatCompactMegacoins(this.createCostFor(playerId))} МК · скидка донат-ранга`
+            : `${formatCompactMegacoins(this.createCostFor(playerId))} МК`,
         },
         selected: session.screen === 'create-confirm'
-          ? { prompt: 'Вы уверены, что хотите создать клан? Это стоит 10 000 Мегакоинов.' }
+          ? { prompt: `Вы уверены, что хотите создать клан? Это стоит ${formatCompactMegacoins(this.createCostFor(playerId))} Мегакоинов.` }
           : undefined,
       };
     }

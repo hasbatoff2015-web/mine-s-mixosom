@@ -112,6 +112,8 @@ export class PermissionService {
   private roles = new Map<string, Set<string>>();
   private playerRoles = new Map<string, Set<string>>();
   private playerPermissions = new Map<string, Set<string>>();
+  /** Timed or computed nodes. The key is already normalized. */
+  private extraNodes: (key: string) => Iterable<string> = () => [];
 
   constructor(
     private readonly store: JsonFileStore,
@@ -165,6 +167,11 @@ export class PermissionService {
 
   keyFor(playerIdOrName: string): string {
     return normalize(this.resolveKey(playerIdOrName));
+  }
+
+  /** Extra nodes are consulted on every check, so an expired grant drops immediately. */
+  setExtraNodes(provider: (key: string) => Iterable<string>): void {
+    this.extraNodes = provider;
   }
 
   isOperator(playerIdOrName: string): boolean {
@@ -329,6 +336,7 @@ export class PermissionService {
     }
     const extra = this.playerPermissions.get(key);
     if (extra) for (const node of extra) nodes.add(node);
+    for (const node of this.extraNodes(key)) nodes.add(node);
     return nodes;
   }
 

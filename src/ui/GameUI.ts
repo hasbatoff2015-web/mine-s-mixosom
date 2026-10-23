@@ -39,6 +39,7 @@ import {
   containerStageSize,
   containerUiScaleWithClose,
   cursorStackClientPosition,
+  MC_MENU_DONATE_WIDTH,
   MC_MENU_WIDTH,
   menuLogicalHeight,
   menuUiScale,
@@ -92,6 +93,7 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
+import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
@@ -334,7 +336,7 @@ export interface HudState {
 export interface InventoryContext {
   inventory: Inventory;
   mode: GameMode;
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
   chest?: ChestState;
   furnace?: FurnaceState;
   containerTitle?: string;
@@ -1615,9 +1617,19 @@ export class GameUI {
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
     if (message.kind === 'player' && message.from) {
+      const style = sanitizePlayerNameStyle(message.nameStyle);
+      if (style?.prefix) {
+        const prefix = document.createElement('span');
+        prefix.className = 'chat-line-prefix';
+        prefix.textContent = style.prefix;
+        if (style.prefixColor) prefix.style.color = DONATION_COLORS[style.prefixColor];
+        if (style.prefixColor === 'black') prefix.classList.add('chat-prefix-black');
+        line.append(prefix, document.createTextNode(' '));
+      }
       const name = document.createElement('span');
-      name.className = 'chat-line-name';
+      name.className = style?.bold ? 'chat-line-name chat-name-bold' : 'chat-line-name';
       name.textContent = message.from;
+      if (style?.nameColor) name.style.color = DONATION_COLORS[style.nameColor];
       const sep = document.createElement('span');
       sep.className = 'chat-line-sep';
       sep.textContent = ': ';
@@ -2701,7 +2713,10 @@ export class GameUI {
     if (isChestWindowKind(context.kind)) {
       const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
       const label = context.containerTitle
-        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest);
+        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest
+          : context.kind === 'invsee' ? 'Инвентарь'
+            : context.kind === 'invsee-op' ? 'Инвентарь (изменение)'
+              : CONTAINER_STRINGS.chest);
       return `<div class="mc-label">${label}</div>
         <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
     }
@@ -4862,7 +4877,9 @@ export class GameUI {
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = MC_MENU_WIDTH;
+    const logicalWidth = state.screen === 'donate' || state.screen.startsWith('donate-')
+      ? MC_MENU_DONATE_WIDTH
+      : MC_MENU_WIDTH;
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -5114,6 +5131,25 @@ export class GameUI {
     bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
+    for (const field of this.modal!.querySelectorAll<HTMLElement>('[data-donate-field]')) {
+      field.addEventListener('pointerdown', (event) => event.stopPropagation());
+      field.addEventListener('keydown', (event) => event.stopPropagation());
+      field.addEventListener('keyup', (event) => event.stopPropagation());
+    }
+    const search = this.modal!.querySelector<HTMLInputElement>('[data-donate-search]');
+    const playerList = this.modal!.querySelector<HTMLElement>('[data-donate-player-list]');
+    const searchEmpty = this.modal!.querySelector<HTMLElement>('[data-donate-search-empty]');
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of playerList?.querySelectorAll<HTMLElement>('[data-donate-player-row]') ?? []) {
+        const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
+        const match = query.length === 0 || name.includes(query);
+        row.hidden = !match;
+        if (match) shown += 1;
+      }
+      if (searchEmpty) searchEmpty.hidden = shown > 0 || query.length === 0;
+    });
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
     for (const list of lists) {
@@ -5256,6 +5292,17 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) + 1 });
         return;
       }
+      const swatch = target.closest<HTMLElement>('[data-donate-swatch]');
+      if (swatch?.dataset.donateSwatch) {
+        const pick = this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]');
+        if (pick) pick.dataset.selected = swatch.dataset.donateSwatch;
+        const preview = this.modal?.querySelector<HTMLElement>('[data-donate-preview]');
+        if (preview) preview.style.color = swatch.style.backgroundColor;
+        for (const entry of this.modal?.querySelectorAll<HTMLElement>('[data-donate-swatch]') ?? []) {
+          entry.classList.toggle('is-selected', entry === swatch);
+        }
+        return;
+      }
       const button = target.closest<HTMLElement>('[data-menu-action]');
       const kind = button?.dataset.menuAction;
       if (!kind || !isMenuActionKind(kind)) return;
@@ -5284,6 +5331,59 @@ export class GameUI {
       if (kind === 'trade_request') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? current.tradeNameText;
         actions.send({ type: 'menu_action', action: 'trade_request', name });
+        return;
+      }
+      if (kind === 'donate_color') {
+        const selected = button?.dataset.donateColor
+          ?? this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]')?.dataset.selected;
+        if (!selected) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Выберите цвет.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_color', color: selected, name: selected });
+        return;
+      }
+      if (kind === 'donate_announce') {
+        const text = this.modal?.querySelector<HTMLTextAreaElement>('[data-donate-announce]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'donate_announce', text });
+        return;
+      }
+      if (kind === 'donate_tp') {
+        const raw = (selector: string) => this.modal?.querySelector<HTMLInputElement>(selector)?.value.trim() ?? '';
+        const x = Number(raw('[data-donate-x]'));
+        const y = Number(raw('[data-donate-y]'));
+        const z = Number(raw('[data-donate-z]'));
+        if (!raw('[data-donate-x]') || !raw('[data-donate-y]') || !raw('[data-donate-z]') || ![x, y, z].every(Number.isFinite)) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Введите координаты X, Y и Z.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_tp', x, y, z });
+        return;
+      }
+      if (kind === 'donate_invsee' || kind === 'donate_invseeop') {
+        const name = button?.dataset.donatePlayer;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: kind, name });
+        return;
+      }
+      if (kind === 'donate_kit') {
+        const name = button?.dataset.donateKit;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_kit', name });
+        return;
+      }
+      if (kind === 'donate_pet') {
+        const name = button?.dataset.donatePet;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_pet', name });
         return;
       }
       actions.send({ type: 'menu_action', action: kind });

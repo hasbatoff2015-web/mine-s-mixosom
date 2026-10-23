@@ -408,10 +408,11 @@ export class PlayerArrowManager {
   tryCollect(
     player: PlayerAABB,
     options: {
-      readonly mode: 'survival' | 'creative';
+      readonly mode: 'survival' | 'creative' | 'spectator';
       readonly addItem: (itemId: string, count: number) => number;
     },
   ): number {
+    if (options.mode === 'spectator') return 0;
     let collected = 0;
     for (let index = this.arrows.length - 1; index >= 0; index -= 1) {
       const arrow = this.arrows[index]!;

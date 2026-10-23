@@ -14,7 +14,9 @@ import {
   type ItemStack,
   type PortalChestInventory,
 } from '../src/inventory';
-import { sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
+import { applyInventoryUiAction, sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
+import { cloneStack } from '../src/inventory/stack';
+import { readInvseeSlots, writeInvseeSlots } from './services/invsee';
 import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { emoteDurationTicks, emoteMovementInterrupts } from '../shared/emotes';
 import type { EmoteId } from '../shared/emotes';
@@ -44,12 +46,15 @@ import { VoxelWorld } from '../src/world/World';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { collectMinecartPassengers } from '../src/entities/minecartOccupancy';
 import {
+  COSMETIC_PET_WORLD_CAP,
   cosmeticKindForSelection,
   isCosmeticPetKind,
   parseCosmeticPetSelection,
+  selectionForCosmeticKind,
   type CosmeticPetSelection,
 } from '../src/entities/cosmeticPets';
 import { findCosmeticSpawnSpot } from '../src/entities/cosmeticPetMotion';
+import { playerText } from '../shared/playerText';
 import { EMPTY_SIGN_LINES, sanitizeSignLines } from '../src/world/sign';
 import { consumeOffhandTotem } from '../src/gameplay/totemDeathProtection';
 import { TOTEM_PRESENTATION_DISTANCE } from '../src/gameplay/totemBurst';
@@ -119,12 +124,13 @@ import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityVi
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
 import { PermissionService } from './services/permissions';
+import { DonationRankService } from './services/donationRanks';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
 import { AutoMineManager, mineVolume } from './services/autoMine';
 import { WorldEventsManager, overlayEventPlacementOnChunkModifications, overlayEventPlacementOnModifications } from './services/worldEvents';
-import { AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
+import { AUCTION_MAX_ACTIVE, AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
@@ -144,8 +150,11 @@ import {
 } from './services/gameMenu';
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
 import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
-import { HOME_MAX_DEFAULT, HOME_MAX_PREMIUM, HOME_MAX_VIP, HOME_MISSING_ERROR } from '../shared/homes';
-import { GAME_MENU_MAX_CLAIMS } from '../shared/gameMenu';
+import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, resolveHomeLimit } from '../shared/homes';
+import { CLAN_CREATE_COST, CLAN_DONATE_CREATE_COST } from '../shared/clans';
+import { formatDurationMs, sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
+import { attemptCoordinateTeleport } from './services/coordinateTeleport';
+import { buildDonateMenu } from './services/donateMenuView';
 import {
   applyGameMenuAction,
   type MenuActionHost,
@@ -371,6 +380,8 @@ export class ServerPlayer implements GameplayPlayer {
   healthSignature = '';
   effectSignature = '';
   appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
+  /** Server-owned nick prefix and color. Never taken from chat text. */
+  nameStyleProvider?: () => PlayerNameStyle | undefined;
   /** Decorative pet for this world. Null means the player has none. */
   cosmeticPet: CosmeticPetSelection | null = null;
   /**
@@ -447,6 +458,7 @@ export class ServerPlayer implements GameplayPlayer {
   snapshot(): PlayerSnapshot {
     const position = this.controller.position;
     const velocity = this.controller.velocity;
+    const nameStyle = sanitizePlayerNameStyle(this.nameStyleProvider?.());
     return {
       id: this.id,
       name: this.name,
@@ -472,6 +484,7 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
+      ...(nameStyle ? { nameStyle } : {}),
       inputSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       ackCommandSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       flying: this.controller.isFlying,
@@ -540,6 +553,7 @@ export class ServerPlayer implements GameplayPlayer {
     return {
       id: snap.id,
       name: snap.name,
+      gamemode: snap.gamemode,
       x: snap.x,
       y: snap.y,
       z: snap.z,
@@ -549,6 +563,7 @@ export class ServerPlayer implements GameplayPlayer {
       equipment: snap.equipment,
       appearance: toNetworkAppearance(this.appearance),
       health: snap.health,
+      ...(snap.nameStyle ? { nameStyle: snap.nameStyle } : {}),
       onFire: snap.onFire === true,
       ...(snap.dead ? { dead: true } : {}),
     };
@@ -615,6 +630,8 @@ export class WorldInstance {
   readonly plugins = new PluginManager(this.events, this.commands);
   readonly pluginStore: JsonFileStore;
   readonly permissions: PermissionService;
+  readonly donation: DonationRankService;
+  private readonly inventoryEditLocks = new Set<string>();
   readonly teleports: TeleportService;
   readonly teleportHistory: TeleportHistoryService;
   readonly pluginConfig: PluginConfigService;
@@ -829,7 +846,16 @@ export class WorldInstance {
       const named = [...this.players.values()].find((player) => player.name.toLowerCase() === lower);
       return named?.name ?? idOrName;
     });
+    this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
+    this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
+    this.clan.setCreateCost((playerId) => (
+      this.donation.effectiveRank(playerId) === 'default' ? CLAN_CREATE_COST : CLAN_DONATE_CREATE_COST
+    ));
     this.teleportHistory = new TeleportHistoryService();
+    this.teleportHistory.bindDeathStore(
+      () => this.pluginStore.load('back/deaths', { deaths: {} }),
+      (value) => { this.pluginStore.save('back/deaths', value); this.dirty = true; },
+    );
     this.teleports = new TeleportService(config.worldId, this.teleportHistory, (playerId) => {
       const player = this.players.get(playerId);
       if (!player) return undefined;
@@ -1011,6 +1037,12 @@ export class WorldInstance {
     this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
     this.gameplay.onDeathLoot = (player, ids) => {
       this.duels.finalizeDeath(player.id, ids);
+      this.teleportHistory.recordDeath(player.id, {
+        worldId: this.worldId,
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+      });
     };
     this.teleports.setExternalDeny((playerId, reason) => (
       reason === 'duel' ? undefined : this.duels.externalTeleportError(playerId)
@@ -1185,6 +1217,7 @@ export class WorldInstance {
       }
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
+      this.donation.load();
       this.economy.load();
       this.auction.load();
       this.clan.load();
@@ -1201,6 +1234,7 @@ export class WorldInstance {
     this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
     this.createdAt = Date.now();
     this.permissions.load();
+    this.donation.load();
     this.economy.load();
     this.auction.load();
     this.clan.load();
@@ -1272,6 +1306,11 @@ export class WorldInstance {
         markDirty: () => { this.dirty = true; },
         holograms: this.holograms,
         claimBoundaries: this.claimBoundaries,
+        donation: this.donation,
+        rankTestEnabled: this.config.rankTestEnabled,
+        openPortalChest: (playerId) => this.openPortalChest(playerId),
+        openPlayerInventory: (viewerId, targetName, mode) => this.openPlayerInventory(viewerId, targetName, mode),
+        broadcastAnnouncement: (text) => this.broadcastAnnouncement(text),
       });
       for (const plugin of builtins) {
         if (this.plugins.list().some((entry) => entry.name === plugin.name)) continue;
@@ -1392,6 +1431,7 @@ export class WorldInstance {
     };
     await this.worldStore.save(snapshot);
     if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
+    this.donation.persist();
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();
@@ -1526,6 +1566,7 @@ export class WorldInstance {
       undefined,
       sanitizeRegisteredAppearance(options.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
+    this.bindNameStyle(player);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
     player.lastInputConnectionId = player.connectionId;
@@ -1610,7 +1651,7 @@ export class WorldInstance {
         totalPages: 1,
         totalCount: 0,
         listings: [],
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -1756,6 +1797,7 @@ export class WorldInstance {
         amount,
         parsedPrice,
         session.expectedItem,
+        this.auctionLimitFor(player),
       );
       if (!result.ok) {
         session.message = result.error;
@@ -1876,7 +1918,7 @@ export class WorldInstance {
     if (!this.hasClanPermission(player, message.action)) {
       const session = this.clan.session(player.id);
       if (session.screen !== 'closed') {
-        session.message = 'You do not have permission.';
+        session.message = 'Недостаточно прав для выполнения этой команды.';
         this.flushClan(player);
         return;
       }
@@ -1889,7 +1931,7 @@ export class WorldInstance {
         totalPages: 1,
         totalCount: 0,
         clans: [],
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -1978,7 +2020,7 @@ export class WorldInstance {
         type: 'chat',
         from: 'server',
         playerId: 'server',
-        text: 'You do not have permission.',
+        text: 'Недостаточно прав для выполнения этой команды.',
         kind: 'error',
       });
       return;
@@ -2007,7 +2049,7 @@ export class WorldInstance {
         total: 0,
         totalLabel: '',
         configured: false,
-        message: 'You do not have permission.',
+        message: 'Недостаточно прав для выполнения этой команды.',
       });
       return;
     }
@@ -2126,6 +2168,15 @@ export class WorldInstance {
         return live ? this.findOwnedClaim(live, claimId) : undefined;
       },
       duels: this.duels,
+      reloadDonation: () => {
+        this.donation.load();
+      },
+      deathPoint: (entry) => {
+        const last = this.teleportHistory.peekDeath(entry.id);
+        if (!last || last.worldId !== this.worldId) return undefined;
+        return { x: last.x, y: last.y, z: last.z };
+      },
+      liveCosmeticPet: (entry) => this.liveCosmeticPet(entry.id),
     };
   }
 
@@ -2254,6 +2305,18 @@ export class WorldInstance {
       this.flushMenuPlayers([...new Set([player.id, ...outcome.affected])]);
       return;
     }
+    if (outcome.kind === 'donate-command') {
+      session.screen = outcome.screen;
+      const result = this.runPlayerCommand(player, outcome.command);
+      session.message = result.lines.join(' ');
+      if (result.ok && outcome.closeOnSuccess) {
+        this.menuSessions.delete(player.id);
+        this.sendTo(player, closedMenuMessage());
+        return;
+      }
+      this.flushMenu(player);
+      return;
+    }
     this.flushMenuPlayers(outcome.affected);
     this.flushActiveTrades(outcome.affected);
   }
@@ -2267,19 +2330,19 @@ export class WorldInstance {
 
   private maxHomesFor(player: ServerPlayer): number {
     const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
-    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', HOME_MAX_VIP));
-    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', HOME_MAX_PREMIUM));
-    if (this.permissions.isOperator(player.id) || this.permissions.has(player.id, 'home.*')) {
-      return Math.max(premium, vip, def);
-    }
-    let max = def;
-    if (this.permissions.has(player.id, 'home.multiple') || this.permissions.has(player.name, 'home.multiple')) {
-      max = Math.max(max, vip);
-    }
-    if (this.permissions.has(player.id, 'home.limit.premium') || this.permissions.has(player.name, 'home.limit.premium')) {
-      max = Math.max(max, premium);
-    }
-    return max;
+    const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', 4));
+    const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', 5));
+    const has = (node: string) => this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return resolveHomeLimit({
+      donation: this.donation.limit(player.id, 'homes'),
+      operator: this.isOperator(player),
+      wildcard: has('home.*'),
+      multiple: has('home.multiple'),
+      premiumNode: has('home.limit.premium'),
+      configuredDefault: def,
+      configuredVip: vip,
+      configuredPremium: premium,
+    });
   }
 
   private loadClaimStore() {
@@ -2437,7 +2500,7 @@ export class WorldInstance {
         ...base,
         claims: mine.map(toMenuClaim),
         claimCount: mine.length,
-        claimMax: GAME_MENU_MAX_CLAIMS,
+        claimMax: this.isOperator(player) ? Math.max(7, this.donation.limit(player.id, 'claims')) : this.donation.limit(player.id, 'claims'),
         ...(selected ? {
           claimId: selected.id,
           claimNameText: session.claimNameText,
@@ -2472,6 +2535,33 @@ export class WorldInstance {
       return {
         ...base,
         ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
+      };
+    }
+    if (session.screen === 'donate' || session.screen.startsWith('donate-')) {
+      const owner = player.name.toLowerCase();
+      const claims = this.loadClaimStore().claims.filter((claim) => claim.owner === owner).length;
+      const last = this.teleportHistory.peekDeath(player.id);
+      const deathPoint = last && last.worldId === this.worldId ? { x: last.x, y: last.y, z: last.z } : undefined;
+      return {
+        ...base,
+        donate: buildDonateMenu({
+          status: this.donation.status(player.id, {
+            operator: this.isOperator(player),
+            homes: this.homes.list(player.name).length,
+            claims,
+            auction: this.auction.activeCount(player.id),
+          }),
+          operator: this.isOperator(player),
+          playerName: player.name,
+          homes: this.homes.list(player.name).length,
+          claims,
+          auction: this.auction.activeCount(player.id),
+          onlinePlayers: this.connectedPlayers()
+            .filter((other) => other.id !== player.id)
+            .map((other) => ({ playerId: other.id, name: other.name })),
+          ...(deathPoint ? { deathPoint } : {}),
+          summonedPet: this.liveCosmeticPet(player.id),
+        }),
       };
     }
     if (session.screen === 'duels') {
@@ -2619,6 +2709,7 @@ export class WorldInstance {
     this.resetConnectionInput(player);
     serverLog(`player disconnected: ${player.name} (${player.id})`);
     this.duels.onPlayerQuit(player.id);
+    this.closeInvseeInvolving(player.id);
     this.events.emit('playerQuit', { playerId: player.id, name: player.name });
     this.broadcast({ type: 'player_left', playerId: player.id }, playerId);
     this.notifyFriendsOfPresence(player, 'left');
@@ -3018,11 +3109,177 @@ export class WorldInstance {
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    if (action.action === 'open' && (action.kind === 'invsee' || action.kind === 'invsee-op')) {
+      this.flushPlayerInventory(player, true);
+      return;
+    }
+    if (player.window.kind === 'invsee' || player.window.kind === 'invsee-op') {
+      this.applyInvseeAction(player, action);
+      return;
+    }
     this.gameplay.applyInventory(player, action);
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     this.flushSharedContainerViewers(player);
+  }
+
+  private auctionLimitFor(player: ServerPlayer): number {
+    const rankLimit = this.donation.limit(player.id, 'auction');
+    return this.isOperator(player) ? Math.max(AUCTION_MAX_ACTIVE, rankLimit) : rankLimit;
+  }
+
+  private bindNameStyle(player: ServerPlayer): void {
+    player.nameStyleProvider = () => this.donation.nameStyle(player.id, this.isOperator(player));
+  }
+
+  private broadcastAnnouncement(text: string): void {
+    const messageId = crypto.randomUUID();
+    for (const player of this.connectedPlayers()) {
+      this.sendTo(player, {
+        type: 'chat',
+        messageId,
+        from: 'server',
+        playerId: 'server',
+        text,
+        kind: 'system',
+        style: 'announcement',
+        channel: 'global',
+      });
+    }
+  }
+
+  private openPortalChest(playerId: string): { ok: boolean; error?: string } {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return { ok: false, error: 'Player not found.' };
+    if (!this.isOperator(player) && !this.permissions.has(player.id, 'enderchest.use') && !this.permissions.has(player.name, 'enderchest.use')) {
+      return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
+    }
+    player.window = { kind: 'portal-chest' };
+    player.inventoryDirty = true;
+    this.flushPlayerInventory(player, true);
+    return { ok: true };
+  }
+
+  private openPlayerInventory(
+    viewerId: string,
+    targetName: string,
+    mode: 'readonly' | 'edit',
+  ): { ok: boolean; error?: string } {
+    const viewer = this.players.get(viewerId);
+    if (!viewer?.connected) return { ok: false, error: 'Player not found.' };
+    if (mode === 'readonly' && !this.isOperator(viewer) && !this.permissions.has(viewer.id, 'invsee.use') && !this.permissions.has(viewer.name, 'invsee.use')) {
+      return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
+    }
+    if (mode === 'edit' && !this.isOperator(viewer)) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
+    const target = this.findConnectedPlayer(targetName);
+    if (!target) return { ok: false, error: 'Player is not online.' };
+    if (target.id === viewer.id) return { ok: false, error: 'Нельзя открыть свой инвентарь этой командой.' };
+    viewer.window = {
+      kind: mode === 'edit' ? 'invsee-op' : 'invsee',
+      viewPlayerId: target.id,
+    };
+    viewer.inventoryDirty = true;
+    this.flushPlayerInventory(viewer, true);
+    serverLog(`invsee ${mode} ${viewer.name} -> ${target.name}`);
+    return { ok: true };
+  }
+
+  private findConnectedPlayer(idOrName: string): ServerPlayer | undefined {
+    const direct = this.players.get(idOrName);
+    if (direct?.connected) return direct;
+    const lower = idOrName.toLowerCase();
+    return this.connectedPlayers().find((player) => player.name.toLowerCase() === lower);
+  }
+
+  private closeInvseeInvolving(playerId: string): void {
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      if (player.id !== playerId && player.window.viewPlayerId !== playerId) continue;
+      if (player.window.kind !== 'invsee' && player.window.kind !== 'invsee-op' && player.id !== playerId) continue;
+      if (player.id === playerId || player.window.viewPlayerId === playerId) {
+        if (player.window.kind === 'invsee' || player.window.kind === 'invsee-op') {
+          player.window = { kind: 'inventory' };
+          player.inventoryDirty = true;
+          if (player.connected) this.flushPlayerInventory(player, true);
+        }
+      }
+    }
+  }
+
+  private applyInvseeAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    const targetId = player.window.viewPlayerId;
+    const target = targetId ? this.players.get(targetId) : undefined;
+    if (!target?.connected) {
+      player.window = { kind: 'inventory' };
+      this.flushPlayerInventory(player, true);
+      return;
+    }
+    const editing = player.window.kind === 'invsee-op';
+    if (!editing || action.action === 'close' || action.action === 'select') {
+      if (!editing && action.action !== 'close' && action.action !== 'select') {
+        this.flushPlayerInventory(player, true);
+        return;
+      }
+      this.gameplay.applyInventory(player, action);
+      if (action.action === 'close') player.window = { kind: 'inventory' };
+      this.flushPlayerInventory(player, true);
+      return;
+    }
+    if (!this.isOperator(player)) {
+      player.window = { kind: 'inventory' };
+      this.flushPlayerInventory(player, true);
+      return;
+    }
+    if (this.inventoryEditLocks.has(target.id) || this.inventoryEditLocks.has(player.id)) {
+      this.flushPlayerInventory(player, true);
+      this.flushPlayerInventory(target, true);
+      return;
+    }
+    this.inventoryEditLocks.add(target.id);
+    this.inventoryEditLocks.add(player.id);
+    const viewerBackup = player.inventory.serialize();
+    const cursorBackup = cloneStack(player.cursor);
+    const craftBackup = player.craftSlots.map((stack) => cloneStack(stack));
+    const targetBackup = target.inventory.serialize();
+    const chest = { slots: readInvseeSlots(target.inventory) };
+    try {
+      const state = {
+        inventory: player.inventory,
+        cursor: player.cursor,
+        craftSlots: player.craftSlots,
+        window: { kind: 'chest' as const },
+        gamemode: player.gamemode,
+        chest,
+      };
+      const result = applyInventoryUiAction(state, action);
+      player.cursor = state.cursor;
+      player.craftSlots = state.craftSlots;
+      if (!result.ok) {
+        player.inventory.restore(viewerBackup);
+        player.cursor = cursorBackup;
+        player.craftSlots = craftBackup;
+      } else {
+        writeInvseeSlots(target.inventory, chest.slots);
+        for (const dropped of result.dropped) this.gameplay.dropFromPlayer(player, dropped);
+        serverLog(`invseeop ${player.name} ${action.action} ${target.name}`);
+      }
+    } catch (error) {
+      player.inventory.restore(viewerBackup);
+      player.cursor = cursorBackup;
+      player.craftSlots = craftBackup;
+      target.inventory.restore(targetBackup);
+      const message = error instanceof Error ? error.message : String(error);
+      serverLog(`invseeop rejected ${player.name} -> ${target.name}: ${message}`, 'warn');
+    } finally {
+      this.inventoryEditLocks.delete(target.id);
+      this.inventoryEditLocks.delete(player.id);
+    }
+    player.inventoryDirty = true;
+    target.inventoryDirty = true;
+    this.dirty = true;
+    this.flushPlayerInventory(player, true);
+    this.flushPlayerInventory(target, true);
   }
 
   attack(player: ServerPlayer): void {
@@ -3538,6 +3795,7 @@ export class WorldInstance {
     commandSeq?: number,
     selectedSlot?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    if (player.gamemode === 'spectator') return { ok: false, reason: 'spectator' };
     if (!this.acceptActionSeq(player, actionSeq)) return { ok: false, reason: 'duplicate' };
     const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
     if (!slot.ok) return slot;
@@ -3737,13 +3995,13 @@ export class WorldInstance {
       type: 'command_result',
       ok: false,
       name: 'holograms',
-      lines: ['You do not have permission.'],
+      lines: ['Недостаточно прав для выполнения этой команды.'],
     });
     this.sendTo(player, {
       type: 'chat',
       from: 'server',
       playerId: 'server',
-      text: 'You do not have permission.',
+      text: 'Недостаточно прав для выполнения этой команды.',
       kind: 'error',
     });
   }
@@ -3759,6 +4017,29 @@ export class WorldInstance {
       serverLog(`console command failed: ${message}`, 'error');
       return { ok: false, lines: [`Command failed: ${message}`] };
     }
+  }
+
+  private runPlayerCommand(player: ServerPlayer, text: string): { ok: boolean; lines: readonly string[] } {
+    const commandEvent = this.events.createPlayerCommand(player.id, text);
+    this.events.emit('playerCommand', commandEvent);
+    if (commandEvent.cancelled) return { ok: false, lines: ['Command cancelled.'] };
+    const dispatched = this.commands.dispatch(text, {
+      ...player.commandSender(),
+      operator: this.isOperator(player),
+    });
+    const lines = dispatched.result?.lines ?? ['Команда не выполнена.'];
+    const okResult = dispatched.result?.ok ?? false;
+    this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
+    const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+    this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text: lines.join('\n'),
+      kind: okResult ? 'command' : 'error',
+    });
+    return { ok: okResult, lines };
   }
 
   handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
@@ -3855,6 +4136,7 @@ export class WorldInstance {
     channel: ChatChannel,
     recipients: ServerPlayer[],
   ): void {
+    const nameStyle = this.donation.nameStyle(sender.id, this.isOperator(sender));
     const payload: ServerChatMessage = {
       type: 'chat',
       messageId: crypto.randomUUID(),
@@ -3863,6 +4145,7 @@ export class WorldInstance {
       text,
       kind: 'player',
       channel,
+      ...(nameStyle ? { nameStyle } : {}),
     };
     const seen = new Set<string>();
     for (const target of recipients) {
@@ -3891,8 +4174,10 @@ export class WorldInstance {
 
   setGameMode(player: ServerPlayer, mode: GameMode): void {
     player.gamemode = mode;
-    player.controller.creativeFlightAllowed = mode === 'creative';
-    if (mode !== 'creative') player.controller.isFlying = false;
+    player.controller.creativeFlightAllowed = mode === 'creative' || mode === 'spectator';
+    player.controller.noclip = mode === 'spectator';
+    if (mode === 'spectator') player.controller.isFlying = true;
+    else if (mode !== 'creative') player.controller.isFlying = false;
     this.sendTo(player, {
       type: 'inventory',
       inventory: player.inventory.serialize(),
@@ -4021,6 +4306,7 @@ export class WorldInstance {
     }
     this.recordCombatPoses();
     this.gameplay.mobs.recordPoseHistory(this.tickNumber);
+    this.enforceCosmeticPetRights();
     this.cosmeticEnsureTicks += 1;
     if (this.cosmeticEnsureTicks >= 20) {
       this.cosmeticEnsureTicks = 0;
@@ -4048,7 +4334,17 @@ export class WorldInstance {
     this.lastTickMetrics = metrics;
     this.finishRtpSearches();
     this.teleports.tick(dt * 1000);
+    if (this.tickNumber % 20 === 0) this.refreshOpenDonateMenus();
     if (this.connectedPlayers().length > 0) this.snapshotsGenerated += 1;
+  }
+
+  private refreshOpenDonateMenus(): void {
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const session = this.menuSessions.get(player.id);
+      if (!session || (session.screen !== 'donate' && !session.screen.startsWith('donate-'))) continue;
+      this.flushMenu(player);
+    }
   }
 
   private finishRtpSearches(): void {
@@ -4665,14 +4961,21 @@ export class WorldInstance {
     this.broadcast({ type: 'block_batch', changes });
   }
 
-  private flushPlayerInventory(player: ServerPlayer, force = true): void {
+  private flushPlayerInventory(player: ServerPlayer, force = true, notifyViewers = true): void {
     if (!force && !player.inventoryDirty) return;
+    if (player.window.kind === 'invsee' || player.window.kind === 'invsee-op') {
+      const target = player.window.viewPlayerId ? this.players.get(player.window.viewPlayerId) : undefined;
+      if (!target?.connected) player.window = { kind: 'inventory' };
+    }
     player.inventoryDirty = false;
+    const viewed = player.window.viewPlayerId ? this.players.get(player.window.viewPlayerId) : undefined;
     const chest = player.window.kind === 'portal-chest'
       ? player.portalChest
-      : player.window.kind === 'chest' && player.window.x !== undefined
-        ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-        : undefined;
+      : player.window.kind === 'invsee' || player.window.kind === 'invsee-op'
+        ? (viewed ? { slots: readInvseeSlots(viewed.inventory) } : undefined)
+        : player.window.kind === 'chest' && player.window.x !== undefined
+          ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
+          : undefined;
     const furnace = player.window.kind === 'furnace' && player.window.x !== undefined
       ? this.world.getFurnace(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
       : undefined;
@@ -4696,6 +4999,17 @@ export class WorldInstance {
         } : {}),
       },
     });
+    if (notifyViewers) this.refreshInvseeViewers(player);
+  }
+
+  private refreshInvseeViewers(target: ServerPlayer): void {
+    for (const other of this.players.values()) {
+      if (!other.connected || other.id === target.id) continue;
+      if (other.window.viewPlayerId !== target.id) continue;
+      if (other.window.kind !== 'invsee' && other.window.kind !== 'invsee-op') continue;
+      other.inventoryDirty = true;
+      this.flushPlayerInventory(other, true, false);
+    }
   }
 
   /**
@@ -5518,6 +5832,7 @@ export class WorldInstance {
       survival,
       sanitizeRegisteredAppearance(stored.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
+    this.bindNameStyle(player);
     if (stored.cursor) {
       try {
         player.cursor = stored.cursor as ItemStack;
@@ -5629,11 +5944,35 @@ export class WorldInstance {
     this.dirty = true;
   }
 
+  private liveCosmeticPet(playerId: string): CosmeticPetSelection | null {
+    const mob = this.ownedCosmeticPets(playerId).find((candidate) => candidate.alive);
+    return mob && isCosmeticPetKind(mob.kind) ? selectionForCosmeticKind(mob.kind) : null;
+  }
+
+  private cosmeticPetAllowed(player: ServerPlayer, selection: CosmeticPetSelection): boolean {
+    const node = selection === 'bee' ? 'pet.bee' : 'pet.creeper';
+    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+  }
+
+  /** Drop a live pet in the same tick the rank or operator right disappears. The saved choice stays. */
+  private enforceCosmeticPetRights(): void {
+    for (const player of this.connectedPlayers()) {
+      const selection = player.cosmeticPet;
+      if (!selection || this.cosmeticPetAllowed(player, selection)) continue;
+      if (this.ownedCosmeticPets(player.id).length === 0) continue;
+      this.removeCosmeticPetRuntime(player.id);
+    }
+  }
+
   private ensureCosmeticPet(player: ServerPlayer): void {
     if (!player.connected || player.survival.dead) return;
     const selection = player.cosmeticPet;
     const owned = this.ownedCosmeticPets(player.id);
     if (!selection) {
+      this.removeCosmeticPetRuntime(player.id);
+      return;
+    }
+    if (!this.cosmeticPetAllowed(player, selection)) {
       this.removeCosmeticPetRuntime(player.id);
       return;
     }
@@ -5649,6 +5988,10 @@ export class WorldInstance {
 
   private snapCosmeticPet(player: ServerPlayer): void {
     if (!player.connected || player.survival.dead || !player.cosmeticPet) return;
+    if (!this.cosmeticPetAllowed(player, player.cosmeticPet)) {
+      this.removeCosmeticPetRuntime(player.id);
+      return;
+    }
     const kind = cosmeticKindForSelection(player.cosmeticPet);
     const owned = this.ownedCosmeticPets(player.id);
     const keep = owned.find((mob) => mob.alive && mob.kind === kind);
@@ -5686,6 +6029,9 @@ export class WorldInstance {
       this.rememberCosmeticSelection(player);
       return ok('Декоративный питомец отключён.');
     }
+    if (!this.cosmeticPetAllowed(player, selection)) {
+      return fail(selection === 'bee' ? playerText.petBeeDenied : playerText.petCreeperDenied);
+    }
     const kind = cosmeticKindForSelection(selection);
     const current = this.ownedCosmeticPets(player.id).filter((mob) => mob.alive && mob.kind === kind);
     if (player.cosmeticPet === selection && current.length >= 1) {
@@ -5695,7 +6041,10 @@ export class WorldInstance {
     const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
     if (!spot) return fail('Не удалось найти безопасное место для питомца.');
     const spawned = this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
-    if (!spawned) return fail('Не удалось создать питомца.');
+    if (!spawned) {
+      const atCap = this.gameplay.mobs.entities.filter((mob) => mob.alive && isCosmeticPetKind(mob.kind)).length >= COSMETIC_PET_WORLD_CAP;
+      return fail(atCap ? playerText.petWorldCap : 'Не удалось создать питомца.');
+    }
     player.cosmeticPet = selection;
     this.removeCosmeticPetRuntime(player.id, spawned.id);
     this.rememberCosmeticSelection(player);
@@ -5719,20 +6068,24 @@ export class WorldInstance {
     this.commands.register({
       name: 'gamemode',
       aliases: ['gm'],
-      usage: '/gamemode <survival|creative>',
-      description: 'Set authoritative game mode',
+      usage: '/gamemode <survival|creative|spectator>',
+      description: 'Сменить режим игры',
+      permission: 'operator',
       execute: (args, sender) => {
         const key = args[0]?.toLowerCase();
         const mode: GameMode | undefined = key === 'survival' || key === 's' || key === '0'
           ? 'survival'
           : key === 'creative' || key === 'c' || key === '1'
             ? 'creative'
-            : undefined;
-        if (!mode) return fail('Usage: /gamemode <survival|creative|s|c|0|1>');
+            : key === 'spectator' || key === 'sp' || key === '2'
+              ? 'spectator'
+              : undefined;
+        if (!mode) return fail('Использование: /gamemode <survival|creative|spectator|0|1|2>');
         const player = this.players.get(sender.playerId);
-        if (!player) return fail('Player not found.');
+        if (!player) return fail('Игрок не найден.');
         this.setGameMode(player, mode);
-        return ok(`Set game mode to ${mode}`);
+        const label = mode === 'creative' ? 'Творчество' : mode === 'spectator' ? 'Наблюдатель' : 'Выживание';
+        return ok(`Режим игры: ${label}.`);
       },
     });
     this.commands.register({
@@ -5745,6 +6098,7 @@ export class WorldInstance {
       name: 'give',
       usage: '/give <item> [count]',
       description: 'Give an item to yourself',
+      permission: 'operator',
       execute: (args, sender) => {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('Player not found.');
@@ -5770,9 +6124,9 @@ export class WorldInstance {
     this.commands.register({
       name: 'spawnpet',
       aliases: ['petspawn'],
-      permission: 'operator',
+      permission: 'player',
       usage: '/spawnpet <bee|creeper|off>',
-      description: 'Operator: choose a decorative bee or mini creeper',
+      description: 'Призвать декоративную пчелу или мини-крипера',
       execute: (args, sender) => {
         if (isConsoleSender(sender) || sender.kind !== 'player') {
           return fail('This command can only be used by a player.');
@@ -5782,13 +6136,14 @@ export class WorldInstance {
         const kind = args[0]?.trim().toLowerCase();
         if (kind === 'off') return this.setCosmeticPet(player, null);
         if (kind === 'bee' || kind === 'creeper') return this.setCosmeticPet(player, kind);
-        return fail('Usage: /spawnpet <bee|creeper|off>');
+        return fail(playerText.spawnpetUsage);
       },
     });
     this.commands.register({
       name: 'time',
       usage: '/time <day|noon|night|midnight>',
       description: 'Set the time of day',
+      permission: 'operator',
       execute: (args) => {
         const key = args[0]?.toLowerCase() as keyof typeof TIME_PRESETS | undefined;
         if (!key || TIME_PRESETS[key] === undefined) return fail('Usage: /time <day|noon|night|midnight>');
@@ -5806,16 +6161,26 @@ export class WorldInstance {
       execute: (args, sender) => {
         const player = this.players.get(sender.playerId);
         if (!player) return fail('Player not found.');
-        const x = Number(args[0]);
-        const y = Number(args[1]);
-        const z = Number(args[2]);
-        if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
-          return fail('Usage: /tp <x> <y> <z>');
-        }
-        if (!isValidWorldY(y)) return fail('Y is outside the world.');
-        const result = this.teleports.now(player.id, { x, y, z }, 'command', { silent: true });
-        if (!result.ok) return fail(result.error ?? 'Teleport failed.');
-        return ok(`Teleported to ${x.toFixed(1)}, ${y.toFixed(1)}, ${z.toFixed(1)}`);
+        const point = { x: Number(args[0]), y: Number(args[1]), z: Number(args[2]) };
+        let failure = 'Teleport failed.';
+        const result = attemptCoordinateTeleport({
+          hasPermission: (playerId) => this.permissions.has(playerId, 'tp.coords') || this.permissions.has(player.name, 'tp.coords'),
+          isOperator: () => this.isOperator(player),
+          teleport: (playerId, dest) => {
+            const moved = this.teleports.now(playerId, dest, 'command', { silent: true });
+            if (!moved.ok) failure = moved.error ?? failure;
+            return moved;
+          },
+          peekCooldown: (playerId, now) => {
+            const peek = this.donation.peekCooldown(playerId, 'coords', 1, now);
+            return { allowed: peek.allowed, remainingMs: peek.remainingMs };
+          },
+          consume: (playerId, now, commit) => this.donation.consumeIf(playerId, 'coords', 1, commit, now),
+        }, player.id, point);
+        if (result.ok) return ok(`Teleported to ${point.x.toFixed(1)}, ${point.y.toFixed(1)}, ${point.z.toFixed(1)}`);
+        if (result.remainingMs) return fail(`Телепортация по координатам будет доступна через ${formatDurationMs(result.remainingMs)}.`);
+        if (result.error === 'Не удалось выполнить команду.') return fail(failure);
+        return fail(result.error);
       },
     });
     this.commands.register({
@@ -5841,6 +6206,7 @@ export class WorldInstance {
       name: 'predsim',
       usage: '/predsim [ticks]',
       description: 'DEV: lockstep pose dump (walk/flight/stationary) and latest-input coalesce',
+      permission: 'operator',
       execute: (args) => {
         const raw = args[0] === undefined || args[0] === '' ? 20 : Number(args[0]);
         const ticks = Number.isInteger(raw) && raw >= 1 && raw <= 40 ? raw : 20;

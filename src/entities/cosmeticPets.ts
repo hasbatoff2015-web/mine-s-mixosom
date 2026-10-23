@@ -2,8 +2,8 @@
  * Decorative companions. Separate from tameable wolf/cat pets (`isPetKind`).
  *
  * The persistent choice lives on the player. The runtime entity exists only
- * while that player is connected. Privilege checks stay at the command so a
- * later rank gate can call the same selection without a second pet system.
+ * while that player is connected. The server checks `pet.bee` and `pet.creeper`
+ * before it creates or keeps one. Wolf and cat pets stay on `isPetKind()`.
  */
 
 export const COSMETIC_PET_SELECTIONS = ['bee', 'creeper'] as const;

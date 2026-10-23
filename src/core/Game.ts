@@ -418,6 +418,7 @@ import {
 } from '../net/remoteAppearance';
 import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
+import { sanitizePlayerNameStyle, type PlayerNameStyle } from '../../shared/donationRanks';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
   collectReadyMeshJobs,
@@ -445,6 +446,8 @@ export interface GameSession {
   combat: CombatSystem;
   inventory: Inventory;
   portalChest: PortalChestInventory;
+  /** Slots of another player opened by /invsee. Not a world chest. */
+  viewedInventory: { slots: Array<ItemStack | null> };
   drops: DroppedItemManager;
   falling: FallingBlockManager;
   mobs: MobManager;
@@ -1412,6 +1415,7 @@ export class Game {
             from: message.from,
             channel: message.channel ?? 'global',
             id: message.messageId,
+            nameStyle: sanitizePlayerNameStyle(message.nameStyle),
           });
         } else {
           if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
@@ -1454,12 +1458,15 @@ export class Game {
             session.online.localFoodUse = undefined;
           }
         }
-        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack, session.portalChest);
+        applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack, session.portalChest, session.viewedInventory);
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
           parseNetworkItemStacks(message.craftSlots),
         );
-        if (
+        const openKind = this.ui.openContainerKind();
+        if ((openKind === 'invsee' || openKind === 'invsee-op') && message.window?.kind === 'inventory') {
+          this.closeInventoryAndResumeLook();
+        } else if (
           shouldOpenOnlineContainer(message.window?.kind, this.ui.isInventoryOpen())
           && message.window?.kind
           && message.window.kind !== 'inventory'
@@ -1547,7 +1554,8 @@ export class Game {
     const x = window.x ?? 0;
     const y = window.y ?? 0;
     const z = window.z ?? 0;
-    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest);
+    applyAuthoritativeContainerSlots(session.world, { kind, ...window }, parseNetworkItemStack, session.portalChest, session.viewedInventory);
+    const detached = kind === 'invsee' || kind === 'invsee-op' || (kind === 'portal-chest' && window.x === undefined);
     const worldBlock = session.world.getBlock(x, y, z);
     const block = kind === 'chest'
       ? (worldBlock === BlockId.EventChest ? BlockId.EventChest : BlockId.Chest)
@@ -1560,7 +1568,7 @@ export class Game {
       normal: new Vec3(0, 1, 0),
       distance: 0,
       point: new Vec3(x + 0.5, y + 0.5, z + 0.5),
-    });
+    }, detached);
   }
 
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
@@ -3434,6 +3442,7 @@ export class Game {
       portalChest: {
         slots: normalizePortalChestSlots(restored?.player.portalChest),
       },
+      viewedInventory: { slots: Array.from({ length: 41 }, () => null) },
       drops,
       falling,
       mobs,
@@ -4302,11 +4311,11 @@ export class Game {
     }
   }
 
-  private openBlockInventory(kind: Exclude<ContainerKind, 'inventory'>, hit: VoxelHit): void {
+  private openBlockInventory(kind: Exclude<ContainerKind, 'inventory'>, hit: VoxelHit, detached = false): void {
     const session = this.session!;
     if (this.lifecycle.state !== 'PLAYING') return;
     this.openGameplayModal();
-    if (kind === 'chest' || kind === 'portal-chest') {
+    if (!detached && (kind === 'chest' || kind === 'portal-chest')) {
       const key = blockKey(hit.x, hit.y, hit.z);
       if (this.openChestKey !== key) {
         this.playWorld('chest.open', hit.x + 0.5, hit.y + 0.5, hit.z + 0.5);
@@ -4320,6 +4329,7 @@ export class Game {
       kind,
       ...(kind === 'chest' ? { chest: session.world.getChest(hit.x, hit.y, hit.z) } : {}),
       ...(kind === 'portal-chest' ? { chest: session.portalChest } : {}),
+      ...(kind === 'invsee' || kind === 'invsee-op' ? { chest: session.viewedInventory } : {}),
       ...(kind === 'furnace' ? { furnace: session.world.getFurnace(hit.x, hit.y, hit.z) } : {}),
       ...(hit.block === BlockId.EventChest ? { containerTitle: CONTAINER_STRINGS.eventChest } : {}),
       onClose: () => {
@@ -6181,7 +6191,7 @@ export class Game {
   private pushChat(
     kind: 'system' | 'player' | 'command' | 'death' | 'error',
     text: string,
-    extra: { from?: string; channel?: ChatChannel; id?: string; style?: ChatMessageStyle } = {},
+    extra: { from?: string; channel?: ChatChannel; id?: string; style?: ChatMessageStyle; nameStyle?: PlayerNameStyle } = {},
   ): void {
     const message = this.chat.push(kind, text, performance.now(), extra);
     this.ui.appendChat(message);

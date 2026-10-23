@@ -1,6 +1,7 @@
 import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
+import type { PlayerNameStyle } from './donationRanks';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
 import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
@@ -32,13 +33,13 @@ export type { ActionRejectReason, PlayerActionKind } from './playerActions';
 export type { CombatActionDiagnostics, EntityUseActionDiagnostics } from './playerActions';
 export type { BowActionDiagnostics } from './playerActions';
 
-export type GameMode = 'survival' | 'creative';
+export type GameMode = 'survival' | 'creative' | 'spectator';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export type Vec3 = readonly [number, number, number];
 
-export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
 
 export type InventoryActionKind =
   | 'click'
@@ -79,6 +80,7 @@ export interface PlayerSnapshot {
   readonly appearance?: PlayerAppearance;
   readonly id: string;
   readonly name: string;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -204,6 +206,8 @@ export interface RemotePlayerInfo {
   readonly onFire?: boolean;
   readonly id: string;
   readonly name: string;
+  readonly gamemode?: GameMode;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -719,7 +723,17 @@ export type MenuActionKind =
   | 'duel_refresh'
   | 'duel_challenge'
   | 'duel_accept'
-  | 'duel_decline';
+  | 'duel_decline'
+  | 'donate_retry'
+  | 'donate_color'
+  | 'donate_announce'
+  | 'donate_invsee'
+  | 'donate_invseeop'
+  | 'donate_back'
+  | 'donate_tp'
+  | 'donate_ec'
+  | 'donate_kit'
+  | 'donate_pet';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -737,6 +751,15 @@ export type GameMenuScreenKind =
   | 'auction-history'
   | 'rating'
   | 'duels'
+  | 'donate'
+  | 'donate-color'
+  | 'donate-announce'
+  | 'donate-invsee'
+  | 'donate-invsee-op'
+  | 'donate-tp'
+  | 'donate-back'
+  | 'donate-kits'
+  | 'donate-pets'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -750,6 +773,11 @@ export interface ClientMenuActionMessage {
   readonly enabled?: boolean;
   readonly page?: number;
   readonly ratingKind?: string;
+  readonly text?: string;
+  readonly color?: string;
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
 }
 
 export type TradeActionKind =
@@ -1007,6 +1035,8 @@ export interface ServerChatMessage {
   readonly channel?: ChatChannel;
   readonly style?: ChatMessageStyle;
   readonly messageId?: string;
+  /** Server-built prefix and nick color. Ignored unless it matches the allowlist. */
+  readonly nameStyle?: PlayerNameStyle;
 }
 
 export interface ServerErrorMessage {
@@ -1554,6 +1584,63 @@ export interface ServerMenuMessage {
   readonly duelArenaBusy?: boolean;
   readonly duelArenaConfigured?: boolean;
   readonly duelAvailable?: boolean;
+  readonly donate?: NetworkDonateMenu;
+}
+
+export interface NetworkDonateAction {
+  readonly id: string;
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+  readonly screen?: GameMenuScreenKind;
+  readonly kitName?: string;
+  /** Quiet marker for a choice that is already on, such as a nick color or a live pet. */
+  readonly active?: boolean;
+}
+
+export interface NetworkDonatePerk {
+  readonly title: string;
+  readonly detail: string;
+}
+
+export interface NetworkDonateKit {
+  readonly name: string;
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+}
+
+export interface NetworkDonatePet {
+  readonly id: 'bee' | 'creeper';
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+  /** True only while this player's live cosmetic entity of that kind exists. */
+  readonly summoned?: boolean;
+  readonly actionLabel?: string;
+}
+
+export interface NetworkDonatePlayer {
+  readonly playerId: string;
+  readonly name: string;
+}
+
+export interface NetworkDonateMenu {
+  readonly rankLabel: string;
+  readonly summary: string;
+  readonly remainingLabel: string;
+  readonly loadError?: string;
+  readonly perks: readonly NetworkDonatePerk[];
+  readonly actions: readonly NetworkDonateAction[];
+  readonly kits: readonly NetworkDonateKit[];
+  readonly pets?: readonly NetworkDonatePet[];
+  readonly catalog: readonly NetworkDonatePerk[];
+  readonly nickChoices: readonly string[];
+  readonly nickColor?: string;
+  readonly previewName: string;
+  readonly onlinePlayers: readonly NetworkDonatePlayer[];
+  readonly deathPoint?: { readonly x: number; readonly y: number; readonly z: number };
+  readonly showInvseeOp: boolean;
 }
 
 export interface ServerDuelEffectMessage {
@@ -1764,7 +1851,7 @@ const MAX_INVENTORY_KEYS = 80;
 const MAX_INVENTORY_SIGNATURE = 480;
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
-  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
+  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest', 'invsee', 'invsee-op',
 ];
 
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
@@ -1810,11 +1897,14 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
   'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
+  'donate_retry', 'donate_color', 'donate_announce', 'donate_invsee', 'donate_invseeop',
+  'donate_back', 'donate_tp', 'donate_ec', 'donate_kit', 'donate_pet',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels', 'closed',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
+  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {
@@ -2629,6 +2719,17 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const page = raw.page === undefined ? undefined : finite(raw.page) ? Math.floor(raw.page) : undefined;
       if (raw.page !== undefined && page === undefined) return { error: 'menu_action.page invalid' };
       const ratingKind = typeof raw.ratingKind === 'string' ? raw.ratingKind.slice(0, 32) : undefined;
+      const text = typeof raw.text === 'string' ? raw.text.slice(0, 160) : undefined;
+      const color = typeof raw.color === 'string' ? raw.color.slice(0, 32) : undefined;
+      const axis = (value: unknown): number | undefined => (
+        typeof value === 'number' && finite(value) && Math.abs(value) <= 1_000_000 ? value : undefined
+      );
+      const x = raw.x === undefined ? undefined : axis(raw.x);
+      const y = raw.y === undefined ? undefined : axis(raw.y);
+      const z = raw.z === undefined ? undefined : axis(raw.z);
+      if (raw.x !== undefined && x === undefined) return { error: 'menu_action.x invalid' };
+      if (raw.y !== undefined && y === undefined) return { error: 'menu_action.y invalid' };
+      if (raw.z !== undefined && z === undefined) return { error: 'menu_action.z invalid' };
       return {
         type: 'menu_action',
         action: raw.action as MenuActionKind,
@@ -2640,6 +2741,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(enabled !== undefined ? { enabled } : {}),
         ...(page !== undefined ? { page } : {}),
         ...(ratingKind ? { ratingKind } : {}),
+        ...(text !== undefined ? { text } : {}),
+        ...(color ? { color } : {}),
+        ...(x !== undefined ? { x } : {}),
+        ...(y !== undefined ? { y } : {}),
+        ...(z !== undefined ? { z } : {}),
       };
     }
     case 'trade_action': {

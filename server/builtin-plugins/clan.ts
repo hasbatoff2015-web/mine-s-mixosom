@@ -64,31 +64,31 @@ export function createClanPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok('Открыто меню клана.');
           };
           if (sub === 'create') {
-            if (!need('clan.create')) return fail('You do not have permission.');
+            if (!need('clan.create')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('create');
           }
           if (sub === 'delete') {
-            if (!need('clan.delete')) return fail('You do not have permission.');
+            if (!need('clan.delete')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('delete');
           }
           if (sub === 'add') {
-            if (!need('clan.add')) return fail('You do not have permission.');
+            if (!need('clan.add')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('add');
           }
           if (sub === 'accept') {
-            if (!need('clan.accept')) return fail('You do not have permission.');
+            if (!need('clan.accept')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('accept');
           }
           if (sub === 'leave') {
-            if (!need('clan.leave')) return fail('You do not have permission.');
+            if (!need('clan.leave')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('leave');
           }
           if (sub === 'makeleader') {
-            if (!need('clan.makeleader')) return fail('You do not have permission.');
+            if (!need('clan.makeleader')) return fail('Недостаточно прав для выполнения этой команды.');
             return open('makeleader');
           }
           if (sub === 'kick') {
-            if (!need('clan.kick')) return fail('You do not have permission.');
+            if (!need('clan.kick')) return fail('Недостаточно прав для выполнения этой команды.');
             const nick = args.slice(1).join(' ').trim();
             if (!nick) return usageError('/clan kick <ник>');
             const target = ctx.lookupPlayer(nick);

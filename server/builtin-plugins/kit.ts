@@ -1,6 +1,8 @@
 import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
+import { formatDurationMs, kitAccessRule } from '../../shared/donationRanks';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
+import type { BuiltinPluginContext } from './context';
 import {
   KIT_NAME_MAX,
   KIT_START_NAME,
@@ -33,7 +35,7 @@ function invalidName(): string {
   return `Некорректное имя набора. Используйте 1–${KIT_NAME_MAX} символов: a-z, 0-9, _.`;
 }
 
-export function createKitPlugin(): Plugin {
+export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
   let loadStore: () => unknown = () => undefined;
   let saveStore: (store: unknown) => void = () => undefined;
   const service = new KitService(
@@ -56,12 +58,30 @@ export function createKitPlugin(): Plugin {
         || api.hasPermission(playerId, 'server.admin')
       );
 
-      const giveNamed = (playerId: string, kitName: string) => {
+      const giveNamed = (playerId: string, kitName: string, bypassCooldown = false) => {
         const player = api.getPlayer(playerId);
         if (!player) return fail('Игрок не найден.');
         const kit = service.get(kitName);
         if (!kit) return fail(`Набор '${kitName}' не найден.`);
-        deliverKit(player, kit);
+        const rule = kitAccessRule(kitName);
+        const operator = api.isOperator(player.name) || api.isOperator(playerId);
+        if (!bypassCooldown && rule && rule.permission !== 'player' && !operator && !api.hasPermission(playerId, rule.permission)) {
+          return fail('Недостаточно прав для выполнения этой команды.');
+        }
+        const deliver = (): boolean => {
+          const live = api.getPlayer(playerId);
+          if (!live) return false;
+          return deliverKit(live, service.get(kitName));
+        };
+        if (rule?.periodMs && !bypassCooldown && !operator) {
+          const result = ctx.donation.consumeIf(playerId, `kit:${kitName}`, 1, deliver);
+          if (!result.ok) {
+            if (result.remainingMs) return fail(`Набор '${kitName}' будет доступен через ${formatDurationMs(result.remainingMs)}.`);
+            return fail(result.error);
+          }
+          return ok(kit.items.length > 0 ? `Выдан набор '${kitName}'.` : `Набор '${kitName}' пуст.`);
+        }
+        if (!deliver()) return fail('Не удалось выдать набор.');
         return ok(kit.items.length > 0 ? `Выдан набор '${kitName}'.` : `Набор '${kitName}' пуст.`);
       };
 
@@ -103,7 +123,7 @@ export function createKitPlugin(): Plugin {
           }
 
           if (sub === 'create') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             const name = parseKitName(args[1]);
             if (!args[1]) return usageError('/kit create <название>');
             if (!name) return fail(invalidName());
@@ -117,7 +137,7 @@ export function createKitPlugin(): Plugin {
           }
 
           if (sub === 'delete') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             const name = parseKitName(args[1]);
             if (!args[1]) return usageError('/kit delete <название>');
             if (!name) return fail(invalidName());
@@ -126,7 +146,7 @@ export function createKitPlugin(): Plugin {
           }
 
           if (sub === 'give') {
-            if (!admin) return fail('You do not have permission.');
+            if (!admin) return fail('Недостаточно прав для выполнения этой команды.');
             if (!args[1] || !args[2]) return usageError('/kit give <игрок> <название>');
             const name = parseKitName(args[2]);
             if (!name) return fail(invalidName());
@@ -141,7 +161,7 @@ export function createKitPlugin(): Plugin {
               if (granted === 'already') deliverKit(target, kit);
               return ok(`Набор 'start' выдан игроку ${target.name}.`);
             }
-            const given = giveNamed(target.id, name);
+            const given = giveNamed(target.id, name, true);
             return given.ok ? ok(`Набор '${name}' выдан игроку ${target.name}.`) : given;
           }
 

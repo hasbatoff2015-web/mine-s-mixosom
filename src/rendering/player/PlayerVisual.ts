@@ -55,6 +55,8 @@ import { InvisibilityWorldParticles } from '../InvisibilityWorldParticles';
 export interface PlayerVisualFrameState extends PlayerAnimationState {
   readonly bedRest?: BedRestState | null;
   readonly invisible: boolean;
+  /** Hide the body without the invisibility potion swirls. */
+  readonly spectator?: boolean;
   readonly hurtFlash: number;
   /** 0 = living pose. 1 = completed humanoid death tilt. */
   readonly deathProgress?: number;
@@ -140,6 +142,7 @@ export class PlayerVisual {
   private offhandItemId?: string;
   private bowTexturePath = 'item/bow';
   private invisible = false;
+  private spectator = false;
   private hurtFlash = 0;
   private hurtFlashStartedAt = -1;
   private disposed = false;
@@ -309,7 +312,9 @@ export class PlayerVisual {
 
   update(deltaSeconds: number, state: Readonly<PlayerVisualFrameState>): PlayerVisualPose {
     this.assertActive();
-    this.invisible = state.invisible;
+    this.invisible = state.invisible || state.spectator === true;
+    this.spectator = state.spectator === true;
+    this.armor.setHidden(this.invisible);
     const nowMs = typeof performance !== 'undefined' ? performance.now() : 0;
     const timedFlash = this.hurtFlashStartedAt >= 0 ? playerHurtFlashIntensity(nowMs - this.hurtFlashStartedAt) : 0;
     this.hurtFlash = Math.max(THREE.MathUtils.clamp(state.hurtFlash, 0, 1), timedFlash);
@@ -369,7 +374,7 @@ export class PlayerVisual {
    */
   updateWorldParticles(deltaSeconds: number): void {
     this.assertActive();
-    this.worldParticles.setActive(this.invisible);
+    this.worldParticles.setActive(this.invisible && !this.spectator);
     this.worldParticles.update(deltaSeconds);
   }
 
@@ -505,11 +510,16 @@ export class PlayerVisual {
       meshes.base.visible = !this.invisible;
       meshes.outer.visible = !this.invisible && this.appearanceValue.layers[LAYER_KEY[part]];
     }
-    this.rig.heldItem.visible = this.heldModel !== undefined && !this.suppressHeldItem;
-    this.rig.offhandItem.visible = this.offhandModel !== undefined;
+    const showHeld = !this.invisible && !this.suppressHeldItem;
+    this.rig.heldItem.visible = this.heldModel !== undefined && showHeld;
+    this.rig.offhandItem.visible = this.offhandModel !== undefined && !this.invisible;
   }
 
   private syncFireOverlay(onFire: boolean): void {
+    if (this.invisible) {
+      if (this.fireOverlay) this.fireOverlay.visible = false;
+      return;
+    }
     if (onFire) {
       if (!this.fireOverlay) {
         const overlay = SharedFireTexture.instance().createScaledOverlay(0.7, 1.85);

@@ -157,6 +157,8 @@ export class PlayerController {
   onLadder = false;
   isFlying = false;
   creativeFlightAllowed = false;
+  /** Spectator flight: movement ignores block collision. */
+  noclip = false;
   fallDistance = 0;
   lastFallDistance = 0;
   lastFallDamage = 0;
@@ -315,6 +317,22 @@ export class PlayerController {
     const jumped = !this.isFlying && !this.meleeKnockback && movement.jump && wasOnGround
       && !this.inWater && !this.inLava && !this.inCobweb;
 
+    if (this.noclip) {
+      this.isFlying = true;
+      this.updateFlyVelocity(movement, stepDt);
+      const ndx = this.velocity.x * stepDt;
+      const ndy = this.velocity.y * stepDt;
+      const ndz = this.velocity.z * stepDt;
+      this.position.x += ndx;
+      this.position.y += ndy;
+      this.position.z += ndz;
+      this.onGround = false;
+      this.fallDistance = 0;
+      this.inWater = false;
+      this.inLava = false;
+      this.onLadder = false;
+      return this.tickResult(false, 0, Math.hypot(ndx, ndy, ndz), Math.hypot(ndx, ndz), false);
+    }
     if (this.isFlying) this.updateFlyVelocity(movement, stepDt);
     else this.updateHorizontalVelocity(movement, stepDt, wasOnGround);
     if (this.isFlying) {

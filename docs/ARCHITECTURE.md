@@ -8,7 +8,7 @@ The saved choice is `ServerPlayer.cosmeticPet`: `'bee' | 'creeper' | null`. `Wor
 
 Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` for other mobs. The root Y is `ownerFeet + 1.22 - bodyCenterLocalY * 0.5`, so the body center, not the root, sits at shoulder height. Wing flap, bob, and body tilt are render-only in `ThreeEntityHost.syncBee()` from a wrapped clock advanced in `interpolateVisuals()`. `syncBee` sets scale `0.5` every frame. The mini creeper reuses `CREEPER_MODEL` and `entity/creeper`. `syncMob()` sets scale `0.49` every frame. `updateCreeper()` is not called for it.
 
-`/spawnpet` remains operator-only. There is no rank grant in this change.
+`/spawnpet` is a player command. `setCosmeticPet`, `ensureCosmeticPet`, and `snapCosmeticPet` call the same check: `pet.bee` for the bee and `pet.creeper` for the mini creeper. OP passes `PermissionService.has` before donate nodes are read. A lost rank removes the live entity on the next gameplay tick and keeps the saved choice. The donate card «Питомцы» sends `donate_pet`, which runs `/spawnpet`. Wolf and cat commands stay rejected.
 
 ## Emotes — 2026-10-17
 
@@ -17,6 +17,20 @@ Bee flight is `stepBeeFlight()` only. It does not change `simulateMobPhysics()` 
 Playback writes one reused pose into `PlayerVisualAnimator` and hides `rig.heldItem`. Armor stays parented to the existing pivots. The camera uses `thirdPersonBack`, `availableThirdPersonDistance`, and a small upward bias on that same ray. The stored perspective preference is restored when the emote ends.
 
 Other clients see `presentation.emote` and `presentation.emoteSeq` on the existing player snapshot. The client sends one `emote` start and one stop. The server ignores a second start, clears the id on a newer movement command, on death, on disconnect, and when the duration elapses. It does not move the player.
+
+## Donate ranks — 2026-10-13
+
+`DonationRankService` is the only timed rank store (`plugin-data/donation/ranks.json`). A player has one grant: rank, `grantedAt`, `expiresAt`, optional source, and a short history. `effectiveRank` is `default` when `expiresAt` is in the past, including for an offline player after restart. `PermissionService.setExtraNodes` adds that rank's nodes on every `has()` call. The nodes are cumulative and do not include `server.*`, `plugins.manage`, or `*`. OP still returns true before those nodes are read, so a donate rank cannot become OP.
+
+Limits are `DonationRankService.limit(player, 'homes' | 'claims' | 'auction')`. `resolveHomeLimit` still honors an older manual `home.multiple` / `home.limit.premium` role and takes the higher number. Claim creation in `/claim create` and block anchors uses the same limit and does not delete extras. `AuctionService.createListing` takes `maxActive` inside the existing player lock. The live server passes the rank limit. Callers that omit it keep `AUCTION_MAX_ACTIVE` (30), which is also the operator floor.
+
+`/ec` sets the player's window to `portal-chest` and flushes the same `player.portalChest`. `/invsee` and `/invseeop` are different window kinds. Read-only actions never call the inventory mutator. OP edits run `applyInventoryUiAction` against a copy of the target slots and write them back with `writeInvseeSlots`. A client `open` of `invsee-op` is ignored. `/tp <x> <y> <z>` and the donate coordinate form both call `attemptCoordinateTeleport`. `/tpa <player>` does not. `/back` applies the daily death counter only when the saved reason is `death`. The donate back button refuses to call `/back` unless that reason is `death`.
+
+`consumeIf` writes the cooldown stamp before the action. A failed write skips the action and rolls the memory back. A failed action deletes the stamp when that second write succeeds. If the delete fails, the stamp stays in memory and on disk.
+
+Chat `nameStyle` and the nameplate read server-built prefix and color ids. The client keeps a prefix only if it is one of `[VIP]`, `[PREMIUM]`, `[BOSS]`, `[TITAN]`, `[ADMIN]`. A stored nick color is applied only while the rank still has `nick.color` or the player is OP. Announcement text is sanitized before the server inserts the real name. `status()` is the donate menu payload: rank, expiry, limits, commands, kit cooldowns, and nick colors. It does not grant anything. `loadError` is set when the rank file cannot be read; the menu then shows a retry instead of a default rank.
+
+`/nickcolor` is registered as `player` so the handler can name PREMIUM. The handler still checks `nick.color` or OP. `/ranktest` is always registered and returns the DEV-only error unless `ServerConfig.rankTestEnabled` is true. That flag is `FC_RANK_TEST=1` or `true`. Production startup does not set it.
 
 ## Water, automine reset, item throw, kits, Mega Zombie knockback — 2026-10-11
 

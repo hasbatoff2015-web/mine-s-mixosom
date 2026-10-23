@@ -1168,7 +1168,7 @@ export class MobManager {
     request: {
       readonly playerId: string;
       readonly heldItemId?: string;
-      readonly gamemode: 'survival' | 'creative';
+      readonly gamemode: 'survival' | 'creative' | 'spectator';
       readonly petLimit: number;
     },
   ): PetInteractResult {

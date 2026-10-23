@@ -34,7 +34,7 @@ export function createPluginAdminPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (!api.hasPermission(sender.playerId, 'plugins.manage') && !api.isOperator(sender.name)) {
-            return fail('You do not have permission.');
+            return fail('Недостаточно прав для выполнения этой команды.');
           }
           const sub = (args[0] ?? 'list').toLowerCase();
           if (sub === 'list') {

@@ -108,7 +108,7 @@ describe('AutoMine plugin commands', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const op = join(world, 'Op');
-    expect(chat(world, ada, '/automine wand').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/automine wand').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/automine wand').some((line) => line.includes('инструмент'))).toBe(true);
     expect(op.player.inventory.has(ItemId.WoodenAxe, 1)).toBe(true);
     holdWand(op.player);

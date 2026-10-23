@@ -275,6 +275,7 @@ export function copyPredictionControllerConfig(
   to: PlayerController,
 ): void {
   to.creativeFlightAllowed = from.creativeFlightAllowed;
+  to.noclip = from.noclip;
 }
 
 function createPredictionScratch(

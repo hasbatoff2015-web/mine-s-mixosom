@@ -1,6 +1,8 @@
 export const CLAN_PLUGIN_NAME = 'clan';
 export const CLAN_MAX_MEMBERS = 20;
 export const CLAN_CREATE_COST = 10_000;
+/** VIP, PREMIUM, BOSS and TITAN pay this instead of `CLAN_CREATE_COST`. */
+export const CLAN_DONATE_CREATE_COST = 5_000;
 export const CLAN_NAME_MIN = 3;
 export const CLAN_NAME_MAX = 16;
 export const CLAN_INVITE_TTL_MS = 24 * 60 * 60 * 1000;

@@ -40,6 +40,7 @@ function testConfig(dataDir: string, port = 0) {
     port,
     chunkViewRadius: 1,
     persistIntervalMs: 60_000,
+    operators: ['Ada', 'Builder'],
   };
 }
 
@@ -356,7 +357,7 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     const server = await boot();
     const a = new TestClient();
     const b = new TestClient();
-    const welcomeA = await a.connect(server.wsUrl(), { name: 'A' });
+    const welcomeA = await a.connect(server.wsUrl(), { name: 'Ada' });
     const welcomeB = await b.connect(server.wsUrl(), { name: 'B' });
     expect(welcomeB.players.some((player) => player.id === welcomeA.playerId)).toBe(true);
     await a.waitFor('player_joined');
@@ -807,6 +808,7 @@ describe('WorldInstance foundation simulation', () => {
     const sink = new MemorySink();
     const joined = world.join({ sink, name: 'Sim' });
     if ('error' in joined) throw new Error(joined.error);
+    world.permissions.op(joined.player.name);
     world.handleChat(joined.player, '/predsim 5');
     const result = [...sink.payloads].reverse().find((payload) => (
       payload as { type?: string }).type === 'command_result'
