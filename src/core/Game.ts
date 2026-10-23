@@ -268,7 +268,17 @@ import {
   isFiniteSpawn,
   resolveAnarchyStartup,
 } from '../world/import';
-import { AnarchyClient, RemotePlayerView, clientUrlForServer, endpointLabel, fetchLocalServerStatuses, isLocalServerName } from '../net';
+import {
+  AnarchyClient,
+  RemotePlayerView,
+  ServerStatusSession,
+  checkingServerStatuses,
+  clientUrlForServer,
+  endpointLabel,
+  isLocalServerName,
+  runOnlineConnectAttempt,
+  selectedLocalServer,
+} from '../net';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
@@ -651,6 +661,7 @@ export class Game {
   private readonly audio = new AudioManager();
   private readonly worldStore = new IdbWorldStore();
   private readonly yandex = new YandexGamesService();
+  private readonly onlineStatus = new ServerStatusSession();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
   private readonly sunlight = new THREE.DirectionalLight(0xffe2b3, 1.55);
@@ -1032,36 +1043,63 @@ export class Game {
     this.characterPreview = undefined;
   }
 
-  private async showOnlineServerList(): Promise<void> {
+  private showOnlineServerList(selectedId?: string, nicknameDraft?: string): void {
     this.disposeCharacterPreview();
-    const statuses = await fetchLocalServerStatuses();
+    const selected = selectedId && isLocalServerName(selectedId) ? selectedId : selectedLocalServer();
     this.ui.showOnlineServers({
-      back: () => this.showMainMenu(),
+      back: () => {
+        this.onlineStatus.cancel();
+        this.showMainMenu();
+      },
       connect: (id) => void this.connectOnlineServer(id),
+      retry: () => {
+        if (this.ui.isOnlineStatusPending()) return;
+        this.ui.applyOnlineServerStatuses(checkingServerStatuses());
+        void this.pullOnlineStatuses();
+      },
       saveNickname: (raw) => {
         const result = savePlayerNickname(raw);
         if (result.ok) this.ui.toast('Ник сохранён. Он будет использован при подключении к серверу.');
         return result;
       },
-    }, statuses, undefined, loadPlayerNickname());
+    }, checkingServerStatuses(), selected, nicknameDraft ?? loadPlayerNickname());
+    void this.pullOnlineStatuses();
+  }
+
+  private async pullOnlineStatuses(): Promise<void> {
+    const statuses = await this.onlineStatus.load();
+    if (!statuses || !this.ui.isShowingOnlineServers()) return;
+    this.ui.applyOnlineServerStatuses(statuses);
   }
 
   private async connectOnlineServer(id: string): Promise<void> {
-    if (!isLocalServerName(id)) {
-      this.ui.toast('Этот сервер пока недоступен');
-      return;
-    }
+    if (!isLocalServerName(id)) return;
     const url = clientUrlForServer(id);
-    this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url));
-    const client = new AnarchyClient();
-    try {
-      const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance);
-      await this.startOnlineAnarchy(client, welcome);
-    } catch {
-      client.disconnect();
-      this.ui.toast('Сервер недоступен');
-      await this.showOnlineServerList();
-    }
+    if (!url) return;
+    const nicknameDraft = this.ui.onlineNicknameDraft();
+    this.onlineStatus.cancel();
+    await runOnlineConnectAttempt({
+      url,
+      onLoading: (endpoint) => {
+        this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(endpoint));
+      },
+      connect: async (endpoint) => {
+        const client = new AnarchyClient();
+        try {
+          const welcome = await client.connect(endpoint, loadPlayerNickname(), this.playerAppearance);
+          await this.startOnlineAnarchy(client, welcome);
+        } catch (error) {
+          client.disconnect();
+          throw error;
+        }
+      },
+      onFailure: (retry) => {
+        this.ui.showOnlineConnectError({
+          retry,
+          back: () => this.showOnlineServerList(id, nicknameDraft),
+        });
+      },
+    });
   }
 
   private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {

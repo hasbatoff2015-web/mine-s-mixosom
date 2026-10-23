@@ -39,8 +39,11 @@ describe('anarchy client endpoints', () => {
     expect(statusUrlFromAnarchyWs(PRODUCTION_WS)).toBe(PRODUCTION_STATUS);
     expect(clientUrlForServer('anarchy')).toBe(PRODUCTION_WS);
     expect(statusUrlForServer('anarchy')).toBe(PRODUCTION_STATUS);
-    expect(clientUrlForServer('survival')).toBe('ws://127.0.0.1:2568');
-    expect(statusUrlForServer('peaceful')).toBe('http://127.0.0.1:2569/status');
+    expect(clientUrlForServer('survival')).toBeUndefined();
+    expect(statusUrlForServer('survival')).toBeUndefined();
+    expect(clientUrlForServer('peaceful')).toBeUndefined();
+    expect(statusUrlForServer('peaceful')).toBeUndefined();
+    expect(endpointLabel(clientUrlForServer('anarchy')!)).toBe('megacraft.agariobrainrot.ru');
   });
 
   it('treats an empty search as no query and uses the production Anarchy endpoint', async () => {
@@ -49,36 +52,36 @@ describe('anarchy client endpoints', () => {
     expect(anarchyStatusUrl('')).toBe(PRODUCTION_STATUS);
     expect(clientUrlForServer('anarchy', '')).toBe(PRODUCTION_WS);
     expect(statusUrlForServer('anarchy', '')).toBe(PRODUCTION_STATUS);
-    expect(clientUrlForServer('survival', '')).toBe('ws://127.0.0.1:2568');
-    expect(statusUrlForServer('survival', '')).toBe('http://127.0.0.1:2568/status');
-    expect(clientUrlForServer('peaceful', '')).toBe('ws://127.0.0.1:2569');
-    expect(statusUrlForServer('peaceful', '')).toBe('http://127.0.0.1:2569/status');
+    expect(clientUrlForServer('survival', '')).toBeUndefined();
+    expect(statusUrlForServer('survival', '')).toBeUndefined();
+    expect(clientUrlForServer('peaceful', '')).toBeUndefined();
+    expect(statusUrlForServer('peaceful', '')).toBeUndefined();
 
     const seen: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       seen.push(String(url));
       return { ok: true, json: async () => ({ online: 0, maxPlayers: 300 }) };
     });
-    await fetchLocalServerStatuses('');
-    expect(seen).toEqual([
-      PRODUCTION_STATUS,
-      'http://127.0.0.1:2568/status',
-      'http://127.0.0.1:2569/status',
-    ]);
+    const statuses = await fetchLocalServerStatuses('');
+    expect(seen).toEqual([PRODUCTION_STATUS]);
+    expect(statuses.anarchy).toEqual({ phase: 'available', online: 0, maxPlayers: 300 });
+    expect(statuses.survival).toEqual({ phase: 'not_configured' });
+    expect(statuses.peaceful).toEqual({ phase: 'not_configured' });
   });
 
-  it('keeps an explicit search on the local presets even when production env is set', () => {
+  it('does not let ?server= replace a public card with localhost', () => {
     vi.stubEnv('VITE_ANARCHY_URL', PRODUCTION_WS);
-    expect(anarchyClientUrl('?server=anarchy')).toBe('ws://127.0.0.1:2567');
-    expect(anarchyStatusUrl('?server=anarchy')).toBe('http://127.0.0.1:2567/status');
-    expect(anarchyClientUrl('?server=survival')).toBe('ws://127.0.0.1:2568');
-    expect(anarchyStatusUrl('?server=survival')).toBe('http://127.0.0.1:2568/status');
-    expect(clientUrlForServer('survival', '?server=survival')).toBe('ws://127.0.0.1:2568');
-    expect(clientUrlForServer('anarchy', '?server=survival')).toBe('ws://127.0.0.1:2567');
+    expect(anarchyClientUrl('?server=anarchy')).toBe(PRODUCTION_WS);
+    expect(anarchyStatusUrl('?server=anarchy')).toBe(PRODUCTION_STATUS);
+    expect(anarchyClientUrl('?server=survival')).toBe(PRODUCTION_WS);
+    expect(anarchyStatusUrl('?server=survival')).toBe(PRODUCTION_STATUS);
+    expect(clientUrlForServer('survival', '?server=survival')).toBeUndefined();
+    expect(clientUrlForServer('anarchy', '?server=survival')).toBe(PRODUCTION_WS);
     expect(clientUrlForServer('survival', '?server=survival')).not.toBe(PRODUCTION_WS);
-    expect(anarchyClientUrl('?server=peaceful')).toBe('ws://127.0.0.1:2569');
-    expect(anarchyStatusUrl('?server=peaceful')).toBe('http://127.0.0.1:2569/status');
-    expect(anarchyClientUrl('?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
+    expect(anarchyClientUrl('?server=peaceful')).toBe(PRODUCTION_WS);
+    expect(anarchyStatusUrl('?server=peaceful')).toBe(PRODUCTION_STATUS);
+    expect(clientUrlForServer('survival', '?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
+    expect(clientUrlForServer('anarchy', '?server=survival&anarchyPort=2700')).toBe(PRODUCTION_WS);
   });
 
   it('lets anarchyUrl, anarchyHost, and anarchyPort beat VITE_ANARCHY_URL', () => {
@@ -90,8 +93,8 @@ describe('anarchy client endpoints', () => {
     expect(anarchyClientUrl('?anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
     expect(anarchyStatusUrl('?anarchyPort=2700')).toBe('http://127.0.0.1:2700/status');
     expect(clientUrlForServer('anarchy', '?anarchyUrl=ws://example.test:9')).toBe('ws://example.test:9');
-    expect(clientUrlForServer('survival', '?anarchyUrl=ws://example.test:9')).toBe('ws://127.0.0.1:2568');
-    expect(clientUrlForServer('peaceful', '?anarchyPort=2700')).toBe('ws://127.0.0.1:2569');
+    expect(clientUrlForServer('survival', '?anarchyUrl=ws://example.test:9')).toBeUndefined();
+    expect(clientUrlForServer('peaceful', '?anarchyPort=2700')).toBeUndefined();
 
     vi.stubGlobal('location', { search: '?anarchyUrl=ws://example.test:9' });
     expect(anarchyClientUrl()).toBe('ws://example.test:9');
@@ -102,23 +105,25 @@ describe('anarchy client endpoints', () => {
     expect(anarchyStatusUrl()).toBe('http://10.0.0.8:2700/status');
   });
 
-  it('polls production Anarchy status and leaves Survival and Peaceful on local ports', async () => {
+  it('polls only configured public status urls', async () => {
     vi.stubEnv('VITE_ANARCHY_URL', PRODUCTION_WS);
+    vi.stubEnv('VITE_PEACEFUL_URL', 'wss://peaceful.example.test');
     const seen: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       seen.push(String(url));
       return { ok: true, json: async () => ({ online: 1, maxPlayers: 300 }) };
     });
-    await fetchLocalServerStatuses();
+    const statuses = await fetchLocalServerStatuses();
     expect(seen).toEqual([
       PRODUCTION_STATUS,
-      'http://127.0.0.1:2568/status',
-      'http://127.0.0.1:2569/status',
+      'https://peaceful.example.test/status',
     ]);
-    expect(endpointLabel(clientUrlForServer('anarchy'))).toBe('megacraft.agariobrainrot.ru');
-    expect(endpointLabel(clientUrlForServer('survival'))).toBe('localhost');
-    expect(endpointLabel(clientUrlForServer('peaceful'))).toBe('localhost');
+    expect(statuses.survival).toEqual({ phase: 'not_configured' });
+    expect(endpointLabel(clientUrlForServer('anarchy')!)).toBe('megacraft.agariobrainrot.ru');
+    expect(clientUrlForServer('survival')).toBeUndefined();
+    expect(endpointLabel(clientUrlForServer('peaceful')!)).toBe('peaceful.example.test');
     expect(endpointLabel('ws://127.0.0.1:2567')).toBe('localhost');
+    expect(seen.join(' ')).not.toContain('127.0.0.1');
   });
 
   it('lets anarchyStatus replace the derived production status URL', () => {

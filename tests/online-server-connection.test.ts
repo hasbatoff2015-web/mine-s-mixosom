@@ -1,0 +1,430 @@
+/**
+ * @vitest-environment happy-dom
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GameUI } from '../src/ui/GameUI';
+import {
+  ONLINE_CONNECT_ERROR,
+  ONLINE_STATUS_ERROR,
+  ONLINE_UNAVAILABLE_LABEL,
+  ONLINE_UNCONFIGURED_LABEL,
+} from '../src/ui/menuModel';
+import {
+  AnarchyClient,
+  ServerStatusSession,
+  checkingServerStatuses,
+  fetchLocalServerStatuses,
+  fetchStatusAt,
+  runOnlineConnectAttempt,
+  type ServerStatusMap,
+} from '../src/net/AnarchyClient';
+import type { WorldSummary } from '../src/save/types';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  document.body.innerHTML = '';
+});
+
+function ok(online: number, maxPlayers = 300) {
+  return { ok: true, json: async () => ({ online, maxPlayers }) };
+}
+
+function mount() {
+  const root = document.createElement('div');
+  document.body.append(root);
+  const ui = new GameUI(root);
+  return { root, ui };
+}
+
+function actions(retry = () => undefined) {
+  return {
+    back: () => undefined,
+    connect: () => undefined,
+    retry,
+    saveNickname: (raw: string) => ({ ok: true as const, name: raw }),
+  };
+}
+
+function label(root: HTMLElement, id: string): string {
+  return root.querySelector(`[data-server-id="${id}"] .server-online`)?.textContent ?? '';
+}
+
+describe('status probe results', () => {
+  it('treats HTTP 200 with zero players as available', async () => {
+    vi.stubGlobal('fetch', async () => ok(0));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'available',
+      online: 0,
+      maxPlayers: 300,
+    });
+  });
+
+  it('keeps an HTTP 500 from looking like an empty server', async () => {
+    vi.stubGlobal('fetch', async () => ({ ok: false, status: 500, json: async () => ({ online: 9, maxPlayers: 300 }) }));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'http',
+    });
+  });
+
+  it('classifies a rejected fetch as a network failure', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'network',
+    });
+  });
+
+  it('leaves checking when the status request times out', async () => {
+    vi.stubGlobal('fetch', (_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('timeout'), { name: 'TimeoutError' }));
+      });
+    }));
+    const started = Date.now();
+    await expect(fetchStatusAt('https://example.test/status', undefined, 30)).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'timeout',
+    });
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('does not crash on invalid JSON', async () => {
+    vi.stubGlobal('fetch', async () => ({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('unexpected token');
+      },
+    }));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'invalid_response',
+    });
+  });
+
+  it('keeps the other cards when one server fails', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (String(url).includes(':2568/')) throw new TypeError('down');
+      const online = String(url).includes(':2569/') ? 4 : 2;
+      return ok(online);
+    });
+    const statuses = await fetchLocalServerStatuses('');
+    expect(statuses.anarchy).toEqual({ phase: 'available', online: 2, maxPlayers: 300 });
+    expect(statuses.survival).toEqual({ phase: 'unavailable', reason: 'network' });
+    expect(statuses.peaceful).toEqual({ phase: 'available', online: 4, maxPlayers: 300 });
+  });
+
+  it('does not report a caller abort as a player-facing failure', async () => {
+    const controller = new AbortController();
+    vi.stubGlobal('fetch', (_url: string, init?: { signal?: AbortSignal }) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => {
+        reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      });
+    }));
+    const pending = fetchStatusAt('https://example.test/status', controller.signal, 5000);
+    controller.abort();
+    await expect(pending).resolves.toEqual({ phase: 'aborted' });
+  });
+});
+
+describe('online server screen', () => {
+  function wire(ui: GameUI, session = new ServerStatusSession()) {
+    const pull = async (): Promise<ServerStatusMap | undefined> => {
+      const statuses = await session.load('', 1500);
+      if (!statuses || !ui.isShowingOnlineServers()) return undefined;
+      ui.applyOnlineServerStatuses(statuses);
+      return statuses;
+    };
+    ui.showOnlineServers({
+      ...actions(() => {
+        if (ui.isOnlineStatusPending()) return;
+        ui.applyOnlineServerStatuses(checkingServerStatuses());
+        void pull();
+      }),
+    }, checkingServerStatuses(), 'anarchy', 'Steve');
+    return { session, pull };
+  }
+
+  it('moves a card from checking to the reported player count', async () => {
+    vi.stubGlobal('fetch', async () => ok(3, 20));
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    expect(label(root, 'anarchy')).toBe('Проверка…');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(true);
+    await pull();
+    expect(label(root, 'anarchy')).toBe('3 / 20');
+    expect(root.querySelector('[data-server-id="anarchy"]')?.getAttribute('data-server-phase')).toBe('available');
+    expect(root.querySelector('[data-server-note]')?.hasAttribute('hidden')).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(false);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+  });
+
+  it('leaves the responding cards available when only one server fails', async () => {
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (String(url).includes(':2568/')) throw new TypeError('down');
+      return ok(String(url).includes(':2569/') ? 4 : 2);
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    expect(label(root, 'anarchy')).toBe('2 / 300');
+    expect(label(root, 'survival')).toBe(ONLINE_UNAVAILABLE_LABEL);
+    expect(label(root, 'peaceful')).toBe('4 / 300');
+    expect(root.querySelector('[data-server-id="anarchy"]')?.getAttribute('data-server-phase')).toBe('available');
+    expect(root.querySelector('[data-server-id="peaceful"]')?.getAttribute('data-server-phase')).toBe('available');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+    root.querySelector<HTMLButtonElement>('[data-server-id="peaceful"]')?.click();
+    expect(root.querySelector('[data-server-id="peaceful"]')?.classList.contains('selected')).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+  });
+
+  it('shows a visible explanation and an enabled retry button after a network failure', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    expect(label(root, 'survival')).toBe(ONLINE_UNAVAILABLE_LABEL);
+    expect(root.textContent).toContain(ONLINE_STATUS_ERROR);
+    expect(root.textContent).not.toContain('оффлайн');
+    expect(root.textContent).not.toContain('CORS');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(false);
+    expect(root.querySelector('[data-server-note]')?.hasAttribute('hidden')).toBe(false);
+  });
+
+  it('returns to checking and then to available when retry succeeds', async () => {
+    let attempt = 0;
+    vi.stubGlobal('fetch', async () => {
+      attempt += 1;
+      if (attempt <= 3) throw new TypeError('offline');
+      return ok(6);
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    expect(label(root, 'anarchy')).toBe(ONLINE_UNAVAILABLE_LABEL);
+    root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.click();
+    expect(label(root, 'anarchy')).toBe('Проверка…');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(true);
+    await vi.waitFor(() => {
+      expect(label(root, 'anarchy')).toBe('6 / 300');
+    });
+    expect(root.querySelector('[data-server-note]')?.hasAttribute('hidden')).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(false);
+  });
+
+  it('keeps the error and re-enables retry when the next attempt also fails', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('still down');
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.click();
+    await vi.waitFor(() => {
+      expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(false);
+    });
+    expect(label(root, 'peaceful')).toBe(ONLINE_UNAVAILABLE_LABEL);
+    expect(root.textContent).toContain(ONLINE_STATUS_ERROR);
+  });
+
+  it('ignores a second retry click while a check is already running', async () => {
+    let calls = 0;
+    vi.stubGlobal('fetch', () => {
+      calls += 1;
+      return new Promise(() => undefined);
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    void pull();
+    await vi.waitFor(() => expect(calls).toBe(3));
+    const retry = root.querySelector<HTMLButtonElement>('[data-action="retry"]');
+    retry?.click();
+    retry?.click();
+    await Promise.resolve();
+    expect(calls).toBe(3);
+    expect(retry?.disabled).toBe(true);
+  });
+
+  it('does not let an older response replace a newer one', async () => {
+    const pending: Array<(value: unknown) => void> = [];
+    vi.stubGlobal('fetch', () => new Promise((resolve) => {
+      pending.push(resolve);
+    }));
+    const session = new ServerStatusSession();
+    const first = session.load('');
+    expect(pending).toHaveLength(3);
+    const second = session.load('');
+    expect(pending).toHaveLength(6);
+    for (const resolve of pending.splice(0, 3)) resolve(ok(1));
+    for (const resolve of pending) resolve(ok(8));
+    await expect(first).resolves.toBeUndefined();
+    const latest = await second;
+    expect(latest?.anarchy).toEqual({ phase: 'available', online: 8, maxPlayers: 300 });
+    expect(latest?.survival).toEqual({ phase: 'available', online: 8, maxPlayers: 300 });
+  });
+
+  it('does not reopen the server list after the player has left', async () => {
+    const pendingFetches: Array<(value: unknown) => void> = [];
+    vi.stubGlobal('fetch', () => new Promise((resolve) => {
+      pendingFetches.push(resolve);
+    }));
+    const { root, ui } = mount();
+    const session = new ServerStatusSession();
+    ui.showOnlineServers(actions(), checkingServerStatuses(), 'anarchy', 'Steve');
+    const pending = session.load('').then((statuses) => {
+      if (!statuses || !ui.isShowingOnlineServers()) return statuses;
+      ui.applyOnlineServerStatuses(statuses);
+      return statuses;
+    });
+    await vi.waitFor(() => expect(pendingFetches.length).toBe(3));
+    session.cancel();
+    let loaded = false;
+    ui.showWorldList([{
+      id: 'home',
+      name: 'Дом',
+      seed: '1',
+      mode: 'survival',
+      createdAt: 1,
+      updatedAt: 1,
+      playTimeSeconds: 10,
+    }], {
+      load: () => { loaded = true; },
+      create: () => undefined,
+      delete: () => undefined,
+      back: () => undefined,
+    });
+    for (const resolve of pendingFetches) resolve(ok(4));
+    await pending;
+    expect(root.querySelector('.server-list')).toBeNull();
+    expect(root.textContent).toContain('Одиночная игра');
+    expect(root.textContent).toContain('Дом');
+    root.querySelector<HTMLButtonElement>('[data-action="play-world"]')?.click();
+    expect(loaded).toBe(true);
+    root.querySelector<HTMLButtonElement>('[data-action="create"]')?.click();
+  });
+
+  it('keeps the typed nickname and the selected card across a status refresh', async () => {
+    vi.stubGlobal('fetch', async () => ok(1));
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    const input = root.querySelector<HTMLInputElement>('#online-nickname');
+    input!.value = 'Alex';
+    input!.dispatchEvent(new Event('input'));
+    root.querySelector<HTMLButtonElement>('[data-server-id="peaceful"]')?.click();
+    await pull();
+    expect(input!.value).toBe('Alex');
+    expect(root.querySelector('[data-server-id="peaceful"]')?.classList.contains('selected')).toBe(true);
+    expect(root.querySelector('[data-server-id="anarchy"]')?.classList.contains('selected')).toBe(false);
+    expect(ui.onlineNicknameDraft()).toBe('Alex');
+    expect(ui.onlineServerSelection()).toBe('peaceful');
+  });
+
+  it('disables connect for a card without a public endpoint and leaves the others usable', async () => {
+    vi.stubEnv('VITE_ANARCHY_URL', 'wss://megacraft.agariobrainrot.ru');
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (String(url).includes('megacraft')) return ok(2);
+      throw new TypeError('unexpected');
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    expect(label(root, 'anarchy')).toBe('2 / 300');
+    expect(label(root, 'survival')).toBe(ONLINE_UNCONFIGURED_LABEL);
+    expect(label(root, 'peaceful')).toBe(ONLINE_UNCONFIGURED_LABEL);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+    root.querySelector<HTMLButtonElement>('[data-server-id="survival"]')?.click();
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(true);
+    let connected = 0;
+    ui.showOnlineServers({
+      ...actions(),
+      connect: () => { connected += 1; },
+    }, {
+      anarchy: { phase: 'available', online: 2, maxPlayers: 300 },
+      survival: { phase: 'not_configured' },
+      peaceful: { phase: 'not_configured' },
+    }, 'survival');
+    root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.click();
+    root.querySelector<HTMLButtonElement>('[data-server-id="survival"]')?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(connected).toBe(0);
+    root.querySelector<HTMLButtonElement>('[data-server-id="anarchy"]')?.click();
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+  });
+});
+
+describe('online connect failure', () => {
+  it('replaces the loading screen with a retry and a way back, then tries again', async () => {
+    const { root, ui } = mount();
+    let attempts = 0;
+    const world: WorldSummary = {
+      id: 'home',
+      name: 'Дом',
+      seed: '1',
+      mode: 'survival',
+      createdAt: 1,
+      updatedAt: 1,
+      playTimeSeconds: 0,
+    };
+    await runOnlineConnectAttempt({
+      url: 'wss://megacraft.agariobrainrot.ru',
+      onLoading: () => ui.showLoading('Подключение к серверу…', 12, 'megacraft.agariobrainrot.ru'),
+      connect: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('closed');
+        ui.showWorldList([world], {
+          load: () => undefined,
+          create: () => undefined,
+          delete: () => undefined,
+          back: () => undefined,
+        });
+      },
+      onFailure: (retry) => {
+        ui.showOnlineConnectError({
+          retry: () => { void retry(); },
+          back: () => ui.showWorldList([world], {
+            load: () => undefined,
+            create: () => undefined,
+            delete: () => undefined,
+            back: () => undefined,
+          }),
+        });
+      },
+    });
+    expect(root.querySelector('#loading-screen')).toBeNull();
+    expect(root.textContent).toContain(ONLINE_CONNECT_ERROR);
+    expect(root.textContent).toContain('Повторить');
+    expect(root.textContent).toContain('К списку серверов');
+    root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.click();
+    await vi.waitFor(() => expect(attempts).toBe(2));
+    expect(root.textContent).toContain('Одиночная игра');
+    expect(root.textContent).not.toContain(ONLINE_CONNECT_ERROR);
+  });
+
+  it('opens a new socket for a repeated connection attempt', async () => {
+    const urls: string[] = [];
+    class Socket extends EventTarget {
+      constructor(url: string) {
+        super();
+        urls.push(url);
+        queueMicrotask(() => this.dispatchEvent(new Event('error')));
+      }
+
+      close(): void {
+        this.dispatchEvent(new Event('close'));
+      }
+
+      send(): void {
+        return undefined;
+      }
+    }
+    vi.stubGlobal('WebSocket', Socket);
+    const client = new AnarchyClient();
+    await expect(client.connect('wss://one.example')).rejects.toThrow('Сервер недоступен');
+    await expect(client.connect('wss://two.example')).rejects.toThrow('Сервер недоступен');
+    expect(urls).toEqual(['wss://one.example', 'wss://two.example']);
+  });
+});

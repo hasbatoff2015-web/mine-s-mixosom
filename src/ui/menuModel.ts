@@ -1,5 +1,7 @@
 import { LOCAL_SERVER_PRESETS, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH, type LocalServerName } from '../../shared/config';
+import type { ServerCardStatus, ServerStatusMap } from '../net/AnarchyClient';
 import { playerNicknameError } from '../../shared/playerName';
+import { serverLogoUrl } from './gameMenuGui';
 
 export type MenuServerCaptionTone = 'danger' | 'warning' | 'positive' | 'info' | 'accent';
 
@@ -15,16 +17,13 @@ export interface MenuServerEntry {
   signal: number;
 }
 
-export interface MenuServerLiveStatus {
-  reachable: boolean;
-  online: number;
-  maxPlayers: number;
-}
-
 export interface MenuServerRow extends MenuServerEntry {
   selected: boolean;
+  phase: ServerCardStatus['phase'];
+  /** True only after a successful status response. An empty server is still reachable. */
   reachable: boolean;
   label: string;
+  connectable: boolean;
 }
 
 export interface ControlBinding {
@@ -46,6 +45,11 @@ export interface MobileControlItem {
 
 export const ONLINE_NICKNAME_HINT = `${MIN_PLAYER_NAME_LENGTH}–${MAX_PLAYER_NAME_LENGTH} символов · только A–Z и 0–9`;
 export const ONLINE_NICKNAME_SAVED = 'Сохранено';
+export const ONLINE_CHECK_LABEL = 'Проверка…';
+export const ONLINE_UNAVAILABLE_LABEL = 'Не удалось связаться';
+export const ONLINE_UNCONFIGURED_LABEL = 'Сервер пока недоступен';
+export const ONLINE_STATUS_ERROR = 'Не удалось проверить соединение с некоторыми игровыми серверами. Проверьте интернет и попробуйте ещё раз.';
+export const ONLINE_CONNECT_ERROR = 'Не удалось подключиться к игровому серверу. Проверьте интернет или попробуйте позже.';
 
 export interface OnlineNicknameMessage {
   text: string;
@@ -106,21 +110,40 @@ export function isMenuServerId(id: string): id is LocalServerName {
   return Object.prototype.hasOwnProperty.call(LOCAL_SERVER_PRESETS, id);
 }
 
+function rowPhase(status: ServerCardStatus | undefined): ServerCardStatus['phase'] {
+  if (!status || status.phase === 'aborted') return 'checking';
+  return status.phase;
+}
+
 export function onlineServerRows(
-  statuses: Partial<Record<LocalServerName, MenuServerLiveStatus>> | undefined,
+  statuses: Partial<ServerStatusMap> | undefined,
   selectedId: LocalServerName,
 ): readonly MenuServerRow[] {
   return MENU_SERVER_ENTRIES.map((server) => {
     const live = statuses?.[server.id];
-    const reachable = live?.reachable === true;
+    const phase = rowPhase(live);
+    const reachable = phase === 'available';
+    const label = phase === 'available' && live?.phase === 'available'
+      ? `${live.online} / ${live.maxPlayers}`
+      : phase === 'unavailable'
+        ? ONLINE_UNAVAILABLE_LABEL
+        : phase === 'not_configured'
+          ? ONLINE_UNCONFIGURED_LABEL
+          : ONLINE_CHECK_LABEL;
     return {
       ...server,
       selected: server.id === selectedId,
+      phase,
       reachable,
-      signal: live && !reachable ? 0 : server.signal,
-      label: !live ? '…' : reachable ? `${live.online} / ${live.maxPlayers}` : 'оффлайн',
+      signal: reachable ? server.signal : 0,
+      label,
+      connectable: phase === 'available' || phase === 'unavailable',
     };
   });
+}
+
+export function onlineStatusNeedsRetry(statuses: Partial<ServerStatusMap> | undefined): boolean {
+  return onlineServerRows(statuses, 'anarchy').some((row) => row.phase === 'unavailable');
 }
 
 function escapeMenuText(value: string): string {
@@ -129,14 +152,14 @@ function escapeMenuText(value: string): string {
   ));
 }
 
-const SERVER_LOGO_SRC: Record<LocalServerName, string> = {
-  anarchy: '/ui/server-logos/anarchy_logo.png',
-  survival: '/ui/server-logos/survival_pvp_logo.png',
-  peaceful: '/ui/server-logos/peaceful_logo.png',
+const SERVER_LOGO_FILE: Record<LocalServerName, string> = {
+  anarchy: 'anarchy_logo.png',
+  survival: 'survival_pvp_logo.png',
+  peaceful: 'peaceful_logo.png',
 };
 
 function serverIconHtml(id: LocalServerName): string {
-  return `<img class="server-icon-image" src="${SERVER_LOGO_SRC[id]}" alt="" aria-hidden="true" />`;
+  return `<img class="server-icon-image" src="${escapeMenuText(serverLogoUrl(SERVER_LOGO_FILE[id]))}" alt="" aria-hidden="true" />`;
 }
 
 function serverCaptionsHtml(server: MenuServerRow): string {
@@ -148,15 +171,24 @@ function serverCaptionsHtml(server: MenuServerRow): string {
 }
 
 export function renderOnlineServerRows(
-  statuses: Partial<Record<LocalServerName, MenuServerLiveStatus>> | undefined,
+  statuses: Partial<ServerStatusMap> | undefined,
   selectedId: LocalServerName,
 ): string {
-  return onlineServerRows(statuses, selectedId).map((server) => `
-      <button class="server-row${server.selected ? ' selected' : ''}${server.label === 'оффлайн' ? ' is-offline' : ''}" data-server-id="${server.id}" aria-pressed="${server.selected}">
+  return onlineServerRows(statuses, selectedId).map((server) => {
+    const stateClass = server.phase === 'unavailable'
+      ? ' is-offline'
+      : server.phase === 'not_configured'
+        ? ' is-unconfigured'
+        : server.phase === 'checking'
+          ? ' is-checking'
+          : '';
+    return `
+      <button type="button" class="server-row${server.selected ? ' selected' : ''}${stateClass}" data-server-id="${server.id}" data-server-phase="${server.phase}" aria-pressed="${server.selected}">
         <span class="server-icon server-icon--${server.id}">${serverIconHtml(server.id)}</span>
         <span class="server-copy"><strong>${escapeMenuText(server.name)}</strong>${serverCaptionsHtml(server)}</span>
-        <span class="server-status"><span class="server-online">${server.label}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
-      </button>`).join('');
+        <span class="server-status"><span class="server-online">${escapeMenuText(server.label)}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>
+      </button>`;
+  }).join('');
 }
 
 export const DESKTOP_CONTROL_SECTIONS: readonly ControlSection[] = [

@@ -2,6 +2,7 @@ import { resolve } from 'node:path';
 import { defineConfig, type Plugin } from 'vite';
 import { generatePlayerSkinCatalog } from './scripts/generate-player-skins.mjs';
 import { readPlayerSkinContentHashes } from './scripts/player-skin-content-hashes.mjs';
+import { rebaseBuiltPublicCss } from './scripts/rebase-public-css';
 
 const PLAYER_SKIN_PUBLIC_DIR = resolve('public/textures/player/skins');
 const PLAYER_SKIN_OVERRIDES = resolve('src/player/appearance/playerSkinModelOverrides.json');
@@ -46,6 +47,20 @@ function playerSkinHashPlugin(): Plugin {
   };
 }
 
+/** Root-absolute public urls break when the ZIP is served from a nested directory. */
+function rebasePublicCssPlugin(): Plugin {
+  return {
+    name: 'rebase-public-css-urls',
+    generateBundle(_options, bundle) {
+      for (const item of Object.values(bundle)) {
+        if (item.type !== 'asset' || !item.fileName.endsWith('.css')) continue;
+        const css = typeof item.source === 'string' ? item.source : new TextDecoder().decode(item.source);
+        item.source = rebaseBuiltPublicCss(css);
+      }
+    },
+  };
+}
+
 function moveItemsDevRoutePlugin(): Plugin {
   return {
     name: 'moveitems-dev-route',
@@ -64,7 +79,7 @@ function moveItemsDevRoutePlugin(): Plugin {
 // `vite build` loads `.env.production` (`VITE_ANARCHY_URL`). `npm run dev` does not.
 export default defineConfig({
   base: './',
-  plugins: [playerSkinHashPlugin(), moveItemsDevRoutePlugin()],
+  plugins: [playerSkinHashPlugin(), moveItemsDevRoutePlugin(), rebasePublicCssPlugin()],
   build: {
     outDir: 'dist',
     assetsDir: 'assets',

@@ -5583,6 +5583,41 @@ textarea,
   background: linear-gradient(rgba(19, 19, 19, 0.98), rgba(8, 8, 8, 0.98));
 }
 
+.menu-footer.server-menu-footer {
+  grid-auto-flow: row;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.server-menu-actions {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 10px;
+}
+
+.server-reach-note {
+  margin: 0;
+  color: #f0d2a0;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.server-reach-note[hidden] {
+  display: none;
+}
+
+.server-connect-error {
+  padding: 8px 20px 20px;
+}
+
+.server-menu-actions .game-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+  filter: grayscale(0.35);
+}
+
 .world-list,
 .server-list,
 .controls-scroll,
@@ -5649,8 +5684,18 @@ textarea,
   box-shadow: inset 2px 2px rgba(255, 255, 255, 0.16), inset -2px -2px rgba(0, 0, 0, 0.42);
 }
 
-.server-row.is-offline .server-online {
-  color: #8d7a7a;
+.server-row.is-offline .server-online,
+.server-row.is-unconfigured .server-online {
+  color: #e7b7a4;
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: right;
+  white-space: normal;
+  max-width: 11rem;
+}
+
+.server-row.is-checking .server-online {
+  color: #d9c978;
 }
 
 .world-preview {

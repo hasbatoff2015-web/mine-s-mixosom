@@ -1,13 +1,19 @@
 export {
   AnarchyClient,
+  ServerStatusSession,
   anarchyClientUrl,
   anarchyStatusUrl,
   buildAnarchyJoinMessage,
+  checkingServerStatuses,
   clientUrlForServer,
   endpointLabel,
   fetchAnarchyStatus,
   fetchLocalServerStatuses,
+  fetchStatusAt,
   isLocalServerName,
+  runOnlineConnectAttempt,
+  selectedLocalServer,
+  statusUrlForServer,
 } from './AnarchyClient';
 export {
   applyAuthoritativeContainerSlots,
