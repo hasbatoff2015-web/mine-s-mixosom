@@ -1594,6 +1594,8 @@ export interface NetworkDonateAction {
   readonly detail: string;
   readonly screen?: GameMenuScreenKind;
   readonly kitName?: string;
+  /** Quiet marker for a choice that is already on, such as a nick color or a live pet. */
+  readonly active?: boolean;
 }
 
 export interface NetworkDonatePerk {
@@ -1613,6 +1615,9 @@ export interface NetworkDonatePet {
   readonly label: string;
   readonly available: boolean;
   readonly detail: string;
+  /** True only while this player's live cosmetic entity of that kind exists. */
+  readonly summoned?: boolean;
+  readonly actionLabel?: string;
 }
 
 export interface NetworkDonatePlayer {

@@ -5,6 +5,7 @@ import {
   type DonationStatus,
   type EffectiveRank,
 } from '../../shared/donationRanks';
+import type { CosmeticPetSelection } from '../../src/entities/cosmeticPets';
 import type { NetworkDonateAction, NetworkDonateKit, NetworkDonateMenu, NetworkDonatePerk, NetworkDonatePet } from '../../shared/protocol';
 import { playerText } from '../../shared/playerText';
 
@@ -42,6 +43,7 @@ export function buildDonateMenu(input: {
   readonly auction: number;
   readonly onlinePlayers: readonly { playerId: string; name: string }[];
   readonly deathPoint?: { x: number; y: number; z: number };
+  readonly summonedPet?: CosmeticPetSelection | null;
 }): NetworkDonateMenu {
   const status = input.status;
   if (status.loadError) {
@@ -90,6 +92,7 @@ export function buildDonateMenu(input: {
       label: 'Цвет ника',
       screen: 'donate-color',
       available: nick?.available === true,
+      active: nick?.available === true && Boolean(status.nick.color),
       detail: nick?.available
         ? (status.nick.color ? `Сейчас: ${status.nick.color}` : 'Изменить цвет своего имени')
         : 'Доступно с привилегии PREMIUM',
@@ -148,7 +151,12 @@ export function buildDonateMenu(input: {
       label: 'Питомцы',
       screen: 'donate-pets',
       available: true,
-      detail: 'Пчёлка и мини-крипер',
+      active: input.summonedPet === 'bee' || input.summonedPet === 'creeper',
+      detail: input.summonedPet === 'bee'
+        ? 'Сейчас рядом: пчёлка'
+        : input.summonedPet === 'creeper'
+          ? 'Сейчас рядом: мини-крипер'
+          : 'Пчёлка и мини-крипер',
     },
   ];
   if (invseeOp?.available) {
@@ -160,19 +168,28 @@ export function buildDonateMenu(input: {
       detail: opNote,
     });
   }
+  const petRow = (
+    id: 'bee' | 'creeper',
+    label: string,
+    available: boolean,
+    ready: string,
+    denied: string,
+    summon: string,
+    dismiss: string,
+  ): NetworkDonatePet => {
+    const summoned = available && input.summonedPet === id;
+    return {
+      id,
+      label,
+      available,
+      summoned,
+      actionLabel: summoned ? dismiss : summon,
+      detail: available ? (summoned ? playerText.petActive : ready) : denied,
+    };
+  };
   const pets: NetworkDonatePet[] = [
-    {
-      id: 'bee',
-      label: 'Пчёлка',
-      available: petBee?.available === true,
-      detail: petBee?.available === true ? playerText.petBeeReady : playerText.petBeeDenied,
-    },
-    {
-      id: 'creeper',
-      label: 'Мини-крипер',
-      available: petCreeper?.available === true,
-      detail: petCreeper?.available === true ? playerText.petCreeperReady : playerText.petCreeperDenied,
-    },
+    petRow('bee', 'Пчёлка', petBee?.available === true, playerText.petBeeReady, playerText.petBeeDenied, playerText.petBeeSummon, playerText.petBeeDismiss),
+    petRow('creeper', 'Мини-крипер', petCreeper?.available === true, playerText.petCreeperReady, playerText.petCreeperDenied, playerText.petCreeperSummon, playerText.petCreeperDismiss),
   ];
   const kits: NetworkDonateKit[] = status.kits.map((kit) => ({
     name: kit.name,

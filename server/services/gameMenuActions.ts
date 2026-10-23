@@ -17,7 +17,7 @@ import { isRankingKind } from '../../shared/ranking';
 import type { DuelService } from './duels';
 import { ANNOUNCE_TEXT_MAX, isNickColorId, sanitizeAnnouncementText } from '../../shared/donationRanks';
 import { parseKitName } from './kit';
-import { isCosmeticPetSelection } from '../../src/entities/cosmeticPets';
+import { isCosmeticPetSelection, type CosmeticPetSelection } from '../../src/entities/cosmeticPets';
 import { playerText } from '../../shared/playerText';
 import type { GameMenuScreen } from '../../shared/gameMenu';
 
@@ -59,6 +59,8 @@ export interface MenuActionHost {
   duels: DuelService;
   reloadDonation(): void;
   deathPoint(player: MenuPlayer): { x: number; y: number; z: number } | undefined;
+  /** Live decorative pet. The menu toggle reads this instead of the last click. */
+  liveCosmeticPet(player: MenuPlayer): CosmeticPetSelection | null;
 }
 
 export function applyGameMenuAction(
@@ -489,7 +491,8 @@ export function applyGameMenuAction(
       session.message = playerText.spawnpetUsage;
       return { kind: 'flush' };
     }
-    return { kind: 'donate-command', command: `/spawnpet ${pet}`, screen: 'donate-pets', closeOnSuccess: false };
+    const command = host.liveCosmeticPet(player) === pet ? '/spawnpet off' : `/spawnpet ${pet}`;
+    return { kind: 'donate-command', command, screen: 'donate-pets', closeOnSuccess: false };
   }
   void (message.screen as GameMenuScreenKind | undefined);
   return { kind: 'flush' };

@@ -165,8 +165,8 @@ describe('main menu HUD and chrome', () => {
         ],
         kits: [],
         pets: [
-          { id: 'bee', label: 'Пчёлка', available: true, detail: 'Летает рядом.' },
-          { id: 'creeper', label: 'Мини-крипер', available: false, detail: 'Для призыва мини-крипера нужна привилегия TITAN.' },
+          { id: 'bee', label: 'Пчёлка', available: true, summoned: true, actionLabel: 'Отозвать пчёлку', detail: 'Сейчас рядом.' },
+          { id: 'creeper', label: 'Мини-крипер', available: false, summoned: false, actionLabel: 'Призвать мини-крипера', detail: 'Для призыва мини-крипера нужна привилегия TITAN.' },
         ],
         catalog: [],
         nickChoices: [],
@@ -179,10 +179,71 @@ describe('main menu HUD and chrome', () => {
     expect(pets).toContain('Пчёлка');
     expect(pets).toContain('Мини-крипер');
     expect(pets).toContain('data-donate-pet="bee"');
-    expect(pets).toContain('Призвать');
+    expect(pets).toContain('is-dismiss');
+    expect(pets).toContain('Отозвать пчёлку');
     expect(pets).toContain('data-donate-pet="creeper"');
+    expect(pets).toContain('is-locked');
     expect(pets).toContain('disabled');
     expect(pets).toContain('Для призыва мини-крипера нужна привилегия TITAN.');
+    const summon = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-pets',
+      title: 'Питомцы',
+      donate: {
+        rankLabel: 'TITAN',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [],
+        kits: [
+          { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+          { name: 'boss', label: 'Набор BOSS', available: false, detail: 'Можно получить через 2 часа' },
+        ],
+        pets: [
+          { id: 'bee', label: 'Пчёлка', available: true, summoned: false, actionLabel: 'Призвать пчёлку', detail: 'Летает рядом.' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(summon).toContain('is-summon');
+    expect(summon).toContain('Призвать пчёлку');
+    expect(summon).not.toContain('Отозвать');
+    const kits = menuDonateHtml({
+      type: 'menu',
+      screen: 'donate-kits',
+      title: 'Наборы',
+      donate: {
+        rankLabel: 'TITAN',
+        summary: '',
+        remainingLabel: 'До 15 ноября',
+        perks: [],
+        actions: [],
+        kits: [
+          { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+          { name: 'boss', label: 'Набор BOSS', available: false, detail: 'Можно получить через 2 часа' },
+        ],
+        catalog: [],
+        nickChoices: [],
+        previewName: 'Ada',
+        onlinePlayers: [],
+        showInvseeOp: false,
+      },
+    }, (value) => value);
+    expect(kits).toContain('data-donate-kit="vip"');
+    expect(kits).toContain('data-donate-kit="boss" title="Можно получить через 2 часа" disabled');
+    const homeDelete = menuBodyHtml({
+      type: 'menu',
+      screen: 'home-delete-confirm',
+      title: 'Дома',
+      pendingHomeName: 'База',
+    }, (value) => value);
+    expect(homeDelete).toContain('data-menu-action="home_confirm_delete"');
+    expect(homeDelete).toContain('mc-btn-danger');
+    expect(homeDelete).toContain('data-menu-action="home_cancel_delete"');
     expect(gameUi).toContain("action: 'donate_pet', name");
     expect(donate).not.toContain('Оператор. Донат-ранга нет');
     expect(donate).toContain('disabled');

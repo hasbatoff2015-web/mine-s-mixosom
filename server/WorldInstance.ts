@@ -50,6 +50,7 @@ import {
   cosmeticKindForSelection,
   isCosmeticPetKind,
   parseCosmeticPetSelection,
+  selectionForCosmeticKind,
   type CosmeticPetSelection,
 } from '../src/entities/cosmeticPets';
 import { findCosmeticSpawnSpot } from '../src/entities/cosmeticPetMotion';
@@ -2175,6 +2176,7 @@ export class WorldInstance {
         if (!last || last.worldId !== this.worldId) return undefined;
         return { x: last.x, y: last.y, z: last.z };
       },
+      liveCosmeticPet: (entry) => this.liveCosmeticPet(entry.id),
     };
   }
 
@@ -2558,6 +2560,7 @@ export class WorldInstance {
             .filter((other) => other.id !== player.id)
             .map((other) => ({ playerId: other.id, name: other.name })),
           ...(deathPoint ? { deathPoint } : {}),
+          summonedPet: this.liveCosmeticPet(player.id),
         }),
       };
     }
@@ -5939,6 +5942,11 @@ export class WorldInstance {
   private rememberCosmeticSelection(player: ServerPlayer): void {
     this.storedPlayers[player.id] = this.toStored(player);
     this.dirty = true;
+  }
+
+  private liveCosmeticPet(playerId: string): CosmeticPetSelection | null {
+    const mob = this.ownedCosmeticPets(playerId).find((candidate) => candidate.alive);
+    return mob && isCosmeticPetKind(mob.kind) ? selectionForCosmeticKind(mob.kind) : null;
   }
 
   private cosmeticPetAllowed(player: ServerPlayer, selection: CosmeticPetSelection): boolean {

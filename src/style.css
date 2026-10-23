@@ -2186,6 +2186,51 @@ textarea,
   background: #2a2d33;
 }
 
+.mc-donate-card.is-locked:hover,
+.mc-donate-card.is-locked:focus-visible,
+.mc-donate-card:disabled:hover,
+.mc-donate-card:disabled:focus-visible {
+  background: #2a2d33;
+}
+
+.mc-donate-card.is-set {
+  box-shadow:
+    0 0 0 calc(1px * var(--mc-ui-scale, 3)) #111214,
+    inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(216, 196, 90, 0.45);
+}
+
+.mc-donate-card.is-summon {
+  background: linear-gradient(180deg, #343f38 0%, #2a332c 100%);
+  box-shadow:
+    0 0 0 calc(1px * var(--mc-ui-scale, 3)) #111214,
+    inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(120, 176, 132, 0.55);
+}
+
+.mc-donate-card.is-summon strong {
+  color: #d7f0df;
+}
+
+.mc-donate-card.is-summon:hover,
+.mc-donate-card.is-summon:focus-visible {
+  background: linear-gradient(180deg, #3d4b40 0%, #313c34 100%);
+}
+
+.mc-donate-card.is-dismiss {
+  background: linear-gradient(180deg, #403434 0%, #322a2a 100%);
+  box-shadow:
+    0 0 0 calc(1px * var(--mc-ui-scale, 3)) #111214,
+    inset 0 0 0 calc(1px * var(--mc-ui-scale, 3)) rgba(196, 120, 120, 0.5);
+}
+
+.mc-donate-card.is-dismiss strong {
+  color: #f0d4d4;
+}
+
+.mc-donate-card.is-dismiss:hover,
+.mc-donate-card.is-dismiss:focus-visible {
+  background: linear-gradient(180deg, #4a3c3c 0%, #3a3030 100%);
+}
+
 .mc-donate-swatches,
 .mc-donate-coords {
   display: flex;

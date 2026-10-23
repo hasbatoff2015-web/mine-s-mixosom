@@ -157,8 +157,8 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
       screen?: string;
       message?: string;
       donate?: {
-        actions?: { id: string; label: string; screen?: string }[];
-        pets?: { id: string; available: boolean; detail: string; label: string }[];
+        actions?: { id: string; label: string; screen?: string; detail?: string }[];
+        pets?: { id: string; available: boolean; summoned?: boolean; actionLabel?: string; detail: string; label: string }[];
       };
     };
     world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate' });
@@ -183,24 +183,63 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
 
     expect(world.donation.grant(player.id, 'boss').ok).toBe(true);
     world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate-pets' });
-    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.available).toBe(true);
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')).toMatchObject({
+      available: true,
+      summoned: false,
+      actionLabel: 'Призвать пчёлку',
+    });
     expect(menu().donate?.pets?.find((pet) => pet.id === 'creeper')?.available).toBe(false);
     world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'bee' });
     expect(menu().screen).toBe('donate-pets');
     expect(menu().message).toContain('Рядом появилась пчела.');
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')).toMatchObject({
+      summoned: true,
+      actionLabel: 'Отозвать пчёлку',
+    });
     expect(world.gameplay.mobs.entities.some((mob) => mob.kind === 'pet_bee')).toBe(true);
+    world.handleMenuAction(player, { type: 'menu_action', action: 'back' });
+    world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate-pets' });
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.summoned).toBe(true);
+    expect(menu().donate?.actions?.find((action) => action.id === 'pets')?.label).toBe('Питомцы');
+    world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate' });
+    expect(menu().donate?.actions?.find((action) => action.id === 'pets')?.detail ?? '').toContain('пчёлка');
+    world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate-pets' });
+    world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'bee' });
+    expect(menu().message).toContain('отключён');
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.summoned).toBe(false);
+    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_bee' || mob.kind === 'pet_creeper')).toHaveLength(0);
+    world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'bee' });
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.summoned).toBe(true);
     world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'creeper' });
     expect(menu().screen).toBe('donate-pets');
     expect(menu().message).toContain('TITAN');
     expect(world.gameplay.mobs.entities.some((mob) => mob.kind === 'pet_creeper')).toBe(false);
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.summoned).toBe(true);
 
     expect(world.donation.grant(player.id, 'titan').ok).toBe(true);
     world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'creeper' });
     expect(menu().message).toContain('мини-крипер');
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'creeper')?.summoned).toBe(true);
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'bee')?.summoned).toBe(false);
     expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_creeper')).toHaveLength(1);
+    world.handleMenuAction(player, { type: 'menu_action', action: 'back' });
+    world.handleMenuAction(player, { type: 'menu_action', action: 'open', screen: 'donate-pets' });
+    expect(menu().donate?.pets?.find((pet) => pet.id === 'creeper')?.actionLabel).toBe('Отозвать мини-крипера');
+    world.donation.revoke(player.id);
+    for (let tick = 0; tick < 20; tick += 1) world.tick();
+    const afterExpiry = menu();
+    expect(afterExpiry.screen).toBe('donate-pets');
+    expect(afterExpiry.donate?.pets?.find((pet) => pet.id === 'creeper')).toMatchObject({
+      available: false,
+      summoned: false,
+    });
+    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_bee' || mob.kind === 'pet_creeper')).toHaveLength(0);
+    world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'creeper' });
+    expect(menu().message).toContain('TITAN');
+    expect(world.donation.grant(player.id, 'titan').ok).toBe(true);
     world.handleMenuAction(player, { type: 'menu_action', action: 'donate_pet', name: 'dragon' });
     expect(menu().screen).toBe('donate-pets');
     expect(menu().message).toContain('bee|creeper|off');
-    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_creeper')).toHaveLength(1);
+    expect(world.gameplay.mobs.entities.filter((mob) => mob.kind === 'pet_bee' || mob.kind === 'pet_creeper')).toHaveLength(0);
   });
 });

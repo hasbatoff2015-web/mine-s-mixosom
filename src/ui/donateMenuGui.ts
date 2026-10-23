@@ -8,13 +8,14 @@ function colorHex(id: string | undefined): string {
 
 function card(action: NetworkDonateAction, escape: (value: string) => string): string {
   const locked = action.available ? '' : ' is-locked';
+  const active = action.available && action.active ? ' is-set' : '';
   const disabled = action.available ? '' : ' disabled';
   const open = action.id === 'ec'
     ? 'data-menu-action="donate_ec"'
     : action.screen
       ? `data-menu-open="${action.screen}"`
       : 'disabled';
-  return `<button type="button" class="mc-donate-card${locked}" ${open}${disabled}>
+  return `<button type="button" class="mc-donate-card${locked}${active}" ${open}${disabled}>
     <strong>${escape(action.label)}</strong>
     <span>${escape(action.detail)}</span>
   </button>`;
@@ -84,7 +85,7 @@ function colorScreen(donate: NetworkDonateMenu, message: string, escape: (value:
     <div class="mc-donate-swatches" data-donate-color-pick>${swatches}</div>
     <div class="mc-ah-actions">
       <button type="button" class="mc-ah-btn" data-menu-action="donate_color">Применить</button>
-      <button type="button" class="mc-ah-btn" data-menu-action="donate_color" data-donate-color="reset">Сбросить</button>
+      <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-action="donate_color" data-donate-color="reset">Сбросить</button>
     </div>
     ${messageHtml(message, escape)}`);
 }
@@ -149,12 +150,15 @@ function backScreen(donate: NetworkDonateMenu, message: string, escape: (value: 
 }
 
 function petsScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
-  const cards = (donate.pets ?? []).map((pet) => `
-    <button type="button" class="mc-donate-card${pet.available ? '' : ' is-locked'}" data-menu-action="donate_pet" data-donate-pet="${escape(pet.id)}"${pet.available ? '' : ' disabled'}>
+  const cards = (donate.pets ?? []).map((pet) => {
+    const tone = pet.available ? (pet.summoned ? ' is-dismiss' : ' is-summon') : ' is-locked';
+    const action = pet.available ? (pet.actionLabel ?? pet.label) : pet.detail;
+    return `
+    <button type="button" class="mc-donate-card${tone}" data-menu-action="donate_pet" data-donate-pet="${escape(pet.id)}" title="${escape(pet.detail)}"${pet.available ? '' : ' disabled'}>
       <strong>${escape(pet.label)}</strong>
-      <span>${escape(pet.detail)}</span>
-      ${pet.available ? '<span>Призвать</span>' : ''}
-    </button>`).join('');
+      <span>${escape(action)}</span>
+    </button>`;
+  }).join('');
   return shell('donate-pets', 'Питомцы', `
     <div class="mc-donate-grid">${cards || '<p class="mc-menu-empty">Питомцев нет.</p>'}</div>
     ${messageHtml(message, escape)}`);
@@ -162,7 +166,7 @@ function petsScreen(donate: NetworkDonateMenu, message: string, escape: (value: 
 
 function kitsScreen(donate: NetworkDonateMenu, message: string, escape: (value: string) => string): string {
   const cards = donate.kits.map((kit) => `
-    <button type="button" class="mc-donate-card${kit.available ? '' : ' is-locked'}" data-menu-action="donate_kit" data-donate-kit="${escape(kit.name)}" title="${escape(kit.detail)}">
+    <button type="button" class="mc-donate-card${kit.available ? '' : ' is-locked'}" data-menu-action="donate_kit" data-donate-kit="${escape(kit.name)}" title="${escape(kit.detail)}"${kit.available ? '' : ' disabled'}>
       <strong>${escape(kit.label)}</strong>
       <span>${escape(kit.detail)}</span>
     </button>`).join('');

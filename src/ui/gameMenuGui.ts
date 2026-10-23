@@ -159,7 +159,7 @@ export function menuHomesHtml(state: ServerMenuMessage, escape: (value: string) 
       ${menuHeadingHtml('Дома')}
       <p class="mc-ah-prompt">Вы уверены, что хотите удалить дом «${escape(name)}»?</p>
       <div class="mc-ah-actions">
-        <button type="button" class="mc-ah-btn" data-menu-action="home_confirm_delete">Удалить</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-action="home_confirm_delete">Удалить</button>
         <button type="button" class="mc-ah-btn" data-menu-action="home_cancel_delete">Отмена</button>
       </div>
     </div>`;
@@ -194,7 +194,7 @@ export function menuFriendsHtml(state: ServerMenuMessage, escape: (value: string
       ${menuHeadingHtml('Друзья')}
       <p class="mc-ah-prompt">Вы уверены, что хотите удалить игрока «${escape(name)}»?</p>
       <div class="mc-ah-actions">
-        <button type="button" class="mc-ah-btn" data-menu-action="friends_confirm_delete">Удалить</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-action="friends_confirm_delete">Удалить</button>
         <button type="button" class="mc-ah-btn" data-menu-action="friends_cancel_delete">Отмена</button>
       </div>
     </div>`;
@@ -311,7 +311,7 @@ export function menuClaimsHtml(state: ServerMenuMessage, escape: (value: string)
       ${menuHeadingHtml('Приваты')}
       <p class="mc-ah-prompt">Вы уверены, что хотите удалить приват «${escape(name)}»?</p>
       <div class="mc-ah-actions">
-        <button type="button" class="mc-ah-btn" data-menu-action="claim_confirm_delete">Удалить</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-action="claim_confirm_delete">Удалить</button>
         <button type="button" class="mc-ah-btn" data-menu-action="claim_cancel_delete">Отмена</button>
       </div>
     </div>`;
@@ -342,7 +342,7 @@ export function menuClaimsHtml(state: ServerMenuMessage, escape: (value: string)
         <button type="button" class="mc-ah-btn" data-menu-action="claim_add_member">Добавить</button>
       </div>
       <div class="mc-ah-actions">
-        <button type="button" class="mc-ah-btn" data-menu-action="claim_delete">Удалить приват</button>
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-action="claim_delete">Удалить приват</button>
       </div>
       ${menuMessage(state.message, escape)}
     </div>`;
