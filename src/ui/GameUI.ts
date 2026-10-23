@@ -521,6 +521,8 @@ export class GameUI {
   private onlineActions?: OnlineServersActions;
   private onlineSelected: LocalServerName = 'anarchy';
   private onlineStatuses?: ServerStatusMap;
+  /** True when disabling «Обновить» moved focus off that button. */
+  private onlineRefreshFocused = false;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -1040,6 +1042,7 @@ export class GameUI {
     selectedId = selectedLocalServer(),
     currentNickname?: string,
   ): void {
+    this.onlineRefreshFocused = false;
     this.onlineActions = actions;
     this.onlineSelected = isMenuServerId(selectedId) ? selectedId : 'anarchy';
     this.onlineStatuses = statuses;
@@ -1053,11 +1056,16 @@ export class GameUI {
           </div>
           <small class="online-nickname-message" id="online-nickname-message" aria-live="polite">${ONLINE_NICKNAME_HINT}</small>
         </form>
-        <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
+        <div class="server-list-panel">
+          <div class="server-list-toolbar">
+            <span class="server-list-toolbar-title">СЕРВЕРЫ</span>
+            <button type="button" class="game-button server-refresh-button" data-action="retry" aria-label="Обновить список серверов" title="Повторно проверить серверы">Обновить</button>
+          </div>
+          <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
+        </div>
         <footer class="menu-footer server-menu-footer">
           <p class="server-reach-note" data-server-note role="status" hidden></p>
           <div class="server-menu-actions">
-            <button type="button" class="game-button" data-action="retry">Повторить</button>
             <button type="button" class="game-button primary" data-action="connect">Подключиться</button>
             <button type="button" class="game-button" data-action="back">Назад</button>
           </div>
@@ -1077,7 +1085,7 @@ export class GameUI {
     this.paintOnlineServerChrome();
   }
 
-  /** Updates status text, the shared error and the retry button without recreating the cards. */
+  /** Updates status text, the shared error and «Обновить» without recreating the cards. */
   applyOnlineServerStatuses(statuses: ServerStatusMap): void {
     if (!this.isShowingOnlineServers()) return;
     this.onlineStatuses = statuses;
@@ -1115,12 +1123,13 @@ export class GameUI {
   }
 
   showOnlineConnectError(actions: OnlineConnectErrorActions): void {
+    this.onlineRefreshFocused = false;
     this.onlineActions = undefined;
     this.setScreen(`
-      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window server-connect-error-window">
         <header class="menu-heading"><div><span class="eyebrow">Подключение</span><h1>Нет соединения</h1></div></header>
         <p class="server-reach-note server-connect-error" role="alert">${ONLINE_CONNECT_ERROR}</p>
-        <footer class="menu-footer"><div class="server-menu-actions">
+        <footer class="menu-footer server-menu-footer"><div class="server-menu-actions">
           <button type="button" class="game-button primary" data-action="retry">Повторить</button>
           <button type="button" class="game-button" data-action="back">К списку серверов</button>
         </div></footer>
@@ -1148,12 +1157,30 @@ export class GameUI {
       note.hidden = !failed;
       note.textContent = failed ? ONLINE_STATUS_ERROR : '';
     }
-    const retry = this.screen?.querySelector<HTMLButtonElement>('[data-action="retry"]');
-    if (retry) retry.disabled = pending;
+    this.paintOnlineRefreshButton(pending);
     const connect = this.screen?.querySelector<HTMLButtonElement>('[data-action="connect"]');
     if (connect) connect.disabled = !this.canConnectOnlineSelection();
     const badge = this.screen?.querySelector('.mock-badge');
     if (badge) badge.textContent = this.onlineEndpointBadge();
+  }
+
+  /** Disables «Обновить» during a probe and gives focus back when that probe ends. */
+  private paintOnlineRefreshButton(pending: boolean): void {
+    const retry = this.screen?.querySelector<HTMLButtonElement>('.server-refresh-button');
+    if (!retry) return;
+    const hadFocus = document.activeElement === retry;
+    if (pending && hadFocus) this.onlineRefreshFocused = true;
+    retry.disabled = pending;
+    if (pending) return;
+    const shouldRestore = this.onlineRefreshFocused;
+    this.onlineRefreshFocused = false;
+    if (!shouldRestore) return;
+    const active = document.activeElement;
+    const focusDumped = hadFocus
+      || active === null
+      || active === document.body
+      || active === document.documentElement;
+    if (focusDumped) retry.focus();
   }
 
   private paintOnlineServerRow(button: HTMLButtonElement, row: MenuServerRow): void {

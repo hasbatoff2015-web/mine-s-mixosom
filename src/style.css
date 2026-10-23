@@ -5894,6 +5894,54 @@ textarea,
   min-height: min(560px, calc(100dvh - 44px));
 }
 
+/* Header, message, footer. The message row takes the free space so the buttons stay short. */
+.server-window.server-connect-error-window {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.server-connect-error-window .server-connect-error {
+  align-self: start;
+  max-height: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.server-list-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.server-list-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+  padding: 8px 20px 0;
+}
+
+.server-list-toolbar-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #a8b990;
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.server-list-panel .server-list {
+  min-height: 0;
+  padding-top: 8px;
+  overflow-y: auto;
+}
+
 .online-nickname-editor {
   margin: 0;
   padding: 11px 20px 10px;
@@ -6358,6 +6406,24 @@ textarea,
   font-size: 10px;
 }
 
+.menu-screen .server-refresh-button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  min-width: 118px;
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  color: #f3f3f3;
+  background: linear-gradient(#4a4a4a, #2f2f2f);
+  font-size: 10px;
+  line-height: 1;
+  text-shadow: 1px 1px #1a1a1a;
+  white-space: nowrap;
+}
+
 @media (max-width: 720px) {
   .controls-scroll,
   .mobile-control-list,
@@ -6499,6 +6565,15 @@ textarea,
     min-height: 0;
     align-content: start;
     overflow-y: auto;
+  }
+
+  .server-list-toolbar {
+    padding: 6px 16px 0;
+  }
+
+  .server-list-panel .server-list {
+    padding-top: 6px;
+    padding-bottom: 8px;
   }
 }
 

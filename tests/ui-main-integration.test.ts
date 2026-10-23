@@ -53,6 +53,13 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(onlineUi).toContain('renderOnlineServerRows(statuses, this.onlineSelected)');
     expect(onlineUi).toContain('actions.connect(this.onlineSelected)');
     expect(onlineUi).toContain('data-action="retry"');
+    expect(onlineUi).toContain('server-list-panel');
+    expect(onlineUi).toContain('server-list-toolbar');
+    expect(onlineUi).toContain('server-refresh-button');
+    expect(onlineUi).toContain('>Обновить<');
+    expect(onlineUi).toContain('server-connect-error-window');
+    expect(onlineUi).toContain('>Повторить<');
+    expect(styleSource).toMatch(/\.server-window\.server-connect-error-window \{[^}]*grid-template-rows: auto minmax\(0, 1fr\) auto;/);
     expect(onlineUi).not.toContain('пока недоступно');
     expect(onlineUi).not.toContain('menu-notice');
     expect(onlineUi).toContain("button.addEventListener('dblclick'");

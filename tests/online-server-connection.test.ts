@@ -523,6 +523,9 @@ describe('online connect failure', () => {
     });
     expect(root.querySelector('#loading-screen')).toBeNull();
     expect(root.textContent).toContain(ONLINE_CONNECT_ERROR);
+    expect(root.querySelector('.server-connect-error-window')).toBeTruthy();
+    expect(root.querySelector('.server-refresh-button')).toBeNull();
+    expect(root.textContent).not.toContain('Обновить');
     expect(root.textContent).toContain('Повторить');
     expect(root.textContent).toContain('К списку серверов');
     root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.click();
@@ -553,5 +556,191 @@ describe('online connect failure', () => {
     await expect(client.connect('wss://one.example')).rejects.toThrow('Сервер недоступен');
     await expect(client.connect('wss://two.example')).rejects.toThrow('Сервер недоступен');
     expect(urls).toEqual(['wss://one.example', 'wss://two.example']);
+  });
+});
+
+describe('online server menu layout', () => {
+  function wire(ui: GameUI, connect: (id: string) => void = () => undefined, session = new ServerStatusSession()) {
+    const pull = async (): Promise<ServerStatusMap | undefined> => {
+      const statuses = await session.load('', 1500);
+      if (!statuses || !ui.isShowingOnlineServers()) return undefined;
+      ui.applyOnlineServerStatuses(statuses);
+      return statuses;
+    };
+    ui.showOnlineServers({
+      ...actions(() => {
+        if (ui.isOnlineStatusPending()) return;
+        ui.applyOnlineServerStatuses(checkingServerStatuses());
+        void pull();
+      }),
+      connect,
+    }, checkingServerStatuses(), 'anarchy', 'Steve');
+    return { session, pull };
+  }
+
+  it('puts Обновить in a toolbar and leaves connect and back in the footer', () => {
+    const { root, ui } = mount();
+    let connected = '';
+    let backs = 0;
+    ui.showOnlineServers({
+      ...actions(),
+      connect: (id) => { connected = id; },
+      back: () => { backs += 1; },
+    }, {
+      anarchy: { phase: 'available', online: 2, maxPlayers: 300 },
+      survival: { phase: 'not_configured' },
+      peaceful: { phase: 'not_configured' },
+    }, 'anarchy', 'Steve');
+
+    const panel = root.querySelector('.server-list-panel');
+    const toolbar = root.querySelector('.server-list-toolbar');
+    const list = root.querySelector('.server-list');
+    const footer = root.querySelector('.server-menu-footer');
+    const refresh = toolbar?.querySelector<HTMLButtonElement>('.server-refresh-button');
+    expect(panel).toBeTruthy();
+    expect(toolbar).toBeTruthy();
+    expect(toolbar?.textContent).toContain('СЕРВЕРЫ');
+    expect(refresh?.textContent?.trim()).toBe('Обновить');
+    expect(refresh?.getAttribute('data-action')).toBe('retry');
+    expect(refresh?.getAttribute('aria-label')).toBe('Обновить список серверов');
+    expect(list?.contains(refresh ?? null)).toBe(false);
+    expect(footer?.contains(refresh ?? null)).toBe(false);
+    expect(panel?.contains(list ?? null)).toBe(true);
+    expect([...root.querySelectorAll('.server-list [data-server-id]')].map((row) => row.getAttribute('data-server-id'))).toEqual([
+      'anarchy',
+      'survival',
+      'peaceful',
+    ]);
+    expect(root.querySelectorAll('.server-list .server-icon-image')).toHaveLength(3);
+    expect(root.textContent).toContain('Играть онлайн');
+    expect(root.querySelector<HTMLInputElement>('#online-nickname')?.value).toBe('Steve');
+    const footerButtons = [...footer!.querySelectorAll<HTMLButtonElement>('.game-button')];
+    expect(footerButtons.map((button) => button.textContent?.trim())).toEqual(['Подключиться', 'Назад']);
+    expect(footer?.textContent).not.toContain('Повторить');
+    expect(root.querySelectorAll('[data-action="retry"]')).toHaveLength(1);
+
+    footer?.querySelector<HTMLButtonElement>('[data-action="connect"]')?.click();
+    expect(connected).toBe('anarchy');
+    root.querySelector<HTMLButtonElement>('[data-server-id="survival"]')?.click();
+    footer?.querySelector<HTMLButtonElement>('[data-action="connect"]')?.click();
+    expect(connected).toBe('anarchy');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(true);
+    footer?.querySelector<HTMLButtonElement>('[data-action="back"]')?.click();
+    expect(backs).toBe(1);
+  });
+
+  it('shows the shared status error above the two footer actions', async () => {
+    vi.stubGlobal('fetch', async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const { root, ui } = mount();
+    const { pull } = wire(ui);
+    await pull();
+    const footer = root.querySelector('.server-menu-footer');
+    const note = footer?.querySelector('[data-server-note]');
+    expect(note?.textContent).toBe(ONLINE_STATUS_ERROR);
+    expect(note?.hasAttribute('hidden')).toBe(false);
+    expect(footer?.querySelector('[data-action="retry"]')).toBeNull();
+    expect(root.querySelector('.server-refresh-button')?.hasAttribute('disabled')).toBe(false);
+  });
+
+  it('refreshes statuses from Обновить once, keeping the nickname, selection, and focus', async () => {
+    let round = 0;
+    vi.stubGlobal('fetch', async () => {
+      round += 1;
+      if (round <= 3) throw new TypeError('down');
+      return ok(7, 40);
+    });
+    const { root, ui } = mount();
+    let connects = 0;
+    const { pull } = wire(ui, () => { connects += 1; });
+    await pull();
+    expect(label(root, 'anarchy')).toBe(ONLINE_UNAVAILABLE_LABEL);
+    const input = root.querySelector<HTMLInputElement>('#online-nickname')!;
+    input.value = 'Mina';
+    const peaceful = root.querySelector<HTMLButtonElement>('[data-server-id="peaceful"]')!;
+    peaceful.click();
+    const refresh = root.querySelector<HTMLButtonElement>('.server-refresh-button')!;
+    const cards = [...root.querySelectorAll('[data-server-id]')];
+    refresh.focus();
+    const before = round;
+    refresh.click();
+    refresh.click();
+    expect(label(root, 'peaceful')).toBe('Проверка…');
+    expect(refresh.disabled).toBe(true);
+    expect(round - before).toBe(3);
+    await vi.waitFor(() => expect(label(root, 'anarchy')).toBe('7 / 40'));
+    expect(round - before).toBe(3);
+    expect(input.value).toBe('Mina');
+    expect(root.querySelector('[data-server-id="peaceful"]')).toBe(peaceful);
+    expect(peaceful.classList.contains('selected')).toBe(true);
+    expect([...root.querySelectorAll('[data-server-id]')]).toEqual(cards);
+    expect(root.querySelector('.server-refresh-button')).toBe(refresh);
+    expect(refresh.disabled).toBe(false);
+    expect(document.activeElement).toBe(refresh);
+    peaceful.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(connects).toBe(1);
+  });
+
+  it('does not steal focus from another control when the refresh finishes', () => {
+    const { root, ui } = mount();
+    ui.showOnlineServers(actions(), checkingServerStatuses(), 'anarchy', 'Steve');
+    const refresh = root.querySelector<HTMLButtonElement>('.server-refresh-button')!;
+    const input = root.querySelector<HTMLInputElement>('#online-nickname')!;
+    refresh.focus();
+    ui.applyOnlineServerStatuses(checkingServerStatuses());
+    input.focus();
+    ui.applyOnlineServerStatuses({
+      anarchy: { phase: 'available', online: 1, maxPlayers: 300 },
+      survival: { phase: 'available', online: 1, maxPlayers: 300 },
+      peaceful: { phase: 'available', online: 1, maxPlayers: 300 },
+    });
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe('Steve');
+    expect(refresh.disabled).toBe(false);
+  });
+
+  it('leaves the server list through Escape', () => {
+    // Earlier screens in this file keep their capture listeners. Drain them first.
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      if (!event.defaultPrevented) break;
+    }
+    const { root, ui } = mount();
+    let backs = 0;
+    ui.showOnlineServers({
+      ...actions(),
+      back: () => { backs += 1; },
+    }, checkingServerStatuses(), 'anarchy', 'Steve');
+    expect(root.querySelector('.server-list')).toBeTruthy();
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+    expect(backs).toBe(1);
+  });
+
+  it('keeps connection retry separate from the server-list refresh button', () => {
+    const { root, ui } = mount();
+    let retried = 0;
+    let backs = 0;
+    ui.showOnlineConnectError({
+      retry: () => { retried += 1; },
+      back: () => { backs += 1; },
+    });
+    expect(root.querySelector('.server-window.server-connect-error-window')).toBeTruthy();
+    expect(root.querySelector('.server-list-toolbar')).toBeNull();
+    expect(root.querySelector('.server-refresh-button')).toBeNull();
+    expect(root.textContent).not.toContain('Обновить');
+    const buttons = [...root.querySelectorAll<HTMLButtonElement>('.server-menu-actions .game-button')];
+    expect(buttons.map((button) => button.textContent?.trim())).toEqual(['Повторить', 'К списку серверов']);
+    buttons[0]?.click();
+    expect(retried).toBe(1);
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(event);
+      if (backs > 0 || !event.defaultPrevented) break;
+    }
+    expect(backs).toBe(1);
+    buttons[1]?.click();
+    expect(backs).toBe(2);
   });
 });
