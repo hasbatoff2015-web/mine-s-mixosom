@@ -261,6 +261,16 @@ Project size gate:
 
 Источники: [Game requirements, items 1.21–1.22](https://yandex.com/dev/games/doc/en/concepts/requirements), [Draft archive requirements](https://yandex.com/dev/games/doc/en/console/add-new-game/draft), [Connection paths](https://yandex.com/dev/games/doc/en/sdk/sdk-about).
 
+## Внешние игровые хосты
+
+**Required:** если игра не смогла получить данные с внешнего ресурса, игрок видит понятное сообщение и действие, которое помогает повторить попытку (кнопка повторного запроса или перезагрузка). Платформа не подтверждает CSP-хост, пока это поведение не видно при подключении. Сообщение в клиенте само по себе не открывает хост: нужны и обработка ошибки, и разрешённый CSP `connect-src` / WebSocket, и рабочий HTTPS/WSS маршрут. Для `fetch` к чужому origin нужен CORS.
+
+**Project policy:** экран «Играть онлайн» сразу показывает три карточки в состоянии «Проверка…». Успешный `/status` показывает online/maxPlayers, в том числе `0 / N`. Сетевая ошибка, timeout, HTTP-ошибка и некорректный JSON показывают «Не удалось связаться» и общий текст с кнопкой «Повторить». Причина не показывается игроку как код, IP или CORS. Повторный запрос один, кнопка заблокирована на время проверки, устаревший ответ не возвращает закрытый экран. Неоткрывшийся WebSocket заменяет loading на сообщение с «Повторить» и «К списку серверов», без автоматического цикла. Ненастроенный публичный режим — «Сервер пока недоступен», без обращения к `127.0.0.1`. `<script src="/sdk.js">` не переписывается. Логотипы и прочие файлы из ZIP разрешаются относительно документа / `base: './'`, а не с VPS.
+
+Публично подтверждён только `wss://megacraft.agariobrainrot.ru` и `https://megacraft.agariobrainrot.ru/status`. Survival и Peaceful ждут отдельных nginx/TLS/WSS. Пока `VITE_SURVIVAL_URL` и `VITE_PEACEFUL_URL` пустые, production-клиент их не выдумывает.
+
+Источник отказа CSP и требование к сообщению: [Add a new game](https://yandex.com/dev/games/doc/en/console/add-new-game). CSP самого портала этим патчем не одобрен.
+
 ## Обязательная QA-матрица проекта
 
 Desktop:

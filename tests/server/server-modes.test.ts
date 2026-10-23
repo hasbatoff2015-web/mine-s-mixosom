@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { LOCAL_SERVER_PRESETS } from '../../shared/config';
-import { anarchyClientUrl, anarchyStatusUrl } from '../../src/net/AnarchyClient';
+import { anarchyClientUrl, anarchyStatusUrl, clientUrlForServer, statusUrlForServer } from '../../src/net/AnarchyClient';
 import { BlockId } from '../../src/blocks';
 import { PLAYER_EYE_HEIGHT } from '../../src/core/constants';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
@@ -260,10 +260,13 @@ describe('server modes', () => {
   it('points the local client at the mode preset port', () => {
     expect(anarchyClientUrl('')).toBe('ws://127.0.0.1:2567');
     expect(anarchyClientUrl('?server=anarchy')).toBe('ws://127.0.0.1:2567');
-    expect(anarchyClientUrl('?server=survival')).toBe('ws://127.0.0.1:2568');
-    expect(anarchyClientUrl('?server=peaceful')).toBe('ws://127.0.0.1:2569');
-    expect(anarchyStatusUrl('?server=peaceful')).toBe('http://127.0.0.1:2569/status');
-    expect(anarchyClientUrl('?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
+    expect(clientUrlForServer('survival', '?server=anarchy')).toBe('ws://127.0.0.1:2568');
+    expect(clientUrlForServer('peaceful', '?server=survival')).toBe('ws://127.0.0.1:2569');
+    expect(statusUrlForServer('peaceful', '')).toBe('http://127.0.0.1:2569/status');
+    expect(anarchyClientUrl('?server=survival')).toBe('ws://127.0.0.1:2567');
+    expect(anarchyStatusUrl('?server=peaceful')).toBe('http://127.0.0.1:2567/status');
+    expect(clientUrlForServer('survival', '?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2700');
+    expect(anarchyClientUrl('?server=survival&anarchyPort=2700')).toBe('ws://127.0.0.1:2567');
     expect(anarchyClientUrl('?anarchyUrl=ws://example.test:9')).toBe('ws://example.test:9');
     expect(anarchyClientUrl('?server=nope')).toBe('ws://127.0.0.1:2567');
   });

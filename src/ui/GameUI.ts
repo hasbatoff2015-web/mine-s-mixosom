@@ -188,17 +188,27 @@ import {
   DESKTOP_CONTROL_SECTIONS,
   MOBILE_CONTROL_FOOTNOTE,
   MOBILE_CONTROL_ITEMS,
+  ONLINE_CONNECT_ERROR,
   ONLINE_NICKNAME_HINT,
+  ONLINE_STATUS_ERROR,
   formatPlayTime,
   formatSettingValue,
   isMenuServerId,
   onlineNicknameMessage,
+  onlineServerRows,
+  onlineStatusNeedsRetry,
   renderOnlineServerRows,
-  type MenuServerLiveStatus,
+  serverRowStateClass,
+  type MenuServerRow,
 } from './menuModel';
 import { SkinPreviewDragTracker } from './skinPreviewDrag';
 import type { LocalServerName } from '../../shared/config';
-import { clientUrlForServer, endpointLabel, selectedLocalServer } from '../net/AnarchyClient';
+import {
+  clientUrlForServer,
+  endpointLabel,
+  selectedLocalServer,
+  type ServerStatusMap,
+} from '../net/AnarchyClient';
 import { skinDescriptor } from '../player/appearance/builtinSkins';
 import type { PlayerAppearance } from '../player/appearance/PlayerAppearance';
 import {
@@ -304,7 +314,13 @@ export interface CreateWorldActions {
 export interface OnlineServersActions {
   back(): void;
   connect(id: string): void;
+  retry(): void;
   saveNickname(raw: string): { ok: true; name: string } | { ok: false; error: string };
+}
+
+export interface OnlineConnectErrorActions {
+  retry(): void;
+  back(): void;
 }
 
 export interface PauseActions {
@@ -502,6 +518,9 @@ export class GameUI {
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75, clouds: true };
   private itemIconResolver?: (itemId: string) => string;
   private onScreenEscape?: () => void;
+  private onlineActions?: OnlineServersActions;
+  private onlineSelected: LocalServerName = 'anarchy';
+  private onlineStatuses?: ServerStatusMap;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -1017,15 +1036,16 @@ export class GameUI {
 
   showOnlineServers(
     actions: OnlineServersActions,
-    statuses?: Partial<Record<LocalServerName, MenuServerLiveStatus>>,
+    statuses?: ServerStatusMap,
     selectedId = selectedLocalServer(),
     currentNickname?: string,
   ): void {
-    let current: LocalServerName = isMenuServerId(selectedId) ? selectedId : 'anarchy';
-    const connectionBadge = (): string => endpointLabel(clientUrlForServer(current));
+    this.onlineActions = actions;
+    this.onlineSelected = isMenuServerId(selectedId) ? selectedId : 'anarchy';
+    this.onlineStatuses = statuses;
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
-        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${connectionBadge()}</span></header>
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${this.escape(this.onlineEndpointBadge())}</span></header>
         <form class="online-nickname-editor" id="online-nickname-form" autocomplete="off" novalidate>
           <div class="online-nickname-controls">
             <input id="online-nickname" name="nickname" type="text" inputmode="text" placeholder="Ваш ник" aria-label="Ваш ник" aria-describedby="online-nickname-message" minlength="${MIN_PLAYER_NAME_LENGTH}" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
@@ -1033,32 +1053,152 @@ export class GameUI {
           </div>
           <small class="online-nickname-message" id="online-nickname-message" aria-live="polite">${ONLINE_NICKNAME_HINT}</small>
         </form>
-        <div class="server-list">${renderOnlineServerRows(statuses, current)}</div>
-        <footer class="menu-footer"><button class="game-button primary" data-action="connect">Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
+        <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
+        <footer class="menu-footer server-menu-footer">
+          <p class="server-reach-note" data-server-note role="status" hidden></p>
+          <div class="server-menu-actions">
+            <button type="button" class="game-button" data-action="retry">Повторить</button>
+            <button type="button" class="game-button primary" data-action="connect">Подключиться</button>
+            <button type="button" class="game-button" data-action="back">Назад</button>
+          </div>
+        </footer>
       </div></section>`, actions.back);
     this.bindOnlineNickname(actions, currentNickname);
     this.bindAction('back', actions.back);
-    this.bindAction('connect', () => {
-      actions.connect(current);
+    this.bindAction('retry', () => {
+      if (this.isOnlineStatusPending()) return;
+      actions.retry();
     });
-    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
+    this.bindAction('connect', () => {
+      if (!this.canConnectOnlineSelection()) return;
+      actions.connect(this.onlineSelected);
+    });
+    this.bindOnlineServerRows();
+    this.paintOnlineServerChrome();
+  }
+
+  /** Updates status text, the shared error and the retry button without recreating the cards. */
+  applyOnlineServerStatuses(statuses: ServerStatusMap): void {
+    if (!this.isShowingOnlineServers()) return;
+    this.onlineStatuses = statuses;
+    const list = this.screen?.querySelector('.server-list');
+    if (!list) return;
+    const rows = onlineServerRows(statuses, this.onlineSelected);
+    const patched = rows.every((row) => {
+      const button = list.querySelector<HTMLButtonElement>(`[data-server-id="${row.id}"]`);
+      if (!button) return false;
+      this.paintOnlineServerRow(button, row);
+      return true;
+    });
+    if (!patched) {
+      list.innerHTML = renderOnlineServerRows(statuses, this.onlineSelected);
+      this.bindOnlineServerRows();
+    }
+    this.paintOnlineServerChrome();
+  }
+
+  isShowingOnlineServers(): boolean {
+    return Boolean(this.screen?.querySelector('.server-list'));
+  }
+
+  isOnlineStatusPending(): boolean {
+    if (!this.isShowingOnlineServers() || !this.onlineStatuses) return false;
+    return Object.values(this.onlineStatuses).some((status) => status.phase === 'checking');
+  }
+
+  onlineServerSelection(): LocalServerName {
+    return this.onlineSelected;
+  }
+
+  onlineNicknameDraft(): string | undefined {
+    return this.screen?.querySelector<HTMLInputElement>('#online-nickname')?.value;
+  }
+
+  showOnlineConnectError(actions: OnlineConnectErrorActions): void {
+    this.onlineActions = undefined;
+    this.setScreen(`
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
+        <header class="menu-heading"><div><span class="eyebrow">Подключение</span><h1>Нет соединения</h1></div></header>
+        <p class="server-reach-note server-connect-error" role="alert">${ONLINE_CONNECT_ERROR}</p>
+        <footer class="menu-footer"><div class="server-menu-actions">
+          <button type="button" class="game-button primary" data-action="retry">Повторить</button>
+          <button type="button" class="game-button" data-action="back">К списку серверов</button>
+        </div></footer>
+      </div></section>`, actions.back);
+    this.bindAction('retry', actions.retry);
+    this.bindAction('back', actions.back);
+  }
+
+  private onlineEndpointBadge(): string {
+    const url = clientUrlForServer(this.onlineSelected);
+    if (!url) return 'не задан';
+    return endpointLabel(url);
+  }
+
+  private canConnectOnlineSelection(): boolean {
+    const row = onlineServerRows(this.onlineStatuses, this.onlineSelected).find((server) => server.id === this.onlineSelected);
+    return row?.connectable === true;
+  }
+
+  private paintOnlineServerChrome(): void {
+    const pending = this.isOnlineStatusPending();
+    const failed = onlineStatusNeedsRetry(this.onlineStatuses);
+    const note = this.screen?.querySelector<HTMLElement>('[data-server-note]');
+    if (note) {
+      note.hidden = !failed;
+      note.textContent = failed ? ONLINE_STATUS_ERROR : '';
+    }
+    const retry = this.screen?.querySelector<HTMLButtonElement>('[data-action="retry"]');
+    if (retry) retry.disabled = pending;
+    const connect = this.screen?.querySelector<HTMLButtonElement>('[data-action="connect"]');
+    if (connect) connect.disabled = !this.canConnectOnlineSelection();
+    const badge = this.screen?.querySelector('.mock-badge');
+    if (badge) badge.textContent = this.onlineEndpointBadge();
+  }
+
+  private paintOnlineServerRow(button: HTMLButtonElement, row: MenuServerRow): void {
+    const stateClass = serverRowStateClass(row);
+    button.classList.toggle('selected', row.selected);
+    button.classList.toggle('is-offline', stateClass === 'is-offline');
+    button.classList.toggle('is-unconfigured', stateClass === 'is-unconfigured');
+    button.classList.toggle('is-checking', stateClass === 'is-checking');
+    button.classList.toggle('is-starting', stateClass === 'is-starting');
+    button.dataset.serverPhase = row.phase;
+    if (row.reason) button.dataset.serverReason = row.reason;
+    else delete button.dataset.serverReason;
+    button.setAttribute('aria-pressed', String(row.selected));
+    const label = button.querySelector('.server-online');
+    if (label) label.textContent = row.label;
+    const bars = button.querySelector('.signal-bars');
+    if (bars) {
+      bars.setAttribute('aria-label', `Уровень соединения ${row.signal} из 5`);
+      const marks = bars.querySelectorAll('i');
+      marks.forEach((mark, index) => mark.classList.toggle('on', index < row.signal));
+    }
+  }
+
+  private bindOnlineServerRows(): void {
+    const actions = this.onlineActions;
+    if (!actions) return;
+    for (const button of this.screen?.querySelectorAll<HTMLButtonElement>('[data-server-id]') ?? []) {
       button.addEventListener('click', () => {
         const next = button.dataset.serverId;
         if (!next || !isMenuServerId(next)) return;
-        current = next;
-        const badge = this.screen!.querySelector('.mock-badge');
-        if (badge) badge.textContent = connectionBadge();
-        for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
+        this.onlineSelected = next;
+        for (const row of this.screen?.querySelectorAll<HTMLButtonElement>('[data-server-id]') ?? []) {
           const selected = row === button;
           row.classList.toggle('selected', selected);
           row.setAttribute('aria-pressed', String(selected));
         }
+        this.paintOnlineServerChrome();
       });
       button.addEventListener('dblclick', () => {
         const next = button.dataset.serverId;
         if (!next || !isMenuServerId(next)) return;
-        current = next;
-        actions.connect(current);
+        this.onlineSelected = next;
+        this.paintOnlineServerChrome();
+        if (!this.canConnectOnlineSelection()) return;
+        actions.connect(this.onlineSelected);
       });
     }
   }

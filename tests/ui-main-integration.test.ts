@@ -45,13 +45,14 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameUiSource).not.toContain('brand-mark');
     expect(gameSource).toContain("this.ui.showLoading('Загрузка мира', this.lastLoadPercent)");
     expect(gameSource).not.toContain('Подготовка мира…');
-    expect(gameSource).toContain("this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url))");
+    expect(gameSource).toContain("this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(endpoint))");
   });
 
   it('keeps live online status and the existing server connect callbacks', () => {
     const onlineUi = sourceSection(gameUiSource, 'showOnlineServers(', 'showCreateWorld(');
-    expect(onlineUi).toContain('renderOnlineServerRows(statuses, current)');
-    expect(onlineUi).toContain('actions.connect(current)');
+    expect(onlineUi).toContain('renderOnlineServerRows(statuses, this.onlineSelected)');
+    expect(onlineUi).toContain('actions.connect(this.onlineSelected)');
+    expect(onlineUi).toContain('data-action="retry"');
     expect(onlineUi).not.toContain('пока недоступно');
     expect(onlineUi).not.toContain('menu-notice');
     expect(onlineUi).toContain("button.addEventListener('dblclick'");
@@ -59,15 +60,18 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(onlineUi).toContain('bindOnlineNickname(actions, currentNickname)');
     expect(gameUiSource).toContain('actions.saveNickname(draft)');
 
-    const onlineGame = sourceSection(gameSource, 'private async showOnlineServerList(', 'private async startOnlineAnarchy(');
+    const onlineGame = sourceSection(gameSource, 'private showOnlineServerList(', 'private async startOnlineAnarchy(');
     expect(onlineGame).toContain('saveNickname:');
     expect(onlineGame).toContain('loadPlayerNickname()');
     expect(onlineGame).toContain('Ник сохранён. Он будет использован при подключении к серверу.');
-    expect(onlineGame).toContain('fetchLocalServerStatuses()');
+    expect(onlineGame).toContain('this.onlineStatus.load()');
+    expect(onlineGame).toContain('checkingServerStatuses()');
     expect(onlineGame).toContain('this.ui.showOnlineServers(');
+    expect(onlineGame).toContain('this.ui.showOnlineConnectError(');
     expect(onlineGame).toContain('this.connectOnlineServer(id)');
     expect(onlineGame).toContain('clientUrlForServer(id)');
     expect(onlineGame).toContain('isLocalServerName(id)');
+    expect(onlineGame).not.toContain("this.ui.toast('Сервер недоступен')");
   });
 
   it('keeps authoritative cursor and inventory action routing alongside Creative UI', () => {
@@ -75,7 +79,7 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameUiSource).toContain('applyAuthoritativeCursor(cursor: ItemStack | null');
     expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'recipe'");
     expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'craft_recipe'");
-    expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'click'");
+    expect(gameUiSource).toContain("submitInventoryAction({ type: 'inventory_action', action: 'click'");
     expect(gameUiSource).toContain('role="tablist" aria-label="Разделы творческого инвентаря"');
   });
 

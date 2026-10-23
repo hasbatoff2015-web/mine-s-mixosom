@@ -72,6 +72,10 @@ export function menuAssetUrl(file: string): string {
   return publicAssetUrl('ui/menu', file);
 }
 
+export function serverLogoUrl(file: string): string {
+  return publicAssetUrl('ui/server-logos', file);
+}
+
 export function chatAssetUrl(file: string): string {
   return publicAssetUrl('ui/chat', file);
 }

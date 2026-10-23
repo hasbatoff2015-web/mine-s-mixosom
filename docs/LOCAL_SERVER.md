@@ -164,11 +164,11 @@ npm run dev:anarchy
 
 1. Open the Vite URL (port **4173**).
 2. **Играть онлайн** → **Анархия PvP** → **Подключиться**.
-3. If the server is down, the menu stays up and shows **Сервер недоступен**. There is no silent IndexedDB fallback.
+3. If the socket does not open, the loading screen is replaced by **Не удалось подключиться к игровому серверу…** with **Повторить** and **К списку серверов**. There is no silent IndexedDB fallback and no reconnect loop.
 
-Query overrides: `?server=anarchy|survival|peaceful`, `?anarchyUrl=ws://127.0.0.1:2567`, or `?anarchyHost=` / `?anarchyPort=`.
+Query overrides: `?server=anarchy|survival|peaceful` selects the initial card only. `?anarchyUrl=`, `?anarchyHost=` and `?anarchyPort=` override that one card. `?anarchyStatus=` replaces only its status URL. `?anarchyUrl=` still does not rewrite the status URL.
 
-`npm run dev` does not set `VITE_ANARCHY_URL`, so the Anarchy card stays on `ws://127.0.0.1:2567` and `http://127.0.0.1:2567/status`. `vite build` loads `.env.production` and bakes `VITE_ANARCHY_URL=wss://megacraft.agariobrainrot.ru`. The menu status check for that card is `https://megacraft.agariobrainrot.ru/status` (`wss` → `https`, path `/status`). The header badge then shows that host instead of `localhost`. Survival and Peaceful have no production proxy, so those cards stay on `127.0.0.1:2568` and `:2569` and the badge returns to `localhost` when one of them is selected. `?anarchyUrl=`, `?anarchyHost=`, and `?anarchyPort=` still win over that env. `?anarchyStatus=` replaces only the status URL.
+`npm run dev` does not set `VITE_ANARCHY_URL`, so the three cards stay on `ws://127.0.0.1:2567`, `:2568` and `:2569`. Status is `http://127.0.0.1:<port>/status`. `vite build` loads `.env.production` and bakes `VITE_ANARCHY_URL=wss://megacraft.agariobrainrot.ru`. That card's status is `https://megacraft.agariobrainrot.ru/status` (`wss` → `https`, path `/status`). Optional `VITE_SURVIVAL_URL` and `VITE_PEACEFUL_URL` are the same kind of public socket. They are unset: nginx has a confirmed public route only for Anarchy, so a production build shows Survival and Peaceful as **Сервер пока недоступен** and does not fetch `127.0.0.1`. A failed check says **Не удалось связаться** and offers **Повторить**. It is not labeled «оффлайн».
 
 `PROTOCOL_VERSION` is **4**. Older clients (v1/v2/v3) fail join (`unsupported protocol`). Rebuild both processes after pulling this branch. World files in `server/data/worlds/anarchy/` are unchanged. Targeted Online actions require `targetBlockId`.
 

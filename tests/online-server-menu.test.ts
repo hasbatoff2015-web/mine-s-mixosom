@@ -7,7 +7,8 @@ import {
   selectedLocalServer,
   statusUrlForServer,
 } from '../src/net/AnarchyClient';
-import { onlineServerRows, renderOnlineServerRows } from '../src/ui/menuModel';
+import { ONLINE_UNAVAILABLE_LABEL, onlineServerRows, renderOnlineServerRows } from '../src/ui/menuModel';
+import { serverLogoUrl } from '../src/ui/gameMenuGui';
 import gameUiSource from '../src/ui/GameUI.ts?raw';
 
 describe('online server menu', () => {
@@ -41,9 +42,9 @@ describe('online server menu', () => {
 
   it('renders exactly the three preset servers and no unavailable stub', () => {
     const html = renderOnlineServerRows({
-      anarchy: { reachable: true, online: 0, maxPlayers: 300 },
-      survival: { reachable: true, online: 0, maxPlayers: 300 },
-      peaceful: { reachable: true, online: 0, maxPlayers: 300 },
+      anarchy: { phase: 'available', online: 0, maxPlayers: 300 },
+      survival: { phase: 'available', online: 0, maxPlayers: 300 },
+      peaceful: { phase: 'available', online: 0, maxPlayers: 300 },
     }, 'anarchy');
     expect(html.match(/data-server-id="/g)).toHaveLength(3);
     expect(html).toContain('data-server-id="anarchy"');
@@ -53,11 +54,11 @@ describe('online server menu', () => {
     expect(html).toContain('Выживание PvP');
     expect(html).toContain('Мирный');
     expect(html).toContain('class="server-icon server-icon--survival"');
-    expect(html).toContain('src="/ui/server-logos/survival_pvp_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('survival_pvp_logo.png')}"`);
     expect(html).toContain('class="server-icon server-icon--peaceful"');
-    expect(html).toContain('src="/ui/server-logos/peaceful_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('peaceful_logo.png')}"`);
     expect(html).toContain('class="server-icon server-icon--anarchy"');
-    expect(html).toContain('src="/ui/server-logos/anarchy_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('anarchy_logo.png')}"`);
     expect(html).not.toContain('<svg');
     expect(html).toContain('спокойное выживание и строительство');
     expect(html).not.toContain('>FC<');
@@ -75,18 +76,27 @@ describe('online server menu', () => {
     ['survival', 'peaceful'],
     ['peaceful', 'anarchy'],
     ['anarchy', 'survival'],
-  ] as const)('marks only %s offline', (offline, selected) => {
+  ] as const)('marks only %s unreachable without calling it offline', (offline, selected) => {
     const statuses = {
-      anarchy: { reachable: offline !== 'anarchy', online: 1, maxPlayers: 300 },
-      survival: { reachable: offline !== 'survival', online: 2, maxPlayers: 300 },
-      peaceful: { reachable: offline !== 'peaceful', online: 3, maxPlayers: 300 },
+      anarchy: offline === 'anarchy'
+        ? { phase: 'unavailable' as const, reason: 'network' as const }
+        : { phase: 'available' as const, online: 1, maxPlayers: 300 },
+      survival: offline === 'survival'
+        ? { phase: 'unavailable' as const, reason: 'http' as const }
+        : { phase: 'available' as const, online: 2, maxPlayers: 300 },
+      peaceful: offline === 'peaceful'
+        ? { phase: 'unavailable' as const, reason: 'timeout' as const }
+        : { phase: 'available' as const, online: 3, maxPlayers: 300 },
     };
     const rows = onlineServerRows(statuses, selected);
-    expect(rows.find((row) => row.id === offline)?.label).toBe('оффлайн');
+    expect(rows.find((row) => row.id === offline)?.label).toBe(ONLINE_UNAVAILABLE_LABEL);
+    expect(rows.find((row) => row.id === offline)?.label).not.toBe('оффлайн');
     expect(rows.find((row) => row.id === offline)?.reachable).toBe(false);
     for (const row of rows) {
       if (row.id === offline) continue;
-      expect(row.label).toBe(`${statuses[row.id].online} / 300`);
+      const live = statuses[row.id];
+      if (live.phase !== 'available') throw new Error(`expected ${row.id} to be available`);
+      expect(row.label).toBe(`${live.online} / 300`);
       expect(row.reachable).toBe(true);
     }
     expect(rows.find((row) => row.id === selected)?.selected).toBe(true);
@@ -101,7 +111,7 @@ describe('online server menu', () => {
       seen.push(String(url));
       if (String(url).includes(':2568/')) return { ok: false };
       const online = String(url).includes(':2569/') ? 4 : 1;
-      return { ok: true, json: async () => ({ online, maxPlayers: 300 }) };
+      return { ok: true, json: async () => ({ ready: true, online, maxPlayers: 300 }) };
     });
     try {
       const statuses = await fetchLocalServerStatuses('');
@@ -110,11 +120,11 @@ describe('online server menu', () => {
         statusUrlForServer('survival', ''),
         statusUrlForServer('peaceful', ''),
       ]);
-      expect(statuses.anarchy).toEqual({ reachable: true, online: 1, maxPlayers: 300 });
-      expect(statuses.survival.reachable).toBe(false);
-      expect(statuses.peaceful).toEqual({ reachable: true, online: 4, maxPlayers: 300 });
+      expect(statuses.anarchy).toEqual({ phase: 'available', online: 1, maxPlayers: 300 });
+      expect(statuses.survival).toEqual({ phase: 'unavailable', reason: 'http' });
+      expect(statuses.peaceful).toEqual({ phase: 'available', online: 4, maxPlayers: 300 });
       const rows = onlineServerRows(statuses, 'survival');
-      expect(rows.find((row) => row.id === 'survival')?.label).toBe('оффлайн');
+      expect(rows.find((row) => row.id === 'survival')?.label).toBe(ONLINE_UNAVAILABLE_LABEL);
       expect(rows.find((row) => row.id === 'anarchy')?.label).toBe('1 / 300');
       expect(rows.find((row) => row.id === 'peaceful')?.label).toBe('4 / 300');
     } finally {

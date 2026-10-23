@@ -6,6 +6,7 @@ import {
   menuAssetUrl,
   menuChromeStyle,
   resolveAssetUrl,
+  serverLogoUrl,
 } from '../src/ui/gameMenuGui';
 
 const PRODUCTION = 'https://megacraft.agariobrainrot.ru/';
@@ -117,5 +118,31 @@ describe('menu and chat chrome URLs', () => {
     expect(menuAssetUrl('pause.png')).toBe('http://localhost:5173/ui/menu/pause.png');
     expect(chatAssetUrl('tab_global.png')).toBe('http://localhost:5173/ui/chat/tab_global.png');
     expect(menuAssetUrl('pause.png')).not.toContain('//ui/');
+  });
+});
+
+describe('server logo urls', () => {
+  it('resolves all three logos on the site root, a nested directory, index.html, and dev', () => {
+    const files = ['anarchy_logo.png', 'survival_pvp_logo.png', 'peaceful_logo.png'] as const;
+    vi.stubEnv('BASE_URL', './');
+    vi.stubGlobal('document', { baseURI: PRODUCTION });
+    for (const file of files) {
+      expect(serverLogoUrl(file)).toBe(`https://megacraft.agariobrainrot.ru/ui/server-logos/${file}`);
+    }
+    vi.stubGlobal('document', { baseURI: NESTED });
+    for (const file of files) {
+      expect(serverLogoUrl(file)).toBe(`https://example.com/game/ui/server-logos/${file}`);
+    }
+    vi.stubGlobal('document', { baseURI: 'https://example.com/game/index.html' });
+    for (const file of files) {
+      expect(serverLogoUrl(file)).toBe(`https://example.com/game/ui/server-logos/${file}`);
+      expect(serverLogoUrl(file)).not.toContain('/assets/ui/');
+    }
+    vi.stubEnv('BASE_URL', '/');
+    vi.stubGlobal('document', { baseURI: LOCALHOST });
+    for (const file of files) {
+      expect(serverLogoUrl(file)).toBe(`http://localhost:5173/ui/server-logos/${file}`);
+      expect(serverLogoUrl(file)).not.toContain('//ui/');
+    }
   });
 });
