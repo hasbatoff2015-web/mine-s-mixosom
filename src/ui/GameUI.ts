@@ -198,6 +198,8 @@ import {
   onlineServerRows,
   onlineStatusNeedsRetry,
   renderOnlineServerRows,
+  serverRowStateClass,
+  type MenuServerRow,
 } from './menuModel';
 import { SkinPreviewDragTracker } from './skinPreviewDrag';
 import type { LocalServerName } from '../../shared/config';
@@ -1075,14 +1077,23 @@ export class GameUI {
     this.paintOnlineServerChrome();
   }
 
-  /** Updates status text, the shared error and the retry button without touching the nickname. */
+  /** Updates status text, the shared error and the retry button without recreating the cards. */
   applyOnlineServerStatuses(statuses: ServerStatusMap): void {
     if (!this.isShowingOnlineServers()) return;
     this.onlineStatuses = statuses;
     const list = this.screen?.querySelector('.server-list');
     if (!list) return;
-    list.innerHTML = renderOnlineServerRows(statuses, this.onlineSelected);
-    this.bindOnlineServerRows();
+    const rows = onlineServerRows(statuses, this.onlineSelected);
+    const patched = rows.every((row) => {
+      const button = list.querySelector<HTMLButtonElement>(`[data-server-id="${row.id}"]`);
+      if (!button) return false;
+      this.paintOnlineServerRow(button, row);
+      return true;
+    });
+    if (!patched) {
+      list.innerHTML = renderOnlineServerRows(statuses, this.onlineSelected);
+      this.bindOnlineServerRows();
+    }
     this.paintOnlineServerChrome();
   }
 
@@ -1143,6 +1154,27 @@ export class GameUI {
     if (connect) connect.disabled = !this.canConnectOnlineSelection();
     const badge = this.screen?.querySelector('.mock-badge');
     if (badge) badge.textContent = this.onlineEndpointBadge();
+  }
+
+  private paintOnlineServerRow(button: HTMLButtonElement, row: MenuServerRow): void {
+    const stateClass = serverRowStateClass(row);
+    button.classList.toggle('selected', row.selected);
+    button.classList.toggle('is-offline', stateClass === 'is-offline');
+    button.classList.toggle('is-unconfigured', stateClass === 'is-unconfigured');
+    button.classList.toggle('is-checking', stateClass === 'is-checking');
+    button.classList.toggle('is-starting', stateClass === 'is-starting');
+    button.dataset.serverPhase = row.phase;
+    if (row.reason) button.dataset.serverReason = row.reason;
+    else delete button.dataset.serverReason;
+    button.setAttribute('aria-pressed', String(row.selected));
+    const label = button.querySelector('.server-online');
+    if (label) label.textContent = row.label;
+    const bars = button.querySelector('.signal-bars');
+    if (bars) {
+      bars.setAttribute('aria-label', `Уровень соединения ${row.signal} из 5`);
+      const marks = bars.querySelectorAll('i');
+      marks.forEach((mark, index) => mark.classList.toggle('on', index < row.signal));
+    }
   }
 
   private bindOnlineServerRows(): void {

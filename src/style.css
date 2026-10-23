@@ -5694,7 +5694,8 @@ textarea,
   max-width: 11rem;
 }
 
-.server-row.is-checking .server-online {
+.server-row.is-checking .server-online,
+.server-row.is-starting .server-online {
   color: #d9c978;
 }
 

@@ -111,7 +111,7 @@ describe('online server menu', () => {
       seen.push(String(url));
       if (String(url).includes(':2568/')) return { ok: false };
       const online = String(url).includes(':2569/') ? 4 : 1;
-      return { ok: true, json: async () => ({ online, maxPlayers: 300 }) };
+      return { ok: true, json: async () => ({ ready: true, online, maxPlayers: 300 }) };
     });
     try {
       const statuses = await fetchLocalServerStatuses('');

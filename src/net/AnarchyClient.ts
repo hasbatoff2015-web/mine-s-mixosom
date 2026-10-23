@@ -23,7 +23,7 @@ import { sanitizePlayerName } from '../../shared/playerName';
 const SESSION_KEY = 'fc.anarchy.sessionToken';
 const STATUS_TIMEOUT_MS = 1500;
 
-export type ServerReachFailure = 'timeout' | 'network' | 'http' | 'invalid_response';
+export type ServerReachFailure = 'timeout' | 'network' | 'http' | 'invalid_response' | 'not_ready';
 
 /** Result of one status probe. `aborted` is internal and must not be shown. */
 export type ServerCardStatus =
@@ -360,10 +360,34 @@ export function buildAnarchyJoinMessage(
   };
 }
 
+/** Present, finite, non-negative integer. Missing values are not treated as zero. */
 function readPlayerCount(value: unknown): number | undefined {
-  if (value === undefined) return 0;
-  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
-  return Math.min(1_000_000, Math.floor(value));
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) return undefined;
+  return value;
+}
+
+/**
+ * `GET /status` from AnarchyServer.handleHttp.
+ * Available only when the world is ready and both counts are present integers.
+ */
+function statusFromBody(json: unknown): ServerCardStatus {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    return { phase: 'unavailable', reason: 'invalid_response' };
+  }
+  const body = json as { ready?: unknown; online?: unknown; maxPlayers?: unknown; name?: unknown };
+  if (body.ready === false) return { phase: 'unavailable', reason: 'not_ready' };
+  if (body.ready !== true) return { phase: 'unavailable', reason: 'invalid_response' };
+  const online = readPlayerCount(body.online);
+  const maxPlayers = readPlayerCount(body.maxPlayers);
+  if (online === undefined || maxPlayers === undefined || maxPlayers <= 0 || online > maxPlayers) {
+    return { phase: 'unavailable', reason: 'invalid_response' };
+  }
+  return {
+    phase: 'available',
+    online,
+    maxPlayers,
+    ...(typeof body.name === 'string' ? { name: body.name } : {}),
+  };
 }
 
 function isAbortLike(error: unknown): boolean {
@@ -387,8 +411,8 @@ function combineAbortSignals(signals: AbortSignal[]): AbortSignal {
 
 /**
  * One HTTP status check.
- * HTTP 200 with numeric counts is available even when online is 0.
- * A caller abort returns `aborted` and must not be shown as a player-facing error.
+ * HTTP 200 is available only for `{ ready: true, online, maxPlayers }` with integer counts.
+ * `ready: false` is `not_ready`. A caller abort returns `aborted` and is not a player-facing error.
  */
 export async function fetchStatusAt(
   url: string,
@@ -407,17 +431,7 @@ export async function fetchStatusAt(
     } catch {
       return { phase: 'unavailable', reason: 'invalid_response' };
     }
-    if (!json || typeof json !== 'object') return { phase: 'unavailable', reason: 'invalid_response' };
-    const body = json as { online?: unknown; maxPlayers?: unknown; name?: unknown };
-    const online = readPlayerCount(body.online);
-    const maxPlayers = readPlayerCount(body.maxPlayers);
-    if (online === undefined || maxPlayers === undefined) return { phase: 'unavailable', reason: 'invalid_response' };
-    return {
-      phase: 'available',
-      online,
-      maxPlayers,
-      ...(typeof body.name === 'string' ? { name: body.name } : {}),
-    };
+    return statusFromBody(json);
   } catch (error) {
     if (signal?.aborted) return { phase: 'aborted' };
     if (timeoutSignal.aborted || (isAbortLike(error) && (error as { name?: string }).name === 'TimeoutError')) {

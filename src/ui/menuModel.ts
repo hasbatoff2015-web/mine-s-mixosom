@@ -20,7 +20,9 @@ export interface MenuServerEntry {
 export interface MenuServerRow extends MenuServerEntry {
   selected: boolean;
   phase: ServerCardStatus['phase'];
-  /** True only after a successful status response. An empty server is still reachable. */
+  /** Set when the probe finished with unavailable, including a world that is still starting. */
+  reason?: Extract<ServerCardStatus, { phase: 'unavailable' }>['reason'];
+  /** True only after a successful ready status. An empty server is still reachable. */
   reachable: boolean;
   label: string;
   connectable: boolean;
@@ -46,6 +48,7 @@ export interface MobileControlItem {
 export const ONLINE_NICKNAME_HINT = `${MIN_PLAYER_NAME_LENGTH}–${MAX_PLAYER_NAME_LENGTH} символов · только A–Z и 0–9`;
 export const ONLINE_NICKNAME_SAVED = 'Сохранено';
 export const ONLINE_CHECK_LABEL = 'Проверка…';
+export const ONLINE_STARTING_LABEL = 'Сервер запускается';
 export const ONLINE_UNAVAILABLE_LABEL = 'Не удалось связаться';
 export const ONLINE_UNCONFIGURED_LABEL = 'Сервер пока недоступен';
 export const ONLINE_STATUS_ERROR = 'Не удалось проверить соединение с некоторыми игровыми серверами. Проверьте интернет и попробуйте ещё раз.';
@@ -122,28 +125,43 @@ export function onlineServerRows(
   return MENU_SERVER_ENTRIES.map((server) => {
     const live = statuses?.[server.id];
     const phase = rowPhase(live);
+    const reason = live?.phase === 'unavailable' ? live.reason : undefined;
+    const starting = reason === 'not_ready';
     const reachable = phase === 'available';
     const label = phase === 'available' && live?.phase === 'available'
       ? `${live.online} / ${live.maxPlayers}`
-      : phase === 'unavailable'
-        ? ONLINE_UNAVAILABLE_LABEL
-        : phase === 'not_configured'
-          ? ONLINE_UNCONFIGURED_LABEL
-          : ONLINE_CHECK_LABEL;
+      : starting
+        ? ONLINE_STARTING_LABEL
+        : phase === 'unavailable'
+          ? ONLINE_UNAVAILABLE_LABEL
+          : phase === 'not_configured'
+            ? ONLINE_UNCONFIGURED_LABEL
+            : ONLINE_CHECK_LABEL;
     return {
       ...server,
       selected: server.id === selectedId,
       phase,
+      ...(reason ? { reason } : {}),
       reachable,
       signal: reachable ? server.signal : 0,
       label,
-      connectable: phase === 'available' || phase === 'unavailable',
+      connectable: phase === 'available' || (phase === 'unavailable' && !starting),
     };
   });
 }
 
 export function onlineStatusNeedsRetry(statuses: Partial<ServerStatusMap> | undefined): boolean {
-  return onlineServerRows(statuses, 'anarchy').some((row) => row.phase === 'unavailable');
+  if (!statuses) return false;
+  return Object.values(statuses).some((status) => status?.phase === 'unavailable' && status.reason !== 'not_ready');
+}
+
+/** State class shared by the first render and later in-place updates. */
+export function serverRowStateClass(row: Pick<MenuServerRow, 'phase' | 'reason'>): string {
+  if (row.reason === 'not_ready') return 'is-starting';
+  if (row.phase === 'unavailable') return 'is-offline';
+  if (row.phase === 'not_configured') return 'is-unconfigured';
+  if (row.phase === 'checking' || row.phase === 'aborted') return 'is-checking';
+  return '';
 }
 
 function escapeMenuText(value: string): string {
@@ -175,15 +193,9 @@ export function renderOnlineServerRows(
   selectedId: LocalServerName,
 ): string {
   return onlineServerRows(statuses, selectedId).map((server) => {
-    const stateClass = server.phase === 'unavailable'
-      ? ' is-offline'
-      : server.phase === 'not_configured'
-        ? ' is-unconfigured'
-        : server.phase === 'checking'
-          ? ' is-checking'
-          : '';
+    const stateClass = serverRowStateClass(server);
     return `
-      <button type="button" class="server-row${server.selected ? ' selected' : ''}${stateClass}" data-server-id="${server.id}" data-server-phase="${server.phase}" aria-pressed="${server.selected}">
+      <button type="button" class="server-row${server.selected ? ' selected' : ''}${stateClass ? ` ${stateClass}` : ''}" data-server-id="${server.id}" data-server-phase="${server.phase}"${server.reason ? ` data-server-reason="${server.reason}"` : ''} aria-pressed="${server.selected}">
         <span class="server-icon server-icon--${server.id}">${serverIconHtml(server.id)}</span>
         <span class="server-copy"><strong>${escapeMenuText(server.name)}</strong>${serverCaptionsHtml(server)}</span>
         <span class="server-status"><span class="server-online">${escapeMenuText(server.label)}</span><span class="signal-bars" aria-label="Уровень соединения ${server.signal} из 5">${Array.from({ length: 5 }, (_, bar) => `<i class="${bar < server.signal ? 'on' : ''}"></i>`).join('')}</span></span>

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GameUI } from '../src/ui/GameUI';
 import {
   ONLINE_CONNECT_ERROR,
+  ONLINE_STARTING_LABEL,
   ONLINE_STATUS_ERROR,
   ONLINE_UNAVAILABLE_LABEL,
   ONLINE_UNCONFIGURED_LABEL,
@@ -26,8 +27,12 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-function ok(online: number, maxPlayers = 300) {
-  return { ok: true, json: async () => ({ online, maxPlayers }) };
+function ok(online: number, maxPlayers = 300, ready = true) {
+  return { ok: true, json: async () => ({ ready, online, maxPlayers }) };
+}
+
+function jsonResponse(body: unknown) {
+  return { ok: true, json: async () => body };
 }
 
 function mount() {
@@ -51,12 +56,53 @@ function label(root: HTMLElement, id: string): string {
 }
 
 describe('status probe results', () => {
-  it('treats HTTP 200 with zero players as available', async () => {
+  it('accepts a ready server with zero players', async () => {
     vi.stubGlobal('fetch', async () => ok(0));
     await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
       phase: 'available',
       online: 0,
       maxPlayers: 300,
+    });
+  });
+
+  it('accepts a ready server with a positive player count', async () => {
+    vi.stubGlobal('fetch', async () => ok(25));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toMatchObject({
+      phase: 'available',
+      online: 25,
+      maxPlayers: 300,
+    });
+  });
+
+  it.each([
+    ['empty object', {}],
+    ['ready only', { ready: true }],
+    ['missing maxPlayers', { ready: true, online: 0 }],
+    ['missing online', { ready: true, maxPlayers: 300 }],
+    ['null body', null],
+    ['string online', { ready: true, online: '3', maxPlayers: 300 }],
+    ['string maxPlayers', { ready: true, online: 1, maxPlayers: '300' }],
+    ['negative online', { ready: true, online: -1, maxPlayers: 300 }],
+    ['NaN online', { ready: true, online: Number.NaN, maxPlayers: 300 }],
+    ['fractional online', { ready: true, online: 1.5, maxPlayers: 300 }],
+    ['infinite online', { ready: true, online: Number.POSITIVE_INFINITY, maxPlayers: 300 }],
+    ['zero maxPlayers', { ready: true, online: 0, maxPlayers: 0 }],
+    ['online above maxPlayers', { ready: true, online: 301, maxPlayers: 300 }],
+    ['missing ready', { online: 1, maxPlayers: 300 }],
+    ['string ready', { ready: 'true', online: 1, maxPlayers: 300 }],
+  ] as const)('rejects %s as an invalid status', async (_name, body) => {
+    vi.stubGlobal('fetch', async () => jsonResponse(body));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'invalid_response',
+    });
+  });
+
+  it('keeps a world that is still starting out of the available state', async () => {
+    vi.stubGlobal('fetch', async () => ok(0, 300, false));
+    await expect(fetchStatusAt('https://example.test/status')).resolves.toEqual({
+      phase: 'unavailable',
+      reason: 'not_ready',
     });
   });
 
@@ -353,6 +399,87 @@ describe('online server screen', () => {
     expect(connected).toBe(0);
     root.querySelector<HTMLButtonElement>('[data-server-id="anarchy"]')?.click();
     expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+  });
+
+  it('keeps the focused server button when statuses arrive', () => {
+    const { root, ui } = mount();
+    wire(ui);
+    const anarchy = root.querySelector<HTMLButtonElement>('[data-server-id="anarchy"]');
+    expect(anarchy).toBeTruthy();
+    anarchy!.focus();
+    ui.applyOnlineServerStatuses({
+      anarchy: { phase: 'available', online: 5, maxPlayers: 300 },
+      survival: { phase: 'unavailable', reason: 'network' },
+      peaceful: { phase: 'not_configured' },
+    });
+    expect(root.querySelector('[data-server-id="anarchy"]')).toBe(anarchy);
+    expect(document.activeElement).toBe(anarchy);
+    expect(anarchy!.querySelector('.server-online')?.textContent).toBe('5 / 300');
+    expect(anarchy!.getAttribute('data-server-phase')).toBe('available');
+
+    const survival = root.querySelector<HTMLButtonElement>('[data-server-id="survival"]');
+    survival!.focus();
+    ui.applyOnlineServerStatuses(checkingServerStatuses());
+    expect(document.activeElement).toBe(survival);
+    expect(survival!.querySelector('.server-online')?.textContent).toBe('Проверка…');
+    ui.applyOnlineServerStatuses({
+      anarchy: { phase: 'unavailable', reason: 'not_ready' },
+      survival: { phase: 'available', online: 2, maxPlayers: 300 },
+      peaceful: { phase: 'checking' },
+    });
+    expect(root.querySelector('[data-server-id="survival"]')).toBe(survival);
+    expect(document.activeElement).toBe(survival);
+    expect(label(root, 'survival')).toBe('2 / 300');
+    expect(label(root, 'anarchy')).toBe(ONLINE_STARTING_LABEL);
+    expect(root.querySelector('[data-server-id="anarchy"]')?.classList.contains('is-starting')).toBe(true);
+  });
+
+  it('keeps the nickname, selection, and a single dblclick listener across updates', () => {
+    const { root, ui } = mount();
+    let connects = 0;
+    ui.showOnlineServers({
+      ...actions(),
+      connect: () => { connects += 1; },
+    }, checkingServerStatuses(), 'anarchy', 'Steve');
+    const input = root.querySelector<HTMLInputElement>('#online-nickname');
+    input!.value = 'Alex';
+    root.querySelector<HTMLButtonElement>('[data-server-id="survival"]')?.click();
+    const survival = root.querySelector<HTMLButtonElement>('[data-server-id="survival"]');
+    ui.applyOnlineServerStatuses({
+      anarchy: { phase: 'available', online: 1, maxPlayers: 300 },
+      survival: { phase: 'unavailable', reason: 'timeout' },
+      peaceful: { phase: 'available', online: 0, maxPlayers: 300 },
+    });
+    ui.applyOnlineServerStatuses({
+      anarchy: { phase: 'available', online: 4, maxPlayers: 300 },
+      survival: { phase: 'available', online: 8, maxPlayers: 300 },
+      peaceful: { phase: 'not_configured' },
+    });
+    expect(input!.value).toBe('Alex');
+    expect(root.querySelector('[data-server-id="survival"]')).toBe(survival);
+    expect(survival!.classList.contains('selected')).toBe(true);
+    expect(label(root, 'survival')).toBe('8 / 300');
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(false);
+    survival!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    expect(connects).toBe(1);
+  });
+
+  it('shows a starting server as not ready and still allows another check', () => {
+    const { root, ui } = mount();
+    let retries = 0;
+    ui.showOnlineServers({
+      ...actions(() => { retries += 1; }),
+    }, {
+      anarchy: { phase: 'unavailable', reason: 'not_ready' },
+      survival: { phase: 'not_configured' },
+      peaceful: { phase: 'not_configured' },
+    }, 'anarchy');
+    expect(label(root, 'anarchy')).toBe(ONLINE_STARTING_LABEL);
+    expect(root.textContent).not.toContain(ONLINE_STATUS_ERROR);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(true);
+    expect(root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.disabled).toBe(false);
+    root.querySelector<HTMLButtonElement>('[data-action="retry"]')?.click();
+    expect(retries).toBe(1);
   });
 });
 

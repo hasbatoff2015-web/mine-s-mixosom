@@ -60,7 +60,7 @@ describe('anarchy client endpoints', () => {
     const seen: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       seen.push(String(url));
-      return { ok: true, json: async () => ({ online: 0, maxPlayers: 300 }) };
+      return { ok: true, json: async () => ({ ready: true, online: 0, maxPlayers: 300 }) };
     });
     const statuses = await fetchLocalServerStatuses('');
     expect(seen).toEqual([PRODUCTION_STATUS]);
@@ -111,7 +111,7 @@ describe('anarchy client endpoints', () => {
     const seen: string[] = [];
     vi.stubGlobal('fetch', async (url: string) => {
       seen.push(String(url));
-      return { ok: true, json: async () => ({ online: 1, maxPlayers: 300 }) };
+      return { ok: true, json: async () => ({ ready: true, online: 1, maxPlayers: 300 }) };
     });
     const statuses = await fetchLocalServerStatuses();
     expect(seen).toEqual([
