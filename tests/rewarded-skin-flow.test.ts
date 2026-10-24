@@ -19,6 +19,7 @@ import {
 } from '../src/player/appearance/skinStoreCatalog';
 import {
   REWARDED_FINISH_TIMEOUT_MS,
+  REWARDED_OPEN_TIMEOUT_MS,
   REWARDED_REQUEST_TIMEOUT_MS,
   RewardedSkinFlow,
   type RewardedFlowClock,
@@ -26,6 +27,7 @@ import {
   type RewardedVideoPort,
 } from '../src/player/appearance/rewardedSkinFlow';
 import {
+  SkinRewardController,
   appearanceForRewardedGrant,
   commitRewardedSkinSwitch,
 } from '../src/player/appearance/skinRewardController';
@@ -230,13 +232,20 @@ describe('rewarded skin flow', () => {
     expect(ads.calls).toHaveLength(2);
   });
 
-  it('finishes a counted reward if close never arrives', () => {
+  it('remembers a reward when close does not arrive and does not grant it yet', () => {
     const { ads, clock, flow } = flowWith();
+    const settlements: string[] = [];
+    flow.onSettled = (event) => settlements.push(event.outcome);
     flow.start(COMMON_ID);
     ads.calls[0]?.onOpen?.();
     ads.calls[0]?.onRewarded?.();
     clock.advance(REWARDED_FINISH_TIMEOUT_MS);
-    expect(flow.consume()?.skinId).toBe(COMMON_ID);
+    expect(settlements).toEqual([]);
+    expect(flow.inspect().phase).toBe('awaiting_close_recovery');
+    expect(flow.consume()).toBeUndefined();
+    expect(flow.isOperationActive).toBe(true);
+    expect(flow.start(OTHER_COMMON_ID)).toEqual({ ok: false, reason: 'busy' });
+    expect(ads.calls).toHaveLength(1);
     expect(clock.pending).toBe(0);
   });
 
@@ -367,5 +376,190 @@ describe('rewarded skin flow', () => {
       ownedPackIds: [],
       adminLegendarySkinIds: [],
     }).reason).toBe('reward_required');
+  });
+});
+
+describe('rewarded close recovery', () => {
+  function watch(flow: RewardedSkinFlow): string[] {
+    const settlements: string[] = [];
+    flow.onSettled = (event) => settlements.push(event.outcome);
+    return settlements;
+  }
+
+  it('grants once for open, reward, and close', () => {
+    const { ads, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    ads.calls[0]?.onClose?.(true);
+    expect(settlements).toEqual(['success']);
+    expect(flow.consume()?.skinId).toBe(COMMON_ID);
+    expect(flow.consume()).toBeUndefined();
+  });
+
+  it('grants once when close arrives after the recovery wait', () => {
+    const { ads, clock, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    clock.advance(REWARDED_FINISH_TIMEOUT_MS);
+    ads.calls[0]?.onClose?.(true);
+    ads.calls[0]?.onClose?.(true);
+    expect(settlements).toEqual(['success']);
+    expect(flow.consume()?.skinId).toBe(COMMON_ID);
+    expect(flow.continueManually()).toEqual({ ok: false, reason: 'not_recovery' });
+  });
+
+  it('grants once when the player continues a counted recovery', () => {
+    const { ads, clock, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    clock.advance(REWARDED_FINISH_TIMEOUT_MS);
+    expect(flow.continueManually()).toEqual({ ok: true, outcome: 'success' });
+    expect(settlements).toEqual(['success']);
+    const grant = flow.consume();
+    expect(grant?.skinId).toBe(COMMON_ID);
+    ads.calls[0]?.onClose?.(true);
+    ads.calls[0]?.onRewarded?.();
+    expect(flow.consume()).toBeUndefined();
+    expect(settlements).toEqual(['success']);
+  });
+
+  it('grants nothing when recovery is continued without a counted view', () => {
+    const { ads, clock, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    clock.advance(REWARDED_OPEN_TIMEOUT_MS);
+    expect(flow.inspect().phase).toBe('awaiting_close_recovery');
+    expect(flow.continueManually()).toEqual({ ok: true, outcome: 'error' });
+    expect(settlements).toEqual(['error']);
+    expect(flow.consume()).toBeUndefined();
+    expect(flow.isOperationActive).toBe(false);
+    expect(clock.pending).toBe(0);
+  });
+
+  it('does not grant when an open ad reports an error before a counted view', () => {
+    const { ads, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onError?.(new Error('playback'));
+    expect(settlements).toEqual([]);
+    expect(flow.inspect().phase).toBe('awaiting_close_recovery');
+    expect(flow.continueManually()).toEqual({ ok: true, outcome: 'error' });
+    expect(flow.consume()).toBeUndefined();
+  });
+
+  it('keeps a counted view when an error arrives before close', () => {
+    const { ads, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    ads.calls[0]?.onError?.(new Error('late'));
+    expect(settlements).toEqual([]);
+    expect(flow.inspect().phase).toBe('reward_received');
+    ads.calls[0]?.onClose?.(true);
+    expect(settlements).toEqual(['success']);
+    expect(flow.consume()?.skinId).toBe(COMMON_ID);
+  });
+
+  it('does not let an old generation finish the next request', () => {
+    const { ads, clock, flow } = flowWith();
+    const settlements = watch(flow);
+    flow.start(COMMON_ID);
+    const first = ads.calls[0];
+    first?.onOpen?.();
+    first?.onRewarded?.();
+    clock.advance(REWARDED_FINISH_TIMEOUT_MS);
+    first?.onClose?.(false);
+    expect(flow.consume()?.skinId).toBe(COMMON_ID);
+    flow.start(OTHER_COMMON_ID);
+    first?.onRewarded?.();
+    first?.onClose?.(true);
+    expect(settlements).toEqual(['success']);
+    expect(flow.consume()).toBeUndefined();
+    expect(flow.inspect().skinId).toBe(OTHER_COMMON_ID);
+  });
+
+  it('drops timers and late grants on dispose', () => {
+    const { ads, clock, flow } = flowWith();
+    flow.start(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    const callbacks = ads.calls[0];
+    flow.dispose();
+    clock.advance(REWARDED_FINISH_TIMEOUT_MS + REWARDED_OPEN_TIMEOUT_MS);
+    callbacks?.onClose?.(true);
+    expect(flow.consume()).toBeUndefined();
+    expect(flow.inspect()).toEqual({ phase: 'idle' });
+    expect(clock.pending).toBe(0);
+    expect(flow.continueManually()).toEqual({ ok: false, reason: 'not_recovery' });
+  });
+});
+
+describe('rewarded hold around recovery', () => {
+  it('keeps the presentation hold until close or an explicit continue', () => {
+    const { ads, clock, flow } = flowWith();
+    const holds: string[] = [];
+    const applied: string[] = [];
+    let allow = true;
+    const controller = new SkinRewardController(ads, {
+      present: () => undefined,
+      acceptEquipped: () => undefined,
+    }, {
+      beginPresentation: () => holds.push('begin'),
+      endPresentation: () => holds.push('end'),
+      apply: (appearance) => applied.push(appearance.skinId),
+      currentAppearance: () => createPlayerAppearance({ skinId: 'frontier_explorer' }),
+      stillOpen: () => true,
+      canRecoverManually: () => allow,
+    }, flow);
+    controller.request(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    ads.calls[0]?.onRewarded?.();
+    clock.advance(REWARDED_FINISH_TIMEOUT_MS);
+    expect(applied).toEqual([]);
+    expect(holds).toEqual(['begin']);
+    expect(controller.isOperationActive()).toBe(true);
+    allow = false;
+    controller.continueFromRecovery();
+    expect(applied).toEqual([]);
+    expect(holds).toEqual(['begin']);
+    allow = true;
+    controller.continueFromRecovery();
+    expect(applied).toEqual([COMMON_ID]);
+    expect(holds).toEqual(['begin', 'end']);
+    ads.calls[0]?.onClose?.(true);
+    ads.calls[0]?.onRewarded?.();
+    expect(applied).toEqual([COMMON_ID]);
+    expect(holds).toEqual(['begin', 'end']);
+  });
+
+  it('does not apply a skin when recovery ends without a counted view', () => {
+    const { ads, clock, flow } = flowWith();
+    const applied: string[] = [];
+    const controller = new SkinRewardController(ads, {
+      present: () => undefined,
+      acceptEquipped: () => undefined,
+    }, {
+      beginPresentation: () => undefined,
+      endPresentation: () => undefined,
+      apply: (appearance) => applied.push(appearance.skinId),
+      currentAppearance: () => createPlayerAppearance({ skinId: 'frontier_explorer' }),
+      stillOpen: () => true,
+      canRecoverManually: () => true,
+    }, flow);
+    controller.request(COMMON_ID);
+    ads.calls[0]?.onOpen?.();
+    clock.advance(REWARDED_OPEN_TIMEOUT_MS);
+    controller.continueFromRecovery();
+    expect(applied).toEqual([]);
+    expect(controller.isOperationActive()).toBe(false);
   });
 });

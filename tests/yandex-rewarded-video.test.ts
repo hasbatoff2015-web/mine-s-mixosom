@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  canFinishRewardedRecovery,
   planRewardedPresentationBegin,
   planRewardedPresentationEnd,
   shouldIgnorePlatformResume,
@@ -148,6 +149,12 @@ describe('rewarded presentation hold', () => {
   it('ignores platform resume while the rewarded video is open', () => {
     expect(shouldIgnorePlatformResume(true)).toBe(true);
     expect(shouldIgnorePlatformResume(false)).toBe(false);
+  });
+
+  it('allows manual recovery only when the page is visible and the platform pause is clear', () => {
+    expect(canFinishRewardedRecovery({ documentHidden: false, platformPause: false })).toBe(true);
+    expect(canFinishRewardedRecovery({ documentHidden: true, platformPause: false })).toBe(false);
+    expect(canFinishRewardedRecovery({ documentHidden: false, platformPause: true })).toBe(false);
   });
 });
 

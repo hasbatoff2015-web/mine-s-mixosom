@@ -15,6 +15,10 @@ export const REWARDED_SKIN_COPY = {
   watch: 'Смотреть рекламу',
   loading: 'Загрузка рекламы...',
   opened: 'Реклама открыта',
+  closing: 'Завершение рекламы...',
+  rewardWaiting: 'Просмотр засчитан. Ожидаем закрытия рекламы.',
+  continue: 'Продолжить',
+  continueHint: 'Если реклама уже закрылась, нажмите «Продолжить».',
   unavailable: 'Реклама сейчас недоступна. Попробуйте позже.',
   offer: 'Одна реклама — одна смена скина. Постоянной разблокировки нет.',
   closed: 'Реклама закрыта. Скин не изменён.',
@@ -45,6 +49,7 @@ export type RewardedFlowPhase =
   | 'requesting'
   | 'ad_open'
   | 'reward_received'
+  | 'awaiting_close_recovery'
   | 'finishing'
   | 'success'
   | 'cancelled'
@@ -65,10 +70,11 @@ export type RewardedStartResult =
   | { readonly ok: true; readonly requestId: string; readonly phase: RewardedFlowPhase }
   | { readonly ok: false; readonly reason: 'busy' | 'disposed' | 'not_rewarded' | 'unavailable' };
 
-const BUSY: ReadonlySet<RewardedFlowPhase> = new Set([
+const ACTIVE: ReadonlySet<RewardedFlowPhase> = new Set([
   'requesting',
   'ad_open',
   'reward_received',
+  'awaiting_close_recovery',
   'finishing',
 ]);
 
@@ -90,6 +96,8 @@ export class RewardedSkinFlow {
   private readonly createRequestId: () => string;
 
   onOpened?: (event: { readonly requestId: string; readonly skinId: string }) => void;
+  onRewardRecorded?: (event: { readonly requestId: string; readonly skinId: string }) => void;
+  onRecovery?: (event: { readonly requestId: string; readonly skinId: string; readonly rewarded: boolean }) => void;
   onSettled?: (event: RewardedFlowSettlement) => void;
 
   constructor(
@@ -103,8 +111,13 @@ export class RewardedSkinFlow {
     this.createRequestId = options.createRequestId ?? (() => crypto.randomUUID());
   }
 
+  /** True while this request can still grant or must keep the ad hold. */
+  get isOperationActive(): boolean {
+    return ACTIVE.has(this.phase);
+  }
+
   get isBusy(): boolean {
-    return BUSY.has(this.phase);
+    return this.isOperationActive;
   }
 
   inspect(): {
@@ -155,6 +168,20 @@ export class RewardedSkinFlow {
     };
   }
 
+  /**
+   * Player says the ad overlay is already gone.
+   * This does not start another video. Without `onRewarded` it grants nothing.
+   */
+  continueManually(): { readonly ok: true; readonly outcome: 'success' | 'error' } | { readonly ok: false; readonly reason: 'not_recovery' } {
+    if (this.disposed || this.phase !== 'awaiting_close_recovery') return { ok: false, reason: 'not_recovery' };
+    if (this.rewarded) {
+      this.succeed(this.generation);
+      return { ok: true, outcome: 'success' };
+    }
+    this.settle(this.generation, 'error');
+    return { ok: true, outcome: 'error' };
+  }
+
   /** One successful grant. A second call, or a grant for another attempt, returns nothing. */
   consume(): RewardedSkinGrant | undefined {
     const grant = this.grant;
@@ -177,6 +204,8 @@ export class RewardedSkinFlow {
     this.skinId = '';
     this.phase = 'idle';
     this.onOpened = undefined;
+    this.onRewardRecorded = undefined;
+    this.onRecovery = undefined;
     this.onSettled = undefined;
   }
 
@@ -188,27 +217,41 @@ export class RewardedSkinFlow {
   }
 
   private handleRewarded(generation: number): void {
-    if (!this.live(generation)) return;
-    if (this.phase !== 'requesting' && this.phase !== 'ad_open') return;
+    if (!this.live(generation) || this.rewarded) return;
+    if (this.phase !== 'requesting' && this.phase !== 'ad_open' && this.phase !== 'awaiting_close_recovery') return;
     this.rewarded = true;
+    const requestId = this.requestId;
+    const skinId = this.skinId;
+    if (this.phase === 'awaiting_close_recovery') {
+      this.onRewardRecorded?.({ requestId, skinId });
+      this.onRecovery?.({ requestId, skinId, rewarded: true });
+      return;
+    }
     this.phase = 'reward_received';
     this.arm(generation, REWARDED_FINISH_TIMEOUT_MS);
+    this.onRewardRecorded?.({ requestId, skinId });
   }
 
   private handleClose(generation: number): void {
     if (!this.live(generation)) return;
-    if (this.rewarded && (this.phase === 'reward_received' || this.phase === 'ad_open' || this.phase === 'requesting')) {
+    if (this.phase === 'idle' || this.phase === 'success' || this.phase === 'cancelled' || this.phase === 'error' || this.phase === 'finishing') return;
+    if (this.rewarded) {
       this.succeed(generation);
       return;
     }
-    if (this.phase !== 'requesting' && this.phase !== 'ad_open') return;
-    this.settle(generation, 'cancelled');
+    if (this.phase === 'requesting' || this.phase === 'ad_open' || this.phase === 'awaiting_close_recovery') {
+      this.settle(generation, 'cancelled');
+    }
   }
 
   private handleError(generation: number): void {
     if (!this.live(generation)) return;
-    if (this.phase !== 'requesting' && this.phase !== 'ad_open') return;
-    this.fail(generation);
+    if (this.rewarded) return;
+    if (this.phase === 'requesting') {
+      this.fail(generation);
+      return;
+    }
+    if (this.phase === 'ad_open') this.enterRecovery(generation);
   }
 
   private succeed(generation: number): void {
@@ -248,14 +291,26 @@ export class RewardedSkinFlow {
     this.timer = this.clock.set(() => this.handleTimeout(generation), ms);
   }
 
+  private enterRecovery(generation: number): void {
+    if (!this.live(generation)) return;
+    if (this.phase !== 'ad_open' && this.phase !== 'reward_received') return;
+    this.clearTimer();
+    this.phase = 'awaiting_close_recovery';
+    this.onRecovery?.({
+      requestId: this.requestId,
+      skinId: this.skinId,
+      rewarded: this.rewarded,
+    });
+  }
+
   private handleTimeout(generation: number): void {
     this.timer = undefined;
     if (!this.live(generation)) return;
-    if (this.phase === 'reward_received') {
-      this.succeed(generation);
+    if (this.phase === 'reward_received' || this.phase === 'ad_open') {
+      this.enterRecovery(generation);
       return;
     }
-    if (this.phase === 'requesting' || this.phase === 'ad_open') this.fail(generation);
+    if (this.phase === 'requesting') this.fail(generation);
   }
 
   private clearTimer(): void {

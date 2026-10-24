@@ -45,3 +45,14 @@ export function planRewardedPresentationEnd(input: {
 export function shouldIgnorePlatformResume(rewardedHold: boolean): boolean {
   return rewardedHold;
 }
+
+/**
+ * Manual recovery is a player action after the ad callbacks stalled.
+ * A hidden tab or a platform pause that has not resumed cannot finish the ad.
+ */
+export function canFinishRewardedRecovery(input: {
+  readonly documentHidden: boolean;
+  readonly platformPause: boolean;
+}): boolean {
+  return !input.documentHidden && !input.platformPause;
+}

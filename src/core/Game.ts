@@ -446,6 +446,7 @@ import { ExplosionQueue } from '../world/ExplosionQueue';
 import { getTntProfile } from '../world/tnt';
 import { YandexGamesService } from '../yandex/YandexGamesService';
 import {
+  canFinishRewardedRecovery,
   planRewardedPresentationBegin,
   planRewardedPresentationEnd,
   shouldIgnorePlatformResume,
@@ -669,6 +670,7 @@ export class Game {
   private readonly yandex = new YandexGamesService();
   private skinReward?: SkinRewardController;
   private rewardedHold = false;
+  private platformPauseActive = false;
   private lifecycleBeforeReward: LifecycleState = 'MENU';
   private readonly onlineStatus = new ServerStatusSession();
   private readonly input: InputManager;
@@ -970,13 +972,14 @@ export class Game {
     this.atlas?.dispose();
     this.renderer.dispose();
     this.worldStore.close();
-    this.closeSkinReward();
+    this.closeSkinReward(true);
     this.yandex.dispose();
     this.profiler.dispose();
     this.longTasks.dispose();
   }
 
   private showMainMenu(): void {
+    if (this.skinReward?.isOperationActive()) return;
     this.lifecycle.setState('MENU');
     this.disposeCharacterPreview();
     this.closeSkinReward();
@@ -994,6 +997,7 @@ export class Game {
   }
 
   private showSkinSelector(): void {
+    if (this.skinReward?.isOperationActive()) return;
     this.disposeCharacterPreview();
     this.closeSkinReward();
     this.skinSelector = new PlayerSkinSelectorSession(this.playerAppearance);
@@ -1017,6 +1021,10 @@ export class Game {
         },
         currentAppearance: () => this.playerAppearance,
         stillOpen: () => this.skinSelector === open,
+        canRecoverManually: () => canFinishRewardedRecovery({
+          documentHidden: typeof document !== 'undefined' && document.hidden,
+          platformPause: this.platformPauseActive,
+        }),
       },
     );
     this.ui.showSkinSelector(this.skinSelector.preview, {
@@ -1035,7 +1043,10 @@ export class Game {
         this.characterPreview?.setAutoRotatePaused(active);
       },
       requestRewarded: (skinId) => this.skinReward?.request(skinId),
+      rewardOperationActive: () => this.skinReward?.isOperationActive() === true,
+      continueRewardRecovery: () => this.skinReward?.continueFromRecovery(),
       confirm: () => {
+        if (this.skinReward?.isOperationActive()) return;
         const session = this.skinSelector;
         const next = session?.confirm();
         this.closeSkinReward();
@@ -1052,6 +1063,7 @@ export class Game {
         this.showMainMenu();
       },
       cancel: () => {
+        if (this.skinReward?.isOperationActive()) return;
         this.skinSelector?.cancel();
         this.closeSkinReward();
         this.skinSelector = undefined;
@@ -1061,7 +1073,8 @@ export class Game {
     });
   }
 
-  private closeSkinReward(): void {
+  private closeSkinReward(force = false): void {
+    if (!force && this.skinReward?.isOperationActive()) return;
     const reward = this.skinReward;
     this.skinReward = undefined;
     reward?.dispose();
@@ -7235,6 +7248,7 @@ export class Game {
   }
 
   private pauseForPlatform(): void {
+    this.platformPauseActive = true;
     if (this.rewardedHold) {
       this.input.releaseActions();
       this.input.releasePointerLock();
@@ -7253,6 +7267,7 @@ export class Game {
   }
 
   private resumeFromPlatform(): void {
+    this.platformPauseActive = false;
     if (shouldIgnorePlatformResume(this.rewardedHold)) return;
     if (this.lifecycle.state === 'AD' && this.session) this.enterPlaying();
   }

@@ -15,6 +15,7 @@ import { skinStoreEntry } from './skinStoreCatalog';
 export type SkinRewardPhase =
   | { readonly kind: 'idle' }
   | { readonly kind: 'pending'; readonly skinId: string; readonly detail: string }
+  | { readonly kind: 'recovery'; readonly skinId: string; readonly detail: string; readonly rewarded: boolean }
   | { readonly kind: 'message'; readonly detail: string };
 
 export interface SkinRewardUi {
@@ -28,6 +29,8 @@ export interface SkinRewardHost {
   apply(appearance: PlayerAppearance): void;
   currentAppearance(): PlayerAppearance;
   stillOpen(): boolean;
+  /** Visible page, and the platform is not still holding its own pause. */
+  canRecoverManually(): boolean;
 }
 
 export function commitRewardedSkinSwitch(
@@ -62,7 +65,24 @@ export class SkinRewardController {
       if (!this.host.stillOpen()) return;
       this.ui.present({ kind: 'pending', skinId: event.skinId, detail: REWARDED_SKIN_COPY.opened });
     };
+    this.flow.onRewardRecorded = (event) => {
+      if (!this.host.stillOpen()) return;
+      this.ui.present({ kind: 'pending', skinId: event.skinId, detail: REWARDED_SKIN_COPY.rewardWaiting });
+    };
+    this.flow.onRecovery = (event) => {
+      if (!this.host.stillOpen()) return;
+      this.ui.present({
+        kind: 'recovery',
+        skinId: event.skinId,
+        detail: REWARDED_SKIN_COPY.continueHint,
+        rewarded: event.rewarded,
+      });
+    };
     this.flow.onSettled = (event) => this.finish(event);
+  }
+
+  isOperationActive(): boolean {
+    return this.flow.isOperationActive;
   }
 
   request(skinId: string): void {
@@ -79,8 +99,15 @@ export class SkinRewardController {
       return;
     }
     if (!this.flow.isBusy) return;
+    if (started.phase === 'reward_received' || started.phase === 'awaiting_close_recovery') return;
     const detail = started.phase === 'ad_open' ? REWARDED_SKIN_COPY.opened : REWARDED_SKIN_COPY.loading;
     this.ui.present({ kind: 'pending', skinId, detail });
+  }
+
+  /** Does not start a video. Refuses while the page is hidden or the platform pause is still known. */
+  continueFromRecovery(): void {
+    if (!this.flow.isOperationActive || !this.host.canRecoverManually()) return;
+    this.flow.continueManually();
   }
 
   dispose(): void {
