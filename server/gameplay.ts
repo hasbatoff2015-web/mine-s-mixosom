@@ -1,7 +1,18 @@
+import type { CommittedCraft } from '../src/crafting/types';
 import { MEGA_ZOMBIE_DEATH_FIREWORK_FLIGHTS, megaZombieLootMotion } from '../src/entities/megaZombie';
 import { splitMegaZombieStacks } from '../src/entities/megaZombieLoot';
 import { Vec3, type Vec3Like } from '../src/math/vec3';
 import { clearMiningLock, survivalFinishLockReject } from './miningLock';
+import { clearCarryState, replaceCarryState } from './carryState';
+import {
+  collectiblePaintingDroppedStack,
+  ensureInventoryInstanceIds,
+  ensureItemInstanceId,
+  readItemInstanceId,
+  requiresUniqueItemIdentity,
+  withItemInstanceId,
+} from '../src/inventory/itemInstance';
+import { isSharedWorldChestBlock } from '../src/inventory/portalChest';
 import {
   BlockId,
   getBlockDefinition,
@@ -143,6 +154,8 @@ export interface GameplayPlayer {
   selectedSlot: number;
   cursor: ItemStack | null;
   craftSlots: Array<ItemStack | null>;
+  /** Present on authoritative players. Test doubles may omit it. */
+  carryRevision?: number;
   window: InventoryWindow;
   ridingCartId?: string;
   miningTarget?: { x: number; y: number; z: number; blockId?: BlockId };
@@ -246,6 +259,12 @@ export class ServerGameplay {
   listPlayers?: () => Iterable<GameplayPlayer>;
   lastTickMs = 0;
   onPersistentStateChanged?: () => void;
+  /** Accepted survival harvest drop. Scanning must not call this again. */
+  onAcceptedBlockDrop?: (itemId: string, count: number, sourceId: string) => void;
+  /** A new monitored stack from boss loot or a detached block. Not a moved stack. */
+  onProducedResource?: (itemId: string, count: number) => void;
+  onCraftedResource?: (commit: CommittedCraft) => void;
+  onCreativeResource?: (previous: ItemStack | null, next: ItemStack | null) => void;
   /** After survival death loot is spawned once. Duels bind these exact entity ids. */
   onDeathLoot?: (player: GameplayPlayer, droppedIds: readonly string[]) => void;
   /** Reject every manual world drop before the inventory mutates. */
@@ -335,6 +354,7 @@ export class ServerGameplay {
             playerId: ownerId,
             attackerId: ownerId,
             mobKind: mob.kind,
+            economyInstanceId: mob.economyInstanceId,
           });
         }
       },
@@ -505,7 +525,12 @@ export class ServerGameplay {
           });
           this.events.emit('playerDamaged', { playerId: victim.id, amount: event.amount, cause: event.source });
           if (victim.survival.dead) {
-            this.events.emit('entityDeath', { entityId: victim.id, cause: event.source, playerId: victim.id });
+            this.events.emit('entityDeath', {
+              entityId: victim.id,
+              cause: event.source,
+              playerId: victim.id,
+              deathEventId: victim.survival.deathEventId,
+            });
           }
           if (result.fullHurt) {
             this.mobs.assignOwnedWolfTarget(victim.id, event.mobId, 'mob', 'defend');
@@ -557,7 +582,9 @@ export class ServerGameplay {
       const event = this.events.createItemPickup(player.id, entity.id, stack.itemId, stack.count);
       this.events.emit('itemPickup', event);
       if (event.cancelled) return 0;
-      const remainder = player.inventory.add(stack);
+      const stamped = ensureItemInstanceId(stack, () => globalThis.crypto.randomUUID());
+      if (stamped !== stack) (entity as { stack: ItemStack }).stack = stamped;
+      const remainder = player.inventory.add(stamped);
       const accepted = stack.count - (remainder?.count ?? 0);
       if (accepted > 0) {
         player.inventoryDirty = true;
@@ -568,11 +595,12 @@ export class ServerGameplay {
   }
 
   dropFromPlayer(player: GameplayPlayer, stack: ItemStack): void {
+    const stamped = ensureItemInstanceId(stack, () => globalThis.crypto.randomUUID());
     const origin = player.controller.eyePosition();
-    const event = this.events.createItemDrop(stack.itemId, stack.count, origin.x, origin.y, origin.z, player.id);
+    const event = this.events.createItemDrop(stamped.itemId, stamped.count, origin.x, origin.y, origin.z, player.id);
     this.events.emit('itemDrop', event);
     if (event.cancelled) return;
-    this.drops.drop(stack, origin, player.controller.viewDirection());
+    this.drops.drop(stamped, origin, player.controller.viewDirection());
   }
 
   spawnDroppedStack(
@@ -580,14 +608,16 @@ export class ServerGameplay {
     position: Vec3,
     playerId?: string,
     options: { readonly merge?: boolean } = {},
-  ): void {
-    const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, playerId);
+  ): boolean {
+    const stamped = ensureItemInstanceId(stack, () => globalThis.crypto.randomUUID());
+    const event = this.events.createItemDrop(stamped.itemId, stamped.count, position.x, position.y, position.z, playerId);
     this.events.emit('itemDrop', event);
-    if (event.cancelled) return;
-    this.drops.spawn(stack, position, {
+    if (event.cancelled) return false;
+    this.drops.spawn(stamped, position, {
       velocity: new Vec3(...dropScatterVelocity(this.random)),
       ...(options.merge === false ? { merge: false } : {}),
     });
+    return true;
   }
 
   /**
@@ -607,8 +637,7 @@ export class ServerGameplay {
     take(player.cursor);
     for (const stack of player.craftSlots) take(stack);
     player.inventory.clear();
-    player.cursor = null;
-    player.craftSlots = player.craftSlots.map(() => null);
+    clearCarryState(player);
     player.inventoryDirty = true;
     return ids;
   }
@@ -622,10 +651,11 @@ export class ServerGameplay {
       horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
     });
     const position = new Vec3(origin[0], origin[1], origin[2]);
-    const event = this.events.createItemDrop(stack.itemId, stack.count, position.x, position.y, position.z, player.id);
+    const stamped = ensureItemInstanceId(stack, () => globalThis.crypto.randomUUID());
+    const event = this.events.createItemDrop(stamped.itemId, stamped.count, position.x, position.y, position.z, player.id);
     this.events.emit('itemDrop', event);
     if (event.cancelled) return undefined;
-    return this.drops.spawn(stack, position, {
+    return this.drops.spawn(stamped, position, {
       velocity: new Vec3(...dropScatterVelocity(this.random, {
         horizontalScale: DEATH_DROP_SCATTER_MULTIPLIER,
       })),
@@ -774,6 +804,7 @@ export class ServerGameplay {
         lockMerge: true,
         pickupDelaySeconds: 0.8,
       }).id);
+      this.onProducedResource?.(stack.itemId, stack.count);
     }
     return ids;
   }
@@ -814,18 +845,33 @@ export class ServerGameplay {
     if (state.redstone) this.redstone.restore(state.redstone as never);
   }
 
+  private chestForOpenWindow(player: GameplayPlayer): { slots: Array<ItemStack | null> } | undefined {
+    const window = player.window;
+    if (window.kind === 'portal-chest') return player.portalChest;
+    if (window.kind !== 'chest' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (!isSharedWorldChestBlock(this.world.getBlock(window.x, window.y, window.z))) return undefined;
+    return this.world.chests.get(blockKey(window.x, window.y, window.z));
+  }
+
+  private furnaceForOpenWindow(player: GameplayPlayer) {
+    const window = player.window;
+    if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (this.world.getBlock(window.x, window.y, window.z) !== BlockId.Furnace) return undefined;
+    return this.world.furnaces.get(blockKey(window.x, window.y, window.z));
+  }
+
   applyInventory(player: GameplayPlayer, action: ClientInventoryActionMessage) {
     if (isManualDropAction(action) && this.blocksManualItemDrop?.(player.id)) {
       return { ok: false, dropped: [] };
     }
-    const chest = player.window.kind === 'portal-chest'
-      ? player.portalChest
-      : player.window.kind === 'chest' && player.window.x !== undefined
-        ? this.world.getChest(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-        : undefined;
-    const furnace = player.window.kind === 'furnace' && player.window.x !== undefined
-      ? this.world.getFurnace(player.window.x, player.window.y ?? 0, player.window.z ?? 0)
-      : undefined;
+    const creativeGrant = action.action === 'click' && typeof action.key === 'string' && action.key.startsWith('creative-');
+    const cursorBefore = creativeGrant ? player.cursor : null;
+    const chest = this.chestForOpenWindow(player);
+    const furnace = this.furnaceForOpenWindow(player);
     const state = {
       inventory: player.inventory,
       cursor: player.cursor,
@@ -836,18 +882,33 @@ export class ServerGameplay {
       furnace,
     };
     const result = applyInventoryUiAction(state, action);
-    player.cursor = state.cursor;
-    player.craftSlots = state.craftSlots;
+    const mint = () => globalThis.crypto.randomUUID();
+    ensureInventoryInstanceIds(player.inventory, mint);
+    if (state.cursor) state.cursor = ensureItemInstanceId(state.cursor, mint);
+    state.craftSlots = state.craftSlots.map((stack) => stack ? ensureItemInstanceId(stack, mint) : stack);
+    if (chest) {
+      for (let index = 0; index < chest.slots.length; index += 1) {
+        const stack = chest.slots[index];
+        if (stack) chest.slots[index] = ensureItemInstanceId(stack, mint);
+      }
+    }
+    if (furnace) {
+      furnace.slots = furnace.slots.map((stack) => stack ? ensureItemInstanceId(stack, mint) : stack) as typeof furnace.slots;
+    }
+    const dropped = result.dropped.map((stack) => ensureItemInstanceId(stack, mint));
+    replaceCarryState(player, state.cursor, state.craftSlots);
     player.window = state.window;
     player.inventoryDirty = true;
     if (action.action === 'select' && action.slot !== undefined) player.selectedSlot = action.slot;
-    for (const dropped of result.dropped) this.dropFromPlayer(player, dropped);
+    for (const stack of dropped) this.dropFromPlayer(player, stack);
+    for (const commit of result.committedCrafts ?? []) this.onCraftedResource?.(commit);
     if (result.crafted) {
       this.events.emit('craft', this.events.createCraft(
         player.id, result.crafted.itemId, result.crafted.count, result.crafted.recipeId,
       ));
     }
-    return result;
+    if (creativeGrant && result.ok) this.onCreativeResource?.(cursorBefore, player.cursor);
+    return { ...result, dropped };
   }
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
@@ -873,27 +934,38 @@ export class ServerGameplay {
     if (block === BlockId.OakDoor) this.removeDoor(x, y, z);
     else if (block === BlockId.WhiteBed) clearBedBlocks(this.world, x, y, z);
     else if (!this.world.setBlock(x, y, z, BlockId.Air)) return { ok: false, reason: 'rejected' };
-    this.events.emit('blockBroken', { playerId: player.id, x, y, z, blockId: block });
+    const rewardEventId = globalThis.crypto.randomUUID();
+    this.events.emit('blockBroken', {
+      playerId: player.id,
+      x, y, z,
+      blockId: block,
+      rewardEventId,
+    });
     if (player.gamemode === 'survival' && harvestable) {
+      const produced = new Map<string, number>();
+      const spawnHarvest = (itemId: string, count: number): void => {
+        if (count <= 0) return;
+        const spawned = this.spawnDroppedStack(createItemStack(itemId, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        if (!spawned) return;
+        produced.set(itemId, (produced.get(itemId) ?? 0) + count);
+      };
       const paintingItemId = collectiblePaintingDropItemId(block, blockState);
       if (paintingItemId) {
-        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
+        const paintingDrop = collectiblePaintingDroppedStack(block, blockState);
+        if (paintingDrop) this.spawnDroppedStack(paintingDrop, new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
       } else {
         const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
         if (farmingDrops !== undefined) {
-          for (const drop of farmingDrops) if (drop.count > 0) {
-            this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-          }
+          for (const drop of farmingDrops) spawnHarvest(drop.item, drop.count);
         } else if (definition.drop) {
           const doubleSlab = isSlabBlock(block) && defaultSlabType(blockState) === 'double';
           for (const rolled of rollBrokenBlockDrops(definition.drop, this.random)) {
             const count = doubleSlab && rolled.item === definition.drop.item ? rolled.count * 2 : rolled.count;
-            if (count > 0) {
-              this.spawnDroppedStack(createItemStack(rolled.item, count), new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
-            }
+            spawnHarvest(rolled.item, count);
           }
         }
       }
+      for (const [itemId, count] of produced) this.onAcceptedBlockDrop?.(itemId, count, rewardEventId);
       this.dropLeafApple(player, block, x, y, z);
     }
     if (player.gamemode === 'survival') {
@@ -934,7 +1006,20 @@ export class ServerGameplay {
     } else {
       hit = this.lookHit(player);
     }
-    return placeBlockAt(this.useContext(player, hit), x, y, z, requestedBlock, hit);
+    const placed = placeBlockAt(this.useContext(player, hit), x, y, z, requestedBlock, hit);
+    if (placed.ok && player.gamemode === 'creative') {
+      const held = player.inventory.getSlot(player.selectedSlot);
+      if (held && requiresUniqueItemIdentity(held.itemId) && !readItemInstanceId(held)) {
+        const placedId = this.world.getBlockState(x, y, z)?.paintingInstanceId;
+        let next = ensureItemInstanceId(held, () => globalThis.crypto.randomUUID());
+        if (readItemInstanceId(next) && readItemInstanceId(next) === placedId) {
+          next = withItemInstanceId(next, globalThis.crypto.randomUUID());
+        }
+        player.inventory.setSlot(player.selectedSlot, next);
+        player.inventoryDirty = true;
+      }
+    }
+    return placed;
   }
 
   useHeld(
@@ -1151,6 +1236,7 @@ export class ServerGameplay {
       minecarts: this.minecarts,
       redstone: this.redstone,
       random: this.random,
+      mintInstanceId: () => globalThis.crypto.randomUUID(),
       allowInteract: (x, y, z, block) => {
         const event = gameplay.events.createPlayerInteract(player.id, x, y, z, block);
         gameplay.events.emit('playerInteract', event);
@@ -1188,7 +1274,7 @@ export class ServerGameplay {
           player.presentSwing?.();
           if (kind === 'crafting-table') {
             player.window = { kind: 'crafting-table', x, y, z };
-            player.craftSlots = Array.from({ length: 9 }, () => null);
+            replaceCarryState(player, player.cursor, Array.from({ length: 9 }, () => null));
           } else if (kind === 'chest') {
             player.window = { kind: 'chest', x, y, z };
           } else if (kind === 'portal-chest') {
@@ -1723,19 +1809,30 @@ export class ServerGameplay {
     clearDoorBlocks(this.world, x, y, z);
   }
 
+  private closeContainerViewers(kind: 'chest' | 'furnace', x: number, y: number, z: number): void {
+    for (const viewer of this.listPlayers?.() ?? []) {
+      const window = viewer.window;
+      if (window.kind !== kind || window.x !== x || window.y !== y || window.z !== z) continue;
+      viewer.window = { kind: 'inventory' };
+      viewer.inventoryDirty = true;
+    }
+  }
+
   private releaseContents(player: GameplayPlayer, x: number, y: number, z: number, block: number): void {
     const key = blockKey(x, y, z);
     if (block === BlockId.Chest || block === BlockId.EventChest) {
       const chest = this.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
-      this.world.chests.delete(key);
+      this.world.removeChestState(x, y, z);
+      this.closeContainerViewers('chest', x, y, z);
     } else if (block === BlockId.PortalChest) {
       // Personal storage is player-owned; breaking the block never drops or wipes it.
     } else if (block === BlockId.Furnace) {
       const furnace = this.world.furnaces.get(key);
       const wasBurning = (furnace?.burnTime ?? 0) > 0;
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new Vec3(x + 0.5, y + 0.6, z + 0.5), player.id);
-      this.world.furnaces.delete(key);
+      this.world.removeFurnaceState(x, y, z);
+      this.closeContainerViewers('furnace', x, y, z);
       if (wasBurning) this.world.syncFurnaceBurnBit(x, y, z, true);
     }
   }
@@ -1747,13 +1844,16 @@ export class ServerGameplay {
       if (event.reason === 'lava') continue;
       const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
       if (paintingItemId) {
-        this.spawnDroppedStack(createItemStack(paintingItemId, 1), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+        const paintingDrop = collectiblePaintingDroppedStack(event.block, event.state);
+        if (paintingDrop) this.spawnDroppedStack(paintingDrop, new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
         continue;
       }
       const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) {
-          this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+          if (this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5))) {
+            this.onProducedResource?.(drop.item, drop.count);
+          }
         }
         continue;
       }
@@ -1761,7 +1861,9 @@ export class ServerGameplay {
       if (!drop) continue;
       for (const rolled of rollBrokenBlockDrops(drop, this.random)) {
         if (rolled.count > 0) {
-          this.spawnDroppedStack(createItemStack(rolled.item, rolled.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
+          if (this.spawnDroppedStack(createItemStack(rolled.item, rolled.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5))) {
+            this.onProducedResource?.(rolled.item, rolled.count);
+          }
         }
       }
     }
@@ -1853,8 +1955,9 @@ export class ServerGameplay {
       });
       const paintingItemId = collectiblePaintingDropItemId(entry.previous, entry.previousState);
       if (!paintingItemId) continue;
-      this.spawnDroppedStack(
-        createItemStack(paintingItemId, 1),
+      const paintingDrop = collectiblePaintingDroppedStack(entry.previous, entry.previousState);
+      if (paintingDrop) this.spawnDroppedStack(
+        paintingDrop,
         new Vec3(entry.x + 0.5, entry.y + 0.3, entry.z + 0.5),
       );
     }
@@ -1969,6 +2072,7 @@ export class ServerGameplay {
         playerId: attacker.id,
         attackerId: attacker.id,
         mobKind: mob.kind,
+        economyInstanceId: mob.economyInstanceId,
       });
     }
     return accepted ? 'hit' : 'immune';
@@ -2073,6 +2177,7 @@ export class ServerGameplay {
         entityId: victim.id,
         cause,
         playerId: victim.id,
+        deathEventId: victim.survival.deathEventId,
         ...(extras.attackerId ? { attackerId: extras.attackerId } : {}),
       });
     }

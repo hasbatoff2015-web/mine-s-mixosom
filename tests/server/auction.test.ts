@@ -6,7 +6,7 @@ import { Inventory, createItemStack } from '../../src/inventory';
 import { parseClientMessage } from '../../shared/protocol';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
-import {
+import { syncAuction,
   AUCTION_DURATION_MS,
   AUCTION_MAX_ACTIVE,
   AUCTION_MAX_PRICE,
@@ -83,7 +83,7 @@ describe('AuctionService', () => {
       metadata: { customName: 'Lucky', lore: ['From Ada'] },
     });
     inventory.setSlot(3, item);
-    const created = auction.createListing('seller', 'Ada', inventory, 3, 1, 250, item);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 3, 1, 250, item));
     expect(created.ok).toBe(true);
     expect(inventory.getSlot(3)).toBeNull();
     expect(created.listing?.item.metadata).toEqual({ customName: 'Lucky', lore: ['From Ada'] });
@@ -99,7 +99,7 @@ describe('AuctionService', () => {
     const first = new AuctionService(store, economy);
     const inventory = new Inventory();
     fill(inventory, 'diamond', 32);
-    const created = first.createListing('seller', 'Ada', inventory, 0, 32, 5000);
+    const created = syncAuction(first.createListing('seller', 'Ada', inventory, 0, 32, 5000));
     expect(created.ok).toBe(true);
     const second = new AuctionService(store, economy);
     const listing = second.getListing(created.listing!.listingId);
@@ -112,7 +112,7 @@ describe('AuctionService', () => {
     const { auction } = await setup();
     const inventory = new Inventory();
     fill(inventory, 'stone', 64);
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 20, 10);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 20, 10));
     expect(created.ok).toBe(true);
     expect(created.listing?.item.count).toBe(20);
     expect(inventory.getSlot(0)?.count).toBe(44);
@@ -123,9 +123,9 @@ describe('AuctionService', () => {
     const inventory = new Inventory();
     fill(inventory, 'stone', 64);
     const expected = createItemStack('stone', 64);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 64, 10, expected).ok).toBe(true);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 64, 10, expected).ok).toBe(false);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 1, 10, expected).error)
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 64, 10, expected)).ok).toBe(true);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 64, 10, expected)).ok).toBe(false);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10, expected)).error)
       .toBe('Предмет больше недоступен для продажи.');
   });
 
@@ -135,7 +135,7 @@ describe('AuctionService', () => {
     fill(inventory, 'stone', 32);
     const expected = createItemStack('stone', 32);
     inventory.setSlot(0, createItemStack('dirt', 32));
-    const result = auction.createListing('seller', 'Ada', inventory, 0, 32, 10, expected);
+    const result = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 32, 10, expected));
     expect(result.ok).toBe(false);
     expect(inventory.getSlot(0)?.itemId).toBe('dirt');
   });
@@ -145,16 +145,16 @@ describe('AuctionService', () => {
     const inventory = new Inventory();
     for (let i = 0; i < AUCTION_MAX_ACTIVE; i += 1) {
       fill(inventory, 'dirt', 1, 0);
-      expect(auction.createListing('seller', 'Ada', inventory, 0, 1, 10).ok).toBe(true);
+      expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10)).ok).toBe(true);
     }
     fill(inventory, 'dirt', 1, 0);
-    const blocked = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const blocked = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     expect(blocked.ok).toBe(false);
     expect(blocked.error).toBe(`У вас уже максимальное количество товаров на аукционе: ${AUCTION_MAX_ACTIVE}.`);
     const first = [...auction.queryMine('seller').listings][0]!;
     expect(auction.cancelListing('seller', first.listingId).ok).toBe(true);
     fill(inventory, 'dirt', 1, 0);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 1, 10).ok).toBe(true);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10)).ok).toBe(true);
     expect(auction.activeCount('seller')).toBe(AUCTION_MAX_ACTIVE);
   });
 
@@ -164,13 +164,13 @@ describe('AuctionService', () => {
     const inventory = new Inventory();
     for (let i = 0; i < AUCTION_MAX_ACTIVE; i += 1) {
       fill(inventory, 'dirt', 1, 0);
-      expect(auction.createListing('seller', 'Ada', inventory, 0, 1, 10).ok).toBe(true);
+      expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10)).ok).toBe(true);
     }
     now += AUCTION_DURATION_MS + 1;
     expect(auction.expireDue()).toBe(AUCTION_MAX_ACTIVE);
     expect(auction.activeCount('seller')).toBe(0);
     fill(inventory, 'dirt', 1, 0);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 1, 10).ok).toBe(true);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10)).ok).toBe(true);
     expect(auction.activeCount('seller')).toBe(1);
   });
 
@@ -179,7 +179,7 @@ describe('AuctionService', () => {
     const { auction } = await setup(() => now);
     const inventory = new Inventory();
     fill(inventory, 'gold_ingot', 8);
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 8, 40);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 8, 40));
     now += AUCTION_DURATION_MS + 1;
     expect(auction.expireDue()).toBeGreaterThan(0);
     const listing = auction.getListing(created.listing!.listingId)!;
@@ -195,7 +195,7 @@ describe('AuctionService', () => {
     economy.setBalance('buyer', 1_000, 'ADMIN_SET');
     const sellerInv = new Inventory();
     fill(sellerInv, 'diamond', 3);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 3, 250);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 3, 250));
     const buyerInv = new Inventory();
     const bought = auction.buyListing('buyer', 'Bob', buyerInv, created.listing!.listingId);
     expect(bought.ok).toBe(true);
@@ -219,7 +219,7 @@ describe('AuctionService', () => {
     const { auction, economy } = await setup();
     const sellerInv = new Inventory();
     fill(sellerInv, 'iron_ingot', 1);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 1, 50)!;
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 1, 50))!;
     expect(auction.buyListing('seller', 'Ada', new Inventory(), created.listing!.listingId).error)
       .toBe('Нельзя купить собственный товар.');
     economy.setBalance('broke', 0, 'ADMIN_SET');
@@ -235,7 +235,7 @@ describe('AuctionService', () => {
 
     const extraInv = new Inventory();
     fill(extraInv, 'coal', 1);
-    const extra = auction.createListing('seller', 'Ada', extraInv, 0, 1, 10);
+    const extra = syncAuction(auction.createListing('seller', 'Ada', extraInv, 0, 1, 10));
     expect(auction.cancelListing('seller', extra.listing!.listingId).ok).toBe(true);
     economy.setBalance('buyer', 100, 'ADMIN_SET');
     expect(auction.buyListing('buyer', 'Bob', new Inventory(), extra.listing!.listingId).error)
@@ -246,7 +246,7 @@ describe('AuctionService', () => {
     const { auction, economy } = await setup();
     const sellerInv = new Inventory();
     fill(sellerInv, 'diamond', 1);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 1, 10);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 1, 10));
     economy.setBalance('a', 100, 'ADMIN_SET');
     economy.setBalance('b', 100, 'ADMIN_SET');
     const first = auction.buyListing('a', 'A', new Inventory(), created.listing!.listingId);
@@ -303,18 +303,18 @@ describe('AuctionService', () => {
     const { auction } = await setup();
     const inventory = new Inventory();
     fill(inventory, 'gold_ingot', 12);
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 12, 30);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 12, 30));
     expect(auction.cancelListing('seller', created.listing!.listingId).ok).toBe(true);
     expect(inventory.getSlot(0)).toBeNull();
     const full = new Inventory();
     for (let i = 0; i < Inventory.SLOT_COUNT; i += 1) full.setSlot(i, createItemStack('dirt', 64));
-    expect(auction.claimListing('seller', full, created.listing!.listingId).error)
+    expect(syncAuction(auction.claimListing('seller', full, created.listing!.listingId)).error)
       .toBe('Недостаточно места в инвентаре.');
     expect(auction.getListing(created.listing!.listingId)?.status).toBe('CANCELLED');
     const empty = new Inventory();
-    expect(auction.claimListing('seller', empty, created.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(auction.claimListing('seller', empty, created.listing!.listingId)).ok).toBe(true);
     expect(empty.getSlot(0)).toEqual(createItemStack('gold_ingot', 12));
-    expect(auction.claimListing('seller', empty, created.listing!.listingId).ok).toBe(false);
+    expect(syncAuction(auction.claimListing('seller', empty, created.listing!.listingId)).ok).toBe(false);
     expect(auction.getListing(created.listing!.listingId)?.status).toBe('CLAIMED');
   });
 
@@ -323,7 +323,7 @@ describe('AuctionService', () => {
     const { auction } = await setup(() => now);
     const inventory = new Inventory();
     fill(inventory, 'diamond', 2);
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 2, 40);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 2, 40));
     now += 1_000;
     const relist = auction.relist('seller', created.listing!.listingId, 80);
     expect(relist.ok).toBe(true);
@@ -334,7 +334,7 @@ describe('AuctionService', () => {
     expect(relist.listing?.listingId).not.toBe(created.listing!.listingId);
     expect(inventory.getSlot(0)).toBeNull();
     expect(auction.queryBrowse().totalCount).toBe(1);
-    expect(auction.claimListing('seller', new Inventory(), created.listing!.listingId).ok).toBe(false);
+    expect(syncAuction(auction.claimListing('seller', new Inventory(), created.listing!.listingId)).ok).toBe(false);
     expect(auction.relist('seller', created.listing!.listingId, 90).ok).toBe(false);
   });
 
@@ -342,7 +342,7 @@ describe('AuctionService', () => {
     const { auction } = await setup();
     const inventory = new Inventory();
     fill(inventory, 'stone', 1);
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     expect(auction.relist('seller', created.listing!.listingId, 5).error).toBe(AUCTION_PRICE_RANGE_ERROR);
     expect(auction.getListing(created.listing!.listingId)?.status).toBe('ACTIVE');
   });
@@ -351,9 +351,9 @@ describe('AuctionService', () => {
     const { auction } = await setup();
     const inventory = new Inventory();
     fill(inventory, 'stone', 64);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, 1).error).toBe(AUCTION_PRICE_RANGE_ERROR);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, 5).error).toBe(AUCTION_PRICE_RANGE_ERROR);
-    expect(auction.createListing('seller', 'Ada', inventory, 0, 10, AUCTION_MAX_PRICE + 1).error)
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 10, 1)).error).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 10, 5)).error).toBe(AUCTION_PRICE_RANGE_ERROR);
+    expect(syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 10, AUCTION_MAX_PRICE + 1)).error)
       .toBe(AUCTION_PRICE_RANGE_ERROR);
     expect(inventory.getSlot(0)?.count).toBe(64);
   });
@@ -384,7 +384,7 @@ describe('AuctionService', () => {
     const { auction } = await setup(() => 0);
     const inventory = new Inventory();
     fill(inventory, 'glass_bottle', 64);
-    const created = auction.createListing('seller', 'Игрок', inventory, 0, 64, 123);
+    const created = syncAuction(auction.createListing('seller', 'Игрок', inventory, 0, 64, 123));
     const text = listingTooltip(created.listing!, 0);
     expect(text.startsWith('Стеклянная бутылочка\n')).toBe(true);
     expect(text).toContain('Цена: 123 Мегакоина');
@@ -392,12 +392,12 @@ describe('AuctionService', () => {
     expect(text).toContain('Осталось:');
     expect(text).not.toMatch(/Количество/);
     fill(inventory, 'stone', 1);
-    const short = listingTooltip(auction.createListing('seller', 'Игрок', inventory, 0, 1, 10).listing!, 0);
+    const short = listingTooltip(syncAuction(auction.createListing('seller', 'Игрок', inventory, 0, 1, 10)).listing!, 0);
     expect(short.startsWith('Камень\n')).toBe(true);
     expect(short).not.toMatch(/Количество/);
     fill(inventory, 'potion_invisibility', 1);
     const expensive = listingTooltip(
-      auction.createListing('seller', 'Игрок', inventory, 0, 1, AUCTION_MAX_PRICE).listing!,
+      syncAuction(auction.createListing('seller', 'Игрок', inventory, 0, 1, AUCTION_MAX_PRICE)).listing!,
       0,
     );
     expect(expensive).toContain('Зелье невидимости');
@@ -419,16 +419,16 @@ describe('AuctionService', () => {
     const { auction } = await setup(() => now);
     const inventory = new Inventory();
     fill(inventory, 'stone', 1, 0);
-    const cancelled = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const cancelled = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     fill(inventory, 'dirt', 1, 0);
-    const expired = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const expired = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     fill(inventory, 'sand', 1, 0);
-    const relisted = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const relisted = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     fill(inventory, 'gravel', 1, 0);
-    const claimed = auction.createListing('seller', 'Ada', inventory, 0, 1, 10);
+    const claimed = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10));
     expect(auction.cancelListing('seller', cancelled.listing!.listingId).ok).toBe(true);
     expect(auction.cancelListing('seller', claimed.listing!.listingId).ok).toBe(true);
-    expect(auction.claimListing('seller', new Inventory(), claimed.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(auction.claimListing('seller', new Inventory(), claimed.listing!.listingId)).ok).toBe(true);
     const relist = auction.relist('seller', relisted.listing!.listingId, 20);
     expect(relist.ok).toBe(true);
     now += AUCTION_DURATION_MS + 1;
@@ -453,6 +453,47 @@ describe('AuctionService', () => {
     expect(mine.listings.every((listing) => listing.status === 'ACTIVE' || listing.status === 'CANCELLED' || listing.status === 'EXPIRED')).toBe(true);
     const network = auction.toNetworkListing(auction.getListing(cancelled.listing!.listingId)!);
     expect(network.status).toBe('CANCELLED');
+  });
+
+  it('keeps a server settlement uuid across save, load, upgrade, and relist', async () => {
+    const { store, economy, auction } = await setup();
+    const inventory = new Inventory();
+    fill(inventory, 'diamond', 1);
+    const listed = syncAuction(auction.createListing('ada', 'Ada', inventory, 0, 1, 10));
+    expect(listed.ok).toBe(true);
+    const settlement = listed.listing!.economySettlementId;
+    expect(settlement).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    const reloaded = new AuctionService(store, economy);
+    expect(reloaded.getListing(listed.listing!.listingId)?.economySettlementId).toBe(settlement);
+    const raw = store.load<{ nextId: number; listings: Array<Record<string, unknown>> }>('auction/listings', {
+      nextId: 1,
+      listings: [],
+    });
+    delete raw.listings[0]?.economySettlementId;
+    store.save('auction/listings', raw);
+    const upgraded = new AuctionService(store, economy);
+    const upgradedId = upgraded.getListing('ah-1')?.economySettlementId;
+    expect(upgradedId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(upgradedId).not.toBe(settlement);
+    const restarted = new AuctionService(store, economy);
+    expect(restarted.getListing('ah-1')?.economySettlementId).toBe(upgradedId);
+    const relisted = restarted.relist('ada', 'ah-1', 20);
+    expect(relisted.ok).toBe(true);
+    expect(relisted.listing?.economySettlementId).not.toBe(upgradedId);
+  });
+
+  it('does not share ah-1 settlement identity across listing stores', async () => {
+    const left = await setup();
+    const right = await setup();
+    const leftInventory = new Inventory();
+    const rightInventory = new Inventory();
+    fill(leftInventory, 'diamond', 1);
+    fill(rightInventory, 'diamond', 1);
+    const a = syncAuction(left.auction.createListing('ada', 'Ada', leftInventory, 0, 1, 10));
+    const b = syncAuction(right.auction.createListing('bea', 'Bea', rightInventory, 0, 1, 10));
+    expect(a.listing?.listingId).toBe('ah-1');
+    expect(b.listing?.listingId).toBe('ah-1');
+    expect(a.listing?.economySettlementId).not.toBe(b.listing?.economySettlementId);
   });
 
   it('parses auction protocol intents', () => {

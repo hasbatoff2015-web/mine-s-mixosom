@@ -52,8 +52,8 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
       saveStore = (store) => api.saveData('store', store);
       service.load();
 
-      const isAdmin = (playerId: string, name: string): boolean => (
-        api.isOperator(name)
+      const isAdmin = (playerId: string, _name: string): boolean => (
+        api.isOperator(playerId)
         || api.hasPermission(playerId, 'kit.admin')
         || api.hasPermission(playerId, 'server.admin')
       );
@@ -64,7 +64,7 @@ export function createKitPlugin(ctx: BuiltinPluginContext): Plugin {
         const kit = service.get(kitName);
         if (!kit) return fail(`Набор '${kitName}' не найден.`);
         const rule = kitAccessRule(kitName);
-        const operator = api.isOperator(player.name) || api.isOperator(playerId);
+        const operator = api.isOperator(playerId);
         if (!bypassCooldown && rule && rule.permission !== 'player' && !operator && !api.hasPermission(playerId, rule.permission)) {
           return fail('Недостаточно прав для выполнения этой команды.');
         }

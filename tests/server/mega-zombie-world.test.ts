@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 import { MEGA_ZOMBIE_SPAWN_TEXT } from '../../src/entities/megaZombie';
 import { createItemStack } from '../../src/inventory';
 import { ItemId } from '../../src/items';
@@ -66,6 +67,7 @@ describe('mega zombie world integration', () => {
     const sink = new MemorySink();
     const joined = world.join({ sink, name: 'Op' });
     if ('error' in joined) throw new Error(joined.error);
+    bindNamedOperatorFixture(world, joined.player);
     const player = joined.player;
     player.controller.position.set(8, 80, 8);
     world.handleChat(player, '/boss setspawn');

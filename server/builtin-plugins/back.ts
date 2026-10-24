@@ -27,7 +27,7 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'back.use',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const operator = api.isOperator(sender.playerId);
           const allowed = operator || api.hasPermission(sender.playerId, 'back.death');
           if (!allowed) return fail('Эта функция доступна с привилегии BOSS.');
           const death = ctx.history.peekDeath(sender.playerId);

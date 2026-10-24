@@ -1,16 +1,19 @@
 import type { Plugin } from '../PluginManager';
-import { fail, isConsoleSender, ok, type CommandResult } from '../commands';
+import { fail, isConsoleSender, ok, type CommandResult, type CommandSender } from '../commands';
+import { clientMoneyRequest, MONEY_REQUEST_REQUIRED, serverMoneyRequest } from '../economy/moneyRequest';
 import {
   ECONOMY_BALT0P_DEFAULT_LIMIT,
   ECONOMY_COMMAND_HISTORY_LIMIT,
   ECONOMY_INITIAL_BALANCE,
   ECONOMY_MAX_BALANCE,
   ECONOMY_PVP_KILL_COOLDOWN_MS,
+  blockReward,
   formatMegacoinAmount,
   formatMegacoins,
   formatTransactionLine,
 } from '../services/economy';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
+import { isPromise, type EconomyCommandRequest } from '../economy/currencyPort';
 import type { BuiltinPluginContext, PlayerIdentity } from './context';
 
 const HELP = {
@@ -67,12 +70,14 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!raw) return usageError(usage);
         const found = lookup(raw);
         if (!found) return fail(`Игрок '${raw}' не найден.`);
-        economy.rememberName(found.id, found.name);
+        const named = economy.rememberName(found.id, found.name);
+        if (isPromise(named)) economy.track?.(named);
         return found;
       };
 
       api.registerEvent('playerJoin', (event) => {
-        economy.rememberName(event.playerId, event.name);
+        const named = economy.rememberName(event.playerId, event.name);
+        if (isPromise(named)) economy.track?.(named);
       });
 
       api.registerEvent('blockPlaced', (event) => {
@@ -83,12 +88,35 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         const placed = economy.isPlacedBlock(event.x, event.y, event.z);
         economy.clearPlacedBlock(event.x, event.y, event.z);
         if (!event.playerId) return;
-        economy.rewardBlockBreak(event.playerId, event.blockId, { placed, source: 'player' });
+        if (economy.backend === 'postgres' && ctx.scheduleRewardedBreak && event.rewardEventId) {
+          const amount = blockReward(event.blockId);
+          if (!placed && amount > 0) {
+            ctx.scheduleRewardedBreak({
+              playerId: event.playerId,
+              blockId: event.blockId,
+              placed,
+              rewardEventId: event.rewardEventId,
+            });
+            return;
+          }
+        }
+        const reward = economy.rewardBlockBreak(
+          event.playerId,
+          event.blockId,
+          { placed, source: 'player' },
+          event.rewardEventId,
+        );
+        if (isPromise(reward)) economy.track?.(reward.then(() => undefined, () => undefined));
       });
 
       api.registerEvent('entityDeath', (event) => {
         if (event.mobKind) {
-          if (event.playerId) economy.rewardMobKill(event.playerId, event.mobKind, event.entityId);
+          if (!event.playerId) return;
+          const sourceId = event.economyInstanceId
+            ?? (economy.backend === 'postgres' ? undefined : event.entityId);
+          if (!sourceId) return;
+          const reward = economy.rewardMobKill(event.playerId, event.mobKind, sourceId);
+          if (isPromise(reward)) economy.track?.(reward.then(() => undefined, () => undefined));
           return;
         }
         const victim = lookup(event.entityId) ?? (event.playerId ? lookup(event.playerId) : undefined);
@@ -96,16 +124,21 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         if (!victim || !killerId || killerId === victim.id) return;
         if (!lookup(killerId)) return;
         if (ctx.duels.shouldSuppressNormalPvpSettlement(victim.id, killerId)) return;
-        economy.recordPvpKill(killerId, victim.id, event.entityId);
+        const deathId = event.deathEventId ?? event.entityId;
+        economy.recordPvpKill(killerId, victim.id, deathId);
         const before = economy.getBalance(victim.id);
-        const result = economy.rewardPlayerKill(killerId, victim.id, event.entityId);
-        if (!result.ok || !result.amount) return;
-        api.getPlayer(killerId)?.sendMessage(
-          `Вы получили ${formatMegacoins(result.amount)} за убийство ${economy.displayName(victim.id)}.`,
-        );
-        api.getPlayer(victim.id)?.sendMessage(
-          `Вы потеряли ${formatMegacoins(result.amount)} (10% от ${formatMegacoins(before)}).`,
-        );
+        const result = economy.rewardPlayerKill(killerId, victim.id, deathId);
+        const announce = (paid: { ok: boolean; amount?: number }): void => {
+          if (!paid.ok || !paid.amount) return;
+          api.getPlayer(killerId)?.sendMessage(
+            `Вы получили ${formatMegacoins(paid.amount)} за убийство ${economy.displayName(victim.id)}.`,
+          );
+          api.getPlayer(victim.id)?.sendMessage(
+            `Вы потеряли ${formatMegacoins(paid.amount)} (10% от ${formatMegacoins(before)}).`,
+          );
+        };
+        if (isPromise(result)) economy.track?.(result.then(announce, () => undefined));
+        else announce(result);
       });
 
       api.scheduleRepeating(2000, () => economy.persistPlaced());
@@ -120,13 +153,15 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (args.length === 0) {
             if (isConsoleSender(sender)) return usageError('/balance <player>');
-            economy.rememberName(sender.playerId, sender.name);
-            return ok(`Баланс: ${formatMegacoins(economy.getBalance(sender.playerId))}`);
+            return afterName(economy.rememberName(sender.playerId, sender.name), () => (
+              ok(`Баланс: ${formatMegacoins(economy.getBalance(sender.playerId))}`)
+            ));
           }
           const target = lookup(args[0]!);
           if (!target) return fail(`Игрок '${args[0]}' не найден.`);
-          economy.rememberName(target.id, target.name);
-          return ok(`Баланс ${target.name}: ${formatMegacoins(economy.getBalance(target.id))}`);
+          return afterName(economy.rememberName(target.id, target.name), () => (
+            ok(`Баланс ${target.name}: ${formatMegacoins(economy.getBalance(target.id))}`)
+          ));
         },
       });
 
@@ -146,14 +181,27 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
           const target = lookup(name);
           if (!target) return fail(`Игрок '${name}' не найден.`);
           if (target.id === sender.playerId) return fail('Нельзя перевести Мегакоины самому себе.');
-          economy.rememberName(sender.playerId, sender.name);
-          economy.rememberName(target.id, target.name);
-          const result = economy.transfer(sender.playerId, target.id, amount, 'PLAYER_TRANSFER');
-          if (!result.ok) return fail(result.error ?? 'Перевод не выполнен.');
-          api.getPlayer(target.id)?.sendMessage(
-            `${target.name} получил ${formatMegacoins(amount)} от ${sender.name}.`,
-          );
-          return ok(`Вы перевели ${target.name} ${formatMegacoins(amount)}.`);
+          const request = moneyCommandRequest(economy.backend, sender, 'economy.player_transfer', {
+            to: target.id,
+            amount,
+          });
+          if (isCommandResult(request)) return request;
+          const named = economy.rememberName(sender.playerId, sender.name);
+          const pay = () => {
+            const also = economy.rememberName(target.id, target.name);
+            const send = () => {
+              const result = economy.transfer(sender.playerId, target.id, amount, 'PLAYER_TRANSFER', request);
+              return afterMoney(result, (paid) => {
+                if (!paid.ok) return fail(paid.error ?? 'Перевод не выполнен.');
+                api.getPlayer(target.id)?.sendMessage(
+                  `${target.name} получил ${formatMegacoins(amount)} от ${sender.name}.`,
+                );
+                return ok(`Вы перевели ${target.name} ${formatMegacoins(amount)}.`);
+              });
+            };
+            return afterName(also, send);
+          };
+          return afterName(named, pay);
         },
       });
 
@@ -166,11 +214,13 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const top = economy.getTopBalances(ECONOMY_BALT0P_DEFAULT_LIMIT);
-          if (top.length === 0) return ok('Пока никто не имеет Мегакоинов.');
-          return ok([
-            'Топ балансов:',
-            ...top.map((entry, index) => `${index + 1}. ${entry.name} — ${formatMegacoinAmount(entry.balance)}`),
-          ]);
+          return afterMoney(top, (rows) => {
+            if (rows.length === 0) return ok('Пока никто не имеет Мегакоинов.');
+            return ok([
+              'Топ балансов:',
+              ...rows.map((entry, index) => `${index + 1}. ${entry.name} — ${formatMegacoinAmount(entry.balance)}`),
+            ]);
+          });
         },
       });
 
@@ -184,11 +234,13 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (isConsoleSender(sender)) return usageError('/eco transactions <player>');
           const rows = economy.getTransactionHistory(sender.playerId, ECONOMY_COMMAND_HISTORY_LIMIT);
-          if (rows.length === 0) return ok('Транзакций пока нет.');
-          return ok([
-            'Последние транзакции:',
-            ...rows.map((tx) => formatTransactionLine(tx, (id) => economy.displayName(id))),
-          ]);
+          return afterMoney(rows, (history) => {
+            if (history.length === 0) return ok('Транзакций пока нет.');
+            return ok([
+              'Последние транзакции:',
+              ...history.map((tx) => formatTransactionLine(tx, (id) => economy.displayName(id))),
+            ]);
+          });
         },
       });
 
@@ -197,8 +249,8 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         aliases: ['economy'],
         usage: '/eco help',
         description: 'Администрирование экономики',
-        permission: 'operator',
-        execute: (args) => {
+permission: 'economy.admin',
+        execute: (args, sender) => {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();
           if (sub === 'give' || sub === 'take' || sub === 'set') {
@@ -213,32 +265,40 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
                   : 'Сумма должна быть целым положительным числом.',
               );
             }
+            const request = moneyCommandRequest(economy.backend, sender, `economy.admin_${sub}`, { playerId: target.id, amount });
+            if (isCommandResult(request)) return request;
             const result = sub === 'give'
-              ? economy.deposit(target.id, amount, 'ADMIN_GIVE')
+              ? economy.deposit(target.id, amount, 'ADMIN_GIVE', undefined, undefined, request)
               : sub === 'take'
-                ? economy.withdraw(target.id, amount, 'ADMIN_TAKE')
-                : economy.setBalance(target.id, amount, 'ADMIN_SET');
-            if (!result.ok) return fail(result.error ?? 'Операция не выполнена.');
-            const formatted = formatMegacoins(amount);
-            if (sub === 'set') {
-              api.getPlayer(target.id)?.sendMessage(`Ваш баланс установлен: ${formatMegacoins(result.balance ?? amount)}.`);
-              return ok(`Баланс ${target.name} установлен: ${formatMegacoins(result.balance ?? amount)}.`);
-            }
-            api.getPlayer(target.id)?.sendMessage(
-              sub === 'give'
-                ? `Вам выдано ${formatted}.`
-                : `С вашего баланса снято ${formatted}.`,
-            );
-            const verb = sub === 'give' ? 'Выдано' : 'Снято';
-            return ok(`${verb} ${target.name} ${formatted}. Новый баланс: ${formatMegacoins(result.balance ?? 0)}.`);
+                ? economy.withdraw(target.id, amount, 'ADMIN_TAKE', undefined, request)
+                : economy.setBalance(target.id, amount, 'ADMIN_SET', request);
+            return afterMoney(result, (paid) => {
+              if (!paid.ok) return fail(paid.error ?? 'Операция не выполнена.');
+              const formatted = formatMegacoins(amount);
+              if (sub === 'set') {
+                api.getPlayer(target.id)?.sendMessage(`Ваш баланс установлен: ${formatMegacoins(paid.balance ?? amount)}.`);
+                return ok(`Баланс ${target.name} установлен: ${formatMegacoins(paid.balance ?? amount)}.`);
+              }
+              api.getPlayer(target.id)?.sendMessage(
+                sub === 'give'
+                  ? `Вам выдано ${formatted}.`
+                  : `С вашего баланса снято ${formatted}.`,
+              );
+              const verb = sub === 'give' ? 'Выдано' : 'Снято';
+              return ok(`${verb} ${target.name} ${formatted}. Новый баланс: ${formatMegacoins(paid.balance ?? 0)}.`);
+            });
           }
           if (sub === 'reset') {
             const target = requireTarget(args[1], '/eco reset <player>');
             if (!isIdentity(target)) return target;
-            const result = economy.resetBalance(target.id, 'ADMIN_RESET');
-            if (!result.ok) return fail(result.error ?? 'Сброс не выполнен.');
-            api.getPlayer(target.id)?.sendMessage(`Ваш баланс сброшен: ${formatMegacoins(ECONOMY_INITIAL_BALANCE)}.`);
-            return ok(`Баланс ${target.name} сброшен: ${formatMegacoins(ECONOMY_INITIAL_BALANCE)}.`);
+            const request = moneyCommandRequest(economy.backend, sender, 'economy.admin_reset', { playerId: target.id });
+            if (isCommandResult(request)) return request;
+            const result = economy.resetBalance(target.id, 'ADMIN_RESET', request);
+            return afterMoney(result, (paid) => {
+              if (!paid.ok) return fail(paid.error ?? 'Сброс не выполнен.');
+              api.getPlayer(target.id)?.sendMessage(`Ваш баланс сброшен: ${formatMegacoins(ECONOMY_INITIAL_BALANCE)}.`);
+              return ok(`Баланс ${target.name} сброшен: ${formatMegacoins(ECONOMY_INITIAL_BALANCE)}.`);
+            });
           }
           if (sub === 'balance') {
             const target = requireTarget(args[1], '/eco balance <player>');
@@ -249,11 +309,13 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
             const target = requireTarget(args[1], '/eco transactions <player>');
             if (!isIdentity(target)) return target;
             const rows = economy.getTransactionHistory(target.id, ECONOMY_COMMAND_HISTORY_LIMIT);
-            if (rows.length === 0) return ok(`У ${target.name} нет транзакций.`);
-            return ok([
-              `История ${target.name}:`,
-              ...rows.map((tx) => formatTransactionLine(tx, (id) => economy.displayName(id))),
-            ]);
+            return afterMoney(rows, (history) => {
+              if (history.length === 0) return ok(`У ${target.name} нет транзакций.`);
+              return ok([
+                `История ${target.name}:`,
+                ...history.map((tx) => formatTransactionLine(tx, (id) => economy.displayName(id))),
+              ]);
+            });
           }
           return usageError('/eco help');
         },
@@ -263,4 +325,43 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
       ctx.economy.persist();
     },
   };
+}
+
+function isCommandResult(value: EconomyCommandRequest | undefined | CommandResult): value is CommandResult {
+  return Boolean(value) && typeof value === 'object' && 'lines' in value;
+}
+
+/**
+ * Postgres money commands require a client UUID. Console work gets a new
+ * server-owned id. Legacy JSON keeps the previous optional behavior.
+ */
+function moneyCommandRequest(
+  backend: 'legacy_json' | 'postgres' | undefined,
+  sender: CommandSender,
+  operation: string,
+  payload: unknown,
+): EconomyCommandRequest | undefined | CommandResult {
+  if (isConsoleSender(sender)) {
+    if (backend !== 'postgres') return undefined;
+    return serverMoneyRequest(operation, sender.playerId, payload);
+  }
+  const request = clientMoneyRequest(sender.clientRequestId, operation, sender.playerId, payload);
+  if (backend === 'postgres' && !request) return fail(MONEY_REQUEST_REQUIRED);
+  return request;
+}
+
+function afterName(
+  named: void | Promise<void>,
+  next: () => CommandResult | Promise<CommandResult>,
+): CommandResult | Promise<CommandResult> {
+  if (isPromise(named)) return named.then(next);
+  return next();
+}
+
+function afterMoney<T>(
+  value: T | Promise<T>,
+  publish: (value: T) => CommandResult,
+): CommandResult | Promise<CommandResult> {
+  if (isPromise(value)) return value.then(publish);
+  return publish(value);
 }

@@ -56,10 +56,14 @@ describe('craft_recipe protocol and authority', () => {
       slot: 3,
       inventory: { slots: [] },
       result: { itemId: 'diamond', count: 64 },
+      requestId: '11111111-1111-4111-8111-111111111111',
+      expectedInventoryRevision: 0,
     })).toEqual({
       type: 'inventory_action',
       action: 'craft_recipe',
       recipeId: 'oak_planks_from_log',
+      requestId: '11111111-1111-4111-8111-111111111111',
+      expectedInventoryRevision: 0,
     });
     expect(parseClientMessage({
       type: 'inventory_action',
@@ -69,6 +73,8 @@ describe('craft_recipe protocol and authority', () => {
       type: 'inventory_action',
       action: 'recipe',
       recipeId: 'crafting_table',
+      requestId: '11111111-1111-4111-8111-111111111111',
+      expectedInventoryRevision: 0,
     })).toMatchObject({ type: 'inventory_action', action: 'recipe', recipeId: 'crafting_table' });
   });
 

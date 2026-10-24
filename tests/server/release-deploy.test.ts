@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error untyped release helper; the shell scripts call the same module
-import { assertOutsideWorldData, assertReleaseId, cleanupPlan, gitReleaseId, installRelease, packRelease, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
+import { assertOutsideWorldData, assertReleaseBundle, assertReleaseId, cleanupPlan, copyRuntimePackages, externalPackageNames, gitReleaseId, installRelease, packRelease, packageNameFromSpecifier, runtimeDependencyClosure, WORLD_DATA_ROOT } from '../../scripts/release-ops.mjs';
 
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../..');
 const bashProbe = spawn('bash', ['-c', 'echo ok'], { stdio: 'ignore' });
@@ -17,10 +17,14 @@ const bashAvailable = await new Promise<boolean>((resolve) => {
 async function fixtureRelease(parent: string, name: string): Promise<string> {
   const dir = join(parent, name);
   await mkdir(join(dir, 'dist/server'), { recursive: true });
+  await mkdir(join(dir, 'dist/admin'), { recursive: true });
   await mkdir(join(dir, 'node_modules/ws'), { recursive: true });
+  await mkdir(join(dir, 'node_modules/pg'), { recursive: true });
   await mkdir(join(dir, 'worlds/anarchy'), { recursive: true });
   await writeFile(join(dir, 'dist/server/index.mjs'), 'export {}\n');
+  await writeFile(join(dir, 'dist/admin/index.html'), '<!doctype html><title>admin</title>\n');
   await writeFile(join(dir, 'node_modules/ws/package.json'), '{"name":"ws"}\n');
+  await writeFile(join(dir, 'node_modules/pg/package.json'), '{"name":"pg","dependencies":{}}\n');
   await writeFile(join(dir, 'worlds/anarchy/world.json'), '{"keep":true}\n');
   return dir;
 }
@@ -61,6 +65,7 @@ describe('release layout', () => {
       const dest = await installRelease({ root: join(parent, 'opt'), source, releaseId: '228492d6607b' });
       expect(dest).toBe(join(parent, 'opt', 'releases', '228492d6607b'));
       expect(await readFile(join(dest, 'dist/server/index.mjs'), 'utf8')).toContain('export');
+      expect(await readFile(join(dest, 'dist/admin/index.html'), 'utf8')).toContain('admin');
       expect(await readFile(join(dest, 'node_modules/ws/package.json'), 'utf8')).toContain('ws');
       expect(await readFile(join(dest, 'RELEASE_ID'), 'utf8')).toBe('228492d6607b\n');
       await expect(readFile(join(dest, 'worlds/anarchy/world.json'), 'utf8')).rejects.toThrow();
@@ -74,6 +79,7 @@ describe('release layout', () => {
       const packed = await packRelease({ repo: source, releaseId: 'aabbccddee01' });
       expect(packed.out).toBe(join(source, 'release', 'aabbccddee01'));
       expect(await readFile(join(packed.out, 'dist/server/index.mjs'), 'utf8')).toContain('export');
+      expect(await readFile(join(packed.out, 'dist/admin/index.html'), 'utf8')).toContain('admin');
       expect(await readFile(join(packed.out, 'node_modules/ws/package.json'), 'utf8')).toContain('ws');
       expect(await readFile(join(packed.out, 'package.json'), 'utf8')).toContain('frontier-cubes-server');
       expect(await readFile(join(packed.out, 'RELEASE_ID'), 'utf8')).toBe('aabbccddee01\n');
@@ -123,6 +129,8 @@ describe('release shell scripts', () => {
     expect(common).toContain('ln -s "$target" "$root/current.new"');
     expect(common).toContain('mv -Tf "$root/current.new" "$root/current"');
     expect(common).toContain('dist/server/index.mjs');
+    expect(common).toContain('node_modules/ws/package.json');
+    expect(common).toContain('node_modules/pg/package.json');
     expect(common).toContain('check-game-servers.mjs');
     expect(deploy).not.toMatch(/systemctl daemon-reload/);
     expect(rollback).toContain('switch_current');
@@ -255,6 +263,102 @@ echo "[status:servers] anarchy, survival, peaceful ready"
       expect(log).toContain('frontier-cubes-survival.service');
       expect(log).toContain('frontier-cubes-peaceful.service');
       expect(log).toContain('restart');
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  }, 30_000);
+});
+
+async function directoryBytes(dir: string): Promise<number> {
+  let total = 0;
+  const entries = await readdir(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) total += await directoryBytes(full);
+    else if (entry.isFile()) total += (await stat(full)).size;
+  }
+  return total;
+}
+
+describe('postgres runtime closure', () => {
+  it('ignores prose that looks like an import and keeps real package names', () => {
+    expect(packageNameFromSpecifier('${name}')).toBeNull();
+    expect(packageNameFromSpecifier('pg')).toBe('pg');
+    expect(packageNameFromSpecifier('@scope/pkg/file.js')).toBe('@scope/pkg');
+    expect(externalPackageNames("ok(`removed from '\${name}'.`);\nimport pg from 'pg';\nimport ws from 'ws';\n")).toEqual(['pg', 'ws']);
+  });
+
+  it('follows production manifests and leaves optional packages behind', () => {
+    const closure = runtimeDependencyClosure(ROOT, ['ws', 'pg']);
+    const names = closure.map((pkg: { name: string; dependencies: string[] }) => pkg.name);
+    for (const name of ['ws', 'pg', 'pg-pool', 'pg-protocol', 'pg-types', 'pgpass', 'split2', 'xtend']) {
+      expect(names).toContain(name);
+    }
+    for (const name of ['three', 'pg-cloudflare', 'pg-native', 'bufferutil', 'utf-8-validate']) {
+      expect(names).not.toContain(name);
+    }
+    for (const pkg of closure as Array<{ name: string; dependencies: string[] }>) {
+      for (const dep of pkg.dependencies) expect(names).toContain(dep);
+    }
+  });
+
+  it('rejects a release that omitted a declared pg dependency', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'fc-pg-missing-'));
+    try {
+      const source = await fixtureRelease(parent, 'source');
+      await writeFile(join(source, 'node_modules/pg/package.json'), `${JSON.stringify({
+        name: 'pg',
+        dependencies: { 'pg-pool': '1.0.0' },
+      })}\n`);
+      await expect(assertReleaseBundle(source)).rejects.toThrow(/pg-pool/);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
+  });
+
+  it('packs a release that can import pg and ws without npm install', async () => {
+    const parent = await mkdtemp(join(tmpdir(), 'fc-pg-closure-'));
+    const dest = join(parent, 'release');
+    try {
+      const copied = await copyRuntimePackages(ROOT, dest, ['ws', 'pg']);
+      expect(copied).toContain('pg');
+      expect(copied).toContain('ws');
+      expect(copied).toContain('pg-pool');
+      await mkdir(join(dest, 'dist/server'), { recursive: true });
+      await mkdir(join(dest, 'dist/admin'), { recursive: true });
+      await writeFile(join(dest, 'dist/server/index.mjs'), "import 'pg';\nimport 'ws';\n");
+      await writeFile(join(dest, 'dist/admin/index.html'), '<!doctype html><title>admin</title>\n');
+      await writeFile(join(dest, 'package.json'), `${JSON.stringify({ name: 'frontier-cubes-server', private: true, type: 'module' })}\n`);
+      await writeFile(join(dest, 'check.mjs'), `
+        import pg from 'pg';
+        import WebSocket from 'ws';
+        import 'pg-pool';
+        import 'pg-types';
+        import 'pg-protocol';
+        import 'pgpass';
+        import 'split2';
+        import 'xtend';
+        const Pool = pg.Pool ?? pg.default?.Pool;
+        if (typeof Pool !== 'function') throw new Error('missing pg.Pool');
+        if (typeof WebSocket !== 'function') throw new Error('missing ws');
+      `);
+      await assertReleaseBundle(dest);
+      const child = spawn(process.execPath, ['check.mjs'], { cwd: dest });
+      const result = await new Promise<{ code: number | null; err: string }>((resolve, reject) => {
+        let err = '';
+        child.stderr.on('data', (chunk: Buffer) => { err += chunk.toString(); });
+        child.on('error', reject);
+        child.on('exit', (code) => resolve({ code, err }));
+      });
+      expect(result.err).toBe('');
+      expect(result.code).toBe(0);
+      await expect(readFile(join(dest, 'node_modules/three/package.json'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(dest, 'node_modules/pg-cloudflare/package.json'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(dest, 'node_modules/pg-native/package.json'), 'utf8')).rejects.toThrow();
+      await expect(readFile(join(dest, 'worlds/anarchy/world.json'), 'utf8')).rejects.toThrow();
+      expect(await directoryBytes(dest)).toBeLessThan(20 * 1024 * 1024);
+      await rm(join(dest, 'node_modules/pg-pool'), { recursive: true, force: true });
+      await expect(assertReleaseBundle(dest)).rejects.toThrow(/pg-pool/);
     } finally {
       await rm(parent, { recursive: true, force: true });
     }

@@ -9,6 +9,7 @@ import { parseClientMessage, type ServerChatMessage } from '../../shared/protoco
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR } from '../../shared/chat';
 import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { CLAN_CREATE_COST } from '../../shared/clans';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-chat-channels-'));
@@ -90,6 +91,7 @@ describe('server chat channels', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

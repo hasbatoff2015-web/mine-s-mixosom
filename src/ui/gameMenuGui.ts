@@ -322,11 +322,22 @@ export function menuClaimsHtml(state: ServerMenuMessage, escape: (value: string)
   }
   if (state.screen === 'claim-settings') {
     const pvp = state.claimPvp === true;
-    const members = (state.claimMembers ?? []).map((member) => `
+    const members = (state.claimMembers ?? []).map((member) => {
+      if (!member.playerId) {
+        return `
+      <div class="mc-player-row">
+        <div class="mc-player-main">
+          <span class="mc-player-name">${escape(member.name)}</span>
+          <span class="mc-player-meta">Старая запись, нужна миграция</span>
+        </div>
+      </div>`;
+      }
+      return `
       <div class="mc-player-row">
         <div class="mc-player-main"><span class="mc-player-name">${escape(member.name)}</span></div>
-        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-claim-kick="${escape(member.name)}">Удалить</button>
-      </div>`).join('');
+        <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-claim-kick="${escape(member.playerId)}">Удалить</button>
+      </div>`;
+    }).join('');
     return `<div class="mc-menu-body" data-menu-screen="claim-settings">
       ${menuHeadingHtml('Приват')}
       <div class="mc-menu-add">

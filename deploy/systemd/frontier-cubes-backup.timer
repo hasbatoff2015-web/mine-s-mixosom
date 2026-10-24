@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Frontier Cubes backup
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+AccuracySec=1min
+Persistent=false
+Unit=frontier-cubes-backup.service
+
+[Install]
+WantedBy=timers.target

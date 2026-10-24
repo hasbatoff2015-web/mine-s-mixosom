@@ -15,10 +15,12 @@ import {
   type Claim,
 } from '../../server/services/claims';
 
+const ADA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+
 function claim(partial: Partial<Claim> & Pick<Claim, 'name' | 'volume'>): Claim {
   return {
     id: partial.id ?? partial.name,
-    owner: partial.owner ?? 'ada',
+    owner: partial.owner ?? ADA,
     worldId: partial.worldId ?? 'anarchy',
     members: partial.members ?? [],
     priority: partial.priority ?? CLAIM_PRIORITY_DEFAULT,
@@ -155,14 +157,14 @@ describe('overlapping claims per-flag priority', () => {
     expect(protectionSource(inside, 'block-break', 'bob')?.name).toBe('spawn');
     expect(protectionSource(inside, 'block-place', 'bob')?.name).toBe('spawn');
     expect(protectionSource(inside, 'pvp', 'bob')).toBeUndefined();
-    expect(protectionSource(inside, 'block-break', 'ada')).toBeUndefined();
+    expect(protectionSource(inside, 'block-break', ADA)).toBeUndefined();
   });
 
   it('uses the highest-priority untrusted claim when nobody set the flag', () => {
     const garden = claim({ name: 'garden', priority: 0, volume: spawnVolume, flags: {} });
     const overlay = claim({ name: 'overlay', priority: 5, volume: spawnVolume, flags: {} });
     expect(protectionSource([garden, overlay], 'block-break', 'bob')?.name).toBe('overlay');
-    expect(protectionSource([garden, overlay], 'block-break', 'ada')).toBeUndefined();
+    expect(protectionSource([garden, overlay], 'block-break', ADA)).toBeUndefined();
   });
 
   it('lists every overlapping deny claim, not only the winning setter', () => {

@@ -8,6 +8,7 @@ import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
 import { AUTOMINE_ALLOWED_BLOCKS, AUTOMINE_WAND_ITEM, cuboidSize, mineVolume } from '../../server/services/autoMine';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-automine-'));
@@ -77,6 +78,7 @@ describe('AutoMine plugin commands', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

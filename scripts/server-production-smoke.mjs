@@ -132,6 +132,13 @@ async function smokeMode(worldPath, { mode, world }) {
     FC_EXAMPLE_PLUGIN: '',
     FC_NO_BUILTIN_PLUGINS: '',
     FC_TEST_FATAL: '',
+    FC_DATABASE_URL: '',
+    FC_DEPLOYMENT_ID: '',
+    FC_DB_POOL_MAX: '',
+    FC_TEST_DATABASE_URL: '',
+    FC_ADMIN_IDS: '',
+    FC_ADMIN_PORT: '',
+    FC_ADMIN_AUTH_HASHES: '',
   });
   try {
     const { port, body } = await waitForStatus(session, mode, world);
@@ -141,6 +148,12 @@ async function smokeMode(worldPath, { mode, world }) {
     }
     if (!(await exists(lockPath))) {
       throw new Error(`expected lock before shutdown: ${lockPath}`);
+    }
+    if (!session.output().includes('database: disabled')) {
+      throw new Error(`expected PostgreSQL to stay disabled\n${session.output()}`);
+    }
+    if (session.output().includes('database: ready') || session.output().includes('postgresql://')) {
+      throw new Error(`database startup leaked into a disabled server\n${session.output()}`);
     }
     console.log(`[smoke:server:prod] ${mode} port=${port} status=${JSON.stringify(body)}`);
     const stopped = await stopServer(session);
@@ -162,6 +175,9 @@ async function smokeMode(worldPath, { mode, world }) {
       throw new Error(
         `${mode} SIGTERM exit ${stopped.code} signal ${stopped.signal} stopped=${stoppedLog} lockGone=${lockGone}\n${session.output()}`,
       );
+    }
+    if (!(await exists(join(worldPath, world, 'world.json')))) {
+      throw new Error(`world.json missing after shutdown for ${mode}\n${session.output()}`);
     }
     console.log(`[smoke:server:prod] ${mode} SIGTERM exit 0, lock removed`);
   } catch (error) {

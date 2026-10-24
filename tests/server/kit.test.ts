@@ -197,6 +197,7 @@ describe('kit commands', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    if (name === 'Op') world.permissions.op(result.player.id);
     return { ...result, sink };
   }
 

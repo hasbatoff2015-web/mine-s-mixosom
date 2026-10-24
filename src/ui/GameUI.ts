@@ -8,6 +8,7 @@ import {
 } from '../inventory';
 import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
+import { stampInventoryIntent } from '../net/inventoryIntent';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
@@ -138,6 +139,7 @@ import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
   isClanActionKind,
+  isRevisionedContainerKind,
   isGameMenuScreenKind,
   isMenuActionKind,
   type ClientDirectMessageActionMessage,
@@ -360,6 +362,9 @@ export interface InventoryContext {
   onDrop(stack: ItemStack): void;
   onChanged(): void;
   submitAction?: (message: ClientInventoryActionMessage) => void;
+  /** Last accepted server revisions. Online submits stamp these onto the message. */
+  inventoryRevision?: number;
+  containerRevision?: number;
 }
 
 interface OverlayCloseOptions {
@@ -467,6 +472,10 @@ export class GameUI {
   private craftSelectedId = '';
   private creativeTab: CreativeInventoryTab = CREATIVE_DEFAULT_TAB;
   private inventoryContext?: InventoryContext;
+  /** Last server inventory revision, kept while the window is closed. */
+  private knownInventoryRevision = 0;
+  /** Last server container revision. Omitted unless the open window is revisioned. */
+  private knownContainerRevision?: number;
   private auctionState?: ServerAuctionMessage;
   private auctionActions?: AuctionGuiActions;
   private auctionSearchTimer?: number;
@@ -1947,7 +1956,7 @@ export class GameUI {
         ? page >= pages.length - 1 : page >= pages.length - 1 && pages.length >= MAX_BOOK_PAGES;
     };
     const capture = (): void => { if (!locked) pages[page] = text.value; };
-    const close = (): void => { this.closeInventory(false); onClose(); };
+    const close = this.bindStandaloneEditor(modal, onClose);
     modal.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape') return;
       event.preventDefault();
@@ -2012,7 +2021,13 @@ export class GameUI {
       modal.querySelector('.sign-lines')!.append(input);
       return input;
     });
-    const close = (): void => { this.closeInventory(false); onClose(); };
+    const close = this.bindStandaloneEditor(modal, onClose);
+    modal.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      event.stopPropagation();
+      close();
+    });
     modal.querySelector('[data-sign="close"]')!.addEventListener('click', close);
     modal.querySelector('[data-sign="save"]')!.addEventListener('click', () => {
       const sanitized = sanitizeSignLines(inputs.map((input) => input.value));
@@ -2525,7 +2540,7 @@ export class GameUI {
     }
     if (check !== true) return;
     if (context.submitAction) {
-      context.submitAction({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id });
+      context.submitAction(this.stampInventorySubmission({ type: 'inventory_action', action: 'craft_recipe', recipeId: recipe.id }));
       return;
     }
     const result = craftOnceByRecipeId(context.inventory, recipe.id);
@@ -3057,7 +3072,7 @@ export class GameUI {
     if (context.submitAction) {
       const counts = inventoryItemCounts(context.inventory);
       this.ghostCraft = ghostFromRecipe(recipe, gridSize, counts);
-      context.submitAction({ type: 'inventory_action', action: 'recipe', recipeId: entry.id, shift });
+      context.submitAction(this.stampInventorySubmission({ type: 'inventory_action', action: 'recipe', recipeId: entry.id, shift }));
       this.renderInventory();
       return;
     }
@@ -3501,11 +3516,33 @@ export class GameUI {
     return null;
   }
 
+  noteInventoryRevisions(inventoryRevision: number, containerRevision?: number): void {
+    this.knownInventoryRevision = inventoryRevision;
+    this.knownContainerRevision = containerRevision;
+    if (!this.inventoryContext) return;
+    this.inventoryContext.inventoryRevision = inventoryRevision;
+    this.inventoryContext.containerRevision = containerRevision;
+  }
+
+  /**
+   * Sole owner of inventory-intent stamps. The open window decides whether a
+   * container revision belongs on the message. A remembered chest revision
+   * must not ride along on inventory or crafting-table actions.
+   */
+  stampInventorySubmission(message: ClientInventoryActionMessage): ClientInventoryActionMessage {
+    const context = this.inventoryContext;
+    const inventory = context?.inventoryRevision ?? this.knownInventoryRevision;
+    const container = context && isRevisionedContainerKind(context.kind)
+      ? (context.containerRevision ?? this.knownContainerRevision ?? 0)
+      : undefined;
+    return stampInventoryIntent(message, { inventory, container });
+  }
+
   private submitInventoryAction(message: ClientInventoryActionMessage): void {
     const context = this.inventoryContext;
     if (!context || this.amountDialog) return;
     if (context.submitAction) {
-      context.submitAction(message);
+      context.submitAction(this.stampInventorySubmission(message));
       this.dragPreview = null;
       this.syncCursorElementContents();
       this.syncCursorStackElement();
@@ -3876,6 +3913,19 @@ export class GameUI {
     if (keep !== 'menu') this.closeGameMenu(keepModal);
     if (keep !== 'trade') this.closeTrade(keepModal);
     this.closeInventory(false);
+  }
+
+  /** Sign and book editors are not inventory screens. Close only the overlay this editor still owns. */
+  private bindStandaloneEditor(modal: HTMLElement, onClose: () => void): () => void {
+    let done = false;
+    return () => {
+      if (done) return;
+      done = true;
+      const owned = this.modal === modal;
+      if (owned) this.releaseOverlay();
+      else if (modal.isConnected) modal.remove();
+      if (owned) onClose();
+    };
   }
 
   private releaseOverlay(options?: OverlayCloseOptions): void {
@@ -5404,7 +5454,7 @@ export class GameUI {
       }
       const claimKick = target.closest<HTMLElement>('[data-menu-claim-kick]');
       if (claimKick?.dataset.menuClaimKick) {
-        actions.send({ type: 'menu_action', action: 'claim_remove_member', name: claimKick.dataset.menuClaimKick });
+        actions.send({ type: 'menu_action', action: 'claim_remove_member', playerId: claimKick.dataset.menuClaimKick });
         return;
       }
       const claimPvp = target.closest<HTMLElement>('[data-menu-claim-pvp]');
