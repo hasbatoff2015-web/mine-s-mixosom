@@ -10,12 +10,24 @@ import { orderedPlayerSkins } from './skinStoreCatalog';
 
 /** Temporary selector draft. Confirm commits; cancel restores the original appearance. */
 export class PlayerSkinSelectorSession {
-  readonly committed: PlayerAppearance;
+  private committedAppearance: PlayerAppearance;
   private previewValue: PlayerAppearance;
 
   constructor(committed: PlayerAppearance) {
-    this.committed = createPlayerAppearance(committed);
-    this.previewValue = this.committed;
+    this.committedAppearance = createPlayerAppearance(committed);
+    this.previewValue = this.committedAppearance;
+  }
+
+  get committed(): PlayerAppearance {
+    return this.committedAppearance;
+  }
+
+  /**
+   * The worn skin changed without leaving the selector.
+   * Preview selection stays where the player left it.
+   */
+  adoptCommitted(appearance: PlayerAppearance): void {
+    this.committedAppearance = createPlayerAppearance(appearance);
   }
 
   get preview(): PlayerAppearance {

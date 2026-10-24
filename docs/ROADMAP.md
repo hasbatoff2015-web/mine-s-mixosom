@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-24: Rewarded video for common skins
+
+- [x] Call `showRewardedVideo` on the existing Yandex SDK instance for the 39 rewarded common skins.
+- [x] Equip one captured `skinId` only after `onRewarded`, then keep it in `fc.player.appearance`.
+- [x] Leave the worn skin in place on cancel, SDK error, and a missing SDK. Do not grant a permanent common-skin unlock.
+- [x] Keep rare, epic, and legendary actions unchanged. Do not call payments.
+- [ ] Not merged. The live server still accepts a registered skin id on join and on `appearance`. Real rewarded playback in the Yandex draft was not run from this environment. Public launch waits for that draft check and for a later server-side entitlement stage.
+
 ## 2026-10-20: Skin rarity catalog and store UI
 
 - [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
@@ -7,7 +15,7 @@
 - [x] Show rarity frames, category headings, target pack prices, and disabled ad/purchase/legendary actions.
 - [x] Keep preview separate from equip. Stage 1 does not grant ownership or call the Yandex ad/purchase SDK.
 - [x] Fail the production build when a new gameplay PNG has no rarity metadata.
-- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Desktop 1920 and 1366, phone landscape, and the portrait rotate overlay were checked in this environment. A real phone is still for the owner.
+- [ ] Not merged at the time of that pass. Client rewarded ads are the 2026-10-24 pass. Server entitlement and Yandex payments stay later. Desktop 1920 and 1366, phone landscape, and the portrait rotate overlay were checked in that environment. A real phone is still for the owner.
 
 ## 2026-10-19: Skin preview faces the camera
 

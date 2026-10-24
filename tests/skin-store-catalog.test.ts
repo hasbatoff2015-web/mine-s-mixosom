@@ -353,10 +353,13 @@ describe('skin action and server entitlement', () => {
     expect(opener).not.toContain('isAdmin');
     const confirm = gameSource.slice(gameSource.indexOf('confirm: () =>'), gameSource.indexOf('cancel: () =>'));
     expect(confirm).toContain('undefined');
-    expect(confirm).toContain('STAGE1_MONETIZATION');
+    expect(confirm).toContain('REWARDED_SKIN_AVAILABILITY');
+    expect(confirm).toContain('commitSelectedSkinAppearance');
     expect(confirm).not.toContain('localStorage');
     expect(confirm).not.toContain('isAdmin');
     expect(confirm).not.toContain('showRewardedVideo');
     expect(confirm).not.toContain('payments');
+    expect(gameSource).toContain('new SkinRewardController');
+    expect(gameSource).not.toContain('showFullscreenAdv');
   });
 });

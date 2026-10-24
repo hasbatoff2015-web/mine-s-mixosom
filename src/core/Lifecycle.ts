@@ -82,6 +82,14 @@ export class GameLifecycleManager {
     }
   }
 
+  /**
+   * The tab hid during an ad, so `previous` may be AD.
+   * The next visible restore should land on the state that preceded the ad.
+   */
+  retargetBackgroundRestore(state: LifecycleState): void {
+    if (this.state === 'BACKGROUND') this.previous = state;
+  }
+
   /** Pointer lock / chat close / canvas click: leave BACKGROUND while the tab is visible. */
   resumePlayingIfVisible(): void {
     if (!shouldResumeFromBackground({ state: this.state, documentHidden: document.hidden })) return;

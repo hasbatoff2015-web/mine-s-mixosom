@@ -171,7 +171,21 @@ Cloud sync через `player.getData()`/`player.setData()` — дополнит
 - Interstitial callbacks: `onOpen`, `onClose(wasShown)`, `onError`. Rewarded callbacks: `onOpen`, `onRewarded`, `onClose`, `onError`.
 - Startup fullscreen ad обрабатывается через platform pause/resume events, потому что прямых callbacks у него нет.
 
-Источники: [Advertising SDK](https://yandex.com/dev/games/doc/en/sdk/sdk-adv), [Ad requirements](https://yandex.com/dev/games/doc/en/concepts/requirements#ad-requirements), [Ad placement](https://yandex.com/dev/games/doc/en/requirements/4/4).
+Источники: [Advertising SDK](https://yandex.ru/dev/games/doc/ru/sdk/sdk-adv), [SDK events](https://yandex.ru/dev/games/doc/ru/sdk/sdk-events), [Ad requirements](https://yandex.com/dev/games/doc/en/concepts/requirements#ad-requirements), [Ad placement](https://yandex.com/dev/games/doc/en/requirements/4/4). Проверено по русской странице рекламы 2026-10-24: вызов имеет вид `ysdk.adv.showRewardedVideo({ callbacks })`.
+
+### Project policy: обычные скины
+
+`YandexGamesService.showRewardedVideo` вызывает только rewarded API на экземпляре после `YaGames.init()`. Повторный init на клик не делается. `showFullscreenAdv` для скина не используется. `/sdk.js` не меняется.
+
+Награда — одна смена выбранного обычного `skinId`. Постоянного открытия нет. Активный скин остаётся в `fc.player.appearance`. Редкие, эпические и легендарные скины этим вызовом не выдаются. Покупки не вызываются.
+
+Реклама запускается из меню выбора скина. Если мир не идёт, lifecycle остаётся `MENU`: `GameplayAPI.start()` после ролика не вызывается и мир сам не стартует. Если ролик когда-либо прервёт `PLAYING`, состояние на время ролика — `AD`, а `game_api_resume` не снимает эту паузу, пока ролик не закончен. Скрытая вкладка звук не включает. Пользовательское pause menu не закрывается.
+
+Без SDK кнопка выключена. Успех рекламы в локальной сборке не имитируется.
+
+Черновик Яндекс Игр сам не подхватывает новый commit. Для проверки ролика владелец собирает архив и загружает его в черновик отдельно. Этот репозиторий архив не загружает.
+
+Ограничение: официальный `onRewarded` — клиентский callback. Он не доказывает просмотр серверу. До публичного запуска нужен отдельный серверный этап. Подробности — в `docs/SKIN_STORE.md`.
 
 ## Gestures, keyboard и browser-native actions
 
