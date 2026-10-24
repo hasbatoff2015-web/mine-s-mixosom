@@ -18,7 +18,6 @@ import {
 import {
   CLAIM_FLAGS,
   CLAIM_PRIORITY_DEFAULT,
-  CLAIM_MAX_OWNED,
   clampClaimPriority,
   claimsAt,
   effectiveFlag,
@@ -133,7 +132,9 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         event.cancel();
         const info = describeProtection(claims, flag, player.id);
         api.log(`${flag} deny ${player.name} overlap=${info.overlap} [${info.names}] effective=${info.flag} trusted=${info.trusted}`);
-        player.sendMessage('This land is claimed.');
+player.sendMessage(flag === 'block-break'
+          ? 'Здесь нельзя ломать блоки: территория занята.'
+          : 'Здесь нельзя ставить блоки: территория занята.');
         ctx.claimBoundaries.showAll(player.id, protectionSources(claims, flag, player.id));
         return true;
       };
@@ -203,7 +204,15 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
           ctx.claimBoundaries.showAll(player.id, overlappingAnchors);
           return;
         }
-        const ownerKey = ownerId(player.id);
+const ownerKey = ownerId(player.id);
+        const owned = store.claims.filter((claim) => claim.owner === ownerKey).length;
+        const limit = bypass(player.id, player.name) ? Number.POSITIVE_INFINITY : ctx.donation.limit(player.id, 'claims');
+        if (owned >= limit) {
+          api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
+          if (player.gamemode !== 'creative') player.give(key, 1);
+          player.sendMessage(`You can only create ${limit} claims.`);
+          return;
+        }
         const name = allocateBlockClaimName(store, ownerKey);
         const created: Claim = {
           id: `${ownerKey}:${name}:${Date.now()}`,
@@ -334,8 +343,8 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Claim ${sub} set.`);
           }
           if (sub === 'create') {
-            if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.playerId)) {
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/claim create <name>');
@@ -343,9 +352,11 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!volume) return fail('Set /claim pos1 and pos2 first.');
             if (!isVolumeInsidePlayableWorld(volume)) return fail(WORLD_BORDER_CLAIM_ERROR);
             const store = load();
-            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= CLAIM_MAX_OWNED
-              && !bypass(sender.playerId, sender.name)) {
-              return fail('You can only create 4 claims.');
+            const claimLimit = bypass(sender.playerId, sender.name)
+              ? Number.POSITIVE_INFINITY
+              : ctx.donation.limit(sender.playerId, 'claims');
+            if (store.claims.filter((claim) => claim.owner === ownerKey).length >= claimLimit) {
+              return fail(`You can only create ${claimLimit} claims.`);
             }
             if (store.claims.some((claim) => claim.owner === ownerKey && claim.name.toLowerCase() === name.toLowerCase())) {
               return fail(`You already have a claim named '${name}'.`);
@@ -392,7 +403,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               claim.owner === ownerId(sender.playerId) || bypass(sender.playerId, sender.name)
             ));
             if (!live) return fail(`Claim '${current}' not found.`);
-            if (!canEdit(live, sender)) return fail('You do not have permission.');
+            if (!canEdit(live, sender)) return fail('Недостаточно прав для выполнения этой команды.');
             const key = nextName.toLowerCase();
             if (store.claims.some((claim) => claim.owner === live.owner && claim.name.toLowerCase() === key && claim.id !== live.id)) {
               return fail(`You already have a claim named '${nextName}'.`);
@@ -449,7 +460,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             const store = load();
             const live = findClaimByName(store.claims, name, ownerKey);
             if (!live) return fail(`Claim '${name}' not found.`);
-            if (!canEdit(live, sender)) return fail('You do not have permission.');
+            if (!canEdit(live, sender)) return fail('Недостаточно прав для выполнения этой команды.');
             live.priority = clampClaimPriority(value);
             save(store);
             return ok(`Set priority of '${live.name}' to ${live.priority}.`);
@@ -462,7 +473,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               if (claimName) {
                 const live = findClaimByName(store.claims, claimName, ownerKey);
                 if (!live) return { ok: false, error: fail(`Claim '${claimName}' not found.`) };
-                if (!canEdit(live, sender)) return { ok: false, error: fail('You do not have permission.') };
+                if (!canEdit(live, sender)) return { ok: false, error: fail('Недостаточно прав для выполнения этой команды.') };
                 return { ok: true, store, live };
               }
               const claim = editableAtFeet(sender) ?? topAt(sender.playerId);
@@ -510,7 +521,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Set ${parsed.flag}=${parsed.value} on claim '${resolved.live.name}'.`);
           }
           if (sub === 'admin') {
-            if (!bypass(sender.playerId, sender.name)) return fail('You do not have permission.');
+            if (!bypass(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
             if (args[1]?.toLowerCase() === 'delete') {
               const name = args[2]?.toLowerCase();
               if (!name) return usageError('/claim admin delete <name>');

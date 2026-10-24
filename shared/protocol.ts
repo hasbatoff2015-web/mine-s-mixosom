@@ -2,12 +2,15 @@ import { isItemInstanceId } from '../src/inventory/itemInstance';
 import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
+import type { PlayerNameStyle } from './donationRanks';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
 import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
 import { sanitizePlayerName } from './playerName';
 import type { AppliedMovementStep } from './playerCommand';
 import type { ActionRejectReason, BowActionDiagnostics, CombatActionDiagnostics, EntityUseActionDiagnostics, PlayerActionKind } from './playerActions';
+import type { EmoteId } from './emotes';
+import { isEmoteId } from './emotes';
 import type { PlayerPresentationState } from './playerPresentation';
 import {
   parseNetworkAppearance,
@@ -31,13 +34,13 @@ export type { ActionRejectReason, PlayerActionKind } from './playerActions';
 export type { CombatActionDiagnostics, EntityUseActionDiagnostics } from './playerActions';
 export type { BowActionDiagnostics } from './playerActions';
 
-export type GameMode = 'survival' | 'creative';
+export type GameMode = 'survival' | 'creative' | 'spectator';
 
 export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnected' | 'error';
 
 export type Vec3 = readonly [number, number, number];
 
-export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
 
 /** Mutable shared or personal container state. A crafting table grid is carry state, not one of these. */
 export function isRevisionedContainerKind(kind: string | undefined): kind is 'chest' | 'furnace' | 'portal-chest' {
@@ -83,6 +86,7 @@ export interface PlayerSnapshot {
   readonly appearance?: PlayerAppearance;
   readonly id: string;
   readonly name: string;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -208,6 +212,8 @@ export interface RemotePlayerInfo {
   readonly onFire?: boolean;
   readonly id: string;
   readonly name: string;
+  readonly gamemode?: GameMode;
+  readonly nameStyle?: PlayerNameStyle;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -733,7 +739,17 @@ export type MenuActionKind =
   | 'duel_refresh'
   | 'duel_challenge'
   | 'duel_accept'
-  | 'duel_decline';
+  | 'duel_decline'
+  | 'donate_retry'
+  | 'donate_color'
+  | 'donate_announce'
+  | 'donate_invsee'
+  | 'donate_invseeop'
+  | 'donate_back'
+  | 'donate_tp'
+  | 'donate_ec'
+  | 'donate_kit'
+  | 'donate_pet';
 
 export type GameMenuScreenKind =
   | 'root'
@@ -751,6 +767,15 @@ export type GameMenuScreenKind =
   | 'auction-history'
   | 'rating'
   | 'duels'
+  | 'donate'
+  | 'donate-color'
+  | 'donate-announce'
+  | 'donate-invsee'
+  | 'donate-invsee-op'
+  | 'donate-tp'
+  | 'donate-back'
+  | 'donate-kits'
+  | 'donate-pets'
   | 'closed';
 
 export interface ClientMenuActionMessage {
@@ -764,6 +789,11 @@ export interface ClientMenuActionMessage {
   readonly enabled?: boolean;
   readonly page?: number;
   readonly ratingKind?: string;
+  readonly text?: string;
+  readonly color?: string;
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
 }
 
 export type TradeActionKind =
@@ -785,6 +815,12 @@ export interface ClientTradeActionMessage {
 }
 
 export type DirectMessageActionKind = 'send' | 'history';
+
+export interface ClientEmoteMessage {
+  readonly type: 'emote';
+  readonly action: 'start' | 'stop';
+  readonly id?: EmoteId;
+}
 
 export interface ClientDirectMessageActionMessage {
   readonly type: 'direct_message_action';
@@ -823,7 +859,8 @@ export type ClientMessage =
   | ClientBuyerActionMessage
   | ClientMenuActionMessage
   | ClientTradeActionMessage
-  | ClientDirectMessageActionMessage;
+  | ClientDirectMessageActionMessage
+  | ClientEmoteMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1014,6 +1051,8 @@ export interface ServerChatMessage {
   readonly channel?: ChatChannel;
   readonly style?: ChatMessageStyle;
   readonly messageId?: string;
+  /** Server-built prefix and nick color. Ignored unless it matches the allowlist. */
+  readonly nameStyle?: PlayerNameStyle;
 }
 
 export interface ServerErrorMessage {
@@ -1154,6 +1193,11 @@ export interface NetworkHologram {
   readonly kind: HologramKind;
   readonly timerDuration: number;
   readonly timerStartedAt: number;
+  /**
+   * AutoMine deadline in server milliseconds. Null means the linked mine has no schedule.
+   * Absent on ordinary looping timers.
+   */
+  readonly timerEndsAt?: number | null;
   readonly backgroundEnabled: boolean;
   readonly backgroundWidth: number;
   readonly backgroundHeight: number;
@@ -1561,6 +1605,63 @@ export interface ServerMenuMessage {
   readonly duelArenaBusy?: boolean;
   readonly duelArenaConfigured?: boolean;
   readonly duelAvailable?: boolean;
+  readonly donate?: NetworkDonateMenu;
+}
+
+export interface NetworkDonateAction {
+  readonly id: string;
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+  readonly screen?: GameMenuScreenKind;
+  readonly kitName?: string;
+  /** Quiet marker for a choice that is already on, such as a nick color or a live pet. */
+  readonly active?: boolean;
+}
+
+export interface NetworkDonatePerk {
+  readonly title: string;
+  readonly detail: string;
+}
+
+export interface NetworkDonateKit {
+  readonly name: string;
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+}
+
+export interface NetworkDonatePet {
+  readonly id: 'bee' | 'creeper';
+  readonly label: string;
+  readonly available: boolean;
+  readonly detail: string;
+  /** True only while this player's live cosmetic entity of that kind exists. */
+  readonly summoned?: boolean;
+  readonly actionLabel?: string;
+}
+
+export interface NetworkDonatePlayer {
+  readonly playerId: string;
+  readonly name: string;
+}
+
+export interface NetworkDonateMenu {
+  readonly rankLabel: string;
+  readonly summary: string;
+  readonly remainingLabel: string;
+  readonly loadError?: string;
+  readonly perks: readonly NetworkDonatePerk[];
+  readonly actions: readonly NetworkDonateAction[];
+  readonly kits: readonly NetworkDonateKit[];
+  readonly pets?: readonly NetworkDonatePet[];
+  readonly catalog: readonly NetworkDonatePerk[];
+  readonly nickChoices: readonly string[];
+  readonly nickColor?: string;
+  readonly previewName: string;
+  readonly onlinePlayers: readonly NetworkDonatePlayer[];
+  readonly deathPoint?: { readonly x: number; readonly y: number; readonly z: number };
+  readonly showInvseeOp: boolean;
 }
 
 export interface ServerDuelEffectMessage {
@@ -1712,6 +1813,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'menu_action',
   'trade_action',
   'direct_message_action',
+  'emote',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1800,7 +1902,7 @@ const MAX_INVENTORY_KEYS = 80;
 const MAX_INVENTORY_SIGNATURE = 480;
 
 const CONTAINER_KINDS: readonly ContainerKind[] = [
-  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest',
+  'inventory', 'crafting-table', 'chest', 'furnace', 'portal-chest', 'invsee', 'invsee-op',
 ];
 
 const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
@@ -1846,11 +1948,14 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'auction_open', 'auction_list', 'auction_sell', 'auction_history',
   'rating_set', 'rating_page',
   'duel_refresh', 'duel_challenge', 'duel_accept', 'duel_decline',
+  'donate_retry', 'donate_color', 'donate_announce', 'donate_invsee', 'donate_invseeop',
+  'donate_back', 'donate_tp', 'donate_ec', 'donate_kit', 'donate_pet',
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
   'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
-  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels', 'closed',
+  'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
+  'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];
 
 export function isClanActionKind(value: string | undefined): value is ClanActionKind {
@@ -1997,6 +2102,9 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
   const appearance = parseHologramAppearanceLenient(raw);
   const timerStartedAt = finite(raw.timerStartedAt) ? raw.timerStartedAt : 0;
   const yaw = finite(raw.yaw) ? raw.yaw : 0;
+  const timerEndsAt = raw.timerEndsAt === null
+    ? null
+    : finite(raw.timerEndsAt) ? raw.timerEndsAt : undefined;
   return {
     name: raw.name.slice(0, HOLOGRAM_MAX_NAME),
     x: raw.x,
@@ -2011,6 +2119,7 @@ export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined 
     kind: appearance.kind,
     timerDuration: appearance.timerDuration,
     timerStartedAt,
+    ...(timerEndsAt !== undefined ? { timerEndsAt } : {}),
     backgroundEnabled: appearance.backgroundEnabled,
     backgroundWidth: appearance.backgroundWidth,
     backgroundHeight: appearance.backgroundHeight,
@@ -2709,6 +2818,17 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const page = raw.page === undefined ? undefined : finite(raw.page) ? Math.floor(raw.page) : undefined;
       if (raw.page !== undefined && page === undefined) return { error: 'menu_action.page invalid' };
       const ratingKind = typeof raw.ratingKind === 'string' ? raw.ratingKind.slice(0, 32) : undefined;
+      const text = typeof raw.text === 'string' ? raw.text.slice(0, 160) : undefined;
+      const color = typeof raw.color === 'string' ? raw.color.slice(0, 32) : undefined;
+      const axis = (value: unknown): number | undefined => (
+        typeof value === 'number' && finite(value) && Math.abs(value) <= 1_000_000 ? value : undefined
+      );
+      const x = raw.x === undefined ? undefined : axis(raw.x);
+      const y = raw.y === undefined ? undefined : axis(raw.y);
+      const z = raw.z === undefined ? undefined : axis(raw.z);
+      if (raw.x !== undefined && x === undefined) return { error: 'menu_action.x invalid' };
+      if (raw.y !== undefined && y === undefined) return { error: 'menu_action.y invalid' };
+      if (raw.z !== undefined && z === undefined) return { error: 'menu_action.z invalid' };
       return {
         type: 'menu_action',
         action: raw.action as MenuActionKind,
@@ -2720,6 +2840,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(enabled !== undefined ? { enabled } : {}),
         ...(page !== undefined ? { page } : {}),
         ...(ratingKind ? { ratingKind } : {}),
+        ...(text !== undefined ? { text } : {}),
+        ...(color ? { color } : {}),
+        ...(x !== undefined ? { x } : {}),
+        ...(y !== undefined ? { y } : {}),
+        ...(z !== undefined ? { z } : {}),
       };
     }
     case 'trade_action': {
@@ -2741,6 +2866,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(money !== undefined ? { money } : {}),
         ...(clientRequestId ? { clientRequestId } : {}),
       };
+    }
+    case 'emote': {
+      if (raw.action !== 'start' && raw.action !== 'stop') return { error: 'emote.action invalid' };
+      if (raw.action === 'stop') return { type: 'emote', action: 'stop' };
+      if (!isEmoteId(raw.id)) return { error: 'emote.id invalid' };
+      return { type: 'emote', action: 'start', id: raw.id };
     }
     default:
       return { error: `unknown message type ${raw.type}` };

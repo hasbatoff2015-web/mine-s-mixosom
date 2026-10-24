@@ -143,7 +143,7 @@ export interface UseSimulationContext {
   readonly world: VoxelWorld;
   readonly inventory: Inventory;
   selectedSlot: number;
-  readonly gamemode: 'survival' | 'creative';
+  readonly gamemode: 'survival' | 'creative' | 'spectator';
   readonly reach: number;
   /** Precomputed crosshair hit (SP `session.target`). Server omits and raycasts. */
   readonly hit?: VoxelHit;

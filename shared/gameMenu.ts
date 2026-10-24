@@ -11,6 +11,7 @@ export const GAME_MENU_BUTTONS = [
   { id: 'auction', label: 'Аукцион', icon: 'icon_auction.png' },
   { id: 'rating', label: 'Рейтинг', icon: 'icon_rating.png' },
   { id: 'duels', label: 'Дуэли', icon: 'icon_duels.png' },
+  { id: 'donate', label: 'Донат', icon: 'icon_donate.png' },
 ] as const;
 
 export type GameMenuButtonId = (typeof GAME_MENU_BUTTONS)[number]['id'];
@@ -31,6 +32,15 @@ export type GameMenuScreen =
   | 'auction-history'
   | 'rating'
   | 'duels'
+  | 'donate'
+  | 'donate-color'
+  | 'donate-announce'
+  | 'donate-invsee'
+  | 'donate-invsee-op'
+  | 'donate-tp'
+  | 'donate-back'
+  | 'donate-kits'
+  | 'donate-pets'
   | 'closed';
 
 export function showsMenuBack(screen: GameMenuScreen): boolean {

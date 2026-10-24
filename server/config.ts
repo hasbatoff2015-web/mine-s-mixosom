@@ -57,6 +57,11 @@ export interface ServerConfig {
    * The public gameplay listener never serves these routes.
    */
   readonly adminHttp: AdminHttpConfig;
+  /**
+   * OP-only `/ranktest` for local DEV. Off unless `FC_RANK_TEST=1`.
+   * Production `npm run start:server` does not set this.
+   */
+  readonly rankTestEnabled: boolean;
 }
 
 export type EconomyBackendConfig =
@@ -274,6 +279,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
     adminIdentity,
     adminHttp: loadAdminHttpConfig(env, adminIdentity),
+    rankTestEnabled: env.FC_RANK_TEST === '1' || env.FC_RANK_TEST === 'true',
   };
 }
 

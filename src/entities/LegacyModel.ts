@@ -25,6 +25,8 @@ export interface LegacyModelBox {
   readonly size: LegacyVector;
   readonly textureOffset: readonly [u: number, v: number];
   readonly mirror?: boolean;
+  readonly faceUvFlipU?: Partial<Readonly<Record<CuboidFace, boolean>>>;
+  readonly faceUvFlipV?: Partial<Readonly<Record<CuboidFace, boolean>>>;
   readonly faceUvRects?: Partial<Readonly<Record<CuboidFace, LogicalUvRect>>>;
   /** Optional render dimensions in legacy model units; UV layout still uses `size`. */
   readonly physicalSize?: LegacyVector;
@@ -112,6 +114,8 @@ export function buildLegacyModel(
             ] as LegacyVector,
           }),
           ...(box.mirror === undefined ? {} : { mirror: box.mirror }),
+          ...(box.faceUvFlipU === undefined ? {} : { faceUvFlipU: box.faceUvFlipU }),
+          ...(box.faceUvFlipV === undefined ? {} : { faceUvFlipV: box.faceUvFlipV }),
           ...(box.faceUvRects === undefined ? {} : { faceUvRects: box.faceUvRects }),
           ...(box.inflate === undefined ? {} : { inflate: box.inflate / LEGACY_MODEL_UNITS_PER_BLOCK }),
         }, legacyBoxCenterToLocal(box), box.texturePath ?? definition.texturePath, {

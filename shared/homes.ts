@@ -2,6 +2,31 @@ export const HOME_PLUGIN_NAME = 'home';
 export const HOME_MAX_DEFAULT = 3;
 export const HOME_MAX_VIP = 4;
 export const HOME_MAX_PREMIUM = 5;
+export const HOME_MAX_BOSS = 6;
+export const HOME_MAX_TITAN = 7;
+
+export function resolveHomeLimit(options: {
+  readonly donation: number;
+  readonly operator: boolean;
+  readonly wildcard: boolean;
+  readonly multiple: boolean;
+  readonly premiumNode: boolean;
+  readonly configuredDefault?: number;
+  readonly configuredVip?: number;
+  readonly configuredPremium?: number;
+}): number {
+  const def = options.configuredDefault ?? HOME_MAX_DEFAULT;
+  const vip = options.configuredVip ?? HOME_MAX_VIP;
+  const premium = options.configuredPremium ?? HOME_MAX_PREMIUM;
+  const donation = Number.isFinite(options.donation) ? options.donation : def;
+  if (options.operator || options.wildcard) {
+    return Math.max(premium, vip, def, HOME_MAX_TITAN, donation);
+  }
+  let max = Math.max(def, donation);
+  if (options.multiple) max = Math.max(max, vip);
+  if (options.premiumNode) max = Math.max(max, premium);
+  return max;
+}
 export const HOME_NAME_MAX = 24;
 export const HOME_NAME_EMPTY_ERROR = 'Введите название дома.';
 export const HOME_NAME_LENGTH_ERROR = `Название дома не длиннее ${HOME_NAME_MAX} символов.`;

@@ -259,7 +259,7 @@ describe('Phase 8 plugin platform', () => {
     world.handleChat(player.player, '/hello');
     expect(player.sink.payloads.some((payload) => (payload as { text?: string }).text === 'Hello')).toBe(true);
     world.handleChat(player.player, '/oponly');
-    expect(player.sink.payloads.some((payload) => (payload as { text?: string }).text === 'You do not have permission.')).toBe(true);
+    expect(player.sink.payloads.some((payload) => (payload as { text?: string }).text === 'Недостаточно прав для выполнения этой команды.')).toBe(true);
     const op = join(world, 'Op');
     world.handleChat(op.player, '/oponly');
     expect(op.sink.payloads.some((payload) => (payload as { text?: string }).text === 'secret')).toBe(true);

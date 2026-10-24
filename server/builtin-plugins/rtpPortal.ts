@@ -105,8 +105,8 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();
           if (sub === 'pos1' || sub === 'pos2') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             const pos = posOf(sender.playerId);
             if (!pos) return fail('Player not found.');
@@ -114,8 +114,8 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Portal ${sub} set to ${pos.x}, ${pos.y}, ${pos.z}.`);
           }
           if (sub === 'create') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/rtpportal create <name>');
@@ -134,8 +134,8 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Created RTP portal '${name}'.`);
           }
           if (sub === 'remove') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();
             if (!name) return usageError('/rtpportal remove <name>');

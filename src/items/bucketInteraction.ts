@@ -41,7 +41,7 @@ export interface BucketContext {
   readonly world: VoxelWorld;
   readonly inventory: Inventory;
   readonly selectedSlot: number;
-  readonly mode: 'survival' | 'creative';
+  readonly mode: 'survival' | 'creative' | 'spectator';
   readonly onDrop: (stack: ItemStack) => void;
   /**
    * Optional mutation guard for the resolved fluid cell.

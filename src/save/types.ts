@@ -1,4 +1,4 @@
-export type GameMode = 'survival' | 'creative';
+export type GameMode = 'survival' | 'creative' | 'spectator';
 
 /** Serialized gameplay state schema. Independent of network protocol and schematic import version. */
 export const WORLD_SCHEMA_VERSION = 1;
@@ -68,6 +68,11 @@ export interface SerializedPersistedPlayer {
    * Missing on old saves means none. Not a second copy of inventory stacks.
    */
   readonly heldReturns?: readonly unknown[];
+  /**
+   * Decorative pet chosen by this player on this world. Missing on old saves
+   * means none. The runtime entity is not stored in the mob list.
+   */
+  readonly cosmeticPet?: 'bee' | 'creeper';
 }
 
 export interface SerializedServerWorld {

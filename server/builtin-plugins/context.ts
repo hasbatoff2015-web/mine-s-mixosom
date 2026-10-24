@@ -6,6 +6,7 @@ import type { ClanService, ClanView, ClanResult } from '../services/clan';
 import type { CurrencyPort } from '../economy/currencyPort';
 import type { FriendsService } from '../services/friends';
 import type { HomeService } from '../services/home';
+import type { DonationRankService } from '../services/donationRanks';
 import type { PermissionService } from '../services/permissions';
 import type { PluginConfigService } from '../services/pluginConfig';
 import type { PlayerSelectionService } from '../services/selection';
@@ -27,6 +28,16 @@ export interface PlayerIdentity {
 
 export interface BuiltinPluginContext {
   readonly permissions: PermissionService;
+  readonly donation: DonationRankService;
+  /** Server config `FC_RANK_TEST`. False on production. */
+  readonly rankTestEnabled: boolean;
+  readonly openPortalChest: (playerId: string) => { ok: boolean; error?: string };
+  readonly openPlayerInventory: (
+    viewerId: string,
+    targetName: string,
+    mode: 'readonly' | 'edit',
+  ) => { ok: boolean; error?: string };
+  readonly broadcastAnnouncement: (text: string) => void;
   readonly teleports: TeleportService;
   readonly history: TeleportHistoryService;
   readonly rtp: RtpService;

@@ -1,6 +1,7 @@
 import type { BlockId } from '../src/blocks';
 import type { ItemStack } from '../src/inventory';
 import type { BedRestState } from '../src/world/bed';
+import type { EmoteId } from './emotes';
 
 export interface EquippedArmorPresentation {
   readonly head: ItemStack['itemId'] | null;
@@ -40,6 +41,10 @@ export interface PlayerPresentationState {
   readonly armor?: EquippedArmorPresentation;
   /** Server-owned full-hurt counter. Join establishes a baseline, never replays history. */
   readonly hurtSeq?: number;
+  /** Cosmetic one-shot. Null or absent means the player is not emoting. */
+  readonly emote?: EmoteId | null;
+  /** Increments on each accepted start so a repeated emote restarts remotely. */
+  readonly emoteSeq?: number;
 }
 
 export interface ArmorSlotReader {

@@ -284,7 +284,7 @@ describe('Anarchy claim-anchor blocks', () => {
     bob.sink.payloads.length = 0;
     ada.sink.payloads.length = 0;
     expect(world.tryPlace(bob.player, x + 2, y, z, BlockId.Dirt)).toEqual({ ok: false, reason: 'cancelled' });
-    expect(resultLines(bob.sink)).toContain('This land is claimed.');
+    expect(resultLines(bob.sink)).toContain('Здесь нельзя ставить блоки: территория занята.');
     expect(boundaryPackets(bob.sink)).toEqual([expect.objectContaining({
       type: 'claim_boundary',
       name: '1',
@@ -380,7 +380,7 @@ describe('Anarchy claim-anchor blocks', () => {
 
     bob.sink.payloads.length = 0;
     expect(placeAnchor(world, bob.player, x + 84, y, z + 4, BlockId.DiamondBlock)).toEqual({ ok: false, reason: 'cancelled' });
-    expect(resultLines(bob.sink)).toContain('This land is claimed.');
+    expect(resultLines(bob.sink)).toContain('Здесь нельзя ставить блоки: территория занята.');
     expect(world.world.getBlock(x + 84, y, z + 4)).toBe(BlockId.Air);
     expect(boundaryPackets(bob.sink)).toEqual([expect.objectContaining({
       name: 'garden',
@@ -393,6 +393,7 @@ describe('Anarchy claim-anchor blocks', () => {
       durationMs: CLAIM_BOUNDARY_DURATION_MS,
     })]);
 
+    expect(world.donation.grant(ada.player.id, 'vip').ok).toBe(true);
     expect(placeAnchor(world, ada.player, x + 84, y, z + 4, BlockId.IronBlock)).toEqual({ ok: true });
     const store = loadClaims(world);
     expect(store.claims.some((claim) => claim.name === 'garden' && !claim.anchor)).toBe(true);
@@ -590,7 +591,7 @@ describe('Anarchy claim-anchor blocks', () => {
     bob.sink.payloads.length = 0;
     prepareCell(world, bob.player, x + 83, y, z);
     expect(world.tryPlace(bob.player, x + 83, y, z, BlockId.Dirt)).toEqual({ ok: false, reason: 'cancelled' });
-    expect(resultLines(bob.sink)).toContain('This land is claimed.');
+    expect(resultLines(bob.sink)).toContain('Здесь нельзя ставить блоки: территория занята.');
 
     detonateTntBeside(world, x + 83, y, z);
     expect(world.world.getBlock(x + 82, y, z)).toBe(BlockId.Air);

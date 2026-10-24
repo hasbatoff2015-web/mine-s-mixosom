@@ -377,6 +377,7 @@ describe('stage 3B unique item locations', () => {
     expect(ada.inventory.count(PAINT)).toBe(1);
 
     ada.inventory.clear();
+    world.permissions.op(ada.id);
     world.handleChat(ada, `/give ${PAINT} 1`);
     world.handleChat(ada, `/give ${PAINT} 1`);
     const ids = ada.inventory.slots.filter((stack) => stack?.itemId === PAINT).map((stack) => readItemInstanceId(stack));

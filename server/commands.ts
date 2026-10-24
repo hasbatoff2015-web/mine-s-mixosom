@@ -136,7 +136,7 @@ export class CommandRegistry {
       if (!allowed) {
         return {
           parsed,
-          result: { ok: false, lines: ['You do not have permission.'] },
+          result: { ok: false, lines: ['Недостаточно прав для выполнения этой команды.'] },
         };
       }
     }

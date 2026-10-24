@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { isEmoteId, type EmoteId } from '../../shared/emotes';
 import type { PlayerSnapshot, RemotePlayerInfo } from '../../shared/protocol';
 import {
   IDLE_PLAYER_PRESENTATION,
@@ -22,6 +23,7 @@ import {
 } from './remotePlayerInterpolation';
 import { PlayerChatBubble } from '../rendering/player/PlayerChatBubble';
 import { PlayerNameplate } from '../rendering/player/PlayerNameplate';
+import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import {
   DEFAULT_PLAYER_APPEARANCE,
   createPlayerAppearance,
@@ -30,8 +32,19 @@ import {
 import {
   humanoidDeathProgress,
 } from '../entities/humanoidDeath';
+import { remotePlayerPresence } from './spectatorPresence';
 
 export { REMOTE_INTERP_DELAY_MS };
+
+function nameplateStyleFrom(value: unknown): { prefix?: string; prefixColor?: string; nameColor?: string } | undefined {
+  const style = sanitizePlayerNameStyle(value);
+  if (!style) return undefined;
+  return {
+    ...(style.prefix ? { prefix: style.prefix } : {}),
+    ...(style.prefixColor ? { prefixColor: DONATION_COLORS[style.prefixColor] } : {}),
+    ...(style.nameColor ? { nameColor: DONATION_COLORS[style.nameColor] } : {}),
+  };
+}
 
 export interface RemotePlayerViewOptions {
   readonly visual: PlayerVisual;
@@ -54,8 +67,12 @@ export class RemotePlayerView {
   private presentationReceivedAt = 0;
   private swingSeq = 0;
   private hurtSeq = 0;
+  private emoteId: EmoteId | null = null;
+  private emoteSeq = 0;
+  private emoteElapsed = 0;
   private lastRenderedPose?: RemoteSampledPose;
   private lastInvisible = false;
+  private spectator = false;
   private seated = false;
   private readonly whOutline: THREE.LineSegments[] = [];
   private readonly whOutlineGeometries: THREE.EdgesGeometry[] = [];
@@ -102,11 +119,14 @@ export class RemotePlayerView {
     this.presentationReceivedAt = _now;
     this.swingSeq = this.presentation.swingSeq;
     this.hurtSeq = presentationHurtSeq(this.presentation);
+    this.emoteId = isEmoteId(this.presentation.emote) ? this.presentation.emote : null;
+    this.emoteSeq = this.presentation.emoteSeq ?? 0;
+    this.emoteElapsed = 0;
     this.visual.setHeldItem(this.presentation.heldItemId ?? undefined);
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(info.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.seated = Boolean('ridingEntityId' in info && info.ridingEntityId);
-    this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health);
+    this.nameplate.setIdentity(info.name, info.health ?? this.nameplate.health, nameplateStyleFrom(info.nameStyle));
     this.chatBubble.clear();
     if (info.appearance) this.setAppearance(info.appearance);
     this.options.onMining?.(this.id, this.presentation.mining, _now);
@@ -145,6 +165,7 @@ export class RemotePlayerView {
   }
 
   applySnapshot(snapshot: PlayerSnapshot | RemotePlayerInfo, now = 0, tick?: number): void {
+    this.spectator = 'gamemode' in snapshot && snapshot.gamemode === 'spectator';
     if (tick === undefined || !Number.isInteger(tick)) return;
     this.buffer.push(remoteSampleFromSnapshot(snapshot, tick, now));
     if (tick <= this.presentationTick) return;
@@ -162,6 +183,13 @@ export class RemotePlayerView {
     if (nextHurt > this.hurtSeq) this.visual.triggerHurtFlash();
     this.swingSeq = Math.max(this.swingSeq, next.swingSeq);
     this.hurtSeq = Math.max(this.hurtSeq, nextHurt);
+    const nextEmote = !dead && isEmoteId(next.emote) ? next.emote : null;
+    const nextEmoteSeq = next.emoteSeq ?? this.emoteSeq;
+    if (nextEmote !== this.emoteId || nextEmoteSeq !== this.emoteSeq) {
+      this.emoteId = nextEmote;
+      this.emoteSeq = nextEmoteSeq;
+      this.emoteElapsed = 0;
+    }
     this.presentation = dead
       ? {
         ...IDLE_PLAYER_PRESENTATION,
@@ -173,10 +201,11 @@ export class RemotePlayerView {
     this.visual.setOffhandItem(this.presentation.offhandItemId ?? undefined);
     this.visual.setArmor(dead ? EMPTY_PLAYER_EQUIPMENT : snapshot.equipment ?? EMPTY_PLAYER_EQUIPMENT);
     this.seated = !dead && Boolean('ridingEntityId' in snapshot && snapshot.ridingEntityId);
+    const plateStyle = nameplateStyleFrom('nameStyle' in snapshot ? snapshot.nameStyle : undefined);
     if ('health' in snapshot && typeof snapshot.health === 'number') {
-      this.nameplate.setIdentity(snapshot.name, snapshot.health);
-    } else if (snapshot.name !== this.nameplate.name) {
-      this.nameplate.setIdentity(snapshot.name, this.nameplate.health);
+      this.nameplate.setIdentity(snapshot.name, snapshot.health, plateStyle);
+    } else if (snapshot.name !== this.nameplate.name || plateStyle) {
+      this.nameplate.setIdentity(snapshot.name, this.nameplate.health, plateStyle);
     }
     this.options.onMining?.(this.id, this.presentation.mining, now);
   }
@@ -196,6 +225,13 @@ export class RemotePlayerView {
     const dying = this.deathSeconds >= 0;
     if (dying) this.deathSeconds += Math.max(0, deltaSeconds);
     const deathProgress = dying ? humanoidDeathProgress(this.deathSeconds) : 0;
+    const emote = !dying && active ? this.emoteId : null;
+    const emoteTime = emote ? this.emoteElapsed : 0;
+    if (emote) this.emoteElapsed += Math.max(0, deltaSeconds);
+    const presence = remotePlayerPresence({
+      invisible: pose?.invisible,
+      gamemode: this.spectator ? 'spectator' : undefined,
+    });
     if (!pose) {
       const seated = this.seated && !dying;
       const visualPose = this.visual.update(deltaSeconds, {
@@ -208,13 +244,17 @@ export class RemotePlayerView {
         verticalVelocity: 0,
         ...actionFrame,
         seated,
-        invisible: false,
+        emote,
+        emoteTime,
+        invisible: presence.hideModel,
+        spectator: this.spectator,
         hurtFlash: 0,
         deathProgress,
         onFire: this.lastRenderedPose?.onFire === true || this.joinOnFire,
       });
       applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
       this.visual.updateWorldParticles(deltaSeconds);
+      this.lastInvisible = presence.hideNameplate;
       return undefined;
     }
     this.group.position.set(pose.x, pose.y, pose.z);
@@ -230,14 +270,17 @@ export class RemotePlayerView {
       verticalVelocity: dying ? 0 : pose.vy,
       ...actionFrame,
       seated,
-      invisible: pose.invisible,
+      emote,
+      emoteTime,
+      invisible: presence.hideModel,
+      spectator: this.spectator,
       hurtFlash: 0,
       deathProgress,
       onFire: pose.onFire === true,
     });
     applySeatVisualRoot(this.visual.root, { x: 0, y: 0, z: 0 }, visualPose.bodyYaw, seated);
     this.visual.updateWorldParticles(deltaSeconds);
-    this.lastInvisible = pose.invisible === true;
+    this.lastInvisible = presence.hideNameplate;
     this.nameplate.setInvisible(this.lastInvisible);
     this.visual.applyWorldLight(this.options.world, pose.x, pose.y, pose.z, daylight);
     maybeLogRemoteTimeline(this.id.slice(0, 8), this.buffer.snapshots(), this.buffer.diagnostics(now), now);

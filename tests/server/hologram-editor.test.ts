@@ -161,7 +161,7 @@ describe('hologram in-game editor', () => {
     chat(world, op, '/holograms create spawn');
     ada.sink.payloads.length = 0;
     world.interactHologram(ada.player, 'spawn');
-    expect(resultLines(ada.sink).some((line) => line.includes('You do not have permission.'))).toBe(true);
+    expect(resultLines(ada.sink).some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
     expect(hologramPackets(ada.sink).some((payload) => payload.type === 'hologram_editor')).toBe(false);
     ada.sink.payloads.length = 0;
     world.updateHologramAppearance(ada.player, {
@@ -172,7 +172,7 @@ describe('hologram in-game editor', () => {
       size: 2,
       style: 'bold',
     });
-    expect(resultLines(ada.sink).some((line) => line.includes('You do not have permission.'))).toBe(true);
+    expect(resultLines(ada.sink).some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
     expect(world.holograms.list()[0]?.lines).toEqual(['spawn']);
     world.permissions.grant(ada.player.id, 'holograms.create');
     ada.sink.payloads.length = 0;
@@ -302,7 +302,7 @@ describe('hologram in-game editor', () => {
     chat(world, op, '/holograms create sign');
     expect(chat(world, op, '/hologram reset sign').some((line) => line.includes('Эта голограмма не является таймером.'))).toBe(true);
     expect(chat(world, op, '/hologram reset missing').some((line) => line.includes("Hologram 'missing' not found."))).toBe(true);
-    expect(chat(world, observer, '/hologram reset eventtimer').some((line) => line.includes('You do not have permission.'))).toBe(true);
+    expect(chat(world, observer, '/hologram reset eventtimer').some((line) => line.includes('Недостаточно прав для выполнения этой команды.'))).toBe(true);
   });
 
   it('starts a fresh timer cycle when switching normal → timer → normal → timer', async () => {

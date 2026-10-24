@@ -11,5 +11,5 @@ export function estimateWorldSpawn(world: VoxelWorld): [number, number, number] 
 }
 
 export function isGameMode(value: unknown): value is GameMode {
-  return value === 'survival' || value === 'creative';
+  return value === 'survival' || value === 'creative' || value === 'spectator';
 }

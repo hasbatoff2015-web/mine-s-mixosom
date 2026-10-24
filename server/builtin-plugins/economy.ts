@@ -249,7 +249,7 @@ export function createEconomyPlugin(ctx: BuiltinPluginContext): Plugin {
         aliases: ['economy'],
         usage: '/eco help',
         description: 'Администрирование экономики',
-        permission: 'economy.admin',
+permission: 'economy.admin',
         execute: (args, sender) => {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();

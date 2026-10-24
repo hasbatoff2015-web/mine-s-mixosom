@@ -37,6 +37,8 @@ export interface HologramRecord {
   interactive: boolean;
   /** False keeps the historical text plane. True matches the text-canvas aspect. */
   preserveTextAspect: boolean;
+  /** When set, the timer shows this AutoMine's nextResetAt. Absent on ordinary holograms. */
+  automine?: string;
 }
 
 export interface HologramEditorContext {
@@ -75,6 +77,7 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     ? raw.timerStartedAt
     : 0;
   const yaw = typeof raw.yaw === 'number' && Number.isFinite(raw.yaw) ? clampHologramYaw(raw.yaw) : 0;
+  const automine = parseAutomineLink(raw.automine);
   return {
     name,
     worldId,
@@ -97,7 +100,15 @@ export function normalizeHologramRecord(raw: unknown, fallbackWorldId = 'anarchy
     yaw,
     interactive: raw.interactive !== false,
     preserveTextAspect: raw.preserveTextAspect === true,
+    ...(automine ? { automine } : {}),
   };
+}
+
+function parseAutomineLink(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const name = raw.trim().toLowerCase();
+  if (!/^[a-z0-9_]{1,24}$/.test(name)) return undefined;
+  return name;
 }
 
 export function createHologramRecord(input: {
@@ -140,8 +151,9 @@ export function createHologramRecord(input: {
   };
 }
 
-export function toNetworkHologram(hologram: HologramRecord): NetworkHologram {
+export function toNetworkHologram(hologram: HologramRecord, timerEndsAt?: number | null): NetworkHologram {
   const appearance = parseHologramAppearanceLenient(hologram);
+  const linked = hologram.automine !== undefined;
   return {
     name: hologram.name,
     x: hologram.x,
@@ -153,9 +165,10 @@ export function toNetworkHologram(hologram: HologramRecord): NetworkHologram {
     font: appearance.font,
     size: appearance.size,
     style: appearance.style,
-    kind: appearance.kind,
+    kind: linked ? 'timer' : appearance.kind,
     timerDuration: appearance.timerDuration,
     timerStartedAt: hologram.timerStartedAt,
+    ...(linked ? { timerEndsAt: timerEndsAt ?? null } : {}),
     backgroundEnabled: appearance.backgroundEnabled,
     backgroundWidth: appearance.backgroundWidth,
     backgroundHeight: appearance.backgroundHeight,
@@ -190,9 +203,10 @@ function applyEditorUpdate(
   const becomingTimer = nextKind === 'timer' && hologram.kind !== 'timer';
   const durationChanged = nextKind === 'timer' && hologram.kind === 'timer' && nextDuration !== hologram.timerDuration;
   hologram.kind = nextKind;
+  if (nextKind !== 'timer') hologram.automine = undefined;
   if (nextKind === 'timer') {
     hologram.timerDuration = nextDuration;
-    if (becomingTimer || durationChanged) hologram.timerStartedAt = context.nowMs;
+    if ((becomingTimer || durationChanged) && !hologram.automine) hologram.timerStartedAt = context.nowMs;
   }
 }
 
@@ -202,8 +216,15 @@ export class HologramNetwork {
   /** Countdown and other runtime text. Never written by persist. */
   private transient: HologramRecord[] = [];
   private persist?: (records: readonly HologramRecord[]) => void;
+  private automineEndsAt: (mineName: string) => number | null | undefined = () => undefined;
+  private automineSignature = '';
 
   constructor(private readonly onChange: (holograms: readonly NetworkHologram[]) => void) {}
+
+  /** Live AutoMine deadline. `undefined` means the mine is missing, `null` means it has no schedule. */
+  setAutomineSchedule(read: (mineName: string) => number | null | undefined): void {
+    this.automineEndsAt = read;
+  }
 
   setPersist(persist: (records: readonly HologramRecord[]) => void): void {
     this.persist = persist;
@@ -212,7 +233,17 @@ export class HologramNetwork {
   list(): readonly NetworkHologram[] {
     return [...this.records, ...this.transient]
       .filter((entry) => entry.enabled)
-      .map(toNetworkHologram);
+      .map((entry) => this.project(entry));
+  }
+
+  /**
+   * Rebroadcast only when a linked mine's nextResetAt changes.
+   * The client counts down to that absolute time; this is not a second clock.
+   */
+  noteAutomineSchedule(): void {
+    const signature = this.currentAutomineSignature();
+    if (signature === this.automineSignature) return;
+    this.emit();
   }
 
   listRecords(): readonly HologramRecord[] {
@@ -316,17 +347,35 @@ export class HologramNetwork {
     return hologram;
   }
 
-  resetTimer(name: string, nowMs = Date.now()): 'ok' | 'missing' | 'not-timer' {
+  resetTimer(name: string, nowMs = Date.now()): 'ok' | 'missing' | 'not-timer' | 'automine' {
     const hologram = this.get(name);
     if (!hologram) return 'missing';
     if (hologram.kind !== 'timer') return 'not-timer';
+    if (hologram.automine) return 'automine';
     hologram.timerStartedAt = nowMs;
     this.emit();
     this.persist?.(this.records);
     return 'ok';
   }
 
+  private project(entry: HologramRecord): NetworkHologram {
+    if (!entry.automine) return toNetworkHologram(entry);
+    const endsAt = this.automineEndsAt(entry.automine);
+    return toNetworkHologram(entry, endsAt === undefined ? null : endsAt);
+  }
+
+  private currentAutomineSignature(): string {
+    const parts: string[] = [];
+    for (const entry of this.records) {
+      if (!entry.automine) continue;
+      const endsAt = this.automineEndsAt(entry.automine);
+      parts.push(`${entry.name}=${endsAt === undefined || endsAt === null ? 'none' : endsAt}`);
+    }
+    return parts.join('|');
+  }
+
   private emit(): void {
+    this.automineSignature = this.currentAutomineSignature();
     this.onChange(this.list());
   }
 }

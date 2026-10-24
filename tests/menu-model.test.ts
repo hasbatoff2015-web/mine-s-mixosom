@@ -13,6 +13,7 @@ import {
   onlineNicknameMessage,
   renderOnlineServerRows,
 } from '../src/ui/menuModel';
+import { serverLogoUrl } from '../src/ui/gameMenuGui';
 
 describe('menu model', () => {
   it('lists the three local server modes with three captions each', () => {
@@ -42,11 +43,11 @@ describe('menu model', () => {
     expect(html).not.toContain('<svg');
     expect(html).not.toContain('shape-rendering');
     expect(html).toContain('class="server-icon server-icon--anarchy"');
-    expect(html).toContain('src="/ui/server-logos/anarchy_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('anarchy_logo.png')}"`);
     expect(html).toContain('class="server-icon server-icon--survival"');
-    expect(html).toContain('src="/ui/server-logos/survival_pvp_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('survival_pvp_logo.png')}"`);
     expect(html).toContain('class="server-icon server-icon--peaceful"');
-    expect(html).toContain('src="/ui/server-logos/peaceful_logo.png"');
+    expect(html).toContain(`src="${serverLogoUrl('peaceful_logo.png')}"`);
     expect(html.match(/class="server-icon-image"/g)).toHaveLength(3);
     expect(html).toContain('alt=""');
     expect(existsSync('public/ui/server-logos/anarchy_logo.png')).toBe(true);

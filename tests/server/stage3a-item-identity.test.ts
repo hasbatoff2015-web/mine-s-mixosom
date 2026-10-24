@@ -226,6 +226,7 @@ describe('stage 3A item identity', () => {
   function addPlayer(world: WorldInstance, name: string, sessionToken?: string): ServerPlayer {
     const joined = world.join({ sink: { send() {} }, name, ...(sessionToken ? { sessionToken } : {}) });
     if ('error' in joined) throw new Error(joined.error);
+    world.permissions.op(joined.player.id);
     return joined.player;
   }
 

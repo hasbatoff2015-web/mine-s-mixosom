@@ -631,6 +631,9 @@ export class AnarchyServer {
       case 'direct_message_action':
         this.world.handleDirectMessage(player, message, { connectionId });
         return;
+      case 'emote':
+        this.world.setPlayerEmote(player, message);
+        return;
       case 'buyer_interact':
         this.world.interactBuyer(player, message.buyerId);
         return;

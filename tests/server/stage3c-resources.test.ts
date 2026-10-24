@@ -55,6 +55,7 @@ describe('stage 3C valuable resources', () => {
   function addPlayer(world: WorldInstance, name: string, sessionToken?: string, clear = true): ServerPlayer {
     const joined = world.join({ sink: { send() {} }, name, ...(sessionToken ? { sessionToken } : {}) });
     if ('error' in joined) throw new Error(joined.error);
+    world.permissions.op(joined.player.id);
     if (clear) joined.player.inventory.clear();
     return joined.player;
   }

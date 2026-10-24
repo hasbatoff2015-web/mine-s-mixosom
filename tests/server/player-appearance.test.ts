@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,7 +11,10 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import {
   DEFAULT_PLAYER_APPEARANCE,
+  appearanceFromSkinId,
   createPlayerAppearance,
+  parseNetworkAppearance,
+  sanitizeRegisteredAppearance,
 } from '../../src/player/appearance/PlayerAppearance';
 
 async function tempDir(): Promise<string> {
@@ -256,5 +259,130 @@ describe('authoritative player appearance', () => {
     });
     const appearanceOnly = alice.messages.slice(before).filter((message) => message.type === 'player_appearance');
     expect(appearanceOnly).toHaveLength(0);
+  });
+
+  it('accepts a discovered production skin and rejects unknown, NPC, QA, and PNG payloads', async () => {
+    const discovered = appearanceFromSkinId('14fcedd090af47a4');
+    expect(discovered).toMatchObject({ skinId: '14fcedd090af47a4', model: 'slim' });
+    expect(sanitizeRegisteredAppearance(discovered)?.skinId).toBe(discovered.skinId);
+    expect(sanitizeRegisteredAppearance({ skinId: 'not_a_catalog_skin', model: 'classic' })).toBeUndefined();
+    expect(sanitizeRegisteredAppearance({ skinId: 'buyer_merchant', model: 'classic' })).toBeUndefined();
+    expect(sanitizeRegisteredAppearance({ skinId: 'player_uv_test', model: 'classic' })).toBeUndefined();
+    expect(parseNetworkAppearance({ ...discovered, base64: 'aaaa' })).toBeUndefined();
+    expect(parseNetworkAppearance({ ...discovered, png: 'iVBORw0KGgo=' })).toBeUndefined();
+
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const joined = world.join({
+      sink: new MemorySink(),
+      name: 'Misha',
+      appearance: discovered,
+    });
+    if ('error' in joined) throw new Error(joined.error);
+    expect(joined.player.appearance).toEqual(discovered);
+    const rejected = world.setAppearance(joined.player, {
+      skinId: 'buyer_merchant',
+      model: 'classic',
+      layers: DEFAULT_PLAYER_APPEARANCE.layers,
+    });
+    expect(rejected.ok).toBe(false);
+    expect(joined.player.appearance.skinId).toBe(discovered.skinId);
+    const token = joined.player.sessionToken;
+    const id = joined.player.id;
+    world.disconnect(id, true);
+    await world.save();
+    await world.stop();
+    worlds.pop();
+
+    const restarted = new WorldInstance(testConfig(dir));
+    worlds.push(restarted);
+    await restarted.initialize();
+    const resumed = restarted.join({
+      sink: new MemorySink(),
+      sessionToken: token,
+    });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(id);
+    expect(resumed.player.appearance).toEqual(discovered);
+    await restarted.stop();
+    worlds.pop();
+
+    const server = new AnarchyServer(testConfig(dir, 0));
+    servers.push(server);
+    await server.start();
+    const url = `ws://127.0.0.1:${server.port}`;
+    const alice = new TestClient();
+    const bob = new TestClient();
+    clients.push(alice, bob);
+    await alice.connect(url, { name: 'Alice' });
+    const welcome = await bob.connect(url, { name: 'Bob', appearance: discovered });
+    expect(welcome.you.appearance).toEqual(discovered);
+    const joinedRemote = await alice.waitFor('player_joined');
+    expect(joinedRemote.player.appearance).toEqual(discovered);
+    expect(JSON.stringify(joinedRemote)).not.toMatch(/png|base64|data:image/i);
+    bob.close();
+    await alice.waitFor('player_left');
+    const before = alice.messages.length;
+    const bob2 = new TestClient();
+    clients.push(bob2);
+    await bob2.connect(url, { sessionToken: welcome.sessionToken, appearance: discovered });
+    const resumedJoin = alice.messages.slice(before).find((message) => message.type === 'player_joined');
+    expect(resumedJoin).toMatchObject({
+      player: { appearance: discovered },
+    });
+  });
+
+  it('restores frontier_explorer when a saved player still has a removed skin id', async () => {
+    const removedSkinId = '10126ef69e2cdfdf';
+    const dir = await tempDir();
+    dirs.push(dir);
+    const world = new WorldInstance(testConfig(dir));
+    worlds.push(world);
+    await world.initialize();
+    const joined = world.join({
+      sink: new MemorySink(),
+      name: 'Misha',
+      appearance: DEFAULT_PLAYER_APPEARANCE,
+    });
+    if ('error' in joined) throw new Error(joined.error);
+    const token = joined.player.sessionToken;
+    const id = joined.player.id;
+    await world.save();
+    await world.stop();
+    worlds.pop();
+
+    const playersPath = join(dir, 'anarchy', 'players.json');
+    const saved = JSON.parse(await readFile(playersPath, 'utf8')) as {
+      players: Record<string, { appearance?: { skinId?: string } }>;
+    };
+    expect(saved.players[id]?.appearance?.skinId).toBe(DEFAULT_PLAYER_APPEARANCE.skinId);
+    saved.players[id]!.appearance!.skinId = removedSkinId;
+    await writeFile(playersPath, `${JSON.stringify(saved, null, 2)}\n`);
+
+    const restarted = new WorldInstance(testConfig(dir));
+    worlds.push(restarted);
+    await restarted.initialize();
+    const resumed = restarted.join({
+      sink: new MemorySink(),
+      sessionToken: token,
+      appearance: {
+        skinId: removedSkinId,
+        model: 'classic',
+        layers: DEFAULT_PLAYER_APPEARANCE.layers,
+      },
+    });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(id);
+    expect(resumed.player.appearance).toEqual(DEFAULT_PLAYER_APPEARANCE);
+    const rejected = restarted.setAppearance(resumed.player, {
+      skinId: removedSkinId,
+      model: 'classic',
+      layers: DEFAULT_PLAYER_APPEARANCE.layers,
+    });
+    expect(rejected.ok).toBe(false);
+    expect(resumed.player.appearance.skinId).toBe('frontier_explorer');
   });
 });

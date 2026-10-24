@@ -414,6 +414,11 @@ export class ClanService {
   private readonly sessions = new Map<string, ClanSession>();
   private readonly locks = new Set<string>();
   private runtime: ClanRuntime = emptyRuntime();
+  private createCostFor: (playerId: string) => number = () => CLAN_CREATE_COST;
+
+  setCreateCost(costFor: (playerId: string) => number): void {
+    this.createCostFor = costFor;
+  }
 
   constructor(
     private readonly store: JsonFileStore,
@@ -784,7 +789,8 @@ export class ClanService {
       if (this.settlements && request && this.economy.backend === 'postgres') {
         return this.createDurable(playerId, parsed.name, key, icon, request);
       }
-      const paid = this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request);
+      const cost = this.createCostFor(playerId);
+      const paid = this.economy.withdraw(playerId, cost, 'CLAN_CREATE', undefined, request);
       return thenResult(paid, (result) => {
         if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
         return this.finishCreate(playerId, parsed.name, key, icon);
@@ -830,7 +836,7 @@ export class ClanService {
         requestId: request.requestId,
       });
       if (!existing || existing.phase === 'PREPARED') {
-        const paid = await Promise.resolve(this.economy.withdraw(playerId, CLAN_CREATE_COST, 'CLAN_CREATE', undefined, request));
+        const paid = await Promise.resolve(this.economy.withdraw(playerId, this.createCostFor(playerId), 'CLAN_CREATE', undefined, request));
         if (!paid.ok) {
           if (row.phase === 'PREPARED') await settlements.transition(request.requestId, 'PREPARED', 'CANCELLED');
           return { ok: false as const, error: paid.error ?? 'Недостаточно Мегакоинов.' };
@@ -1956,11 +1962,13 @@ export class ClanService {
         create: {
           nameText: session.nameText,
           icon: session.selectedIcon,
-          cost: CLAN_CREATE_COST,
-          costLabel: `${formatCompactMegacoins(CLAN_CREATE_COST)} МК`,
+          cost: this.createCostFor(playerId),
+          costLabel: this.createCostFor(playerId) < CLAN_CREATE_COST
+            ? `Создание клана: ${formatCompactMegacoins(this.createCostFor(playerId))} МК · скидка донат-ранга`
+            : `${formatCompactMegacoins(this.createCostFor(playerId))} МК`,
         },
         selected: session.screen === 'create-confirm'
-          ? { prompt: 'Вы уверены, что хотите создать клан? Это стоит 10 000 Мегакоинов.' }
+          ? { prompt: `Вы уверены, что хотите создать клан? Это стоит ${formatCompactMegacoins(this.createCostFor(playerId))} Мегакоинов.` }
           : undefined,
       };
     }

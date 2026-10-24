@@ -110,7 +110,7 @@ describe('AutoMine plugin commands', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     const op = join(world, 'Op');
-    expect(chat(world, ada, '/automine wand').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/automine wand').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/automine wand').some((line) => line.includes('инструмент'))).toBe(true);
     expect(op.player.inventory.has(ItemId.WoodenAxe, 1)).toBe(true);
     holdWand(op.player);
@@ -213,10 +213,7 @@ describe('AutoMine plugin commands', () => {
     drain(world, 'tiny');
     expect(AUTOMINE_ALLOWED_BLOCKS.has(world.world.getBlock(8, 25, 8))).toBe(true);
     expect(chat(world, op, '/automine delete tiny').some((line) => line.includes('удаляется'))).toBe(true);
-    for (let i = 0; i < 40; i += 1) {
-      if (!world.autoMine.get('tiny')) break;
-      world.tick();
-    }
+    drain(world, 'tiny');
     expect(world.autoMine.get('tiny')).toBeUndefined();
     expect(world.world.getBlock(8, 25, 8)).toBe(BlockId.Bricks);
   });

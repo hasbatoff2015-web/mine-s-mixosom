@@ -186,7 +186,7 @@ describe('Buyer plugin', () => {
   it('denies create for a default player and ignores spoofed admin save', async () => {
     const world = await boot();
     const ada = join(world, 'Ada');
-    expect(chat(world, ada, '/buyer create Farmer').some((line) => /permission/i.test(line))).toBe(true);
+    expect(chat(world, ada, '/buyer create Farmer').some((line) => line.includes('прав'))).toBe(true);
     expect(world.buyer.list()).toHaveLength(0);
     const op = join(world, 'Op');
     chat(world, op, '/buyer create Farmer');

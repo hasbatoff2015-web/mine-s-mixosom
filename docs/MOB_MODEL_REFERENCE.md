@@ -140,6 +140,14 @@ Geometry is legacy `ModelOcelot`.
 
 Sitting offsets from the standing baseline (legacy): body `Y-4, Z+5`, `rx=π/4`; head `Y-3.3, Z+1`; tail1 `Y+8, Z-2`, `rx=1.7278761`; tail2 `Y+2, Z-0.8`, `rx=2.670354`; front legs `y=15.8, z=-7`, `rx=-0.157`; back legs `y=21, z=1`, `rx=+π/2` (legacy; the adapter reflects X). Converted through the project adapter each frame from base transforms — no accumulated offsets. Walk uses separate front/back legs, `legacyRotationToThree` for swing, and a light tail motion. **Alpha approximation**.
 
+## Decorative bee
+
+`src/entities/beeModel.ts` adapts public Bedrock `geometry.bee` into LegacyModel. Bedrock pivots are absolute and Y-up. A child pivot is `child - parent`, then Y is flipped. Cube corners use the same pivot delta, and the legacy Y origin is `-(originY - pivotY) - sizeY`. The entity root is bedrock Y=0, so the body center sits at local Y `5.5/16` before scale. `PET_BEE_MODEL_SCALE` is 0.5. Wings, the stinger, and the three leg planes keep a 0.12-pixel thickness so a zero bedrock axis still has two visible sides. UV islands stay `[0,0]`, `[0,18]`, `[9,24]`, `[2,0]`, `[2,3]`, `[26,1]`, `[26,3]`, `[26,5]`, `[26,7]`. The committed `bee.png` is unchanged. The body cube flips U on left and right and V on top so the yellow head samples at -Z. Each wing flips U on its top face so the painted tip points outward. Flap remains 6.5 Hz on the render clock. **Adapted bedrock reference.**
+
+## Mini creeper
+
+Same `CREEPER_MODEL` and `entity/creeper` sheet as the hostile creeper. `PET_CREEPER_MODEL_SCALE` is 0.49, so the rendered height is about 0.80 blocks and the feet stay on the entity origin. The scale is reapplied in `syncMob`. The hostile creeper scale path is unchanged.
+
 ## Animation contract
 
 - Every animated part stores `baseRotationX/Y/Z` once and each frame computes `base + offset`; angles never accumulate.

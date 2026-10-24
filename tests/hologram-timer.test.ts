@@ -21,6 +21,7 @@ import {
   HOLOGRAM_TEXT_RESOLUTION_SCALE_MIN,
 } from '../shared/hologramStyle';
 import { hologramAabb } from '../src/gameplay/hologramHit';
+import { createHologramRecord, HologramNetwork, normalizeHologramRecord } from '../server/services/holograms';
 
 describe('hologram timer countdown', () => {
   it('counts 60 → 59 → … → 0 then restarts at full duration', () => {
@@ -64,6 +65,38 @@ describe('hologram timer countdown', () => {
       timerDuration: 10,
       timerStartedAt: 0,
     }, 0)).toEqual(['Hello']);
+  });
+
+  it('counts an AutoMine deadline down to zero without restarting a local period', () => {
+    const now = 1_000_000;
+    const endsAt = now + 272_000;
+    expect(hologramDisplayLines({
+      kind: 'timer',
+      lines: ['Обновление шахты через:'],
+      timerDuration: 60,
+      timerStartedAt: 0,
+      timerEndsAt: endsAt,
+    }, now)).toEqual(['Обновление шахты через: 04:32']);
+    expect(hologramDisplayLines({
+      kind: 'timer',
+      lines: ['Обновление шахты через:'],
+      timerDuration: 60,
+      timerStartedAt: 0,
+      timerEndsAt: endsAt,
+    }, endsAt + 5_000)).toEqual(['Обновление шахты через: 00:00']);
+    expect(hologramDisplayLines({
+      kind: 'timer',
+      lines: ['Обновление шахты через:'],
+      timerDuration: 60,
+      timerStartedAt: 0,
+      timerEndsAt: null,
+    }, now)).toEqual(['Обновление шахты: нет расписания']);
+    expect(hologramDisplayLines({
+      kind: 'normal',
+      lines: ['Hello'],
+      timerDuration: 60,
+      timerStartedAt: 0,
+    }, now)).toEqual(['Hello']);
   });
 });
 
@@ -181,5 +214,53 @@ describe('hologram text canvas resolution', () => {
     expect(hologramSpriteHeight(1, 1)).toBeCloseTo(0.77);
     expect(rendererSource).toContain('hologramTextPlaneSize(');
     expect(rendererSource).toContain('hologram.backgroundWidth, hologram.backgroundHeight');
+  });
+});
+
+describe('AutoMine hologram deadline', () => {
+  it('follows nextResetAt and leaves ordinary timers alone', () => {
+    const emitted: { name: string; kind: string; timerEndsAt?: number | null; lines: readonly string[] }[][] = [];
+    const net = new HologramNetwork((list) => {
+      emitted.push(list.map((entry) => ({
+        name: entry.name,
+        kind: entry.kind,
+        timerEndsAt: entry.timerEndsAt,
+        lines: entry.lines,
+      })));
+    });
+    let pitEnds: number | null = 50_000;
+    net.setAutomineSchedule((name) => (name === 'pit' ? pitEnds : undefined));
+    const linked = createHologramRecord({ name: 'sign', worldId: 'anarchy', x: 1, y: 2, z: 3 });
+    linked.kind = 'timer';
+    linked.automine = 'pit';
+    linked.lines = ['Обновление шахты через:'];
+    const plain = createHologramRecord({ name: 'hello', worldId: 'anarchy', x: 0, y: 0, z: 0, lines: ['Hello'] });
+    plain.kind = 'timer';
+    plain.timerDuration = 60;
+    plain.timerStartedAt = 1_000;
+    net.upsert(linked);
+    net.upsert(plain);
+    const first = emitted.at(-1)!;
+    expect(first.find((entry) => entry.name === 'sign')).toMatchObject({
+      kind: 'timer',
+      timerEndsAt: 50_000,
+      lines: ['Обновление шахты через:'],
+    });
+    expect(first.find((entry) => entry.name === 'hello')?.timerEndsAt).toBeUndefined();
+    const broadcasts = emitted.length;
+    net.noteAutomineSchedule();
+    expect(emitted.length).toBe(broadcasts);
+    pitEnds = 90_000;
+    net.noteAutomineSchedule();
+    expect(emitted.at(-1)!.find((entry) => entry.name === 'sign')?.timerEndsAt).toBe(90_000);
+    expect(emitted.at(-1)!.find((entry) => entry.name === 'hello')?.timerEndsAt).toBeUndefined();
+    pitEnds = null;
+    net.noteAutomineSchedule();
+    expect(emitted.at(-1)!.find((entry) => entry.name === 'sign')?.timerEndsAt).toBeNull();
+    const stored = net.listRecords().find((entry) => entry.name === 'sign');
+    const restored = normalizeHologramRecord(JSON.parse(JSON.stringify(stored)));
+    expect(restored?.automine).toBe('pit');
+    expect(restored?.kind).toBe('timer');
+    expect(restored?.lines).toEqual(['Обновление шахты через:']);
   });
 });

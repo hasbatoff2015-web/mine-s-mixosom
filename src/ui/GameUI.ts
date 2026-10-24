@@ -40,6 +40,7 @@ import {
   containerStageSize,
   containerUiScaleWithClose,
   cursorStackClientPosition,
+  MC_MENU_DONATE_WIDTH,
   MC_MENU_WIDTH,
   menuLogicalHeight,
   menuUiScale,
@@ -93,6 +94,7 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
+import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
@@ -119,6 +121,7 @@ import {
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
+import { EMOTE_IDS, EMOTE_LABELS, type EmoteId } from '../../shared/emotes';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
   chatScrollPinnedToBottom,
@@ -187,19 +190,45 @@ import {
   DESKTOP_CONTROL_SECTIONS,
   MOBILE_CONTROL_FOOTNOTE,
   MOBILE_CONTROL_ITEMS,
+  ONLINE_CONNECT_ERROR,
   ONLINE_NICKNAME_HINT,
+  ONLINE_STATUS_ERROR,
   formatPlayTime,
   formatSettingValue,
   isMenuServerId,
   onlineNicknameMessage,
+  onlineServerRows,
+  onlineStatusNeedsRetry,
   renderOnlineServerRows,
-  type MenuServerLiveStatus,
+  serverRowStateClass,
+  type MenuServerRow,
 } from './menuModel';
 import { SkinPreviewDragTracker } from './skinPreviewDrag';
 import type { LocalServerName } from '../../shared/config';
-import { clientUrlForServer, endpointLabel, selectedLocalServer } from '../net/AnarchyClient';
-import { PRODUCTION_PLAYER_SKINS } from '../player/appearance/builtinSkins';
+import {
+  clientUrlForServer,
+  endpointLabel,
+  selectedLocalServer,
+  type ServerStatusMap,
+} from '../net/AnarchyClient';
+import { skinDescriptor } from '../player/appearance/builtinSkins';
 import type { PlayerAppearance } from '../player/appearance/PlayerAppearance';
+import {
+  resolveSkinActionState,
+  skinCardLocked,
+  STAGE1_MONETIZATION,
+  type MonetizationAvailability,
+  type SkinAccessSnapshot,
+} from '../player/appearance/skinActionState';
+import {
+  SKIN_RARITY_HEADINGS,
+  SKIN_RARITY_LABELS,
+  SKIN_RARITY_ORDER,
+  orderedPlayerSkins,
+  skinAcquisition,
+  skinPackForRarity,
+  skinRarity,
+} from '../player/appearance/skinStoreCatalog';
 import { drawSkinPortrait } from '../rendering/player/SkinPortrait';
 
 export interface MainMenuActions {
@@ -217,6 +246,14 @@ export interface SkinSelectorActions {
   rotatePreview(deltaPixels: number): void;
   setPreviewRotationActive(active: boolean): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
+  /** Equipped skin at open. Defaults to the appearance passed into the screen. */
+  equippedSkinId?: string;
+  /**
+   * Read-only UI reflection. The live game does not invent this from storage.
+   * A bad snapshot cannot unlock a skin.
+   */
+  accessSnapshot?: SkinAccessSnapshot | null;
+  monetizationAvailability?: MonetizationAvailability;
 }
 
 export interface HologramEditorActions {
@@ -279,7 +316,13 @@ export interface CreateWorldActions {
 export interface OnlineServersActions {
   back(): void;
   connect(id: string): void;
+  retry(): void;
   saveNickname(raw: string): { ok: true; name: string } | { ok: false; error: string };
+}
+
+export interface OnlineConnectErrorActions {
+  retry(): void;
+  back(): void;
 }
 
 export interface PauseActions {
@@ -311,7 +354,7 @@ export interface HudState {
 export interface InventoryContext {
   inventory: Inventory;
   mode: GameMode;
-  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest';
+  kind: 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
   chest?: ChestState;
   furnace?: FurnaceState;
   containerTitle?: string;
@@ -326,6 +369,21 @@ export interface InventoryContext {
 
 interface OverlayCloseOptions {
   keepModal?: boolean;
+}
+
+function emoteWheelHtml(): string {
+  const wedges = EMOTE_IDS.map((id) => `<div class="emote-wedge" data-wedge="${id}"></div>`).join('');
+  const labels = EMOTE_IDS.map((id) => `<span class="emote-label emote-label-${id}">${EMOTE_LABELS[id]}</span>`).join('');
+  return `<div id="emote-wheel" class="hidden" aria-hidden="true">
+    <div class="emote-wheel-dim"></div>
+    <div class="emote-disc" data-selected="">
+      ${wedges}
+      <div class="emote-dividers" aria-hidden="true"></div>
+      ${labels}
+      <div class="emote-hub"><span id="emote-wheel-title">Отмена</span></div>
+      <div class="emote-cursor" aria-hidden="true"></div>
+    </div>
+  </div>`;
 }
 
 export class GameUI {
@@ -364,6 +422,10 @@ export class GameUI {
   private playerInClan = false;
   private chatLines: ChatMessage[] = [];
   private pointerLockFallback: HTMLElement;
+  private emoteWheel: HTMLElement;
+  private emoteDisc: HTMLElement;
+  private emoteWheelTitle: HTMLElement;
+  private emoteCursor: HTMLElement;
   private modal?: HTMLElement;
   private hologramEditor?: HTMLElement;
   private hologramPreviewTimer?: number;
@@ -465,6 +527,11 @@ export class GameUI {
   private settings = { volume: 0.7, sensitivity: 0.0022, renderDistance: 4, fov: 75, clouds: true };
   private itemIconResolver?: (itemId: string) => string;
   private onScreenEscape?: () => void;
+  private onlineActions?: OnlineServersActions;
+  private onlineSelected: LocalServerName = 'anarchy';
+  private onlineStatuses?: ServerStatusMap;
+  /** True when disabling «Обновить» moved focus off that button. */
+  private onlineRefreshFocused = false;
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -541,7 +608,12 @@ export class GameUI {
             <span class="hud-corner-key">M</span>
             <span class="hud-corner-label">Меню</span>
           </button>
+          <div id="hud-emote" role="img" aria-label="Эмоции, клавиша Z">
+            <span class="hud-corner-key">Z</span>
+            <span class="hud-corner-label">Эмоции</span>
+          </div>
         </div>
+        ${emoteWheelHtml()}
         <div id="debug-panel" class="hidden"></div>
         <div id="toast-stack"></div>
       </div>
@@ -578,6 +650,10 @@ export class GameUI {
     this.chatClanEmptyEl = this.root.querySelector('#chat-clan-empty')!;
     this.chatTabButtons = this.root.querySelectorAll('#chat-tabs [data-chat-tab]');
     this.pointerLockFallback = this.root.querySelector('#pointer-lock-fallback')!;
+    this.emoteWheel = this.root.querySelector('#emote-wheel')!;
+    this.emoteDisc = this.root.querySelector('.emote-disc')!;
+    this.emoteWheelTitle = this.root.querySelector('#emote-wheel-title')!;
+    this.emoteCursor = this.root.querySelector('.emote-cursor')!;
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
@@ -762,10 +838,10 @@ export class GameUI {
     appearance: PlayerAppearance,
     actions: SkinSelectorActions,
   ): void {
-    const cards = PRODUCTION_PLAYER_SKINS.map((skin) => `
-      <button type="button" class="skin-card${skin.id === appearance.skinId ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" aria-pressed="${skin.id === appearance.skinId}">
-        <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(skin.id)}" data-skin-model="${skin.defaultModel}" aria-hidden="true"></canvas>
-      </button>`).join('');
+    const equippedSkinId = actions.equippedSkinId ?? appearance.skinId;
+    const accessSnapshot = actions.accessSnapshot;
+    const monetizationAvailability = actions.monetizationAvailability ?? STAGE1_MONETIZATION;
+    const cards = this.skinCatalogMarkup(appearance.skinId, accessSnapshot);
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window skin-selector-window">
         <header class="menu-heading"><div><span class="eyebrow">Персонаж</span><h1>Выбор скина</h1></div></header>
@@ -774,15 +850,63 @@ export class GameUI {
             <canvas class="character-preview-canvas large" data-skin-preview width="320" height="420" aria-hidden="true"></canvas>
             <p class="skin-preview-hint">Потяните модель, чтобы повернуть</p>
           </aside>
-          <div class="skin-card-grid" role="listbox" aria-label="Доступные скины">${cards}</div>
+          <div class="skin-card-grid" role="listbox" aria-label="Каталог скинов">${cards}</div>
         </div>
-        <footer class="menu-footer">
-          <button class="game-button" data-action="cancel">Отмена</button>
-          <button class="game-button primary" data-action="confirm">Подтвердить</button>
+        <footer class="menu-footer skin-selector-footer">
+          <p class="skin-action-note" data-skin-action-note aria-hidden="true"></p>
+          <button type="button" class="game-button" data-action="cancel">Отмена</button>
+          <button type="button" class="game-button" data-action="confirm"></button>
         </footer>
       </div></section>`, actions.cancel);
     this.bindAction('cancel', actions.cancel);
-    this.bindAction('confirm', actions.confirm);
+    const applyAction = (skinId: string): void => {
+      const state = resolveSkinActionState({
+        selectedSkinId: skinId,
+        equippedSkinId,
+        accessSnapshot,
+        monetizationAvailability,
+      });
+      const button = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+      const note = this.screen?.querySelector<HTMLElement>('[data-skin-action-note]');
+      if (!button) return;
+      button.textContent = state.label;
+      button.disabled = !state.enabled;
+      button.tabIndex = state.enabled ? 0 : -1;
+      button.classList.toggle('primary', state.emphasis === 'primary');
+      button.dataset.actionState = state.kind;
+      button.setAttribute('aria-disabled', String(!state.enabled));
+      if (note) {
+        note.textContent = state.detail;
+        if (state.detail.length === 0) note.setAttribute('aria-hidden', 'true');
+        else note.removeAttribute('aria-hidden');
+        if (state.targetPriceLabel) note.dataset.priceSource = 'target';
+        else delete note.dataset.priceSource;
+      }
+    };
+    applyAction(appearance.skinId);
+    const confirm = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
+    confirm?.addEventListener('click', (event) => {
+      const selectedId = this.screen?.querySelector<HTMLButtonElement>('[data-skin-id].selected')?.dataset.skinId
+        ?? appearance.skinId;
+      const state = resolveSkinActionState({
+        selectedSkinId: selectedId,
+        equippedSkinId,
+        accessSnapshot,
+        monetizationAvailability,
+      });
+      if (!state.enabled || confirm.disabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      actions.confirm();
+    });
+    for (const packButton of this.screen?.querySelectorAll<HTMLButtonElement>('[data-pack-action]') ?? []) {
+      packButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+      });
+    }
     const preview = this.screen?.querySelector<HTMLCanvasElement>('[data-skin-preview]');
     if (preview) {
       actions.onPreviewCanvas?.(preview);
@@ -798,9 +922,41 @@ export class GameUI {
           card.setAttribute('aria-pressed', String(selected));
         }
         actions.preview(skinId);
+        applyAction(skinId);
       });
     }
     this.paintSkinThumbs();
+  }
+
+  private skinCatalogMarkup(selectedSkinId: string, accessSnapshot?: SkinAccessSnapshot | null): string {
+    const parts: string[] = [];
+    for (const rarity of SKIN_RARITY_ORDER) {
+      const skins = orderedPlayerSkins().filter((skin) => skinRarity(skin.id) === rarity);
+      parts.push(`<h2 class="skin-rarity-heading" data-rarity="${rarity}">${SKIN_RARITY_HEADINGS[rarity]}</h2>`);
+      const pack = skinPackForRarity(rarity);
+      if (pack) {
+        parts.push(`<div class="skin-pack-offer" data-rarity="${rarity}" data-pack-sku="${this.escape(pack.sku)}">
+          <span class="skin-pack-copy"><strong>${this.escape(pack.title)}</strong><span>${pack.skinIds.length} шт.</span></span>
+          <span class="skin-pack-price" data-price-source="target">${this.escape(pack.targetPriceLabel)}</span>
+          <button type="button" class="game-button" data-pack-action="${this.escape(pack.sku)}" disabled tabindex="-1" aria-disabled="true">Покупки скоро</button>
+        </div>`);
+      }
+      for (const skin of skins) {
+        const descriptor = skinDescriptor(skin.id) ?? skin;
+        const acquisition = skinAcquisition(skin.id);
+        if (!acquisition) continue;
+        const selected = skin.id === selectedSkinId;
+        const label = `${SKIN_RARITY_LABELS[rarity]} скин`;
+        const lock = skinCardLocked(skin.id, accessSnapshot)
+          ? '<span class="skin-card-lock" aria-hidden="true"></span>'
+          : '';
+        parts.push(`<button type="button" role="option" class="skin-card rarity-${rarity}${selected ? ' selected' : ''}" data-skin-id="${this.escape(skin.id)}" data-rarity="${rarity}" data-acquisition="${acquisition}" aria-pressed="${selected}" aria-label="${this.escape(label)}" title="${this.escape(label)}">
+          <canvas class="skin-card-preview" width="64" height="64" data-skin-thumb="${this.escape(descriptor.id)}" data-skin-model="${descriptor.defaultModel}" aria-hidden="true"></canvas>
+          ${lock}
+        </button>`);
+      }
+    }
+    return parts.join('');
   }
 
   showWorldList(worlds: readonly WorldSummary[], actions: WorldListActions): void {
@@ -891,15 +1047,17 @@ export class GameUI {
 
   showOnlineServers(
     actions: OnlineServersActions,
-    statuses?: Partial<Record<LocalServerName, MenuServerLiveStatus>>,
+    statuses?: ServerStatusMap,
     selectedId = selectedLocalServer(),
     currentNickname?: string,
   ): void {
-    let current: LocalServerName = isMenuServerId(selectedId) ? selectedId : 'anarchy';
-    const connectionBadge = (): string => endpointLabel(clientUrlForServer(current));
+    this.onlineRefreshFocused = false;
+    this.onlineActions = actions;
+    this.onlineSelected = isMenuServerId(selectedId) ? selectedId : 'anarchy';
+    this.onlineStatuses = statuses;
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window">
-        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${connectionBadge()}</span></header>
+        <header class="menu-heading"><div><span class="eyebrow">Список серверов</span><h1>Играть онлайн</h1></div><span class="mock-badge">${this.escape(this.onlineEndpointBadge())}</span></header>
         <form class="online-nickname-editor" id="online-nickname-form" autocomplete="off" novalidate>
           <div class="online-nickname-controls">
             <input id="online-nickname" name="nickname" type="text" inputmode="text" placeholder="Ваш ник" aria-label="Ваш ник" aria-describedby="online-nickname-message" minlength="${MIN_PLAYER_NAME_LENGTH}" maxlength="${MAX_PLAYER_NAME_LENGTH}" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
@@ -907,32 +1065,176 @@ export class GameUI {
           </div>
           <small class="online-nickname-message" id="online-nickname-message" aria-live="polite">${ONLINE_NICKNAME_HINT}</small>
         </form>
-        <div class="server-list">${renderOnlineServerRows(statuses, current)}</div>
-        <footer class="menu-footer"><button class="game-button primary" data-action="connect">Подключиться</button><button class="game-button" data-action="back">Назад</button></footer>
+        <div class="server-list-panel">
+          <div class="server-list-toolbar">
+            <span class="server-list-toolbar-title">СЕРВЕРЫ</span>
+            <button type="button" class="game-button server-refresh-button" data-action="retry" aria-label="Обновить список серверов" title="Повторно проверить серверы">Обновить</button>
+          </div>
+          <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
+        </div>
+        <footer class="menu-footer server-menu-footer">
+          <p class="server-reach-note" data-server-note role="status" hidden></p>
+          <div class="server-menu-actions">
+            <button type="button" class="game-button primary" data-action="connect">Подключиться</button>
+            <button type="button" class="game-button" data-action="back">Назад</button>
+          </div>
+        </footer>
       </div></section>`, actions.back);
     this.bindOnlineNickname(actions, currentNickname);
     this.bindAction('back', actions.back);
-    this.bindAction('connect', () => {
-      actions.connect(current);
+    this.bindAction('retry', () => {
+      if (this.isOnlineStatusPending()) return;
+      actions.retry();
     });
-    for (const button of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
+    this.bindAction('connect', () => {
+      if (!this.canConnectOnlineSelection()) return;
+      actions.connect(this.onlineSelected);
+    });
+    this.bindOnlineServerRows();
+    this.paintOnlineServerChrome();
+  }
+
+  /** Updates status text, the shared error and «Обновить» without recreating the cards. */
+  applyOnlineServerStatuses(statuses: ServerStatusMap): void {
+    if (!this.isShowingOnlineServers()) return;
+    this.onlineStatuses = statuses;
+    const list = this.screen?.querySelector('.server-list');
+    if (!list) return;
+    const rows = onlineServerRows(statuses, this.onlineSelected);
+    const patched = rows.every((row) => {
+      const button = list.querySelector<HTMLButtonElement>(`[data-server-id="${row.id}"]`);
+      if (!button) return false;
+      this.paintOnlineServerRow(button, row);
+      return true;
+    });
+    if (!patched) {
+      list.innerHTML = renderOnlineServerRows(statuses, this.onlineSelected);
+      this.bindOnlineServerRows();
+    }
+    this.paintOnlineServerChrome();
+  }
+
+  isShowingOnlineServers(): boolean {
+    return Boolean(this.screen?.querySelector('.server-list'));
+  }
+
+  isOnlineStatusPending(): boolean {
+    if (!this.isShowingOnlineServers() || !this.onlineStatuses) return false;
+    return Object.values(this.onlineStatuses).some((status) => status.phase === 'checking');
+  }
+
+  onlineServerSelection(): LocalServerName {
+    return this.onlineSelected;
+  }
+
+  onlineNicknameDraft(): string | undefined {
+    return this.screen?.querySelector<HTMLInputElement>('#online-nickname')?.value;
+  }
+
+  showOnlineConnectError(actions: OnlineConnectErrorActions): void {
+    this.onlineRefreshFocused = false;
+    this.onlineActions = undefined;
+    this.setScreen(`
+      <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window server-window server-connect-error-window">
+        <header class="menu-heading"><div><span class="eyebrow">Подключение</span><h1>Нет соединения</h1></div></header>
+        <p class="server-reach-note server-connect-error" role="alert">${ONLINE_CONNECT_ERROR}</p>
+        <footer class="menu-footer server-menu-footer"><div class="server-menu-actions">
+          <button type="button" class="game-button primary" data-action="retry">Повторить</button>
+          <button type="button" class="game-button" data-action="back">К списку серверов</button>
+        </div></footer>
+      </div></section>`, actions.back);
+    this.bindAction('retry', actions.retry);
+    this.bindAction('back', actions.back);
+  }
+
+  private onlineEndpointBadge(): string {
+    const url = clientUrlForServer(this.onlineSelected);
+    if (!url) return 'не задан';
+    return endpointLabel(url);
+  }
+
+  private canConnectOnlineSelection(): boolean {
+    const row = onlineServerRows(this.onlineStatuses, this.onlineSelected).find((server) => server.id === this.onlineSelected);
+    return row?.connectable === true;
+  }
+
+  private paintOnlineServerChrome(): void {
+    const pending = this.isOnlineStatusPending();
+    const failed = onlineStatusNeedsRetry(this.onlineStatuses);
+    const note = this.screen?.querySelector<HTMLElement>('[data-server-note]');
+    if (note) {
+      note.hidden = !failed;
+      note.textContent = failed ? ONLINE_STATUS_ERROR : '';
+    }
+    this.paintOnlineRefreshButton(pending);
+    const connect = this.screen?.querySelector<HTMLButtonElement>('[data-action="connect"]');
+    if (connect) connect.disabled = !this.canConnectOnlineSelection();
+    const badge = this.screen?.querySelector('.mock-badge');
+    if (badge) badge.textContent = this.onlineEndpointBadge();
+  }
+
+  /** Disables «Обновить» during a probe and gives focus back when that probe ends. */
+  private paintOnlineRefreshButton(pending: boolean): void {
+    const retry = this.screen?.querySelector<HTMLButtonElement>('.server-refresh-button');
+    if (!retry) return;
+    const hadFocus = document.activeElement === retry;
+    if (pending && hadFocus) this.onlineRefreshFocused = true;
+    retry.disabled = pending;
+    if (pending) return;
+    const shouldRestore = this.onlineRefreshFocused;
+    this.onlineRefreshFocused = false;
+    if (!shouldRestore) return;
+    const active = document.activeElement;
+    const focusDumped = hadFocus
+      || active === null
+      || active === document.body
+      || active === document.documentElement;
+    if (focusDumped) retry.focus();
+  }
+
+  private paintOnlineServerRow(button: HTMLButtonElement, row: MenuServerRow): void {
+    const stateClass = serverRowStateClass(row);
+    button.classList.toggle('selected', row.selected);
+    button.classList.toggle('is-offline', stateClass === 'is-offline');
+    button.classList.toggle('is-unconfigured', stateClass === 'is-unconfigured');
+    button.classList.toggle('is-checking', stateClass === 'is-checking');
+    button.classList.toggle('is-starting', stateClass === 'is-starting');
+    button.dataset.serverPhase = row.phase;
+    if (row.reason) button.dataset.serverReason = row.reason;
+    else delete button.dataset.serverReason;
+    button.setAttribute('aria-pressed', String(row.selected));
+    const label = button.querySelector('.server-online');
+    if (label) label.textContent = row.label;
+    const bars = button.querySelector('.signal-bars');
+    if (bars) {
+      bars.setAttribute('aria-label', `Уровень соединения ${row.signal} из 5`);
+      const marks = bars.querySelectorAll('i');
+      marks.forEach((mark, index) => mark.classList.toggle('on', index < row.signal));
+    }
+  }
+
+  private bindOnlineServerRows(): void {
+    const actions = this.onlineActions;
+    if (!actions) return;
+    for (const button of this.screen?.querySelectorAll<HTMLButtonElement>('[data-server-id]') ?? []) {
       button.addEventListener('click', () => {
         const next = button.dataset.serverId;
         if (!next || !isMenuServerId(next)) return;
-        current = next;
-        const badge = this.screen!.querySelector('.mock-badge');
-        if (badge) badge.textContent = connectionBadge();
-        for (const row of this.screen!.querySelectorAll<HTMLButtonElement>('[data-server-id]')) {
+        this.onlineSelected = next;
+        for (const row of this.screen?.querySelectorAll<HTMLButtonElement>('[data-server-id]') ?? []) {
           const selected = row === button;
           row.classList.toggle('selected', selected);
           row.setAttribute('aria-pressed', String(selected));
         }
+        this.paintOnlineServerChrome();
       });
       button.addEventListener('dblclick', () => {
         const next = button.dataset.serverId;
         if (!next || !isMenuServerId(next)) return;
-        current = next;
-        actions.connect(current);
+        this.onlineSelected = next;
+        this.paintOnlineServerChrome();
+        if (!this.canConnectOnlineSelection()) return;
+        actions.connect(this.onlineSelected);
       });
     }
   }
@@ -1301,6 +1603,42 @@ export class GameUI {
     return this.modal !== undefined || this.chatOpen || this.hologramEditor !== undefined;
   }
 
+  isEmoteWheelOpen(): boolean {
+    return !this.emoteWheel.classList.contains('hidden');
+  }
+
+  showEmoteWheel(): void {
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
+    this.emoteWheel.classList.remove('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'false');
+  }
+
+  /** Highlight only. The hub label stays «Отмена». */
+  setEmoteWheelSelection(id: EmoteId | null): void {
+    this.emoteDisc.dataset.selected = id ?? '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+  }
+
+  emoteWheelRadius(): number {
+    return this.emoteDisc.getBoundingClientRect().width / 2;
+  }
+
+  placeEmoteCursor(x: number, y: number): void {
+    const px = Number.isFinite(x) ? x : 0;
+    const py = Number.isFinite(y) ? y : 0;
+    this.emoteCursor.style.transform = `translate(${px}px, ${py}px)`;
+  }
+
+  hideEmoteWheel(): void {
+    this.emoteWheel.classList.add('hidden');
+    this.emoteWheel.setAttribute('aria-hidden', 'true');
+    this.emoteDisc.dataset.selected = '';
+    this.emoteWheelTitle.textContent = 'Отмена';
+    this.placeEmoteCursor(0, 0);
+  }
+
   isHologramEditorOpen(): boolean {
     return this.hologramEditor !== undefined;
   }
@@ -1455,9 +1793,19 @@ export class GameUI {
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
     if (message.kind === 'player' && message.from) {
+      const style = sanitizePlayerNameStyle(message.nameStyle);
+      if (style?.prefix) {
+        const prefix = document.createElement('span');
+        prefix.className = 'chat-line-prefix';
+        prefix.textContent = style.prefix;
+        if (style.prefixColor) prefix.style.color = DONATION_COLORS[style.prefixColor];
+        if (style.prefixColor === 'black') prefix.classList.add('chat-prefix-black');
+        line.append(prefix, document.createTextNode(' '));
+      }
       const name = document.createElement('span');
-      name.className = 'chat-line-name';
+      name.className = style?.bold ? 'chat-line-name chat-name-bold' : 'chat-line-name';
       name.textContent = message.from;
+      if (style?.nameColor) name.style.color = DONATION_COLORS[style.nameColor];
       const sep = document.createElement('span');
       sep.className = 'chat-line-sep';
       sep.textContent = ': ';
@@ -2547,7 +2895,10 @@ export class GameUI {
     if (isChestWindowKind(context.kind)) {
       const slots = context.chest?.slots ?? Array.from({ length: 27 }, () => null);
       const label = context.containerTitle
-        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest : CONTAINER_STRINGS.chest);
+        ?? (context.kind === 'portal-chest' ? CONTAINER_STRINGS.portalChest
+          : context.kind === 'invsee' ? 'Инвентарь'
+            : context.kind === 'invsee-op' ? 'Инвентарь (изменение)'
+              : CONTAINER_STRINGS.chest);
       return `<div class="mc-label">${label}</div>
         <div class="mc-grid mc-grid-9">${slots.map((slot, index) => this.slotHtml(slot, `container-${index}`)).join('')}</div>`;
     }
@@ -4743,7 +5094,9 @@ export class GameUI {
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = MC_MENU_WIDTH;
+    const logicalWidth = state.screen === 'donate' || state.screen.startsWith('donate-')
+      ? MC_MENU_DONATE_WIDTH
+      : MC_MENU_WIDTH;
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -4995,6 +5348,25 @@ export class GameUI {
     bindDraft('[data-menu-claim-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_name', name }));
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
+    for (const field of this.modal!.querySelectorAll<HTMLElement>('[data-donate-field]')) {
+      field.addEventListener('pointerdown', (event) => event.stopPropagation());
+      field.addEventListener('keydown', (event) => event.stopPropagation());
+      field.addEventListener('keyup', (event) => event.stopPropagation());
+    }
+    const search = this.modal!.querySelector<HTMLInputElement>('[data-donate-search]');
+    const playerList = this.modal!.querySelector<HTMLElement>('[data-donate-player-list]');
+    const searchEmpty = this.modal!.querySelector<HTMLElement>('[data-donate-search-empty]');
+    search?.addEventListener('input', () => {
+      const query = search.value.trim().toLowerCase();
+      let shown = 0;
+      for (const row of playerList?.querySelectorAll<HTMLElement>('[data-donate-player-row]') ?? []) {
+        const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
+        const match = query.length === 0 || name.includes(query);
+        row.hidden = !match;
+        if (match) shown += 1;
+      }
+      if (searchEmpty) searchEmpty.hidden = shown > 0 || query.length === 0;
+    });
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
     for (const list of lists) {
@@ -5137,6 +5509,17 @@ export class GameUI {
         actions.send({ type: 'menu_action', action: 'rating_page', page: (current.ratingPage ?? 1) + 1 });
         return;
       }
+      const swatch = target.closest<HTMLElement>('[data-donate-swatch]');
+      if (swatch?.dataset.donateSwatch) {
+        const pick = this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]');
+        if (pick) pick.dataset.selected = swatch.dataset.donateSwatch;
+        const preview = this.modal?.querySelector<HTMLElement>('[data-donate-preview]');
+        if (preview) preview.style.color = swatch.style.backgroundColor;
+        for (const entry of this.modal?.querySelectorAll<HTMLElement>('[data-donate-swatch]') ?? []) {
+          entry.classList.toggle('is-selected', entry === swatch);
+        }
+        return;
+      }
       const button = target.closest<HTMLElement>('[data-menu-action]');
       const kind = button?.dataset.menuAction;
       if (!kind || !isMenuActionKind(kind)) return;
@@ -5165,6 +5548,59 @@ export class GameUI {
       if (kind === 'trade_request') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-trade-name]')?.value ?? current.tradeNameText;
         actions.send({ type: 'menu_action', action: 'trade_request', name });
+        return;
+      }
+      if (kind === 'donate_color') {
+        const selected = button?.dataset.donateColor
+          ?? this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]')?.dataset.selected;
+        if (!selected) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Выберите цвет.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_color', color: selected, name: selected });
+        return;
+      }
+      if (kind === 'donate_announce') {
+        const text = this.modal?.querySelector<HTMLTextAreaElement>('[data-donate-announce]')?.value ?? '';
+        actions.send({ type: 'menu_action', action: 'donate_announce', text });
+        return;
+      }
+      if (kind === 'donate_tp') {
+        const raw = (selector: string) => this.modal?.querySelector<HTMLInputElement>(selector)?.value.trim() ?? '';
+        const x = Number(raw('[data-donate-x]'));
+        const y = Number(raw('[data-donate-y]'));
+        const z = Number(raw('[data-donate-z]'));
+        if (!raw('[data-donate-x]') || !raw('[data-donate-y]') || !raw('[data-donate-z]') || ![x, y, z].every(Number.isFinite)) {
+          const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
+          if (note) {
+            note.hidden = false;
+            note.textContent = 'Введите координаты X, Y и Z.';
+          }
+          return;
+        }
+        actions.send({ type: 'menu_action', action: 'donate_tp', x, y, z });
+        return;
+      }
+      if (kind === 'donate_invsee' || kind === 'donate_invseeop') {
+        const name = button?.dataset.donatePlayer;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: kind, name });
+        return;
+      }
+      if (kind === 'donate_kit') {
+        const name = button?.dataset.donateKit;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_kit', name });
+        return;
+      }
+      if (kind === 'donate_pet') {
+        const name = button?.dataset.donatePet;
+        if (!name) return;
+        actions.send({ type: 'menu_action', action: 'donate_pet', name });
         return;
       }
       actions.send({ type: 'menu_action', action: kind });

@@ -105,8 +105,8 @@ describe('world events plugin commands', () => {
     const ada = join(world, 'Ada');
     const op = join(world, 'Op');
 
-    expect(chat(world, ada, '/wand').some((line) => line.includes('permission'))).toBe(true);
-    expect(chat(world, ada, '/events force spawn').some((line) => line.includes('permission'))).toBe(true);
+    expect(chat(world, ada, '/wand').some((line) => line.includes('прав'))).toBe(true);
+    expect(chat(world, ada, '/events force spawn').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/events status').some((line) => line.includes('World events'))).toBe(true);
     expect(chat(world, op, '/events status').some((line) => line.includes('Europe/Moscow'))).toBe(true);
 

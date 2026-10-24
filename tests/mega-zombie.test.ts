@@ -690,4 +690,88 @@ describe('mega zombie spawn placement', () => {
     mobs.dispose();
     tracked.dispose();
   });
+
+  it('takes hits from several players without knockback and still attacks', () => {
+    const mobs = manager('boss-no-knockback');
+    const boss = mobs.spawn('mega_zombie', new Vec3(8, 72, 8), { force: true, bossArena: ARENA })!;
+    const zombie = mobs.spawn('zombie', new Vec3(14, 72, 8), { force: true })!;
+    const originX = boss.position.x;
+    const originY = boss.position.y;
+    const originZ = boss.position.z;
+    expect(mobs.damage(boss, 6, {
+      source: 'player',
+      attackerId: 'ada',
+      attackerPosition: { x: 6, y: 72, z: 8 },
+      attackerYaw: 0,
+      extraKnockbackLevel: 2,
+    })).toBe(true);
+    expect(boss.health).toBe(MEGA_ZOMBIE_MAX_HEALTH - 6);
+    expect(boss.velocity.x).toBe(0);
+    expect(boss.velocity.y).toBe(0);
+    expect(boss.velocity.z).toBe(0);
+    expect(boss.meleeKnockback).toBe(false);
+    expect(boss.position.x).toBe(originX);
+    for (let hit = 0; hit < 8; hit += 1) {
+      mobs.damage(boss, 6, {
+        source: 'player',
+        attackerId: hit % 2 === 0 ? 'ada' : 'bob',
+        attackerPosition: { x: hit % 2 === 0 ? 5 : 11, y: 72, z: 8 },
+        attackerYaw: 1.2,
+        extraKnockbackLevel: 2,
+      });
+    }
+    expect(boss.position.x).toBe(originX);
+    expect(boss.position.y).toBe(originY);
+    expect(boss.position.z).toBe(originZ);
+    expect(boss.velocity.lengthSq()).toBe(0);
+    expect(boss.health).toBeLessThan(MEGA_ZOMBIE_MAX_HEALTH);
+
+    expect(mobs.damage(zombie, 2, {
+      source: 'player',
+      attackerId: 'ada',
+      attackerPosition: { x: 12, y: 72, z: 8 },
+      extraKnockbackLevel: 1,
+    })).toBe(true);
+    expect(zombie.velocity.x).not.toBe(0);
+    expect(zombie.meleeKnockback).toBe(true);
+
+    for (let tick = 0; tick < 20; tick += 1) mobs.update(0.05, { players: [] });
+    const beforeProjectile = boss.health;
+    expect(mobs.damage(boss, 3, {
+      source: 'projectile',
+      attackerId: 'ada',
+      attackerPosition: { x: 4, y: 72, z: 8 },
+      knockback: 4.2,
+    })).toBe(true);
+    expect(boss.health).toBe(beforeProjectile - 3);
+    expect(boss.velocity.lengthSq()).toBe(0);
+    for (let tick = 0; tick < 20; tick += 1) mobs.update(0.05, { players: [] });
+    const beforeBlast = boss.health;
+    expect(mobs.damage(boss, 4, {
+      source: 'explosion',
+      attackerPosition: { x: 8, y: 72, z: 4 },
+      knockback: 8,
+    })).toBe(true);
+    expect(boss.health).toBe(beforeBlast - 4);
+    expect(boss.velocity.lengthSq()).toBe(0);
+    for (let tick = 0; tick < 20; tick += 1) mobs.update(0.05, { players: [] });
+    const beforeFire = boss.health;
+    expect(mobs.damage(boss, 1, { source: 'fire', igniteTicks: 20 })).toBe(true);
+    expect(boss.health).toBe(beforeFire - 1);
+    expect(boss.fireTicks).toBeGreaterThan(0);
+    expect(boss.velocity.lengthSq()).toBe(0);
+    expect(boss.position.x).toBeCloseTo(originX, 5);
+    expect(boss.position.z).toBeCloseTo(originZ, 5);
+
+    boss.position.set(originX, originY, originZ);
+    boss.velocity.set(0, 0, 0);
+    boss.attackCooldownSeconds = 0;
+    mobs.update(0.05, {
+      players: [{ id: 'ada', position: new Vec3(8, 72, 10.2), alive: true, targetable: true }],
+    });
+    expect(mobs.consumePlayerDamage().some((hit) => hit.mobKind === 'mega_zombie' && hit.amount === MEGA_ZOMBIE_ATTACK_DAMAGE)).toBe(true);
+    expect(boss.position.x).toBeCloseTo(originX, 3);
+    expect(boss.alive).toBe(true);
+    mobs.dispose();
+  });
 });

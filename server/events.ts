@@ -56,6 +56,8 @@ function cancellable<T extends object>(extra: T): T & Cancellable {
 export interface PlayerJoinEvent {
   readonly playerId: string;
   readonly name: string;
+  /** True only when this join created a new player id. Resume and respawn are false. */
+  readonly firstJoin: boolean;
 }
 
 export interface PlayerQuitEvent {

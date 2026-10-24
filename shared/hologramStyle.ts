@@ -343,9 +343,20 @@ export function hologramDisplayLines(
     readonly lines: readonly string[];
     readonly timerDuration: number;
     readonly timerStartedAt: number;
+    /** Absolute server deadline. Null means a linked timer has no schedule. Absent means a normal looping timer. */
+    readonly timerEndsAt?: number | null;
   },
   nowMs: number,
 ): string[] {
+  if (hologram.kind === 'timer' && hologram.timerEndsAt !== undefined) {
+    if (hologram.timerEndsAt === null || !Number.isFinite(hologram.timerEndsAt)) {
+      return ['Обновление шахты: нет расписания'];
+    }
+    const remaining = Math.max(0, Math.ceil((hologram.timerEndsAt - nowMs) / 1000));
+    const clock = formatHologramCountdown(remaining);
+    const prefix = hologram.lines[0]?.trim();
+    return [prefix ? `${prefix} ${clock}` : clock];
+  }
   if (hologram.kind === 'timer') {
     return [formatHologramCountdown(
       hologramTimerRemainingSeconds(hologram.timerDuration, hologram.timerStartedAt, nowMs),

@@ -16,6 +16,11 @@ import type { GameMenuSession } from './gameMenu';
 import { parentMenuScreen } from './gameMenu';
 import { isRankingKind } from '../../shared/ranking';
 import type { DuelService } from './duels';
+import { ANNOUNCE_TEXT_MAX, isNickColorId, sanitizeAnnouncementText } from '../../shared/donationRanks';
+import { parseKitName } from './kit';
+import { isCosmeticPetSelection, type CosmeticPetSelection } from '../../src/entities/cosmeticPets';
+import { playerText } from '../../shared/playerText';
+import type { GameMenuScreen } from '../../shared/gameMenu';
 
 export interface MenuPlayer {
   readonly id: string;
@@ -38,7 +43,8 @@ export type MenuActionOutcome =
   | { kind: 'open-auction'; view: 'browse' | 'list' | 'sell' }
   | { kind: 'trade-request'; affected: readonly string[] }
   | { kind: 'trade-session'; affected: readonly string[] }
-  | { kind: 'refresh-players'; affected: readonly string[] };
+  | { kind: 'refresh-players'; affected: readonly string[] }
+  | { kind: 'donate-command'; command: string; screen: GameMenuScreen; closeOnSuccess: boolean };
 
 export interface MenuActionHost {
   homes: HomeService;
@@ -53,6 +59,10 @@ export interface MenuActionHost {
   findOwnedClaim(player: MenuPlayer, claimId: string): Claim | undefined;
   resolvePlayer(target: string): { ok: true; playerId: string; name: string } | { ok: false; error: string };
   duels: DuelService;
+  reloadDonation(): void;
+  deathPoint(player: MenuPlayer): { x: number; y: number; z: number } | undefined;
+  /** Live decorative pet. The menu toggle reads this instead of the last click. */
+  liveCosmeticPet(player: MenuPlayer): CosmeticPetSelection | null;
 }
 
 export function applyGameMenuAction(
@@ -435,6 +445,84 @@ export function applyGameMenuAction(
   if (action === 'auction_history') {
     session.screen = 'auction-history';
     return { kind: 'flush' };
+  }
+  if (action === 'donate_retry') {
+    host.reloadDonation();
+    session.screen = 'donate';
+    return { kind: 'flush' };
+  }
+  if (action === 'donate_color') {
+    const color = (message.color ?? message.name ?? '').trim().toLowerCase();
+    session.screen = 'donate-color';
+    if (color !== 'reset' && !isNickColorId(color)) {
+      session.message = 'Выберите цвет из палитры.';
+      return { kind: 'flush' };
+    }
+    return { kind: 'donate-command', command: `/nickcolor ${color}`, screen: 'donate-color', closeOnSuccess: false };
+  }
+  if (action === 'donate_announce') {
+    session.screen = 'donate-announce';
+    const text = sanitizeAnnouncementText(message.text ?? '');
+    if (!text) {
+      session.message = `Введите текст объявления до ${ANNOUNCE_TEXT_MAX} символов.`;
+      return { kind: 'flush' };
+    }
+    return { kind: 'donate-command', command: `/an ${text}`, screen: 'donate-announce', closeOnSuccess: false };
+  }
+  if (action === 'donate_invsee' || action === 'donate_invseeop') {
+    session.screen = 'donate-invsee';
+    const name = (message.name ?? '').trim();
+    if (!/^[A-Za-z0-9]{2,13}$/.test(name)) {
+      session.message = 'Выберите игрока, который сейчас онлайн.';
+      return { kind: 'flush' };
+    }
+    const command = action === 'donate_invseeop' ? `/invseeop ${name}` : `/invsee ${name}`;
+    return { kind: 'donate-command', command, screen: 'donate-invsee', closeOnSuccess: true };
+  }
+  if (action === 'donate_back') {
+    session.screen = 'donate-back';
+    const point = host.deathPoint(player);
+    if (!point) {
+      session.message = 'Точка смерти не сохранена.';
+      return { kind: 'flush' };
+    }
+    return { kind: 'donate-command', command: '/back', screen: 'donate-back', closeOnSuccess: true };
+  }
+  if (action === 'donate_tp') {
+    session.screen = 'donate-tp';
+    if (message.x === undefined || message.y === undefined || message.z === undefined) {
+      session.message = 'Введите координаты X, Y и Z.';
+      return { kind: 'flush' };
+    }
+    return {
+      kind: 'donate-command',
+      command: `/tp ${message.x} ${message.y} ${message.z}`,
+      screen: 'donate-tp',
+      closeOnSuccess: true,
+    };
+  }
+  if (action === 'donate_ec') {
+    session.screen = 'donate';
+    return { kind: 'donate-command', command: '/ec', screen: 'donate', closeOnSuccess: true };
+  }
+  if (action === 'donate_kit') {
+    session.screen = 'donate';
+    const kit = parseKitName(message.name);
+    if (!kit) {
+      session.message = 'Некорректное имя набора.';
+      return { kind: 'flush' };
+    }
+    return { kind: 'donate-command', command: `/kit ${kit}`, screen: 'donate', closeOnSuccess: false };
+  }
+  if (action === 'donate_pet') {
+    session.screen = 'donate-pets';
+    const pet = message.name?.trim().toLowerCase();
+    if (!isCosmeticPetSelection(pet)) {
+      session.message = playerText.spawnpetUsage;
+      return { kind: 'flush' };
+    }
+    const command = host.liveCosmeticPet(player) === pet ? '/spawnpet off' : `/spawnpet ${pet}`;
+    return { kind: 'donate-command', command, screen: 'donate-pets', closeOnSuccess: false };
   }
   void (message.screen as GameMenuScreenKind | undefined);
   return { kind: 'flush' };

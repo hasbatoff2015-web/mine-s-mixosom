@@ -88,6 +88,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'friends.*',
     'trade.*',
     'duels.admin',
+    'kit.*',
   ],
   vip: [
     'home.multiple',
@@ -136,6 +137,8 @@ export class PermissionService {
   private playerPermissions = new Map<string, Set<string>>();
   private legacy: LegacyMaps = emptyLegacy();
   private ignoredEnvOperators: string[] = [];
+  /** Timed or computed nodes. The key is already normalized. */
+  private extraNodes: (key: string) => Iterable<string> = () => [];
 
   constructor(
     private readonly store: JsonFileStore,
@@ -246,6 +249,11 @@ export class PermissionService {
 
   ignoredOperators(): readonly string[] {
     return this.ignoredEnvOperators;
+  }
+
+  /** Extra nodes are consulted on every check, so an expired grant drops immediately. */
+  setExtraNodes(provider: (key: string) => Iterable<string>): void {
+    this.extraNodes = provider;
   }
 
   legacyInfo(nickname: string): { operator: boolean; roles: string[]; permissions: string[] } | null {
@@ -473,6 +481,7 @@ export class PermissionService {
     }
     const extra = key ? this.playerPermissions.get(key) : undefined;
     if (extra) for (const node of extra) nodes.add(node);
+    for (const node of this.extraNodes(key)) nodes.add(node);
     return nodes;
   }
 

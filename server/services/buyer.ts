@@ -468,23 +468,23 @@ export class BuyerService {
       return { ok: false, error: BUYER_STALE_ERROR };
     }
     if (message.action === 'set_name') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       session.nameText = typeof message.name === 'string' ? message.name.slice(0, 32) : '';
       return { ok: true };
     }
     if (message.action === 'set_price') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       session.priceText = typeof message.price === 'string' || typeof message.price === 'number'
         ? String(message.price)
         : '';
       return { ok: true };
     }
     if (message.action === 'set_hologram_text') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       return { ok: true };
     }
     if (message.action === 'edit_hologram') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       if (session.screen !== 'admin') return { ok: true };
       this.syncHologram(buyer);
       if (!this.holograms.get(buyer.hologramName)) {
@@ -493,7 +493,7 @@ export class BuyerService {
       return { ok: true, buyer, openHologramEditor: true };
     }
     if (message.action === 'pick_item') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       session.screen = 'pick-item';
       return { ok: true };
     }
@@ -502,7 +502,7 @@ export class BuyerService {
       return { ok: true };
     }
     if (message.action === 'open_trade') {
-      if (!can.use) return { ok: false, error: 'You do not have permission.' };
+      if (!can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       this.returnTradeSlot(playerId, session, inventory);
       session.screen = 'trade';
       session.tradeSlot = null;
@@ -510,30 +510,30 @@ export class BuyerService {
     }
     if (message.action === 'select_slot' && message.slot !== undefined) {
       if (session.screen === 'pick-item') {
-        if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+        if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
         return this.pickFromInventory(session, inventory, message.slot);
       }
       if (session.screen === 'trade') {
-        if (!can.use) return { ok: false, error: 'You do not have permission.' };
+        if (!can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
         if (message.slot === -1) return this.returnTradeToInventory(session, inventory);
         return this.placeTradeItem(session, buyer, inventory, message.slot);
       }
       return { ok: true };
     }
     if (message.action === 'set_amount') {
-      if (session.screen !== 'trade' || !can.use) return { ok: false, error: 'You do not have permission.' };
+      if (session.screen !== 'trade' || !can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       return this.setTradeAmount(session, buyer, inventory, message.amount ?? 0);
     }
     if (message.action === 'save') {
-      if (!can.edit) return { ok: false, error: 'You do not have permission.' };
+      if (!can.edit) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       return this.saveAdmin(session, message);
     }
     if (message.action === 'delete') {
-      if (!can.delete) return { ok: false, error: 'You do not have permission.' };
+      if (!can.delete) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       return this.deleteById(session.buyerId);
     }
     if (message.action === 'sell') {
-      if (!can.use) return { ok: false, error: 'You do not have permission.' };
+      if (!can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
       return this.sell(playerId, inventory, session, saleRequest(playerId, message)) as BuyerResult;
     }
     return { ok: true };

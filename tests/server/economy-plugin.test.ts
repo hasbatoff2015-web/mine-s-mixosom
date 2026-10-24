@@ -153,7 +153,7 @@ describe('Economy plugin', () => {
     const world = await boot();
     const op = join(world, 'Op');
     const ada = join(world, 'Ada');
-    expect(chat(world, ada, '/eco give Ada 10')[0]).toMatch(/permission/);
+    expect(chat(world, ada, '/eco give Ada 10')[0]).toMatch(/прав/);
     expect(chat(world, op, '/eco give Ada 1000')[0]).toMatch(/Выдано Ada 1 000 Мегакоинов/);
     expect(world.economy.getBalance(ada.player.id)).toBe(1100);
     expect(chat(world, op, '/eco take Ada 500')[0]).toMatch(/Снято Ada 500 Мегакоинов/);

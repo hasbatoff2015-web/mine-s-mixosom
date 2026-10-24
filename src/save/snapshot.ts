@@ -1,3 +1,4 @@
+import { parseCosmeticPetSelection } from '../entities/cosmeticPets';
 import { Inventory } from '../inventory';
 import { PersistenceError } from './PersistenceError';
 import {
@@ -110,6 +111,9 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
       ? { settlementReceipts: value.settlementReceipts.filter((receipt): receipt is string => typeof receipt === 'string') }
       : {}),
     ...(Array.isArray(value.heldReturns) ? { heldReturns: value.heldReturns } : {}),
+    ...(parseCosmeticPetSelection(value.cosmeticPet)
+      ? { cosmeticPet: parseCosmeticPetSelection(value.cosmeticPet)! }
+      : {}),
   };
 }
 

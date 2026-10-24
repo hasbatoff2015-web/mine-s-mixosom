@@ -90,6 +90,67 @@
 - [ ] Admin HTTP, Passkey, Tailscale, the gameplay economy cutover, and unique-item ids stay future work. The ledger schema is the following Stage 2A section.
 - [ ] Not merged. Draft PR **#129**.
 
+## 2026-10-20: Skin rarity catalog and store UI
+
+- [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
+- [x] Sort the selector by rarity, with `frontier_explorer` first, and keep the PNG generator as the texture source.
+- [x] Show rarity frames, category headings, target pack prices, and disabled ad/purchase/legendary actions.
+- [x] Keep preview separate from equip. Stage 1 does not grant ownership or call the Yandex ad/purchase SDK.
+- [x] Fail the production build when a new gameplay PNG has no rarity metadata.
+- [ ] Not merged. Server entitlement, rewarded ads, and Yandex payments stay in later stages. Desktop 1920 and 1366, phone landscape, and the portrait rotate overlay were checked in this environment. A real phone is still for the owner.
+
+## 2026-10-19: Skin preview faces the camera
+
+- [x] Initial preview yaw aims the skin's local −Z front at the menu camera.
+- [x] Auto-spin, drag pause, and skin changes keep the existing turntable.
+- [ ] Not merged. Owner still checks the face, a classic arm, a slim arm, and a translucent outer layer in the browser.
+
+## 2026-10-19: Automatic player skin catalog
+
+- [x] One build-time catalog from `public/textures/player/skins/*.png` for the client and the Node server.
+- [x] Keep the 45 shipped Classic/Slim models, `frontier_explorer`, `buyer_merchant`, and `player_uv_test`.
+- [x] Classify new 64×64 skins from the arm UV islands. Ambiguous sheets fall back to classic and still register.
+- [x] Reuse the outer-alpha scan. `npm run skins:check` fails when the generated module is stale.
+- [ ] Not merged. Owner QA of the selector, a slim arm, a translucent outer layer, and a second online client is still open.
+
+## 2026-10-18: Decorative bee and mini creeper
+
+- [x] Separate runtime kinds `pet_bee` and `pet_creeper`. They are not `isPetKind()` wolves or cats.
+- [x] Original bee rig, 64×64 sheet, render-clock wing flap and server flight follow.
+- [x] Bee head texels sit on -Z and each wing tip points outward. The sheet bytes are unchanged.
+- [x] Mini creeper reuses the creeper rig at scale 0.49 and never runs creeper fuse.
+- [x] `/spawnpet bee|creeper|off`. `wolf` and `cat` no longer spawn. Bee is BOSS, mini creeper is TITAN, and OP can summon both.
+- [x] Player `cosmeticPet` survives reconnect and restart. The runtime mob is not in the world mob list.
+- [ ] Not merged. Browser DEV QA of the 3D bee was not run in this environment.
+
+## 2026-10-17: Emotes
+
+- [x] Hold Z for a four-sector wheel. Release plays the sector. The center plays nothing.
+- [x] One-shot procedural poses on the existing player rig. Third-person back camera, hidden main-hand item, armor stays attached.
+- [x] Movement, death, blur, and other UI cancel the emote. Mouse look does not.
+- [x] Server `emote` start/stop on the existing presentation snapshot. No position or damage change. Protocol stays 4.
+
+## 2026-10-13: Timed donate ranks
+
+- [x] VIP, PREMIUM, BOSS, TITAN replace each other and expire to `default`.
+- [x] Homes, claims, and auction lots use one server limit. Existing objects stay when the rank drops.
+- [x] `/ec`, `/an`, `/invsee`, `/invseeop`, `/nickcolor`, and `/tp` share the rank service. Player `/tpa` stays a request.
+- [x] Kit periods and command cooldowns survive restart. The stamp is saved before the action.
+- [x] Menu tab «Донат» reads `DonationRankService.status()` and calls the same commands.
+- [x] Card «Питомцы» lists the bee and the mini creeper and calls `/spawnpet`.
+- [ ] Not merged. Draft PR **#131**. Wait for an explicit merge command.
+
+## 2026-10-11: Water speed, automine, throw, kits, Mega Zombie knockback
+
+- [x] Settled swim speed is 0.8× ground speed. Land, sneak, air, and lava caps stay on their previous constants.
+- [x] Automine logs are halved; stone is 45%; iron ore matches coal at 5%. Weights still sum to 10 000.
+- [x] An automine reset finishes on its own light token. A full region-light queue no longer holds `RESETTING`.
+- [x] Player Q throws travel about twice as far horizontally. The vertical hop is unchanged.
+- [x] Builtin `/kit` copies the creator inventory and gives `start` once.
+- [x] `/holograms automine` counts down to that mine's real `nextResetAt`.
+- [x] Mega Zombie ignores attack knockback. Other mobs do not.
+- [ ] Not merged. Wait for an explicit merge command.
+
 ## 2026-10-08: Mega Zombie boss
 
 - [x] Server-authoritative arena boss on the existing mob, damage, item, firework, and plugin paths.

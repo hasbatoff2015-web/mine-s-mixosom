@@ -33,6 +33,8 @@ export interface InventoryWindow {
   x?: number;
   y?: number;
   z?: number;
+  /** Set only by the server for /invsee. Clients cannot choose this. */
+  viewPlayerId?: string;
 }
 
 export function isSharedContainerWindow(window: InventoryWindow): boolean {

@@ -515,6 +515,7 @@ export class AuctionService {
     amount: number,
     price: number,
     expected?: ItemStack,
+    maxActive = AUCTION_MAX_ACTIVE,
   ): AuctionResult | Promise<AuctionResult> {
     return this.withPlayerLock(playerId, () => {
       this.expireDue();
@@ -524,8 +525,9 @@ export class AuctionService {
       if (!Number.isInteger(slot) || slot < 0 || slot >= Inventory.SLOT_COUNT) {
         return { ok: false, error: 'Предмет больше недоступен для продажи.' };
       }
-      if (this.activeCount(playerId) >= AUCTION_MAX_ACTIVE) {
-        return { ok: false, error: `У вас уже максимальное количество товаров на аукционе: ${AUCTION_MAX_ACTIVE}.` };
+      const cap = Number.isInteger(maxActive) && maxActive > 0 ? maxActive : AUCTION_MAX_ACTIVE;
+      if (this.activeCount(playerId) >= cap) {
+        return { ok: false, error: `У вас уже максимальное количество товаров на аукционе: ${cap}.` };
       }
       const current = inventory.getSlot(slot);
       if (!current) return { ok: false, error: 'Предмет больше недоступен для продажи.' };

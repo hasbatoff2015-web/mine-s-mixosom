@@ -108,7 +108,7 @@ export function createWorldEventsPlugin(ctx: BuiltinPluginContext): Plugin {
           const sub = args[0]!.toLowerCase();
           if (sub === 'status') return ok(manager.statusLines());
 
-          if (!canManage(sender.playerId, sender.name)) return fail('You do not have permission.');
+          if (!canManage(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
 
           if (sub === 'reload') {
             const next = toConfig(api.loadConfig({ ...DEFAULT_WORLD_EVENTS_CONFIG }));

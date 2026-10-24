@@ -41,7 +41,9 @@ export interface PlayerView {
   snapshot(): PlayerSnapshot;
   teleport(x: number, y: number, z: number): boolean;
   sendMessage(text: string): void;
-  give(itemId: string, count: number): { given: number; leftover: number };
+  give(itemId: string, count: number, options?: { readonly durability?: number }): { given: number; leftover: number };
+  /** Non-empty main, armor, and offhand stacks. Creation of a kit copies this and does not clear it. */
+  contents(): readonly { itemId: string; count: number; durability?: number }[];
   removeItem(itemId: string, count: number): number;
   clearInventory(): number;
   hasItem(itemId: string, count?: number): boolean;

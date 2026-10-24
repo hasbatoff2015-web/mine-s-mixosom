@@ -577,7 +577,7 @@ export class ServerGameplay {
   }
 
   collectFor(player: GameplayPlayer): void {
-    if (player.survival.dead) return;
+    if (player.survival.dead || player.gamemode === 'spectator') return;
     this.drops.collectNearby(player.controller.position, (stack, entity) => {
       const event = this.events.createItemPickup(player.id, entity.id, stack.itemId, stack.count);
       this.events.emit('itemPickup', event);
@@ -912,6 +912,7 @@ export class ServerGameplay {
   }
 
   breakBlock(player: GameplayPlayer, x: number, y: number, z: number): { ok: true } | { ok: false; reason: string } {
+    if (player.gamemode === 'spectator') return { ok: false, reason: 'spectator' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
     if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
     if (!this.inReach(player, x, y, z)) return { ok: false, reason: 'reach' };
@@ -990,6 +991,7 @@ export class ServerGameplay {
     intent?: BlockTargetIntent,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
+    if (player.gamemode === 'spectator') return { ok: false, reason: 'spectator' };
     if (player.survival.dead) return { ok: false, reason: 'dead' };
     if (!isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) return { ok: false, reason: 'bounds' };
     if (!gameplayMayMutateBlock(x, z)) return { ok: false, reason: 'bounds' };
@@ -1310,6 +1312,7 @@ export class ServerGameplay {
         rewindTicks: options.target.pose.rewindTicks,
       }
       : {};
+    if (player.gamemode === 'spectator') return { result: 'immune', ...timeline };
     if (!player.connected || player.survival.dead || options?.attackerPose.dead) {
       return { result: 'stale', ...timeline };
     }

@@ -26,6 +26,8 @@ const HELP = {
     { usage: '/holograms line remove <name> <line>', description: 'Remove a line', permission: 'holograms.create' },
     { usage: '/holograms range <name> <distance>', description: 'Set view distance', permission: 'holograms.create' },
     { usage: '/holograms reset <name>', description: 'Restart a timer hologram for every player', permission: 'holograms.create' },
+    { usage: '/holograms automine <hologram> <mine>', description: 'Show that AutoMine reset countdown', permission: 'holograms.create' },
+    { usage: '/holograms automine <hologram> clear', description: 'Unlink a hologram from AutoMine', permission: 'holograms.create' },
     { usage: '/hologram reset <name>', description: 'Alias of /holograms reset', permission: 'holograms.create' },
   ],
 };
@@ -91,14 +93,16 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
               `Style: ${hologram.style}`,
               `Background: ${hologram.backgroundEnabled ? 'on' : 'off'} ${hologram.backgroundWidth.toFixed(2)}×${hologram.backgroundHeight.toFixed(2)}`,
               `Orientation: ${hologram.billboard ? 'billboard' : 'fixed'}`,
-              ...(hologram.kind === 'timer'
-                ? [`Timer: ${hologram.timerDuration}s started ${hologram.timerStartedAt}`]
-                : []),
+              ...(hologram.automine
+                ? [`AutoMine: ${hologram.automine}`]
+                : hologram.kind === 'timer'
+                  ? [`Timer: ${hologram.timerDuration}s started ${hologram.timerStartedAt}`]
+                  : []),
               `Lines (${hologram.lines.length}):`,
               ...hologram.lines.map((line, index) => `  ${index + 1}. ${line}`),
             ]);
           }
-          if (!canEdit(sender.playerId, sender.name)) return fail('You do not have permission.');
+          if (!canEdit(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
           const buyerOwned = (name: string | undefined) => name && isBuyerHologramName(name);
           const player = api.getPlayer(sender.playerId);
           if (sub === 'create') {
@@ -164,10 +168,37 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику.');
             const hologram = store.holograms.find((entry) => entry.name === name);
             if (!hologram) return fail(`Hologram '${name}' not found.`);
+            if (hologram.automine) return fail(`Таймер '${name}' идёт по автошахте '${hologram.automine}'.`);
             if (hologram.kind !== 'timer') return fail('Эта голограмма не является таймером.');
             hologram.timerStartedAt = Date.now();
             save(store);
             return ok(`Reset timer '${name}'.`);
+          }
+          if (sub === 'automine') {
+            const name = args[1]?.toLowerCase();
+            const mineName = args[2]?.toLowerCase();
+            if (!name || !mineName) return usageError('/holograms automine <hologram> <mine>');
+            if (buyerOwned(name)) return fail('Эта голограмма принадлежит скупщику.');
+            const hologram = store.holograms.find((entry) => entry.name === name);
+            if (!hologram) return fail(`Hologram '${name}' not found.`);
+            if (mineName === 'clear') {
+              hologram.automine = undefined;
+              hologram.kind = 'normal';
+              save(store);
+              return ok(`Голограмма '${name}' больше не привязана к автошахте.`);
+            }
+            if (!/^[a-z0-9_]{1,24}$/.test(mineName)) return fail(`Авто-шахта '${mineName}' не найдена.`);
+            const mine = ctx.autoMine.get(mineName);
+            if (!mine) return fail(`Авто-шахта '${mineName}' не найдена.`);
+            hologram.automine = mine.name;
+            hologram.kind = 'timer';
+            if (hologram.lines.length <= 1 && (hologram.lines[0] === hologram.name || hologram.lines.length === 0)) {
+              hologram.lines = ['Обновление шахты через:'];
+            }
+            save(store);
+            return ok(mine.nextResetAt === null
+              ? `Таймер '${name}' привязан к '${mine.name}'. Расписание ещё не задано.`
+              : `Таймер '${name}' показывает обновление '${mine.name}'.`);
           }
           if (sub === 'line') {
             const action = args[1]?.toLowerCase();

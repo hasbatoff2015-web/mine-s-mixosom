@@ -45,14 +45,14 @@ export function createAuctionPlugin(ctx: BuiltinPluginContext): Plugin {
           }
           if (sub === 'sell') {
             if (!api.hasPermission(sender.playerId, 'auction.sell') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             ctx.openAuction(sender.playerId, 'sell');
             return ok('Открыта продажа на аукционе.');
           }
           if (sub === 'list') {
             if (!api.hasPermission(sender.playerId, 'auction.list') && !api.isOperator(sender.playerId)) {
-              return fail('You do not have permission.');
+              return fail('Недостаточно прав для выполнения этой команды.');
             }
             ctx.openAuction(sender.playerId, 'list');
             return ok('Открыт список ваших лотов.');
