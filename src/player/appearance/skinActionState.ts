@@ -1,4 +1,5 @@
 import type { PlayerAppearance } from './PlayerAppearance';
+import { REWARDED_SKIN_COPY } from './rewardedSkinFlow';
 import {
   SKIN_PACK_ALL_EPIC,
   SKIN_PACK_ALL_RARE,
@@ -23,8 +24,9 @@ export interface SkinAccessSnapshot {
 }
 
 /**
- * Platform readiness. Stage 1 keeps both flags false.
- * Turning a flag on does not equip a skin and does not start an SDK call.
+ * Platform readiness.
+ * `rewardedAds` allows the client to request a video. It does not equip a skin.
+ * `purchases` does not unlock rare or epic skins.
  */
 export interface MonetizationAvailability {
   readonly rewardedAds: boolean;
@@ -36,9 +38,16 @@ export const STAGE1_MONETIZATION: MonetizationAvailability = Object.freeze({
   purchases: false,
 });
 
+/** The live client may ask for a rewarded video. Purchases stay off. */
+export const REWARDED_SKIN_AVAILABILITY: MonetizationAvailability = Object.freeze({
+  rewardedAds: true,
+  purchases: false,
+});
+
 export type SkinActionKind =
   | 'confirm_default'
   | 'already_equipped'
+  | 'request_rewarded_ad'
   | 'rewarded_unavailable'
   | 'purchase_unavailable'
   | 'legendary_locked'
@@ -49,8 +58,16 @@ export type SkinActionKind =
 export interface SkinActionState {
   readonly kind: SkinActionKind;
   readonly label: string;
+  /** Same as `buttonEnabled`. Kept for the existing button binding. */
   readonly enabled: boolean;
+  readonly buttonEnabled: boolean;
+  /** The SDK can open a rewarded video. This is not permission to equip. */
+  readonly advertisementReady: boolean;
+  /** True only while a one-switch grant is in hand. The resolver never sets this. */
+  readonly rewardEarned: boolean;
+  /** Same as `appearanceCommitAllowed`. */
   readonly commitsAppearance: boolean;
+  readonly appearanceCommitAllowed: boolean;
   readonly emphasis: 'primary' | 'neutral';
   readonly detail: string;
   readonly rarity?: SkinRarity;
@@ -63,6 +80,8 @@ export interface ResolveSkinActionInput {
   readonly equippedSkinId: string;
   readonly accessSnapshot?: SkinAccessSnapshot | null;
   readonly monetizationAvailability?: MonetizationAvailability;
+  /** Separate from `rewardedAds`. False keeps the request button disabled. */
+  readonly advertisementReady?: boolean;
 }
 
 interface SkinGrants {
@@ -111,13 +130,18 @@ function stateFor(
   enabled: boolean,
   commitsAppearance: boolean,
   detail = '',
+  advertisementReady = false,
 ): SkinActionState {
   return {
     kind,
     label,
     enabled,
+    buttonEnabled: enabled,
+    advertisementReady,
+    rewardEarned: false,
     commitsAppearance,
-    emphasis: commitsAppearance ? 'primary' : 'neutral',
+    appearanceCommitAllowed: commitsAppearance,
+    emphasis: commitsAppearance || (kind === 'request_rewarded_ad' && enabled) ? 'primary' : 'neutral',
     detail,
     ...(entry ? { rarity: entry.rarity, acquisition: entry.acquisition } : {}),
     ...(entry?.targetPriceLabel ? { targetPriceLabel: entry.targetPriceLabel } : {}),
@@ -132,10 +156,9 @@ function packGrants(entry: SkinStoreEntry, grants: SkinGrants): boolean {
 
 /**
  * Button state for the skin that is currently previewed.
- * Preview itself is always allowed. Only `commitsAppearance` may reach
- * `Game.setPlayerAppearance`, and only for a free, already-authorized skin.
- * Rewarded and purchase buttons stay disabled until a later stage wires the SDK.
- * Availability flags do not skip that gate.
+ * Preview itself is always allowed. Only `appearanceCommitAllowed` may reach
+ * `Game.setPlayerAppearance` through the ordinary confirm path.
+ * `request_rewarded_ad` asks for a video. It does not equip the skin.
  */
 export function resolveSkinActionState(input: ResolveSkinActionInput): SkinActionState {
   const entry = skinStoreEntry(input.selectedSkinId);
@@ -148,14 +171,27 @@ export function resolveSkinActionState(input: ResolveSkinActionInput): SkinActio
   }
 
   const grants = readSkinAccessSnapshot(input.accessSnapshot);
+  const availability = input.monetizationAvailability ?? STAGE1_MONETIZATION;
   if (entry.acquisition === 'rewarded_ad') {
+    if (!availability.rewardedAds) {
+      return stateFor(
+        entry,
+        'rewarded_unavailable',
+        REWARDED_SKIN_COPY.soon,
+        false,
+        false,
+        REWARDED_SKIN_COPY.soonDetail,
+      );
+    }
+    const ready = input.advertisementReady === true;
     return stateFor(
       entry,
-      'rewarded_unavailable',
-      'Реклама скоро',
+      'request_rewarded_ad',
+      REWARDED_SKIN_COPY.watch,
+      ready,
       false,
-      false,
-      'Каждая новая смена потребует рекламу. Реклама ещё не подключена.',
+      ready ? REWARDED_SKIN_COPY.offer : REWARDED_SKIN_COPY.unavailable,
+      ready,
     );
   }
   if (entry.acquisition === 'purchase') {
@@ -203,11 +239,13 @@ export function commitSelectedSkinAppearance(
     accessSnapshot,
     monetizationAvailability: availability,
   });
-  // Ads and purchases are not live. The flags must not turn a locked skin into a commit.
-  if (availability.rewardedAds || availability.purchases) {
-    if (state.kind === 'rewarded_unavailable' || state.kind === 'purchase_unavailable') return undefined;
-  }
-  return state.commitsAppearance ? selected : undefined;
+  if (
+    state.kind === 'request_rewarded_ad'
+    || state.kind === 'rewarded_unavailable'
+    || state.kind === 'purchase_unavailable'
+  ) return undefined;
+  if ((availability.rewardedAds || availability.purchases) && !state.appearanceCommitAllowed) return undefined;
+  return state.appearanceCommitAllowed ? selected : undefined;
 }
 
 /** Corner mark for paid and admin skins that this snapshot does not unlock. */

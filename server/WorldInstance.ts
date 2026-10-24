@@ -5888,9 +5888,11 @@ export class WorldInstance {
 
   /**
    * Registered production skin ids are still accepted here.
-   * A direct appearance packet can equip a rare, epic, or legendary skin.
-   * `evaluateServerSkinEquip` is the future fail-closed check and is not wired
-   * in, so existing saves are left untouched. UI locks are not this check.
+   * A direct appearance packet can equip a rewarded common skin, and also a
+   * rare, epic, or legendary skin. Client `onRewarded` is not checked.
+   * `evaluateServerSkinEquip` stays unwired, so a reconnect of an already
+   * worn skin is not blocked and the main menu does not need a server ack.
+   * UI locks are not this check.
    */
   setAppearance(
     player: ServerPlayer,

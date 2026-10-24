@@ -1164,7 +1164,7 @@ Future UI: панель «Персонаж / Скин» в главном мен
 4. Запушить изменения.
 5. Пересобрать и развернуть **и клиент, и сервер**. `git push` сам по себе не обновляет уже запущенную production-игру. Пока серверная сборка старая, новый id будет отвергнут whitelist.
 
-Редкость, целевые цены и будущие SKU живут отдельно от PNG-каталога. Порядок меню — `orderedPlayerSkins()`, не алфавит файлов. `resolveSkinActionState` решает только подпись кнопки. Серверная проверка `evaluateServerSkinEquip` описана, но `WorldInstance.setAppearance` её пока не вызывает: прямой пакет appearance по-прежнему проходит по whitelist зарегистрированных id. Покупки этим UI не защищены. См. `docs/SKIN_STORE.md`.
+Редкость, целевые цены и будущие SKU живут отдельно от PNG-каталога. Порядок меню — `orderedPlayerSkins()`, не алфавит файлов. `resolveSkinActionState` решает подпись кнопки. Обычный рекламный скин запрашивает ролик и не коммитится этой кнопкой. Серверная проверка `evaluateServerSkinEquip` описана, но `join` и `WorldInstance.setAppearance` её не вызывают: прямой пакет appearance по-прежнему проходит по whitelist зарегистрированных id. Покупки этим UI не защищены. См. `docs/SKIN_STORE.md`.
 
 `npm run dev`, `npm run build`, `npm run build:server`, typecheck и test сами запускают генератор. `npm run skins:generate` перезаписывает каталог. `npm run skins:check` падает, если закоммиченный каталог не совпадает с папкой PNG; `npm run check` вызывает его до того, как остальные шаги перезапишут файл. В `npm run dev` новый или изменённый PNG обновляет каталог и content-hash URL, затем страница перезагружается. Если вотчер не сработал, перезапустите `npm run dev`.
 
@@ -1871,13 +1871,16 @@ Natural terrain is reconstructed from `summary.seed` whenever a chunk is materia
 
 `YandexGamesService` изолирует optional SDK:
 
-- `initialize()` ловит отсутствие или ошибку SDK;
+- `initialize()` ловит отсутствие или ошибку SDK и не создаёт второй экземпляр на каждый ролик;
 - `loadingReady()` отправляется не более одного раза;
 - `gameplayStart/Stop()` idempotent;
+- `showRewardedVideo()` вызывает `adv.showRewardedVideo({ callbacks })` у уже полученного SDK;
 - platform pause/resume events переводятся в lifecycle callbacks;
-- local development не блокируется `/sdk.js`.
+- local development не блокируется `/sdk.js` и не получает фиктивный `onRewarded`.
 
-Ads, authorization, cloud saves, leaderboards и payments находятся вне текущего adapter scope.
+`RewardedSkinFlow` хранит один запрос: фаза, один `skinId`, один `requestId` и один таймер ожидания callback. `requestId` только отличает старый callback от нового. Это не подпись Яндекса. `SkinRewardController` вызывает `setPlayerAppearance` только после успешного завершения этого запроса. `resolveSkinActionState` помечает кнопку как `request_rewarded_ad` и не разрешает обычный commit.
+
+Показ из главного меню не переводит `MENU` в `PLAYING`. `planRewardedPresentationEnd` возвращает мир только если ролик прервал `PLAYING`, вкладка видима и сессия есть. Authorization, cloud saves, leaderboards и payments по-прежнему вне adapter scope.
 
 ## Performance boundaries
 

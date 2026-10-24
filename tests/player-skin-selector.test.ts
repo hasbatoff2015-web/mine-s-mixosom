@@ -183,7 +183,8 @@ describe('player skin selector', () => {
     expect(gameSource).toContain('selectSkin: () => this.showSkinSelector()');
     expect(gameSource).toContain('new PlayerSkinSelectorSession');
     expect(gameSource).toContain('commitSelectedSkinAppearance');
-    expect(gameSource).toContain('STAGE1_MONETIZATION');
+    expect(gameSource).toContain('REWARDED_SKIN_AVAILABILITY');
+    expect(gameSource).toContain('new SkinRewardController');
     expect(gameSource).toContain('if (committed) this.setPlayerAppearance(committed)');
     expect(gameSource).toContain('new PlayerAppearancePreview');
     expect(gameSource).toContain('new PlayerVisual(');

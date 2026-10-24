@@ -218,6 +218,8 @@ import {
   type MonetizationAvailability,
   type SkinAccessSnapshot,
 } from '../player/appearance/skinActionState';
+import { REWARDED_SKIN_COPY } from '../player/appearance/rewardedSkinFlow';
+import type { SkinRewardPhase } from '../player/appearance/skinRewardController';
 import {
   SKIN_RARITY_HEADINGS,
   SKIN_RARITY_LABELS,
@@ -244,6 +246,14 @@ export interface SkinSelectorActions {
   rotatePreview(deltaPixels: number): void;
   setPreviewRotationActive(active: boolean): void;
   onPreviewCanvas?(canvas: HTMLCanvasElement): void;
+  /** Ask for one rewarded video. This does not equip the skin. */
+  requestRewarded?(skinId: string): void;
+  /** Live flow state. Exit stays blocked while this returns true. */
+  rewardOperationActive?(): boolean;
+  /** Finish a stalled ad. Does not start another video. */
+  continueRewardRecovery?(): void;
+  /** SDK can open rewarded video. Independent of the feature flag. */
+  advertisementReady?: boolean;
   /** Equipped skin at open. Defaults to the appearance passed into the screen. */
   equippedSkinId?: string;
   /**
@@ -523,6 +533,14 @@ export class GameUI {
   private onlineStatuses?: ServerStatusMap;
   /** True when disabling «Обновить» moved focus off that button. */
   private onlineRefreshFocused = false;
+  /** Skin-selector exit lock. Other screens leave this unset. */
+  private skinExitBlocked?: () => boolean;
+  private skinRewardView?: {
+    apply: (skinId: string) => void;
+    selectedId: () => string;
+    acceptEquipped: (skinId: string, detail: string) => void;
+    present: (phase: SkinRewardPhase) => void;
+  };
 
   constructor(private readonly root: HTMLElement) {
     this.root.innerHTML = `
@@ -714,6 +732,11 @@ export class GameUI {
     }, { capture: true });
     window.addEventListener('keydown', (event) => {
       if (event.key !== 'Escape' || !this.onScreenEscape || !this.screen) return;
+      if (this.skinExitBlocked?.()) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        return;
+      }
       event.preventDefault();
       event.stopImmediatePropagation();
       const action = this.onScreenEscape;
@@ -829,9 +852,11 @@ export class GameUI {
     appearance: PlayerAppearance,
     actions: SkinSelectorActions,
   ): void {
-    const equippedSkinId = actions.equippedSkinId ?? appearance.skinId;
+    let equippedSkinId = actions.equippedSkinId ?? appearance.skinId;
     const accessSnapshot = actions.accessSnapshot;
     const monetizationAvailability = actions.monetizationAvailability ?? STAGE1_MONETIZATION;
+    const advertisementReady = actions.advertisementReady === true;
+    let rewardPhase: SkinRewardPhase = { kind: 'idle' };
     const cards = this.skinCatalogMarkup(appearance.skinId, accessSnapshot);
     this.setScreen(`
       <section class="screen menu-screen submenu-screen"><div class="menu-card menu-window skin-selector-window">
@@ -849,43 +874,133 @@ export class GameUI {
           <button type="button" class="game-button" data-action="confirm"></button>
         </footer>
       </div></section>`, actions.cancel);
-    this.bindAction('cancel', actions.cancel);
+    this.skinExitBlocked = () => actions.rewardOperationActive?.() === true;
+    const cancelButton = this.screen?.querySelector<HTMLButtonElement>('[data-action="cancel"]');
+    cancelButton?.addEventListener('click', (event) => {
+      if (actions.rewardOperationActive?.()) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      actions.cancel();
+    });
+    const selectedSkinId = (): string => this.screen?.querySelector<HTMLButtonElement>('[data-skin-id].selected')?.dataset.skinId
+      ?? appearance.skinId;
+    const paintNote = (note: HTMLElement, text: string, priceSource?: string): void => {
+      note.textContent = text;
+      if (text.length === 0) note.setAttribute('aria-hidden', 'true');
+      else note.removeAttribute('aria-hidden');
+      if (priceSource) note.dataset.priceSource = priceSource;
+      else delete note.dataset.priceSource;
+    };
     const applyAction = (skinId: string): void => {
       const state = resolveSkinActionState({
         selectedSkinId: skinId,
         equippedSkinId,
         accessSnapshot,
         monetizationAvailability,
+        advertisementReady,
       });
       const button = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
       const note = this.screen?.querySelector<HTMLElement>('[data-skin-action-note]');
+      const cancelControl = this.screen?.querySelector<HTMLButtonElement>('[data-action="cancel"]');
+      const exitLocked = rewardPhase.kind === 'pending' || rewardPhase.kind === 'recovery';
+      if (cancelControl) {
+        cancelControl.disabled = exitLocked;
+        cancelControl.tabIndex = exitLocked ? -1 : 0;
+        cancelControl.setAttribute('aria-disabled', String(exitLocked));
+      }
       if (!button) return;
+      if (rewardPhase.kind === 'recovery') {
+        button.textContent = REWARDED_SKIN_COPY.continue;
+        button.disabled = false;
+        button.tabIndex = 0;
+        button.classList.add('primary');
+        button.dataset.actionState = 'reward_recovery';
+        button.setAttribute('aria-disabled', 'false');
+        button.removeAttribute('aria-busy');
+        if (note) paintNote(note, rewardPhase.detail);
+        return;
+      }
+      if (rewardPhase.kind === 'pending') {
+        button.textContent = rewardPhase.detail === REWARDED_SKIN_COPY.rewardWaiting
+          ? REWARDED_SKIN_COPY.closing
+          : REWARDED_SKIN_COPY.loading;
+        button.disabled = true;
+        button.tabIndex = -1;
+        button.classList.remove('primary');
+        button.dataset.actionState = 'reward_pending';
+        button.setAttribute('aria-disabled', 'true');
+        button.setAttribute('aria-busy', 'true');
+        if (note) paintNote(note, rewardPhase.detail);
+        return;
+      }
+      button.removeAttribute('aria-busy');
       button.textContent = state.label;
-      button.disabled = !state.enabled;
-      button.tabIndex = state.enabled ? 0 : -1;
+      button.disabled = !state.buttonEnabled;
+      button.tabIndex = state.buttonEnabled ? 0 : -1;
       button.classList.toggle('primary', state.emphasis === 'primary');
       button.dataset.actionState = state.kind;
-      button.setAttribute('aria-disabled', String(!state.enabled));
-      if (note) {
-        note.textContent = state.detail;
-        if (state.detail.length === 0) note.setAttribute('aria-hidden', 'true');
-        else note.removeAttribute('aria-hidden');
-        if (state.targetPriceLabel) note.dataset.priceSource = 'target';
-        else delete note.dataset.priceSource;
+      button.setAttribute('aria-disabled', String(!state.buttonEnabled));
+      if (!note) return;
+      if (rewardPhase.kind === 'message') {
+        paintNote(note, rewardPhase.detail);
+        return;
+      }
+      paintNote(note, state.detail, state.targetPriceLabel ? 'target' : undefined);
+    };
+    const selectCard = (skinId: string): void => {
+      for (const card of this.screen?.querySelectorAll<HTMLButtonElement>('[data-skin-id]') ?? []) {
+        const selected = card.dataset.skinId === skinId;
+        card.classList.toggle('selected', selected);
+        card.setAttribute('aria-pressed', String(selected));
       }
     };
     applyAction(appearance.skinId);
+    this.skinRewardView = {
+      apply: applyAction,
+      selectedId: selectedSkinId,
+      present: (phase) => {
+        rewardPhase = phase;
+        applyAction(selectedSkinId());
+      },
+      acceptEquipped: (skinId, detail) => {
+        equippedSkinId = skinId;
+        rewardPhase = { kind: 'message', detail };
+        selectCard(skinId);
+        actions.preview(skinId);
+        applyAction(skinId);
+      },
+    };
     const confirm = this.screen?.querySelector<HTMLButtonElement>('[data-action="confirm"]');
     confirm?.addEventListener('click', (event) => {
-      const selectedId = this.screen?.querySelector<HTMLButtonElement>('[data-skin-id].selected')?.dataset.skinId
-        ?? appearance.skinId;
+      if (rewardPhase.kind === 'recovery') {
+        actions.continueRewardRecovery?.();
+        return;
+      }
+      if (actions.rewardOperationActive?.() || rewardPhase.kind === 'pending' || confirm.disabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      const selectedId = selectedSkinId();
       const state = resolveSkinActionState({
         selectedSkinId: selectedId,
         equippedSkinId,
         accessSnapshot,
         monetizationAvailability,
+        advertisementReady,
       });
-      if (!state.enabled || confirm.disabled) {
+      if (!state.buttonEnabled) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+      if (state.kind === 'request_rewarded_ad') {
+        actions.requestRewarded?.(selectedId);
+        return;
+      }
+      if (!state.appearanceCommitAllowed && state.kind !== 'already_equipped') {
         event.preventDefault();
         event.stopPropagation();
         return;
@@ -907,16 +1022,21 @@ export class GameUI {
       button.addEventListener('click', () => {
         const skinId = button.dataset.skinId;
         if (!skinId) return;
-        for (const card of this.screen!.querySelectorAll<HTMLButtonElement>('[data-skin-id]')) {
-          const selected = card === button;
-          card.classList.toggle('selected', selected);
-          card.setAttribute('aria-pressed', String(selected));
-        }
+        selectCard(skinId);
+        if (rewardPhase.kind !== 'pending' && rewardPhase.kind !== 'recovery') rewardPhase = { kind: 'idle' };
         actions.preview(skinId);
         applyAction(skinId);
       });
     }
     this.paintSkinThumbs();
+  }
+
+  presentSkinReward(phase: SkinRewardPhase): void {
+    this.skinRewardView?.present(phase);
+  }
+
+  acceptRewardedSkin(skinId: string, detail: string): void {
+    this.skinRewardView?.acceptEquipped(skinId, detail);
   }
 
   private skinCatalogMarkup(selectedSkinId: string, accessSnapshot?: SkinAccessSnapshot | null): string {
@@ -5783,6 +5903,8 @@ export class GameUI {
     this.screen?.remove();
     this.screen = undefined;
     this.onScreenEscape = undefined;
+    this.skinRewardView = undefined;
+    this.skinExitBlocked = undefined;
   }
 
   private bindAction(action: string, callback: () => void): void {
