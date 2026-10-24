@@ -6,7 +6,7 @@ import { Inventory, createItemStack } from '../../src/inventory';
 import { ItemId } from '../../src/items';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
-import {
+import { syncAuction,
   AUCTION_DURATION_MS,
   AUCTION_MIN_PRICE,
   AuctionService,
@@ -34,7 +34,7 @@ describe('collectible paintings on the auction house', () => {
     economy.setBalance('buyer', 1_000, 'ADMIN_SET');
     const seller = new Inventory();
     seller.setSlot(0, createItemStack(ItemId.Painting07SunnyBee));
-    const created = auction.createListing('seller', 'Ada', seller, 0, 1, AUCTION_MIN_PRICE);
+    const created = syncAuction(auction.createListing('seller', 'Ada', seller, 0, 1, AUCTION_MIN_PRICE));
     expect(created.ok).toBe(true);
     expect(created.listing?.item.itemId).toBe(ItemId.Painting07SunnyBee);
     expect(created.listing?.item.count).toBe(1);
@@ -54,25 +54,25 @@ describe('collectible paintings on the auction house', () => {
     expect(auction.historyRows('buyer')[0]?.title).toContain('Коллекционная картина #7');
 
     seller.setSlot(1, createItemStack(ItemId.Painting20TigerMusya));
-    const listed = auction.createListing('seller', 'Ada', seller, 1, 1, 50);
+    const listed = syncAuction(auction.createListing('seller', 'Ada', seller, 1, 1, 50));
     expect(listed.ok).toBe(true);
     expect(auction.cancelListing('seller', listed.listing!.listingId).ok).toBe(true);
     const claim = new Inventory();
-    expect(auction.claimListing('seller', claim, listed.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(auction.claimListing('seller', claim, listed.listing!.listingId)).ok).toBe(true);
     expect(claim.getSlot(0)?.itemId).toBe(ItemId.Painting20TigerMusya);
 
     seller.setSlot(2, createItemStack(ItemId.Painting11CrowdScream));
-    const expiring = auction.createListing('seller', 'Ada', seller, 2, 1, 80);
+    const expiring = syncAuction(auction.createListing('seller', 'Ada', seller, 2, 1, 80));
     expect(expiring.ok).toBe(true);
     now += AUCTION_DURATION_MS + 1;
     expect(auction.expireDue()).toBeGreaterThan(0);
     expect(auction.getListing(expiring.listing!.listingId)?.status).toBe('EXPIRED');
     const expiredClaim = new Inventory();
-    expect(auction.claimListing('seller', expiredClaim, expiring.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(auction.claimListing('seller', expiredClaim, expiring.listing!.listingId)).ok).toBe(true);
     expect(expiredClaim.getSlot(0)?.itemId).toBe(ItemId.Painting11CrowdScream);
 
     seller.setSlot(3, createItemStack(ItemId.Painting09RainbowGhast));
-    const active = auction.createListing('seller', 'Ada', seller, 3, 1, 90);
+    const active = syncAuction(auction.createListing('seller', 'Ada', seller, 3, 1, 90));
     expect(active.ok).toBe(true);
     const relisted = auction.relist('seller', active.listing!.listingId, 120);
     expect(relisted.ok).toBe(true);

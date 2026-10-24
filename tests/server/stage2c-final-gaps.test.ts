@@ -8,7 +8,7 @@ import type { ItemStack } from '../../src/inventory/types';
 import type { Database, Queryable } from '../../server/db/types';
 import { hashPayload } from '../../server/db/canonicalJson';
 import type { CurrencyPort, EconomyCommandRequest } from '../../server/economy/currencyPort';
-import { AuctionService } from '../../server/services/auction';
+import { syncAuction, AuctionService } from '../../server/services/auction';
 import { EconomyService } from '../../server/services/economy';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
@@ -117,7 +117,7 @@ describe('auction purchase identity', () => {
     const auction = new AuctionService(store, listedEconomy, () => 1_000);
     const seller = new Inventory();
     seller.setSlot(0, createItemStack('diamond', 2));
-    const listed = auction.createListing('ada', 'Ada', seller, 0, 2, 10);
+    const listed = syncAuction(auction.createListing('ada', 'Ada', seller, 0, 2, 10));
     expect(listed.ok).toBe(true);
     const listingId = listed.listing!.listingId;
     const memory = new MemorySettlements();
@@ -200,7 +200,7 @@ describe('auction purchase identity', () => {
     const auction = new AuctionService(store, new EconomyService(store), () => 1_000);
     const seller = new Inventory();
     seller.setSlot(0, createItemStack('diamond', 2));
-    const listed = auction.createListing('ada', 'Ada', seller, 0, 2, 10);
+    const listed = syncAuction(auction.createListing('ada', 'Ada', seller, 0, 2, 10));
     const listingId = listed.listing!.listingId;
     const memory = new MemorySettlements();
     const charges: string[] = [];

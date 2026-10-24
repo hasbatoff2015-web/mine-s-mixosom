@@ -99,6 +99,12 @@ export interface AuctionResult {
   readonly previous?: AuctionListing;
 }
 
+/** Reads a listing result that the caller already knows is synchronous. */
+export function syncAuction(result: AuctionResult | Promise<AuctionResult>): AuctionResult {
+  if (isPromise(result)) throw new Error('auction operation is still pending');
+  return result;
+}
+
 export interface AuctionQuery {
   readonly search?: string;
   readonly page?: number;
@@ -509,7 +515,7 @@ export class AuctionService {
     amount: number,
     price: number,
     expected?: ItemStack,
-  ): AuctionResult {
+  ): AuctionResult | Promise<AuctionResult> {
     return this.withPlayerLock(playerId, () => {
       this.expireDue();
       const priceError = auctionPriceError(price);
@@ -760,7 +766,7 @@ export class AuctionService {
     });
   }
 
-  claimListing(playerId: string, inventory: Inventory, listingId: string): AuctionResult {
+  claimListing(playerId: string, inventory: Inventory, listingId: string): AuctionResult | Promise<AuctionResult> {
     return this.withLocks(playerId, listingId, () => {
       this.expireDue();
       const listing = this.listings.get(listingId);
@@ -803,7 +809,7 @@ export class AuctionService {
       }).catch(() => {
         return { ok: false as const, error: SETTLEMENT_RECOVERING };
       });
-    }) as unknown as AuctionResult;
+    });
   }
 
   selectSellSlot(playerId: string, inventory: Inventory, slot: number): AuctionResult {
@@ -822,7 +828,10 @@ export class AuctionService {
     return { ok: true };
   }
 
-  private withPlayerLock(playerId: string, fn: () => AuctionResult | Promise<AuctionResult>): AuctionResult {
+  private withPlayerLock(
+    playerId: string,
+    fn: () => AuctionResult | Promise<AuctionResult>,
+  ): AuctionResult | Promise<AuctionResult> {
     if (this.playerLocks.has(playerId)) return { ok: false, error: 'Предмет больше недоступен для продажи.' };
     this.playerLocks.add(playerId);
     let asyncResult = false;
@@ -832,7 +841,7 @@ export class AuctionService {
         asyncResult = true;
         return result.finally(() => {
           this.playerLocks.delete(playerId);
-        }) as unknown as AuctionResult;
+        });
       }
       return result;
     } finally {

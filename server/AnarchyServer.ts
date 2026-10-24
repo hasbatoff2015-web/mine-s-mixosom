@@ -620,7 +620,7 @@ export class AnarchyServer {
         this.world.updateHologramAppearance(player, message);
         return;
       case 'auction_action':
-        this.world.handleAuctionAction(player, message);
+        this.world.handleAuctionAction(player, message, { connectionId });
         return;
       case 'clan_action':
         this.world.handleClanAction(player, message);

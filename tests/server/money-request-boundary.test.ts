@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { Inventory, createItemStack } from '../../src/inventory';
 import type { CurrencyPort, EconomyCommandRequest } from '../../server/economy/currencyPort';
 import { MONEY_REQUEST_REQUIRED } from '../../server/economy/moneyRequest';
-import { AuctionService } from '../../server/services/auction';
+import { syncAuction, AuctionService } from '../../server/services/auction';
 import { BuyerService } from '../../server/services/buyer';
 import { ClanService } from '../../server/services/clan';
 import { HologramNetwork } from '../../server/services/holograms';
@@ -65,7 +65,7 @@ describe('client money request boundaries', () => {
     const auction = new AuctionService(store, economy);
     const inventory = new Inventory();
     inventory.setSlot(0, createItemStack('diamond', 1));
-    const listed = auction.createListing('ada', 'Ada', inventory, 0, 1, 10);
+    const listed = syncAuction(auction.createListing('ada', 'Ada', inventory, 0, 1, 10));
     const buyerInventory = new Inventory();
     const bought = await auction.buyListing('bea', 'Bea', buyerInventory, listed.listing!.listingId);
     expect(bought.ok).toBe(false);

@@ -8,7 +8,7 @@ import { ItemId } from '../../src/items';
 import { Vec3 } from '../../src/math/vec3';
 import { loadServerConfig } from '../../server/config';
 import { IDENTITY_TRANSFER_BLOCKED, scanIdentity, type IdentityScanInput } from '../../server/identity/locationScan';
-import { AUCTION_MIN_PRICE } from '../../server/services/auction';
+import { syncAuction, AUCTION_MIN_PRICE } from '../../server/services/auction';
 import { EconomyService } from '../../server/services/economy';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
 
@@ -197,7 +197,7 @@ describe('stage 3B unique item locations', () => {
     const world = await start('auction-dupe');
     const ada = addPlayer(world, 'Ada');
     ada.inventory.setSlot(0, tracked(PAINT, X));
-    const listed = world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE);
+    const listed = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE));
     expect(listed.ok).toBe(true);
     ada.inventory.setSlot(1, tracked(PAINT, X));
     const seen = of(world, X);
@@ -257,7 +257,7 @@ describe('stage 3B unique item locations', () => {
     ada.inventory.setSlot(0, tracked(PAINT, Y));
     money(world).setBalance(bob.id, 1_000, 'ADMIN_SET');
     const balance = money(world).getBalance(bob.id);
-    const listed = world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE);
+    const listed = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE));
     expect(listed.ok).toBe(true);
     const bought = world.auction.buyListing(bob.id, bob.name, bob.inventory, listed.listing!.listingId);
     expect(bought.ok).toBe(true);
@@ -268,7 +268,7 @@ describe('stage 3B unique item locations', () => {
     expect(bob.inventory.count(PAINT)).toBe(1);
 
     ada.inventory.setSlot(0, tracked(OTHER, X));
-    const cancelled = world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE);
+    const cancelled = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE));
     expect(cancelled.ok).toBe(true);
     expect(world.auction.cancelListing(ada.id, cancelled.listing!.listingId).ok).toBe(true);
     seen = of(world, X);
@@ -276,7 +276,7 @@ describe('stage 3B unique item locations', () => {
     expect(seen.locations).toEqual([expect.objectContaining({ kind: 'auction', listingId: cancelled.listing!.listingId })]);
     expect(ada.inventory.count(OTHER)).toBe(0);
     const claim = new Inventory();
-    expect(world.auction.claimListing(ada.id, claim, cancelled.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(world.auction.claimListing(ada.id, claim, cancelled.listing!.listingId)).ok).toBe(true);
     ada.inventory.setSlot(0, claim.getSlot(0));
     seen = of(world, X);
     expect(seen.finding).toBeUndefined();
@@ -285,7 +285,7 @@ describe('stage 3B unique item locations', () => {
 
     bob.inventory.clear();
     ada.inventory.setSlot(0, tracked(PAINT, Y));
-    const active = world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE);
+    const active = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE));
     expect(active.ok).toBe(true);
     const relisted = world.auction.relist(ada.id, active.listing!.listingId, AUCTION_MIN_PRICE + 1);
     expect(relisted.ok).toBe(true);
@@ -459,7 +459,7 @@ describe('stage 3B unique item locations', () => {
     expect(world.auction.holdingListings()).toHaveLength(0);
 
     world.world.chests.delete(`${x},${y},${z}`);
-    const listed = world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE);
+    const listed = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 0, 1, AUCTION_MIN_PRICE));
     expect(listed.ok).toBe(true);
     bob.inventory.setSlot(0, tracked(PAINT, X));
     money(world).setBalance(bob.id, 500, 'ADMIN_SET');

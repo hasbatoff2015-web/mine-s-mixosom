@@ -9,7 +9,7 @@ import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerAuctionMessage } from '../../shared/protocol';
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { bindNamedOperatorFixture } from './helpers/operatorFixture';
-import {
+import { syncAuction,
   AUCTION_PAGE_SIZE,
   AUCTION_PRICE_EMPTY_ERROR,
   AUCTION_PRICE_RANGE_ERROR,
@@ -170,14 +170,14 @@ describe('Auction plugin', () => {
     const ada = join(world, 'Ada');
     const bob = join(world, 'Bob');
     ada.player.inventory.setSlot(0, createItemStack('diamond', 2, { metadata: { mark: 'keep' } }));
-    const created = world.auction.createListing(
+    const created = syncAuction(world.auction.createListing(
       ada.player.id,
       ada.player.name,
       ada.player.inventory,
       0,
       2,
       80,
-    );
+    ));
     expect(created.ok).toBe(true);
     const listingId = created.listing!.listingId;
     const adaToken = ada.player.sessionToken;
@@ -201,7 +201,7 @@ describe('Auction plugin', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     ada.player.inventory.setSlot(0, createItemStack('gold_ingot', 8));
-    const created = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 8, 10);
+    const created = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 8, 10));
     world.handleAuctionAction(ada.player, {
       type: 'auction_action',
       action: 'cancel',
@@ -230,7 +230,7 @@ describe('Auction plugin', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     ada.player.inventory.setSlot(0, createItemStack('iron_ingot', 4));
-    const created = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 4, 20);
+    const created = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 4, 20));
     chat(world, ada, '/ah list');
     world.handleAuctionAction(ada.player, {
       type: 'auction_action',
@@ -297,7 +297,7 @@ describe('Auction plugin', () => {
     world.economy.deposit(bob.player.id, 500, 'ADMIN_GIVE');
     for (let i = 0; i < AUCTION_PAGE_SIZE + 1; i += 1) {
       ada.player.inventory.setSlot(0, createItemStack('stone', 1));
-      expect(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 1, 10).ok).toBe(true);
+      expect(syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 1, 10)).ok).toBe(true);
     }
     chat(world, bob, '/ah');
     world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'search', search: 'stone' });
@@ -346,7 +346,7 @@ describe('Auction plugin', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     ada.player.inventory.setSlot(0, createItemStack('gold_ingot', 4));
-    const created = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 4, 10);
+    const created = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 4, 10));
     world.handleAuctionAction(ada.player, {
       type: 'auction_action',
       action: 'cancel',

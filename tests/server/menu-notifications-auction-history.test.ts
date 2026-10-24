@@ -7,7 +7,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService, formatMegacoins } from '../../server/services/economy';
-import { AuctionService } from '../../server/services/auction';
+import { syncAuction, AuctionService } from '../../server/services/auction';
 import { NotificationService } from '../../server/services/notifications';
 import { FriendsService } from '../../server/services/friends';
 import { TradeService } from '../../server/services/trade';
@@ -138,7 +138,7 @@ describe('AuctionService deal history', () => {
     const { auction, economy, notifications } = await setup(() => now);
     const sellerInv = new Inventory();
     fill(sellerInv, 'diamond', 32);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 32, 12_000);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 32, 12_000));
     expect(created.ok).toBe(true);
     expect(auction.historyEntries()).toEqual([]);
     economy.setBalance('buyer', 20_000, 'ADMIN_SET');
@@ -168,7 +168,7 @@ describe('AuctionService deal history', () => {
     const { auction, economy } = await setup();
     const sellerInv = new Inventory();
     fill(sellerInv, 'iron_ingot', 16);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 16, 4800);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 16, 4800));
     economy.setBalance('buyer', 10_000, 'ADMIN_SET');
     expect(auction.buyListing('buyer', 'Bob', new Inventory(), created.listing!.listingId).ok).toBe(true);
     expect(auction.historyEntries('buyer')[0]).toMatchObject({
@@ -181,14 +181,14 @@ describe('AuctionService deal history', () => {
     const { auction, economy, notifications } = await setup();
     const sellerInv = new Inventory();
     fill(sellerInv, 'diamond', 3);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 3, 250);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 3, 250));
     expect(auction.historyEntries()).toEqual([]);
     expect(auction.cancelListing('seller', created.listing!.listingId).ok).toBe(true);
-    expect(auction.claimListing('seller', new Inventory(), created.listing!.listingId).ok).toBe(true);
+    expect(syncAuction(auction.claimListing('seller', new Inventory(), created.listing!.listingId)).ok).toBe(true);
     expect(auction.historyEntries()).toEqual([]);
 
     fill(sellerInv, 'diamond', 1);
-    const live = auction.createListing('seller', 'Ada', sellerInv, 0, 1, 50);
+    const live = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 1, 50));
     expect(auction.buyListing('seller', 'Ada', new Inventory(), live.listing!.listingId).ok).toBe(false);
     economy.setBalance('broke', 0, 'ADMIN_SET');
     expect(auction.buyListing('broke', 'Bob', new Inventory(), live.listing!.listingId).ok).toBe(false);
@@ -207,7 +207,7 @@ describe('AuctionService deal history', () => {
     const sellerInv = new Inventory();
     for (let i = 0; i < 21; i += 1) {
       fill(sellerInv, 'dirt', 1);
-      const created = auction.createListing('seller', 'Ada', sellerInv, 0, 1, 10);
+      const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 1, 10));
       now += 1_000;
       expect(auction.buyListing('buyer', 'Bob', new Inventory(), created.listing!.listingId).ok).toBe(true);
     }
@@ -228,7 +228,7 @@ describe('AuctionService deal history', () => {
     const { auction, economy, store } = await setup();
     const sellerInv = new Inventory();
     fill(sellerInv, 'diamond', 2);
-    const created = auction.createListing('seller', 'Ada', sellerInv, 0, 2, 40);
+    const created = syncAuction(auction.createListing('seller', 'Ada', sellerInv, 0, 2, 40));
     economy.setBalance('buyer', 100, 'ADMIN_SET');
     expect(auction.buyListing('buyer', 'Bob', new Inventory(), created.listing!.listingId).ok).toBe(true);
     const again = new AuctionService(store, new EconomyService(store));
@@ -373,7 +373,7 @@ describe('menu unread notifications', () => {
     const bob = join(world, 'Bob');
     ada.player.inventory.setSlot(0, createItemStack('diamond', 32));
     world.economy.setBalance(bob.player.id, 20_000, 'ADMIN_SET');
-    const listed = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 32, 12_000);
+    const listed = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 0, 32, 12_000));
     expect(listed.ok).toBe(true);
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'root' });
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'open', screen: 'root' });
@@ -392,10 +392,10 @@ describe('menu unread notifications', () => {
     expect(world.notifications.counts(bob.player.id).auction).toBe(0);
 
     ada.player.inventory.setSlot(1, createItemStack('dirt', 1));
-    const second = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 1, 1, 10);
+    const second = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 1, 1, 10));
     expect(world.auction.buyListing(bob.player.id, 'Bob', bob.player.inventory, second.listing!.listingId).ok).toBe(true);
     ada.player.inventory.setSlot(2, createItemStack('dirt', 1));
-    const third = world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 2, 1, 10);
+    const third = syncAuction(world.auction.createListing(ada.player.id, 'Ada', ada.player.inventory, 2, 1, 10));
     expect(world.auction.buyListing(bob.player.id, 'Bob', bob.player.inventory, third.listing!.listingId).ok).toBe(true);
     expect(world.notifications.counts(ada.player.id).auction).toBe(2);
   });

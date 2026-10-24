@@ -1,3 +1,4 @@
+import { syncAuction } from '../../server/services/auction';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -235,7 +236,7 @@ describe('inventory revision and replay', () => {
 
     ada.inventory.setSlot(1, createItemStack('diamond', 3));
     const beforeAuction = ada.inventory.revision;
-    const listed = world.auction.createListing(ada.id, ada.name, ada.inventory, 1, 1, 10);
+    const listed = syncAuction(world.auction.createListing(ada.id, ada.name, ada.inventory, 1, 1, 10));
     expect(listed.ok).toBe(true);
     expect(ada.inventory.getSlot(1)?.count).toBe(2);
     expect(ada.inventory.revision).toBeGreaterThan(beforeAuction);

@@ -13,7 +13,7 @@ import { PostgresGameplayEconomy } from '../../server/economy/postgresAuthority'
 import { MegacoinService } from '../../server/economy/service';
 import { applyLegacyBalanceImport, inspectLegacyBalances, planLegacyImport } from '../../server/economy/legacyImport';
 import { CLAN_CREATE_COST } from '../../shared/clans';
-import { AuctionService } from '../../server/services/auction';
+import { syncAuction, AuctionService } from '../../server/services/auction';
 import { BuyerService } from '../../server/services/buyer';
 import { ClanService } from '../../server/services/clan';
 import { ECONOMY_INITIAL_BALANCE, ECONOMY_MAX_BALANCE, EconomyService } from '../../server/services/economy';
@@ -251,7 +251,7 @@ describe.skipIf(databaseUrl === '')('postgres gameplay economy', () => {
     await money.deposit(bea, 500, 'ADMIN_GIVE');
     const sellerInventory = new Inventory();
     sellerInventory.addItem('diamond', 1);
-    const listed = auction.createListing(ada, 'Alice', sellerInventory, 0, 1, 100);
+    const listed = syncAuction(auction.createListing(ada, 'Alice', sellerInventory, 0, 1, 100));
     expect(listed.ok).toBe(true);
     const listingId = listed.listing!.listingId;
     const buyerInventory = new Inventory();

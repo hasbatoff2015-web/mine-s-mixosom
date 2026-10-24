@@ -8,7 +8,7 @@ import type { ItemStack } from '../../src/inventory/types';
 import type { Database, Queryable } from '../../server/db/types';
 import { hashPayload } from '../../server/db/canonicalJson';
 import type { CurrencyPort, EconomyCommandRequest } from '../../server/economy/currencyPort';
-import { AuctionService } from '../../server/services/auction';
+import { syncAuction, AuctionService } from '../../server/services/auction';
 import { BuyerService } from '../../server/services/buyer';
 import { ClanService } from '../../server/services/clan';
 import { EconomyService } from '../../server/services/economy';
@@ -765,7 +765,7 @@ describe('stage 2C auction delivery', () => {
     const auction = new AuctionService(store, economy, () => 1_000);
     const seller = new Inventory();
     seller.setSlot(0, createItemStack('diamond', 2));
-    const listed = auction.createListing('ada', 'Ada', seller, 0, 2, 10);
+    const listed = syncAuction(auction.createListing('ada', 'Ada', seller, 0, 2, 10));
     expect(listed.ok).toBe(true);
     const { service, memory } = settlementService();
     return { store, service, memory, listingId: listed.ok ? listed.listing!.listingId : '' };

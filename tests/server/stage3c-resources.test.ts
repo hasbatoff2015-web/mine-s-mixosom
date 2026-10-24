@@ -9,7 +9,7 @@ import { creativeCatalogItems, ItemId } from '../../src/items';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import type { Plugin } from '../../server/PluginManager';
-import { AUCTION_MIN_PRICE } from '../../server/services/auction';
+import { syncAuction, AUCTION_MIN_PRICE } from '../../server/services/auction';
 import { EconomyService } from '../../server/services/economy';
 import type { ItemDurability } from '../../server/settlements/durability';
 import { WorldInstance, type ServerPlayer } from '../../server/WorldInstance';
@@ -467,7 +467,7 @@ describe('stage 3C valuable resources', () => {
     expect(row(world, ItemId.Diamond)).toMatchObject({ current: 64, unexplained: 0 });
 
     money(world).setBalance(ada.id, 1_000, 'ADMIN_SET');
-    const listed = world.auction.createListing(bob.id, bob.name, bob.inventory, 0, 64, AUCTION_MIN_PRICE);
+    const listed = syncAuction(world.auction.createListing(bob.id, bob.name, bob.inventory, 0, 64, AUCTION_MIN_PRICE));
     expect(listed.ok).toBe(true);
     expect(row(world, ItemId.Diamond).current).toBe(64);
     expect(world.auction.buyListing(ada.id, ada.name, ada.inventory, listed.listing!.listingId).ok).toBe(true);
