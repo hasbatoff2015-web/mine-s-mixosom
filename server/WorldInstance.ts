@@ -2400,6 +2400,9 @@ export class WorldInstance {
         this.flushAuction(player);
         return;
       }
+      const connectionId = source?.connectionId ?? player.connectionId;
+      const revisionBefore = player.inventory.revision;
+      const origin = this.auctionOrigin(player.id);
       const result = this.auction.createListing(
         player.id,
         player.name,
@@ -2409,19 +2412,12 @@ export class WorldInstance {
         parsedPrice,
         session.expectedItem,
       );
-      const connectionId = source?.connectionId ?? player.connectionId;
       this.settleAuction(result, (done) => {
-        if (!this.auctionCallerCurrent(player, connectionId)) return;
-        if (!done.ok) {
-          this.noteAuction(player, done.error ?? 'Предмет больше недоступен для продажи.');
-          return;
-        }
-        player.inventoryDirty = true;
-        this.flushPlayerInventory(player);
-        if (!this.auctionScreenCurrent(player)) return;
-        this.auction.openSell(player.id);
-        this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
-        this.flushAuction(player);
+        this.completeAuction(player, connectionId, revisionBefore, origin, done, () => {
+          this.auction.openSell(player.id);
+          this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
+          this.flushAuction(player);
+        }, done.error ?? 'Предмет больше недоступен для продажи.');
       });
       return;
     }
@@ -2473,24 +2469,20 @@ export class WorldInstance {
       return;
     }
     if (action === 'claim' && (message.listingId || session.listingId)) {
+      const connectionId = source?.connectionId ?? player.connectionId;
+      const revisionBefore = player.inventory.revision;
+      const origin = this.auctionOrigin(player.id);
       const result = this.auction.claimListing(
         player.id,
         player.inventory,
         message.listingId ?? session.listingId!,
       );
-      const connectionId = source?.connectionId ?? player.connectionId;
       this.settleAuction(result, (done) => {
-        if (!this.auctionCallerCurrent(player, connectionId)) return;
-        if (!done.ok) {
-          this.noteAuction(player, done.error ?? 'Этот товар уже продан.');
-          return;
-        }
-        player.inventoryDirty = true;
-        this.flushPlayerInventory(player);
-        if (!this.auctionScreenCurrent(player)) return;
-        this.auction.openMine(player.id);
-        this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
-        this.flushAuction(player);
+        this.completeAuction(player, connectionId, revisionBefore, origin, done, () => {
+          this.auction.openMine(player.id);
+          this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
+          this.flushAuction(player);
+        }, done.error ?? 'Этот товар уже продан.');
       });
       return;
     }
@@ -2509,9 +2501,55 @@ export class WorldInstance {
     this.money.track?.(guarded);
   }
 
+  private auctionOrigin(playerId: string): { screen: string; search: string; page: number; listingId?: string } {
+    const session = this.auction.session(playerId);
+    return {
+      screen: session.screen,
+      search: session.search,
+      page: session.page,
+      listingId: session.listingId,
+    };
+  }
+
+  private completeAuction(
+    player: ServerPlayer,
+    connectionId: string,
+    revisionBefore: number,
+    origin: { screen: string; search: string; page: number; listingId?: string },
+    done: AuctionResult,
+    present: () => void,
+    failure: string,
+  ): void {
+    const live = this.players.get(player.id);
+    if (live?.connected && (live.inventory.revision !== revisionBefore || live.inventoryDirty)) {
+      live.inventoryDirty = true;
+      this.flushPlayerInventory(live);
+    }
+    if (!this.auctionCallerCurrent(player, connectionId)) return;
+    if (!this.auctionOriginCurrent(player, origin)) return;
+    if (!done.ok) {
+      this.noteAuction(player, failure);
+      return;
+    }
+    present();
+  }
+
   private auctionCallerCurrent(player: ServerPlayer, connectionId: string): boolean {
     const live = this.players.get(player.id);
     return Boolean(live?.connected && live === player && live.connectionId === connectionId);
+  }
+
+  private auctionOriginCurrent(
+    player: ServerPlayer,
+    origin: { screen: string; search: string; page: number; listingId?: string },
+  ): boolean {
+    if (this.menuSessions.has(player.id)) return false;
+    const session = this.auction.session(player.id);
+    return session.screen !== 'closed'
+      && session.screen === origin.screen
+      && session.search === origin.search
+      && session.page === origin.page
+      && session.listingId === origin.listingId;
   }
 
   private auctionScreenCurrent(player: ServerPlayer): boolean {

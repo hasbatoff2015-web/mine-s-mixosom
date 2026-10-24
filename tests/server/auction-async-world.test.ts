@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
@@ -495,5 +496,157 @@ describe('auction create and claim through WorldInstance', () => {
     expect(world.auction.getListing(listingId)?.status).toBe('SOLD');
     expect(world.money.getBalance(buyer.player.id)).toBe(990);
     expect(world.money.getBalance(seller.player.id)).toBe(10);
+  });
+
+  function inventories(messages: ServerMessage[]): Extract<ServerMessage, { type: 'inventory' }>[] {
+    return messages.filter((message): message is Extract<ServerMessage, { type: 'inventory' }> => message.type === 'inventory');
+  }
+
+  it('resyncs inventory revision after a failed async create', async () => {
+    const world = await start('auc-resync-create');
+    const { player, messages } = enter(world, 'Ada');
+    const durability = new DeferredDurability((id) => world.players.get(id)?.inventory);
+    world.auction.setStage2C({ durability });
+    armSell(world, player, DIAMOND, 4);
+    const known = player.inventoryRevision;
+    const before = inventories(messages).length;
+    world.handleAuctionAction(player, { type: 'auction_action', action: 'create', price: 10 });
+    durability.rejectEscrow();
+    await settle();
+    const packet = inventories(messages).at(-1);
+    expect(inventories(messages).length).toBe(before + 1);
+    expect(player.inventory.count(DIAMOND)).toBe(4);
+    expect(rows(world)).toHaveLength(0);
+    expect(auctions(messages).some((message) => message.message === 'Товар выставлен на аукцион.')).toBe(false);
+    expect(packet?.inventoryRevision).toBe(player.inventoryRevision);
+    expect(packet!.inventoryRevision).toBeGreaterThan(known);
+    world.applyInventoryAction(player, {
+      type: 'inventory_action',
+      action: 'split_stack',
+      key: 'inventory-0',
+      count: 1,
+      requestId: randomUUID(),
+      expectedInventoryRevision: known,
+    });
+    expect(player.inventory.getSlot(0)?.count).toBe(4);
+    world.applyInventoryAction(player, {
+      type: 'inventory_action',
+      action: 'split_stack',
+      key: 'inventory-0',
+      count: 1,
+      requestId: randomUUID(),
+      expectedInventoryRevision: packet!.inventoryRevision,
+    });
+    expect(player.inventory.getSlot(0)?.count).toBe(3);
+    expect(player.inventory.count(DIAMOND)).toBe(4);
+  });
+
+  it('resyncs inventory revision after a failed claim delivery', async () => {
+    const world = await start('auc-resync-claim');
+    const { player, messages } = enter(world, 'Ada');
+    armSell(world, player);
+    world.handleAuctionAction(player, { type: 'auction_action', action: 'create', price: 10 });
+    const listingId = world.auction.queryMine(player.id).listings[0]!.listingId;
+    world.auction.cancelListing(player.id, listingId);
+    player.inventory.setSlot(1, createItemStack('cobblestone', 4));
+    const known = player.inventoryRevision;
+    const durability = (world as unknown as { itemDurability(): ItemDurability }).itemDurability();
+    world.auction.setStage2C({ durability });
+    const store = (world as unknown as { worldStore: { savePlayers: (...args: unknown[]) => Promise<void> } }).worldStore;
+    const original = store.savePlayers.bind(store);
+    store.savePlayers = async () => {
+      throw new Error('disk full');
+    };
+    world.openAuction(player.id, 'list');
+    const before = inventories(messages).length;
+    world.handleAuctionAction(player, { type: 'auction_action', action: 'claim', listingId });
+    await settle();
+    store.savePlayers = original;
+    const packet = inventories(messages).at(-1);
+    expect(inventories(messages).length).toBe(before + 1);
+    expect(player.inventory.count(DIAMOND)).toBe(0);
+    expect(player.inventory.getSlot(1)?.count).toBe(4);
+    expect(world.auction.getListing(listingId)?.status).toBe('CANCELLED');
+    expect(auctions(messages).some((message) => message.message === 'Предмет возвращён в инвентарь.')).toBe(false);
+    expect(packet?.inventoryRevision).toBe(player.inventoryRevision);
+    expect(packet!.inventoryRevision).toBeGreaterThan(known);
+    world.applyInventoryAction(player, {
+      type: 'inventory_action',
+      action: 'split_stack',
+      key: 'inventory-1',
+      count: 1,
+      requestId: randomUUID(),
+      expectedInventoryRevision: packet!.inventoryRevision,
+    });
+    expect(player.inventory.getSlot(1)?.count).toBe(3);
+    expect(player.inventory.count(DIAMOND)).toBe(0);
+  });
+
+  it('sends the claimed inventory to the connection that took over', async () => {
+    const world = await start('auc-claim-takeover');
+    const first = enter(world, 'Ada');
+    armSell(world, first.player);
+    world.handleAuctionAction(first.player, { type: 'auction_action', action: 'create', price: 10 });
+    const listingId = world.auction.queryMine(first.player.id).listings[0]!.listingId;
+    world.auction.cancelListing(first.player.id, listingId);
+    first.player.inventory.setSlot(1, createItemStack('cobblestone', 4));
+    const durability = new DeferredDurability((id) => world.players.get(id)?.inventory);
+    world.auction.setStage2C({ durability });
+    world.openAuction(first.player.id, 'list');
+    const oldConnection = first.player.connectionId;
+    world.handleAuctionAction(
+      first.player,
+      { type: 'auction_action', action: 'claim', listingId },
+      { connectionId: oldConnection },
+    );
+    const beforeFirst = first.messages.length;
+    const second = enter(world, 'Ada', first.player.sessionToken);
+    world.openGameMenu(second.player.id, 'root');
+    const beforeSecond = second.messages.length;
+    durability.finishDeliver();
+    await settle();
+    const late = second.messages.slice(beforeSecond);
+    const packet = late.find((message): message is Extract<ServerMessage, { type: 'inventory' }> => message.type === 'inventory');
+    expect(first.messages.length).toBe(beforeFirst);
+    expect(packet?.inventoryRevision).toBe(second.player.inventoryRevision);
+    expect(late.some((message) => message.type === 'auction' || message.type === 'menu')).toBe(false);
+    expect(second.player.inventory.count(DIAMOND)).toBe(1);
+    expect(world.auction.getListing(listingId)?.status).toBe('CLAIMED');
+    expect(durability.receipts.size).toBe(1);
+    world.applyInventoryAction(second.player, {
+      type: 'inventory_action',
+      action: 'split_stack',
+      key: 'inventory-1',
+      count: 1,
+      requestId: randomUUID(),
+      expectedInventoryRevision: packet!.inventoryRevision,
+    });
+    expect(second.player.inventory.getSlot(1)?.count).toBe(3);
+    expect(second.player.inventory.count(DIAMOND)).toBe(1);
+  });
+
+  it('keeps a newer auction screen when create finishes', async () => {
+    const world = await start('auc-screen');
+    const { player, messages } = enter(world, 'Ada');
+    const durability = new DeferredDurability((id) => world.players.get(id)?.inventory);
+    world.auction.setStage2C({ durability });
+    armSell(world, player);
+    world.handleAuctionAction(player, { type: 'auction_action', action: 'create', price: 10 });
+    world.handleAuctionAction(player, { type: 'auction_action', action: 'search', search: 'ore' });
+    const session = world.auction.session(player.id);
+    session.page = 3;
+    session.listingId = 'keep-me';
+    const before = inventories(messages).length;
+    durability.finishEscrow();
+    await settle();
+    expect(session.screen).toBe('browse');
+    expect(session.search).toBe('ore');
+    expect(session.page).toBe(3);
+    expect(session.listingId).toBe('keep-me');
+    expect(session.message).not.toBe('Товар выставлен на аукцион.');
+    expect(auctions(messages).at(-1)?.screen).toBe('browse');
+    expect(inventories(messages).length).toBeGreaterThan(before);
+    expect(player.inventory.count(DIAMOND)).toBe(0);
+    expect(world.auction.queryMine(player.id).listings[0]?.status).toBe('ACTIVE');
   });
 });
