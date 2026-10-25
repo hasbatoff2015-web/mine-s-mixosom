@@ -110,3 +110,7 @@ The earlier full-suite failures were run again on this branch and on `origin/mai
 `applyDonatePlayerFilter` reads the live search box and hides rows of the list that the latest snapshot rendered. It runs on input and after an invsee patch. Players the server removed are not in that list, so the filter cannot show them.
 
 A failed `setMoney` used to return no `affected`, so nobody was told. It now lists only the sender. The partner snapshot has no `TRADE_MONEY_ERROR`, and the sender's focused field still takes the authoritative amount when that error arrives. Coordinate fields and the announcement textarea stay non-echo inputs, so the same patch does not clear them.
+
+## Menu width after merging sellers
+
+The root panel used `width: min(logical × scale, 100%)` inside a stage whose own width was `min(100%, 100vw - 16px)`. In that flex/grid chain the percentage did not resolve to the logical width, and `flex-shrink` let the panel fall toward the tiles' `min-width: 0`. Tile height stayed `56px × scale`, so the menu became a tall narrow column. The panel width is now the logical width times scale, capped by the viewport, with `flex: none`. The close/back row is absolutely positioned inside the panel, so it no longer adds a flow row or shrinks the grid. Headless Chrome checked 640×360 through 1920×1080: panel width matches that formula, ten tiles share one width, desktop roots do not scroll, and the close control stays inside the panel without covering the title.

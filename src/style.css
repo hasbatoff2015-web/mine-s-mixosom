@@ -2016,7 +2016,11 @@ textarea,
 
 .mc-menu-heading {
   margin: 0;
-  padding: 0;
+  padding: 0 max(48px, calc(28px * var(--mc-ui-scale, 3))) 0 0;
+}
+
+.mc-menu-panel:has(.mc-back) .mc-menu-heading {
+  padding-left: max(48px, calc(28px * var(--mc-ui-scale, 3)));
   color: #f4f4f4;
   font-family: var(--font-ui);
   font-size: max(13px, calc(11px * var(--mc-ui-scale, 3)));
@@ -2526,10 +2530,15 @@ textarea,
 
 .mc-panel.mc-menu-panel,
 .mc-menu-panel {
+  position: relative;
   box-sizing: border-box;
   display: flex;
+  flex: none;
   flex-direction: column;
-  width: min(calc(var(--mc-logical-width, 248) * 1px * var(--mc-ui-scale, 3)), 100%);
+  width: min(
+    calc(var(--mc-logical-width, 248) * 1px * var(--mc-ui-scale, 3)),
+    calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+  );
   max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   height: auto;
   max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
@@ -2554,21 +2563,32 @@ textarea,
 
 .mc-menu-stage {
   position: relative;
+  flex: none;
   justify-content: center;
   align-items: flex-start;
-  width: min(100%, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
-  max-width: 100%;
+  width: max-content;
+  max-width: min(100%, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
   margin-inline: auto;
 }
 
 .mc-menu-chrome {
+  position: absolute;
+  z-index: 3;
+  top: calc(4px * var(--mc-ui-scale, 3));
+  right: calc(4px * var(--mc-ui-scale, 3));
+  left: calc(4px * var(--mc-ui-scale, 3));
   display: flex;
-  flex: none;
   align-items: center;
   justify-content: space-between;
   gap: calc(4px * var(--mc-ui-scale, 3));
-  min-height: max(32px, calc(22px * var(--mc-ui-scale, 3)));
-  margin-bottom: calc(2px * var(--mc-ui-scale, 3));
+  min-height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.mc-menu-chrome > .mc-close,
+.mc-menu-chrome > .mc-back {
+  pointer-events: auto;
 }
 
 .mc-menu-chrome.is-close-only {
@@ -2584,6 +2604,7 @@ textarea,
 .mc-menu-panel > .mc-menu-body {
   flex: 1 1 auto;
   min-height: 0;
+  padding-top: max(48px, calc(26px * var(--mc-ui-scale, 3)));
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;

@@ -484,7 +484,10 @@ describe('coarse mobile layout rects', () => {
               return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
             };
             const panel = document.querySelector('[data-menu-panel]');
-            const heading = document.querySelector('.mc-menu-heading');
+            const headingNode = document.querySelector('.mc-menu-heading');
+            const headingRange = document.createRange();
+            if (headingNode) headingRange.selectNodeContents(headingNode);
+            const heading = headingNode ? { getBoundingClientRect: () => headingRange.getBoundingClientRect() } : null;
             const back = document.querySelector('.mc-back');
             const close = document.querySelector('[data-ui="close"]');
             const field = document.querySelector('[data-menu-field]');
@@ -546,6 +549,148 @@ describe('coarse mobile layout rects', () => {
       }
     }
   }, 180_000);
+
+  it('keeps the root menu as wide as its logical scale instead of a narrow column', async () => {
+    server?.close();
+    const { menuLogicalHeight, menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    const { menuChromeHtml, menuRootHtml, overlayStageStyle } = await import('../src/ui/gameMenuGui');
+    const body = menuRootHtml({ balance: 1200, balanceLabel: '1.2K' });
+    const close = '<button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>';
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 1280);
+      const height = Number(url.searchParams.get('h') ?? 720);
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; width: 100%; height: 100%; }
+        ${style}
+      </style></head><body><div id="app">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" data-root-stage style="${overlayStageStyle(scale, logicalWidth)}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              ${menuChromeHtml('', close)}
+              ${body}
+            </div>
+          </div>
+        </div>
+      </div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('root menu server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const viewports = [
+      [640, 360],
+      [667, 375],
+      [740, 360],
+      [800, 360],
+      [844, 390],
+      [932, 430],
+      [1280, 720],
+      [1600, 900],
+      [1920, 1080],
+    ] as const;
+    const launched = await launchChrome(1280, 720, 'about:blank');
+    chromeJobs.push(launched);
+    for (const [width, height] of viewports) {
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      const expected = Math.min(logicalWidth * scale, width - 16);
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}` });
+      let ready = false;
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'document.querySelectorAll(".mc-menu-tile").length',
+        });
+        ready = (probe.result as { value?: number } | undefined)?.value === 10
+          && await launched.cdp.send('Runtime.evaluate', {
+            returnByValue: true,
+            expression: 'window.innerWidth',
+          }).then((value) => (value.result as { value?: number } | undefined)?.value === width);
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`root menu did not render at ${width}x${height}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const box = (node) => {
+            const rect = node.getBoundingClientRect();
+            return { width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+          };
+          const stage = document.querySelector('[data-root-stage]');
+          const panel = document.querySelector('[data-menu-panel]');
+          const menuBody = document.querySelector('.mc-menu-body');
+          const tiles = [...document.querySelectorAll('.mc-menu-tile')].map(box);
+          const close = document.querySelector('[data-ui="close"]');
+          const heading = document.querySelector('.mc-menu-heading');
+          const balance = document.querySelector('.mc-menu-balance');
+          const stageStyle = getComputedStyle(stage);
+          return {
+            stage: box(stage),
+            panel: box(panel),
+            body: box(menuBody),
+            tiles,
+            close: box(close),
+            heading: box(heading),
+            balance: box(balance),
+            scale: stageStyle.getPropertyValue('--mc-ui-scale').trim(),
+            logical: stageStyle.getPropertyValue('--mc-logical-width').trim(),
+            panelShrink: getComputedStyle(panel).flexShrink,
+            overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+            bodyScroll: menuBody.scrollHeight - menuBody.clientHeight,
+            closeInside: close.getBoundingClientRect().left >= panel.getBoundingClientRect().left - 1
+              && close.getBoundingClientRect().right <= panel.getBoundingClientRect().right + 1
+              && close.getBoundingClientRect().top >= panel.getBoundingClientRect().top - 1,
+            closeOverlapsHeading: (() => {
+              const range = document.createRange();
+              range.selectNodeContents(heading);
+              const text = range.getBoundingClientRect();
+              const button = close.getBoundingClientRect();
+              return text.width > 0 && button.left < text.right - 1 && button.right > text.left + 1
+                && button.top < text.bottom - 1 && button.bottom > text.top + 1;
+            })(),
+          };
+        })()`,
+      });
+      const value = (evaluated.result as { value?: {
+        panel: { width: number; height: number };
+        tiles: Array<{ width: number; height: number; bottom: number }>;
+        close: { width: number; height: number };
+        scale: string;
+        overflowX: boolean;
+        bodyScroll: number;
+        closeInside: boolean;
+        closeOverlapsHeading: boolean;
+        body: { bottom: number };
+      } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overflowX, `${width}x${height}`).toBe(false);
+      expect(value!.panel.width, `${width}x${height} panel`).toBeGreaterThan(expected - 24);
+      expect(value!.panel.width, `${width}x${height} panel cap`).toBeLessThan(expected + 24);
+      expect(value!.tiles, `${width}x${height}`).toHaveLength(10);
+      const tileWidth = value!.tiles[0]!.width;
+      expect(tileWidth, `${width}x${height} tile`).toBeGreaterThan(expected / 4);
+      expect(Math.abs(value!.tiles[0]!.height - 56 * scale), `${width}x${height} tile height`).toBeLessThan(8);
+      expect(value!.tiles.every((tile) => Math.abs(tile.width - tileWidth) < 2), `${width}x${height} tile widths`).toBe(true);
+      expect(value!.closeInside, `${width}x${height}`).toBe(true);
+      expect(value!.closeOverlapsHeading, `${width}x${height}`).toBe(false);
+      expect(value!.close.width, `${width}x${height}`).toBeGreaterThanOrEqual(32);
+      if (height >= 720) {
+        expect(value!.bodyScroll, `${width}x${height} scroll`).toBeLessThan(2);
+        expect(value!.tiles[9]!.bottom, `${width}x${height} last tile`).toBeLessThanOrEqual(value!.body.bottom + 2);
+      }
+    }
+  }, 90_000);
 
   it('keeps donate text readable and inside the viewport', async () => {
     server?.close();

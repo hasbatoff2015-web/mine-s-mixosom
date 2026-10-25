@@ -450,6 +450,58 @@ describe('auction, clan, and buyer patches', () => {
     expect(next!.value).toBe('9');
     expect(root.querySelector('[data-buyer-id]')?.getAttribute('data-buyer-id')).toBe('npc-2');
   });
+
+  it('keeps the trader name on the same role and rebuilds when the npc becomes a seller', () => {
+    const { root, ui } = mount();
+    const sent: string[] = [];
+    const buyer = (patch: Partial<ServerBuyerMessage>): ServerBuyerMessage => ({
+      type: 'buyer',
+      screen: 'admin',
+      title: 'Скупщик',
+      buyerId: 'npc-1',
+      name: 'Фермер',
+      hologramText: '',
+      priceText: '10',
+      quantity: 1,
+      maxQuantity: 8,
+      total: 10,
+      totalLabel: '10',
+      configured: true,
+      role: 'buyer',
+      ...patch,
+    });
+    ui.openBuyer(buyer({}), { send: (message) => sent.push(message.action), close() {} });
+    const name = root.querySelector<HTMLInputElement>('[data-buyer-name]')!;
+    typeInto(name, 'Лавка');
+    ui.applyBuyer(buyer({ message: 'Цена обновлена', priceText: '12' }));
+    expect(root.querySelector('[data-buyer-name]')).toBe(name);
+    expect(name.value).toBe('Лавка');
+    expect(root.querySelector('[data-buyer-message]')?.textContent).toBe('Цена обновлена');
+    expect(root.querySelector('[data-buyer-action="set_role"][data-buyer-role="buyer"]')?.className).toContain('is-on');
+    ui.applyBuyer(buyer({ role: 'seller', title: 'Продавец', name: 'Фермер' }));
+    const nextName = root.querySelector<HTMLInputElement>('[data-buyer-name]');
+    expect(nextName).not.toBe(name);
+    expect(nextName!.value).toBe('Фермер');
+    expect(root.querySelector('[data-buyer-action="set_role"][data-buyer-role="seller"]')?.className).toContain('is-on');
+    expect(root.querySelector('[data-buyer-action="set_role"][data-buyer-role="buyer"]')?.className ?? '').not.toContain('is-on');
+    expect(root.querySelector('[data-buyer-action="delete"]')?.textContent).toContain('продавца');
+    expect(root.querySelector('[data-buyer-action="sell"]')).toBeNull();
+    ui.openBuyer(buyer({
+      screen: 'trade',
+      role: 'seller',
+      title: 'Лавка',
+      quantity: 2,
+      maxQuantity: 16,
+      totalLabel: '20',
+      pricePerItem: 10,
+    }), { send: (message) => sent.push(message.action), close() {} });
+    expect(root.querySelector('[data-buyer-action="buy"]')?.textContent).toBe('КУПИТЬ');
+    expect(root.querySelector('[data-buyer-action="sell"]')).toBeNull();
+    expect(root.querySelector('[data-buyer-qty]')).toBeNull();
+    expect(root.querySelector('[data-buyer-total]')?.textContent).toBe('20');
+    const stage = root.querySelector<HTMLElement>('.mc-stage');
+    expect(Number(stage?.dataset.logicalHeight)).toBe(268);
+  });
 });
 
 function donateShell(
