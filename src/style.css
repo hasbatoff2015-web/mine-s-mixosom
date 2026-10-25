@@ -2017,10 +2017,6 @@ textarea,
 .mc-menu-heading {
   margin: 0;
   padding: 0 max(48px, calc(28px * var(--mc-ui-scale, 3))) 0 0;
-}
-
-.mc-menu-panel:has(.mc-back) .mc-menu-heading {
-  padding-left: max(48px, calc(28px * var(--mc-ui-scale, 3)));
   color: #f4f4f4;
   font-family: var(--font-ui);
   font-size: max(13px, calc(11px * var(--mc-ui-scale, 3)));
@@ -2028,6 +2024,10 @@ textarea,
   line-height: 1.15;
   text-align: left;
   letter-spacing: 0.01em;
+}
+
+.mc-menu-panel:has(.mc-back) .mc-menu-heading {
+  padding-left: max(48px, calc(28px * var(--mc-ui-scale, 3)));
 }
 
 .mc-menu-rule {

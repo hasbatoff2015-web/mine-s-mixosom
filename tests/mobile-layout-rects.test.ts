@@ -443,6 +443,7 @@ describe('coarse mobile layout rects', () => {
     if (!address || typeof address === 'string') throw new Error('menu server has no port');
     const origin = `http://127.0.0.1:${address.port}`;
     const viewports = [
+      [667, 375],
       [844, 390],
       [932, 430],
       [740, 360],
@@ -515,6 +516,12 @@ describe('coarse mobile layout rects', () => {
               closeWidth: closeBox.width,
               submitWidth: submitBox.width,
               viewport: { width: window.innerWidth, height: window.innerHeight },
+              headingWeight: getComputedStyle(headingNode).fontWeight,
+              headingSize: Number.parseFloat(getComputedStyle(headingNode).fontSize),
+              headingColor: getComputedStyle(headingNode).color,
+              headingPadLeft: Number.parseFloat(getComputedStyle(headingNode).paddingLeft),
+              closePointer: getComputedStyle(close).pointerEvents,
+              backPointer: back ? getComputedStyle(back).pointerEvents : 'auto',
             };
           })()`,
         });
@@ -531,6 +538,12 @@ describe('coarse mobile layout rects', () => {
           submitWidth: number;
           panel: { width: number; height: number };
           viewport: { width: number; height: number };
+          headingWeight: string;
+          headingSize: number;
+          headingColor: string;
+          headingPadLeft: number;
+          closePointer: string;
+          backPointer: string;
         } } | undefined)?.value;
         expect(value, `${screen} ${width}x${height}`).toBeTruthy();
         expect(value!.viewport).toEqual({ width, height });
@@ -546,6 +559,19 @@ describe('coarse mobile layout rects', () => {
         expect(value!.submitWidth).toBeGreaterThan(20);
         expect(value!.panel.width).toBeGreaterThan(80);
         expect(value!.panel.height).toBeGreaterThan(40);
+        const logicalWidth = menuLogicalWidth(screen, width);
+        const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight(screen === 'trade' ? 'trade' : screen));
+        expect(value!.headingWeight, `${screen} ${width}x${height}`).toBe('800');
+        expect(value!.headingSize, `${screen} ${width}x${height}`).toBeCloseTo(Math.max(13, 11 * scale), 0);
+        expect(value!.headingColor.replace(/\s/g, ''), `${screen} ${width}x${height}`).toBe('rgb(244,244,244)');
+        expect(value!.closePointer, `${screen} ${width}x${height}`).toBe('auto');
+        expect(value!.backPointer, `${screen} ${width}x${height}`).toBe('auto');
+        if (screen === 'homes') {
+          expect(value!.headingPadLeft, `${screen} ${width}x${height}`).toBeGreaterThanOrEqual(Math.max(48, 28 * scale) - 1);
+        }
+        if (screen === 'root') {
+          expect(value!.headingPadLeft, `${screen} ${width}x${height}`).toBeLessThan(1);
+        }
       }
     }
   }, 180_000);
@@ -659,6 +685,10 @@ describe('coarse mobile layout rects', () => {
               return text.width > 0 && button.left < text.right - 1 && button.right > text.left + 1
                 && button.top < text.bottom - 1 && button.bottom > text.top + 1;
             })(),
+            headingWeight: getComputedStyle(heading).fontWeight,
+            headingSize: Number.parseFloat(getComputedStyle(heading).fontSize),
+            headingColor: getComputedStyle(heading).color,
+            headingPadLeft: Number.parseFloat(getComputedStyle(heading).paddingLeft),
           };
         })()`,
       });
@@ -672,6 +702,10 @@ describe('coarse mobile layout rects', () => {
         closeInside: boolean;
         closeOverlapsHeading: boolean;
         body: { bottom: number };
+        headingWeight: string;
+        headingSize: number;
+        headingColor: string;
+        headingPadLeft: number;
       } } | undefined)?.value;
       expect(value, `${width}x${height}`).toBeTruthy();
       expect(value!.overflowX, `${width}x${height}`).toBe(false);
@@ -685,6 +719,10 @@ describe('coarse mobile layout rects', () => {
       expect(value!.closeInside, `${width}x${height}`).toBe(true);
       expect(value!.closeOverlapsHeading, `${width}x${height}`).toBe(false);
       expect(value!.close.width, `${width}x${height}`).toBeGreaterThanOrEqual(32);
+      expect(value!.headingWeight, `${width}x${height}`).toBe('800');
+      expect(value!.headingSize, `${width}x${height}`).toBeCloseTo(Math.max(13, 11 * scale), 0);
+      expect(value!.headingColor.replace(/\s/g, ''), `${width}x${height}`).toBe('rgb(244,244,244)');
+      expect(value!.headingPadLeft, `${width}x${height}`).toBeLessThan(1);
       if (height >= 720) {
         expect(value!.bodyScroll, `${width}x${height} scroll`).toBeLessThan(2);
         expect(value!.tiles[9]!.bottom, `${width}x${height} last tile`).toBeLessThanOrEqual(value!.body.bottom + 2);
