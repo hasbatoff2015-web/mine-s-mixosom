@@ -142,7 +142,11 @@ describe('TradeService', () => {
     const { trade, economy } = await setup();
     trade.request('ada', 'Bob');
     trade.acceptRequest('bob', trade.incomingRequests('bob')[0]!.requestId);
-    expect(trade.setMoney('ada', economy.getBalance('ada') + 1).error).toBe(TRADE_MONEY_ERROR);
-    expect(trade.setMoney('ada', -1).error).toBe(TRADE_MONEY_ERROR);
+    const over = trade.setMoney('ada', economy.getBalance('ada') + 1);
+    expect(over.error).toBe(TRADE_MONEY_ERROR);
+    expect(over.affected).toEqual(['ada']);
+    const negative = trade.setMoney('ada', -1);
+    expect(negative.error).toBe(TRADE_MONEY_ERROR);
+    expect(negative.affected).toEqual(['ada']);
   });
 });

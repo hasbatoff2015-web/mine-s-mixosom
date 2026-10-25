@@ -107,6 +107,7 @@ describe('Auction plugin', () => {
     expect(browse?.screen).toBe('browse');
     expect(browse?.title).toBe('Аукцион');
     expect(browse?.totalCount).toBe(0);
+    expect(browse?.source).toBeUndefined();
     expect(chat(world, ada, '/ah sell')[0]).toMatch(/продаж/);
     expect(lastAuction(ada.sink)?.screen).toBe('sell-pick');
     expect(chat(world, ada, '/ah list')[0]).toMatch(/лотов/);
@@ -360,5 +361,61 @@ describe('Auction plugin', () => {
       listingId: created.listing!.listingId,
     });
     expect(lastAuction(ada.sink)?.screen).toBe('claim');
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'back' });
+    expect(lastAuction(ada.sink)?.screen).toBe('mine');
+    expect(lastAuction(ada.sink)?.source).toBeUndefined();
+  });
+
+  it('returns each nested auction screen to its parent and keeps menu origin', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    ada.player.inventory.setSlot(2, createItemStack('oak_planks', 8));
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'auction' });
+    const before = ada.sink.payloads.length;
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'auction_sell' });
+    const opened = ada.sink.payloads.slice(before).filter((payload) => (
+      (payload as { type?: string }).type === 'auction'
+    )) as ServerAuctionMessage[];
+    expect(opened).toHaveLength(1);
+    expect(opened[0]).toMatchObject({ screen: 'sell-pick', source: 'menu' });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'select_slot', slot: 2 });
+    expect(lastAuction(ada.sink)).toMatchObject({ screen: 'sell-confirm', source: 'menu' });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'back' });
+    expect(lastAuction(ada.sink)).toMatchObject({ screen: 'sell-pick', source: 'menu' });
+    world.handleAuctionAction(ada.player, {
+      type: 'auction_action',
+      action: 'create',
+      slot: 2,
+      amount: 8,
+      price: '40',
+    });
+    const listingId = world.auction.queryMine(ada.player.id).listings[0]!.listingId;
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'auction' });
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'auction_list' });
+    expect(lastAuction(ada.sink)).toMatchObject({ screen: 'mine', source: 'menu' });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'select', listingId });
+    expect(lastAuction(ada.sink)?.screen).toBe('manage');
+    expect(lastAuction(ada.sink)?.source).toBe('menu');
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'relist', listingId });
+    expect(lastAuction(ada.sink)).toMatchObject({ screen: 'relist', source: 'menu' });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'back' });
+    expect(lastAuction(ada.sink)).toMatchObject({ screen: 'mine', source: 'menu' });
+
+    world.economy.deposit(bob.player.id, 100, 'ADMIN_GIVE');
+    world.handleMenuAction(bob.player, { type: 'menu_action', action: 'open', screen: 'auction' });
+    world.handleMenuAction(bob.player, { type: 'menu_action', action: 'auction_open' });
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'select', listingId });
+    expect(lastAuction(bob.sink)).toMatchObject({ screen: 'buy', source: 'menu' });
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'back' });
+    expect(lastAuction(bob.sink)).toMatchObject({ screen: 'browse', source: 'menu' });
+    const menusBeforeClose = bob.sink.payloads.filter((payload) => (
+      (payload as { type?: string }).type === 'menu'
+    )).length;
+    world.handleAuctionAction(bob.player, { type: 'auction_action', action: 'close' });
+    expect(lastAuction(bob.sink)?.screen).toBe('closed');
+    expect(bob.sink.payloads.filter((payload) => (
+      (payload as { type?: string }).type === 'menu'
+    ))).toHaveLength(menusBeforeClose);
   });
 });

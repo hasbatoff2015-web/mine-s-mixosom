@@ -155,10 +155,18 @@ describe('game menu plugin', () => {
     const world = await boot();
     const ada = join(world, 'Ada');
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'auction' });
+    const before = ada.sink.payloads.length;
     world.handleMenuAction(ada.player, { type: 'menu_action', action: 'auction_open' });
-    const auction = lastOf<{ type: string; source?: string; screen?: string }>(ada.sink, 'auction');
-    expect(auction?.screen).toBe('browse');
-    expect(auction?.source).toBe('menu');
+    const packets = ada.sink.payloads.slice(before).filter((payload) => (
+      (payload as { type?: string }).type === 'auction'
+    )) as Array<{ type: string; source?: string; screen?: string }>;
+    expect(packets).toHaveLength(1);
+    expect(packets[0]).toMatchObject({ screen: 'browse', source: 'menu' });
+    world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'search', search: 'stone' });
+    expect(lastOf<{ type?: string; source?: string; screen?: string }>(ada.sink, 'auction')).toMatchObject({
+      screen: 'browse',
+      source: 'menu',
+    });
     world.handleAuctionAction(ada.player, { type: 'auction_action', action: 'back' });
     expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).toBe('auction');
   });

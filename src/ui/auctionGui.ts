@@ -1,4 +1,55 @@
 import type { ItemStack } from '../inventory';
+import type { AuctionScreenKind, ServerAuctionMessage } from '../../shared/protocol';
+
+export type AuctionBackParent = 'menu' | 'browse' | 'sell-pick' | 'mine';
+
+/**
+ * One back control for the screen that can leave it.
+ * Top-level screens return to the game menu only when the auction was opened from there.
+ * Nested screens return to their parent. `/ah` browse has no menu to return to.
+ */
+export function auctionBackParent(
+  screen: AuctionScreenKind,
+  source: 'menu' | undefined,
+): AuctionBackParent | null {
+  if (screen === 'buy') return 'browse';
+  if (screen === 'sell-confirm') return 'sell-pick';
+  if (screen === 'manage' || screen === 'claim' || screen === 'relist') return 'mine';
+  if (source === 'menu' && (screen === 'browse' || screen === 'sell-pick' || screen === 'mine')) return 'menu';
+  return null;
+}
+
+export function auctionShowsBack(screen: AuctionScreenKind, source: 'menu' | undefined): boolean {
+  return auctionBackParent(screen, source) !== null;
+}
+
+export function auctionBackButtonHtml(): string {
+  return '<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>';
+}
+
+/** Buy / sell / manage forms are per listing or inventory slot. Browse is not. */
+export function auctionFormContext(state: Pick<ServerAuctionMessage, 'screen' | 'selected'>): string {
+  if (
+    state.screen === 'buy'
+    || state.screen === 'manage'
+    || state.screen === 'claim'
+    || state.screen === 'relist'
+    || state.screen === 'sell-confirm'
+  ) {
+    if (state.selected?.listingId) return state.selected.listingId;
+    if (state.selected?.slot !== undefined) return `slot:${state.selected.slot}`;
+  }
+  return '';
+}
+
+export function auctionLogicalHeight(screen: string): number {
+  if (screen === 'sell-pick') return 222;
+  if (screen === 'browse') return 216;
+  if (screen === 'mine') return 200;
+  if (screen === 'manage') return 236;
+  if (screen === 'sell-confirm') return 204;
+  return 218;
+}
 
 export const AUCTION_CLAIM_HINT = 'Заберите этот предмет';
 export const AUCTION_CLAIMABLE_CLASS = 'mc-ah-claimable';

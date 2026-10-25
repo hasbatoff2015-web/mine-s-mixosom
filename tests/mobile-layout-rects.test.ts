@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -393,6 +393,826 @@ describe('coarse mobile layout rects', () => {
       expect(measured.catalogTouch).toBe('pan-y');
       expect(measured.catalogScroll).toBeGreaterThan(measured.catalogClient);
       expect(measured.scrolled).toBeGreaterThan(0);
+    }
+  }, 90_000);
+
+  it('keeps menu back and close inside the panel on phone and desktop viewports', async () => {
+    server?.close();
+    const { menuLogicalHeight, menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 844);
+      const height = Number(url.searchParams.get('h') ?? 390);
+      const screen = url.searchParams.get('screen') ?? 'homes';
+      const logicalWidth = menuLogicalWidth(screen);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight(screen === 'trade' ? 'trade' : screen));
+      const back = screen === 'root' || screen === 'trade'
+        ? ''
+        : '<button type="button" class="mc-close mc-back" data-menu-action="back" aria-label="Назад">←</button>';
+      const chromeClass = back ? 'mc-menu-chrome' : 'mc-menu-chrome is-close-only';
+      const title = screen === 'trade' ? 'Обмен' : screen === 'root' ? 'Меню' : 'Дома';
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; width: 100%; height: 100%; }
+        ${style}
+      </style></head><body><div id="app">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              <div class="${chromeClass}">
+                ${back}
+                <button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>
+              </div>
+              <div class="mc-menu-body">
+                <div class="mc-menu-heading">${title}</div>
+                <form class="mc-menu-form">
+                  <label class="mc-ah-field">Название
+                    <input type="text" data-menu-field value="дом" />
+                  </label>
+                  <button type="button" class="mc-ah-btn" data-menu-submit>Создать</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('menu server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const viewports = [
+      [667, 375],
+      [844, 390],
+      [932, 430],
+      [740, 360],
+      [390, 844],
+      [1280, 720],
+      [1920, 1080],
+    ] as const;
+    for (const screen of ['homes', 'trade', 'root'] as const) {
+      for (const [width, height] of viewports) {
+        const launched = await launchChrome(width, height, 'about:blank');
+        chromeJobs.push(launched);
+        await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}&screen=${screen}` });
+        let ready = false;
+        let seen = '';
+        for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+          const probe = await launched.cdp.send('Runtime.evaluate', {
+            returnByValue: true,
+            expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight, panel: !!document.querySelector("[data-menu-panel]") })',
+          });
+          seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+          const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; panel: boolean } : undefined;
+          ready = parsed?.panel === true && parsed.w === width && parsed.h === height;
+          if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!ready) throw new Error(`menu did not render for ${screen} ${width}x${height}: ${seen}`);
+        const evaluated = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: `(() => {
+            const overlaps = (a, b) => !!a && !!b && a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+            const box = (node) => {
+              if (!node) return null;
+              const rect = node.getBoundingClientRect();
+              return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+            };
+            const panel = document.querySelector('[data-menu-panel]');
+            const headingNode = document.querySelector('.mc-menu-heading');
+            const headingRange = document.createRange();
+            if (headingNode) headingRange.selectNodeContents(headingNode);
+            const heading = headingNode ? { getBoundingClientRect: () => headingRange.getBoundingClientRect() } : null;
+            const back = document.querySelector('.mc-back');
+            const close = document.querySelector('[data-ui="close"]');
+            const field = document.querySelector('[data-menu-field]');
+            const submit = document.querySelector('[data-menu-submit]');
+            const panelBox = box(panel);
+            const headingBox = box(heading);
+            const backBox = box(back);
+            const closeBox = box(close);
+            const fieldBox = box(field);
+            const submitBox = box(submit);
+            return {
+              panel: panelBox,
+              heading: headingBox,
+              back: backBox,
+              close: closeBox,
+              field: fieldBox,
+              backOverlapsHeading: overlaps(backBox, headingBox),
+              closeOverlapsHeading: overlaps(closeBox, headingBox),
+              closeOverlapsField: overlaps(closeBox, fieldBox),
+              backInsidePanel: !backBox || (backBox.left >= panelBox.left - 1 && backBox.right <= panelBox.right + 1 && backBox.top >= panelBox.top - 1),
+              closeInsidePanel: closeBox.left >= panelBox.left - 1 && closeBox.right <= panelBox.right + 1 && closeBox.top >= panelBox.top - 1,
+              panelInside: panelBox.left >= -1 && panelBox.top >= -1 && panelBox.right <= window.innerWidth + 1 && panelBox.bottom <= window.innerHeight + 1,
+              overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+              headingWidth: headingBox.width,
+              closeWidth: closeBox.width,
+              submitWidth: submitBox.width,
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+              headingWeight: getComputedStyle(headingNode).fontWeight,
+              headingSize: Number.parseFloat(getComputedStyle(headingNode).fontSize),
+              headingColor: getComputedStyle(headingNode).color,
+              headingPadLeft: Number.parseFloat(getComputedStyle(headingNode).paddingLeft),
+              closePointer: getComputedStyle(close).pointerEvents,
+              backPointer: back ? getComputedStyle(back).pointerEvents : 'auto',
+            };
+          })()`,
+        });
+        const value = (evaluated.result as { value?: {
+          backOverlapsHeading: boolean;
+          closeOverlapsHeading: boolean;
+          closeOverlapsField: boolean;
+          backInsidePanel: boolean;
+          closeInsidePanel: boolean;
+          panelInside: boolean;
+          overflowX: boolean;
+          headingWidth: number;
+          closeWidth: number;
+          submitWidth: number;
+          panel: { width: number; height: number };
+          viewport: { width: number; height: number };
+          headingWeight: string;
+          headingSize: number;
+          headingColor: string;
+          headingPadLeft: number;
+          closePointer: string;
+          backPointer: string;
+        } } | undefined)?.value;
+        expect(value, `${screen} ${width}x${height}`).toBeTruthy();
+        expect(value!.viewport).toEqual({ width, height });
+        expect(value!.backOverlapsHeading, JSON.stringify(value)).toBe(false);
+        expect(value!.closeOverlapsHeading, JSON.stringify(value)).toBe(false);
+        expect(value!.closeOverlapsField, JSON.stringify(value)).toBe(false);
+        expect(value!.backInsidePanel, JSON.stringify(value)).toBe(true);
+        expect(value!.closeInsidePanel, JSON.stringify(value)).toBe(true);
+        expect(value!.panelInside, JSON.stringify(value)).toBe(true);
+        expect(value!.overflowX, JSON.stringify(value)).toBe(false);
+        expect(value!.headingWidth).toBeGreaterThan(20);
+        expect(value!.closeWidth).toBeGreaterThanOrEqual(32);
+        expect(value!.submitWidth).toBeGreaterThan(20);
+        expect(value!.panel.width).toBeGreaterThan(80);
+        expect(value!.panel.height).toBeGreaterThan(40);
+        const logicalWidth = menuLogicalWidth(screen, width);
+        const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight(screen === 'trade' ? 'trade' : screen));
+        expect(value!.headingWeight, `${screen} ${width}x${height}`).toBe('800');
+        expect(value!.headingSize, `${screen} ${width}x${height}`).toBeCloseTo(Math.max(13, 11 * scale), 0);
+        expect(value!.headingColor.replace(/\s/g, ''), `${screen} ${width}x${height}`).toBe('rgb(244,244,244)');
+        expect(value!.closePointer, `${screen} ${width}x${height}`).toBe('auto');
+        expect(value!.backPointer, `${screen} ${width}x${height}`).toBe('auto');
+        if (screen === 'homes') {
+          expect(value!.headingPadLeft, `${screen} ${width}x${height}`).toBeGreaterThanOrEqual(Math.max(48, 28 * scale) - 1);
+        }
+        if (screen === 'root') {
+          expect(value!.headingPadLeft, `${screen} ${width}x${height}`).toBeLessThan(1);
+        }
+      }
+    }
+  }, 180_000);
+
+  it('keeps the root menu as wide as its logical scale instead of a narrow column', async () => {
+    server?.close();
+    const { menuLogicalHeight, menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    const { menuChromeHtml, menuRootHtml, overlayStageStyle } = await import('../src/ui/gameMenuGui');
+    const body = menuRootHtml({ balance: 1200, balanceLabel: '1.2K' });
+    const close = '<button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>';
+    const mainStyle = execFileSync('git', ['show', 'origin/main:src/style.css'], { encoding: 'utf8' });
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 1280);
+      const height = Number(url.searchParams.get('h') ?? 720);
+      const legacy = url.searchParams.get('legacy') === '1';
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      const chrome = legacy ? '' : menuChromeHtml('', close);
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; width: 100%; height: 100%; }
+        ${legacy ? mainStyle : style}
+      </style></head><body><div id="app">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" data-root-stage style="${overlayStageStyle(scale, logicalWidth)}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              ${chrome}
+              ${body}
+            </div>
+          </div>
+        </div>
+      </div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('root menu server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const featureGeometry = new Map<string, {
+      panelWidth: number;
+      panelHeight: number;
+      headingInset: number;
+      firstTileInset: number;
+      tileHeight: number;
+      lastBottom: number;
+    }>();
+    const viewports = [
+      [640, 360],
+      [667, 375],
+      [740, 360],
+      [800, 360],
+      [844, 390],
+      [932, 430],
+      [1280, 720],
+      [1600, 900],
+      [1920, 1080],
+    ] as const;
+    const launched = await launchChrome(1280, 720, 'about:blank');
+    chromeJobs.push(launched);
+    for (const [width, height] of viewports) {
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      const expected = Math.min(logicalWidth * scale, width - 16);
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}` });
+      let ready = false;
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'document.querySelectorAll(".mc-menu-tile").length',
+        });
+        ready = (probe.result as { value?: number } | undefined)?.value === 10
+          && await launched.cdp.send('Runtime.evaluate', {
+            returnByValue: true,
+            expression: 'window.innerWidth',
+          }).then((value) => (value.result as { value?: number } | undefined)?.value === width);
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`root menu did not render at ${width}x${height}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const box = (node) => {
+            const rect = node.getBoundingClientRect();
+            return { width: rect.width, height: rect.height, top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left };
+          };
+          const stage = document.querySelector('[data-root-stage]');
+          const panel = document.querySelector('[data-menu-panel]');
+          const menuBody = document.querySelector('.mc-menu-body');
+          const tiles = [...document.querySelectorAll('.mc-menu-tile')].map(box);
+          const close = document.querySelector('[data-ui="close"]');
+          const heading = document.querySelector('.mc-menu-heading');
+          const balance = document.querySelector('.mc-menu-balance');
+          const stageStyle = getComputedStyle(stage);
+          return {
+            stage: box(stage),
+            panel: box(panel),
+            body: box(menuBody),
+            tiles,
+            close: box(close),
+            heading: box(heading),
+            balance: box(balance),
+            scale: stageStyle.getPropertyValue('--mc-ui-scale').trim(),
+            logical: stageStyle.getPropertyValue('--mc-logical-width').trim(),
+            panelShrink: getComputedStyle(panel).flexShrink,
+            overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+            bodyScroll: menuBody.scrollHeight - menuBody.clientHeight,
+            closeInside: close.getBoundingClientRect().left >= panel.getBoundingClientRect().left - 1
+              && close.getBoundingClientRect().right <= panel.getBoundingClientRect().right + 1
+              && close.getBoundingClientRect().top >= panel.getBoundingClientRect().top - 1,
+            closeOverlapsHeading: (() => {
+              const range = document.createRange();
+              range.selectNodeContents(heading);
+              const text = range.getBoundingClientRect();
+              const button = close.getBoundingClientRect();
+              return text.width > 0 && button.left < text.right - 1 && button.right > text.left + 1
+                && button.top < text.bottom - 1 && button.bottom > text.top + 1;
+            })(),
+            headingWeight: getComputedStyle(heading).fontWeight,
+            headingSize: Number.parseFloat(getComputedStyle(heading).fontSize),
+            headingColor: getComputedStyle(heading).color,
+            headingPadLeft: Number.parseFloat(getComputedStyle(heading).paddingLeft),
+            panelPadTop: Number.parseFloat(getComputedStyle(panel).paddingTop),
+            bodyPadTop: Number.parseFloat(getComputedStyle(menuBody).paddingTop),
+            headingInset: box(heading).top - box(panel).top,
+            firstTileInset: tiles[0].top - box(panel).top,
+            closeOverlapsTile: tiles.some((tile) => {
+              const button = close.getBoundingClientRect();
+              return button.left < tile.right - 1 && button.right > tile.left + 1
+                && button.top < tile.bottom - 1 && button.bottom > tile.top + 1;
+            }),
+          };
+        })()`,
+      });
+      const value = (evaluated.result as { value?: {
+        panel: { width: number; height: number; top: number };
+        tiles: Array<{ width: number; height: number; bottom: number }>;
+        close: { width: number; height: number };
+        scale: string;
+        overflowX: boolean;
+        bodyScroll: number;
+        closeInside: boolean;
+        closeOverlapsHeading: boolean;
+        body: { bottom: number };
+        headingWeight: string;
+        headingSize: number;
+        headingColor: string;
+        headingPadLeft: number;
+        panelPadTop: number;
+        bodyPadTop: number;
+        headingInset: number;
+        firstTileInset: number;
+        closeOverlapsTile: boolean;
+      } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overflowX, `${width}x${height}`).toBe(false);
+      expect(value!.panel.width, `${width}x${height} panel`).toBeGreaterThan(expected - 24);
+      expect(value!.panel.width, `${width}x${height} panel cap`).toBeLessThan(expected + 24);
+      expect(value!.tiles, `${width}x${height}`).toHaveLength(10);
+      const tileWidth = value!.tiles[0]!.width;
+      expect(tileWidth, `${width}x${height} tile`).toBeGreaterThan(expected / 4);
+      expect(Math.abs(value!.tiles[0]!.height - 56 * scale), `${width}x${height} tile height`).toBeLessThan(8);
+      expect(value!.tiles.every((tile) => Math.abs(tile.width - tileWidth) < 2), `${width}x${height} tile widths`).toBe(true);
+      expect(value!.closeInside, `${width}x${height}`).toBe(true);
+      expect(value!.closeOverlapsHeading, `${width}x${height}`).toBe(false);
+      expect(value!.close.width, `${width}x${height}`).toBeGreaterThanOrEqual(32);
+      expect(value!.headingWeight, `${width}x${height}`).toBe('800');
+      expect(value!.headingSize, `${width}x${height}`).toBeCloseTo(Math.max(13, 11 * scale), 0);
+      expect(value!.headingColor.replace(/\s/g, ''), `${width}x${height}`).toBe('rgb(244,244,244)');
+      expect(value!.headingPadLeft, `${width}x${height}`).toBeLessThan(1);
+      expect(value!.panelPadTop + value!.bodyPadTop, `${width}x${height} top inset`).toBeCloseTo(10 * scale, 0);
+      expect(value!.headingInset, `${width}x${height} heading`).toBeCloseTo(10 * scale, 0);
+      expect(value!.closeOverlapsTile, `${width}x${height}`).toBe(false);
+      if (height >= 720) {
+        expect(value!.bodyScroll, `${width}x${height} scroll`).toBeLessThan(2);
+        expect(value!.tiles[9]!.bottom, `${width}x${height} last tile`).toBeLessThanOrEqual(value!.body.bottom + 2);
+      }
+      featureGeometry.set(`${width}x${height}`, {
+        panelWidth: value!.panel.width,
+        panelHeight: value!.panel.height,
+        headingInset: value!.headingInset,
+        firstTileInset: value!.firstTileInset,
+        tileHeight: value!.tiles[0]!.height,
+        lastBottom: value!.tiles[9]!.bottom - value!.panel.top,
+      });
+    }
+    for (const [width, height] of [[844, 390], [1280, 720], [1920, 1080]] as const) {
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}&legacy=1` });
+      let ready = false;
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'document.querySelectorAll(".mc-menu-tile").length === 10 && !document.querySelector("[data-ui=\\"close\\"]")',
+        });
+        ready = (probe.result as { value?: boolean } | undefined)?.value === true;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`legacy root menu did not render at ${width}x${height}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const panel = document.querySelector('[data-menu-panel]').getBoundingClientRect();
+          const heading = document.querySelector('.mc-menu-heading').getBoundingClientRect();
+          const tile = document.querySelector('.mc-menu-tile').getBoundingClientRect();
+          const last = [...document.querySelectorAll('.mc-menu-tile')].at(-1).getBoundingClientRect();
+          return {
+            panelWidth: panel.width,
+            panelHeight: panel.height,
+            headingInset: heading.top - panel.top,
+            firstTileInset: tile.top - panel.top,
+            tileHeight: tile.height,
+            lastBottom: last.bottom - panel.top,
+          };
+        })()`,
+      });
+      const legacy = (evaluated.result as { value?: {
+        panelWidth: number;
+        panelHeight: number;
+        headingInset: number;
+        firstTileInset: number;
+        tileHeight: number;
+        lastBottom: number;
+      } } | undefined)?.value;
+      const feature = featureGeometry.get(`${width}x${height}`)!;
+      expect(legacy, `${width}x${height} legacy`).toBeTruthy();
+      expect(legacy!.headingInset, `${width}x${height} main heading`).toBeCloseTo(10 * scale, 0);
+      expect(Math.abs(feature.panelWidth - legacy!.panelWidth), `${width}x${height} width`).toBeLessThan(20);
+      expect(Math.abs(feature.panelHeight - legacy!.panelHeight), `${width}x${height} height`).toBeLessThan(24);
+      expect(Math.abs(feature.headingInset - legacy!.headingInset), `${width}x${height} heading inset`).toBeLessThan(4);
+      expect(Math.abs(feature.tileHeight - legacy!.tileHeight), `${width}x${height} tile`).toBeLessThan(4);
+      expect(Math.abs(feature.firstTileInset - legacy!.firstTileInset), `${width}x${height} first tile`).toBeLessThan(16);
+    }
+  }, 90_000);
+
+  it('keeps donate text readable and inside the viewport', async () => {
+    server?.close();
+    const { menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    const { menuDonateHtml } = await import('../src/ui/donateMenuGui');
+    const { menuBackHtml, menuChromeHtml, overlayStageStyle } = await import('../src/ui/gameMenuGui');
+    const escape = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const baseDonate = {
+      rankLabel: 'VIP',
+      summary: '',
+      remainingLabel: 'Осталось 3 дня до конца привилегии',
+      perks: [{ title: 'Дома', detail: '4/10' }, { title: 'Приваты', detail: '2/4' }],
+      actions: [
+        { id: 'tp', label: 'Телепорт по координатам', available: true, detail: 'Доступно с привилегии TITAN. Длинная подпись цены 500 Мегакоинов', screen: 'donate-tp' as const },
+        { id: 'announce', label: 'Объявление на сервер', available: true, detail: 'Раз в час', screen: 'donate-announce' as const },
+        { id: 'nickcolor', label: 'Цвет ника', available: true, detail: 'PREMIUM', screen: 'donate-color' as const },
+        { id: 'kits', label: 'Наборы', available: true, detail: 'Стартовые и ранговые наборы', screen: 'donate-kits' as const },
+        { id: 'pets', label: 'Питомцы', available: true, detail: 'Пчёлка и мини-крипер', screen: 'donate-pets' as const },
+      ],
+      kits: [
+        { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+        { name: 'titan', label: 'Набор TITAN с очень длинным названием', available: false, detail: 'Можно получить через 2 часа' },
+      ],
+      pets: [
+        { id: 'bee' as const, label: 'Пчёлка', available: true, summoned: false, actionLabel: 'Призвать пчёлку', detail: 'Летает рядом' },
+        { id: 'creeper' as const, label: 'Мини-крипер', available: false, summoned: false, actionLabel: 'Призвать', detail: 'Нужна привилегия TITAN' },
+      ],
+      catalog: [{ title: 'VIP', detail: 'Дома 4' }, { title: 'PREMIUM', detail: 'Цвет ника' }, { title: 'BOSS', detail: 'Питомцы' }, { title: 'TITAN', detail: 'Телепорт' }],
+      nickChoices: ['white', 'red', 'gold', 'green', 'aqua', 'blue', 'purple'],
+      nickColor: 'gold',
+      previewName: 'ДлинноеИмяИгрока',
+      onlinePlayers: [],
+      showInvseeOp: false,
+    };
+    const screens = ['donate', 'donate-pets', 'donate-kits', 'donate-color', 'donate-announce', 'donate-tp'] as const;
+    const panels = (width: number, height: number) => screens.map((screen) => {
+      const logicalWidth = menuLogicalWidth(screen, width);
+      const scale = menuUiScale(width, height, logicalWidth, 360);
+      const body = menuDonateHtml({
+        type: 'menu',
+        screen,
+        title: 'Донат',
+        donate: baseDonate,
+      }, escape);
+      return `<section data-donate-panel="${screen}" data-scale="${scale}" data-logical="${logicalWidth}">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              ${menuChromeHtml(menuBackHtml(screen), '<button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>')}
+              ${body}
+            </div>
+          </div>
+        </div>
+      </section>`;
+    }).join('');
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 844);
+      const height = Number(url.searchParams.get('h') ?? 390);
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; }
+        ${style}
+      </style></head><body><div id="app">${panels(width, height)}</div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('donate server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const viewports = [
+      [390, 844],
+      [640, 360],
+      [667, 375],
+      [740, 360],
+      [844, 390],
+      [932, 430],
+      [1280, 720],
+      [1920, 1080],
+    ] as const;
+    const launched = await launchChrome(844, 390, 'about:blank');
+    chromeJobs.push(launched);
+    const measure = `(() => {
+      const parsePx = (value) => Number.parseFloat(value);
+      const panels = [...document.querySelectorAll('[data-donate-panel]')].map((panel) => {
+        const texts = [...panel.querySelectorAll('.mc-donate-rank strong, .mc-donate-rank span, .mc-donate-card strong, .mc-donate-card span, .mc-donate-chip, .mc-donate-preview, .mc-donate-coords input, textarea, .mc-menu-heading, .mc-player-meta')];
+        const fonts = texts.filter((node) => node.textContent.trim().length > 0 || node.matches('input, textarea')).map((node) => ({
+          tag: node.tagName,
+          cls: node.className || '',
+          size: parsePx(getComputedStyle(node).fontSize),
+        }));
+        const cards = [...panel.querySelectorAll('.mc-donate-card')].map((card) => ({
+          scroll: card.scrollWidth,
+          client: card.clientWidth,
+          height: card.getBoundingClientRect().height,
+        }));
+        const swatch = panel.querySelector('.mc-donate-swatch')?.getBoundingClientRect();
+        const button = panel.querySelector('.mc-ah-btn, .mc-donate-card')?.getBoundingClientRect();
+        const back = panel.querySelector('.mc-back')?.getBoundingClientRect();
+        const close = panel.querySelector('[data-ui="close"]')?.getBoundingClientRect();
+        const shell = panel.querySelector('[data-menu-panel]');
+        return {
+          screen: panel.getAttribute('data-donate-panel'),
+          fonts,
+          cards,
+          swatch: swatch ? swatch.width : 0,
+          buttonHeight: button ? button.height : 0,
+          backTop: back ? back.top : null,
+          closeTop: close ? close.top : null,
+          closeRight: close ? close.right : null,
+          panelOverflow: shell ? shell.scrollWidth > shell.clientWidth + 1 : false,
+          screenName: panel.querySelector('[data-menu-screen]')?.getAttribute('data-menu-screen'),
+        };
+      });
+      return {
+        panels,
+        overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    })()`;
+    for (const [width, height] of viewports) {
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}` });
+      let ready = false;
+      let seen = '';
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight, panels: document.querySelectorAll("[data-donate-panel]").length })',
+        });
+        seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+        const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; panels: number } : undefined;
+        ready = parsed?.panels === screens.length && parsed.w === width && parsed.h === height;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (!ready) throw new Error(`donate did not render at ${width}x${height}: ${seen}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', { returnByValue: true, expression: measure });
+      const value = (evaluated.result as { value?: {
+        overflowX: boolean;
+        viewport: { width: number; height: number };
+        panels: Array<{
+          screen: string;
+          fonts: Array<{ tag: string; cls: string; size: number }>;
+          cards: Array<{ scroll: number; client: number; height: number }>;
+          swatch: number;
+          buttonHeight: number;
+          closeRight: number | null;
+          panelOverflow: boolean;
+          screenName: string;
+        }>;
+      } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overflowX, `${width}x${height}`).toBe(false);
+      for (const panel of value!.panels) {
+        expect(panel.screenName, panel.screen).toBe(panel.screen);
+        expect(panel.panelOverflow, JSON.stringify(panel)).toBe(false);
+        expect(panel.fonts.length, panel.screen).toBeGreaterThan(0);
+        for (const font of panel.fonts) {
+          const floor = font.tag === 'STRONG' || font.cls.includes('mc-menu-heading') || font.cls.includes('mc-donate-preview')
+            ? 13
+            : 12;
+          expect(font.size, `${panel.screen} ${font.cls || font.tag} at ${width}x${height}`).toBeGreaterThanOrEqual(floor);
+        }
+        for (const card of panel.cards) {
+          expect(card.scroll, panel.screen).toBeLessThanOrEqual(card.client + 1);
+          expect(card.height, panel.screen).toBeGreaterThanOrEqual(44);
+        }
+        if (panel.screen === 'donate-color') expect(panel.swatch).toBeGreaterThanOrEqual(44);
+        if (panel.closeRight !== null) expect(panel.closeRight).toBeLessThanOrEqual(width + 1);
+      }
+    }
+    await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 844,
+      height: 390,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await launched.cdp.send('Page.navigate', { url: `${origin}/?w=844&h=390` });
+    let announceReady = false;
+    for (let attempt = 0; attempt < 40 && !announceReady; attempt += 1) {
+      const probe = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: 'document.querySelector("[data-donate-announce]") ? "yes" : ""',
+      });
+      announceReady = (probe.result as { value?: string } | undefined)?.value === 'yes';
+      if (!announceReady) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!announceReady) throw new Error('donate announce field missing before resize');
+    await launched.cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const field = document.querySelector('[data-donate-announce]');
+        field.focus();
+        field.value = 'привет';
+        field.dataset.keep = '1';
+        window.__field = field;
+      })()`,
+    });
+    for (const [width, height] of [[667, 375], [932, 430]] as const) {
+      const logicalWidth = menuLogicalWidth('donate-announce', width);
+      const scale = menuUiScale(width, height, logicalWidth, 360);
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      const resized = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const stage = document.querySelector('[data-donate-panel="donate-announce"] .mc-stage');
+          stage.style.setProperty('--mc-ui-scale', '${scale}');
+          stage.style.setProperty('--mc-logical-width', '${logicalWidth}');
+          const field = document.querySelector('[data-donate-announce]');
+          return {
+            same: field === window.__field,
+            value: field.value,
+            keep: field.dataset.keep,
+            screen: document.querySelector('[data-donate-panel="donate-announce"] [data-menu-screen]').getAttribute('data-menu-screen'),
+            scale: getComputedStyle(stage).getPropertyValue('--mc-ui-scale').trim(),
+          };
+        })()`,
+      });
+      const live = (resized.result as { value?: {
+        same: boolean;
+        value: string;
+        keep: string;
+        screen: string;
+        scale: string;
+      } } | undefined)?.value;
+      expect(live, `${width}x${height}`).toMatchObject({
+        same: true,
+        value: 'привет',
+        keep: '1',
+        screen: 'donate-announce',
+        scale: String(scale),
+      });
+    }
+  }, 120_000);
+
+  it('scrolls the creative catalog from a real touch without selecting or double-scrolling', async () => {
+    server?.close();
+    server = createServer((_request, response) => {
+      const slots = Array.from({ length: 90 }, (_unused, index) => (
+        `<button type="button" class="mc-slot" data-slot="creative-${index}">${index}</button>`
+      )).join('');
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>:root{--touch-target:44px;--mc-ui-scale:2;--mc-slot:36px}${style}</style></head><body>
+        <div class="modal-backdrop mc-backdrop"><div class="mc-creative-catalog" id="catalog" data-creative-catalog>${slots}</div></div>
+        <script>
+          const catalog = document.getElementById('catalog');
+          const trace = [];
+          let grants = 0;
+          let base = 0;
+          let y = 0;
+          let active = -1;
+          window.__trace = () => trace.join(',');
+          catalog.addEventListener('pointerdown', (event) => {
+            const slot = event.target.closest('[data-slot]');
+            trace.push('down:' + (slot ? 'slot' : 'miss') + ':' + catalog.scrollTop);
+            if (!slot) return;
+            base = catalog.scrollTop;
+            y = event.clientY;
+            active = event.pointerId;
+          });
+          catalog.addEventListener('pointermove', (event) => {
+            if (event.pointerId !== active) return;
+            y = Math.max(y, Math.abs(event.clientY - y) > 8 ? y : y);
+          });
+          catalog.addEventListener('click', (event) => {
+            const delta = Math.abs(catalog.scrollTop - base);
+            trace.push('click:' + (event.target.closest('[data-slot]') ? 'slot' : 'miss') + ':' + delta);
+            if (!event.target.closest('[data-slot]')) return;
+            if (delta > 2) return;
+            grants += 1;
+          });
+          catalog.addEventListener('pointercancel', () => { active = -1; });
+          window.__catalogGrants = () => grants;
+        </script>
+      </body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('catalog server has no port');
+    const launched = await launchChrome(844, 390, 'about:blank');
+    chromeJobs.push(launched);
+    await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 844, height: 390, deviceScaleFactor: 1, mobile: true,
+    });
+    await launched.cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+    await launched.cdp.send('Page.navigate', { url: `http://127.0.0.1:${address.port}/` });
+    let ready = false;
+    for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+      const probe = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: '!!document.querySelector("[data-slot]")',
+      });
+      ready = (probe.result as { value?: boolean } | undefined)?.value === true;
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!ready) throw new Error('catalog touch page did not render');
+    const spot = await launched.cdp.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const slot = document.querySelector('[data-slot]');
+        const box = slot.getBoundingClientRect();
+        const catalog = document.getElementById('catalog');
+        return { x: box.left + box.width / 2, y: box.top + box.height / 2, before: catalog.scrollTop, max: catalog.scrollHeight - catalog.clientHeight };
+      })()`,
+    });
+    const point = (spot.result as { value?: { x: number; y: number; before: number; max: number } } | undefined)?.value;
+    expect(point && point.max).toBeGreaterThan(20);
+    const steps = 8;
+    await launched.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: point!.x, y: point!.y, id: 1 }],
+    });
+    for (let step = 1; step <= steps; step += 1) {
+      await launched.cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: point!.x, y: point!.y - step * 18, id: 1 }],
+      });
+    }
+    await launched.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const after = await launched.cdp.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `JSON.stringify({ top: document.getElementById('catalog').scrollTop, grants: window.__catalogGrants() })`,
+    });
+    const result = JSON.parse((after.result as { value?: string } | undefined)?.value ?? '{}') as { top: number; grants: number };
+    expect(result.top).toBeGreaterThan(point!.before);
+    expect(result.top).toBeLessThan(point!.before + steps * 18 * 2);
+    expect(result.grants).toBe(0);
+  }, 60_000);
+
+  it('keeps the live boss bar clear of the corner buttons', async () => {
+    server?.close();
+    server = createServer((_request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><style>${style}</style></head><body><div id="app"><div id="hud">
+        <div id="boss-bar"><span>Босс</span><div class="boss-bar-track"><span></span></div></div>
+        <div id="hud-corner">
+          <button type="button" id="hud-pause">Пауза</button>
+          <button type="button" id="hud-chat">Чат</button>
+          <button type="button" id="hud-menu">Меню</button>
+          <button type="button" id="hud-emote">Эмоции</button>
+        </div>
+      </div></div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('boss server has no port');
+    const origin = `http://127.0.0.1:${address.port}/`;
+    for (const [width, height] of [[640, 360], [667, 375], [740, 360], [844, 390], [932, 430], [1280, 720], [1920, 1080]] as const) {
+      const launched = await launchChrome(width, height, 'about:blank');
+      chromeJobs.push(launched);
+      await launched.cdp.send('Page.navigate', { url: origin });
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      });
+      let seen = '';
+      let ready = false;
+      for (let attempt = 0; attempt < 30 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'JSON.stringify({ w: innerWidth, h: innerHeight, bar: !!document.querySelector("#boss-bar:not(.hidden)") })',
+        });
+        seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+        const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; bar: boolean } : undefined;
+        ready = parsed?.bar === true && parsed.w === width && parsed.h === height;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`boss bar page ${width}x${height}: ${seen}`);
+      const measured = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const bar = document.querySelector('#boss-bar').getBoundingClientRect();
+          const corner = document.querySelector('#hud-corner').getBoundingClientRect();
+          const overlap = bar.left < corner.right - 1 && bar.right > corner.left + 1 && bar.top < corner.bottom - 1 && bar.bottom > corner.top + 1;
+          return { overlap, barRight: bar.right, cornerLeft: corner.left, width: bar.width };
+        })()`,
+      });
+      const value = (measured.result as { value?: { overlap: boolean; width: number } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overlap, JSON.stringify(value)).toBe(false);
+      expect(value!.width).toBeGreaterThan(40);
     }
   }, 90_000);
 

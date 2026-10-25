@@ -117,6 +117,14 @@ export function movementBeyondDeadzone(travel: number): boolean {
   return travel >= TOUCH_DEADZONE_PX;
 }
 
+/**
+ * A hold that started no mining, use, or attack can still become a camera swipe
+ * once the finger travels. An active mine, bow, or food hold stays a hold.
+ */
+export function emptyHoldCanBecomeSwipe(intent: string | null | undefined, travel: number): boolean {
+  return (intent === null || intent === undefined || intent === 'none') && travel >= TOUCH_SWIPE_THRESHOLD_PX;
+}
+
 export function advanceTouchTrack(track: TouchTrack, x: number, y: number, now: number): TouchTrack {
   const next: TouchTrack = { ...track, x, y };
   if (next.phase !== 'pending') return next;

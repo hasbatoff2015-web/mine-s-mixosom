@@ -254,8 +254,8 @@ describe('mobile movement helpers', () => {
     expect(inputSource).toContain('data-action="jump"');
     expect(inputSource).toContain('data-action="sneak"');
     expect(inputSource).toContain('data-action="inventory"');
-    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(performance.now())');
-    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(performance.now(), event.type === \'pointercancel\')');
+    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(event.pointerId, performance.now())');
+    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(event.pointerId, performance.now(), event.type !== \'pointerup\')');
     expect(inputSource).not.toContain('data-action="mine"');
     expect(inputSource).not.toContain('data-action="use"');
     expect(inputSource).not.toContain('data-action="sprint"');
@@ -349,8 +349,8 @@ describe('mobile movement helpers', () => {
     expect(playerSource).toContain('if (this.isFlying) this.updateFlyVelocity(movement, stepDt)');
     const fly = playerSource.slice(playerSource.indexOf('private updateFlyVelocity'), playerSource.indexOf('private updateStance'));
     expect(fly).toContain('if (movement.descend) desiredY -= CREATIVE_VERTICAL_SPEED');
-    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(performance.now())');
-    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(performance.now(), event.type === \'pointercancel\')');
+    expect(inputSource).toContain('if (action === \'jump\') this.pressJump(event.pointerId, performance.now())');
+    expect(inputSource).toContain('if (action === \'jump\') this.releaseJump(event.pointerId, performance.now(), event.type !== \'pointerup\')');
   });
 });
 

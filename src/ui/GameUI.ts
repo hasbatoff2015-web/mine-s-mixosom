@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionClaimableClass, auctionIconStack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionBackButtonHtml, auctionClaimableClass, auctionFormContext, auctionIconStack, auctionLogicalHeight, auctionShowsBack, auctionSlotHint, clampAuctionAmount } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -32,16 +32,15 @@ import {
   clanMembersHtml,
   clanRankHtml,
   clanSortButtonsHtml,
-  keepClanSearchDraft,
+  clanScreenContext,
   showsClanBack,
 } from './clanGui';
 import {
   containerStageSize,
   containerUiScaleWithClose,
   cursorStackClientPosition,
-  MC_MENU_DONATE_WIDTH,
-  MC_MENU_WIDTH,
   menuLogicalHeight,
+  menuLogicalWidth,
   menuUiScale,
 } from './containerTheme';
 import { viewportMetrics } from './visualViewport';
@@ -50,6 +49,7 @@ import { inventoryKeyDecision } from './inventoryKeys';
 import {
   INVENTORY_DOUBLE_CLICK_MS,
   INVENTORY_TOUCH_LONG_PRESS_MS,
+  catalogTapSuppressed,
   shouldFollowCarriedPointer,
   stepInventoryGesture,
   type GestureEffect,
@@ -59,6 +59,7 @@ import {
   type PointerZone,
   type SourceClass,
 } from './inventoryPointerGesture';
+import { emoteTouchSelection } from './emotePointer';
 import { resolveInventoryPointerZone } from './inventoryPointerHit';
 import { mobileDropHitContains } from './mobileDropTarget';
 import {
@@ -93,7 +94,7 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
-import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
+import { DONATION_COLORS, isDonationColorId, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
@@ -110,16 +111,17 @@ import {
   buyerPriceEachLabel,
   buyerScreenHtml,
   clampBuyerAmount,
-  keepBuyerDraft,
 } from './buyerGui';
 import {
   chatChromeStyle,
   friendChatMessageHtml,
   hudChromeStyle,
   menuBackHtml,
+  menuChromeHtml,
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
+import { applyDonatePlayerFilter } from './donateMenuGui';
 import { EMOTE_IDS, EMOTE_LABELS, type EmoteId } from '../../shared/emotes';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
@@ -134,6 +136,17 @@ import {
   settleFriendChatSend,
   trackFriendChatSend,
 } from '../../shared/directMessages';
+import {
+  echoFieldKey,
+  fieldIsComposing,
+  parseMarkup,
+  patchPreservingFocus,
+  planAuthoritativeField,
+  stampScreenContext,
+  watchFieldComposition,
+  type FieldEcho,
+} from './preserveFocusedField';
+import { TRADE_MONEY_ERROR } from '../../shared/trade';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -478,6 +491,10 @@ export class GameUI {
   private menuState?: ServerMenuMessage;
   private menuActions?: MenuGuiActions;
   private menuForceRender = false;
+  /** Last server text applied to each echo field, plus the draft last sent. */
+  private fieldEcho = new Map<string, FieldEcho>();
+  /** Nick color picked locally and not yet confirmed by donate_color. */
+  private pendingNickColor: string | null = null;
   /** Logical px copied from the friends panel so opening a chat does not resize it. */
   private friendChatLogicalHeight?: number;
   private readonly friendChatComposer = createFriendChatComposerLedger();
@@ -492,6 +509,15 @@ export class GameUI {
   onHudPause?: () => void;
   onHudChat?: () => void;
   onHudMenu?: () => void;
+  /** Mobile emote button. Desktop Z stays on InputManager. */
+  onEmoteOpen?: () => void;
+  onEmotePoint?: (dx: number, dy: number) => void;
+  onEmoteCommit?: () => void;
+  onEmoteAbort?: () => void;
+  private emoteGesture?: { pointerId: number; origin: 'button' | 'wheel'; dragSelect: boolean };
+  private emoteIgnoreLost = false;
+  private catalogScrollBase = 0;
+  private overlayViewportKey = '';
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -599,10 +625,10 @@ export class GameUI {
             <span class="hud-corner-key">M</span>
             <span class="hud-corner-label">Меню</span>
           </button>
-          <div id="hud-emote" role="img" aria-label="Эмоции, клавиша Z">
+          <button type="button" id="hud-emote" data-hud="emote" aria-label="Эмоции">
             <span class="hud-corner-key">Z</span>
             <span class="hud-corner-label">Эмоции</span>
-          </div>
+          </button>
         </div>
         ${emoteWheelHtml()}
         <div id="debug-panel" class="hidden"></div>
@@ -648,6 +674,7 @@ export class GameUI {
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
+    this.bindMobileEmote();
     document.addEventListener('pointermove', (event) => {
       if (this.pointerGesture?.pointerId === event.pointerId) return;
       if (!shouldFollowCarriedPointer({
@@ -664,6 +691,7 @@ export class GameUI {
     window.addEventListener('blur', () => {
       this.cancelInventoryGesture();
       this.closeAmountDialog();
+      this.abortMobileEmote();
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1598,6 +1626,89 @@ export class GameUI {
     return !this.emoteWheel.classList.contains('hidden');
   }
 
+  private abortMobileEmote(): void {
+    if (!this.emoteGesture) return;
+    this.emoteGesture = undefined;
+    this.onEmoteAbort?.();
+  }
+
+  /**
+   * Tap opens the existing wheel. A later tap on a sector starts that emote.
+   * Dragging from the button onto a sector also commits. The center and the
+   * dim close the wheel without starting one.
+   */
+  private bindMobileEmote(): void {
+    const button = this.root.querySelector<HTMLButtonElement>('#hud-emote');
+    if (!button) return;
+    const selectionAt = (event: PointerEvent) => {
+      const rect = this.emoteDisc.getBoundingClientRect();
+      return emoteTouchSelection(rect, event.clientX, event.clientY);
+    };
+    const track = (event: PointerEvent) => {
+      const gesture = this.emoteGesture;
+      if (!gesture || gesture.pointerId !== event.pointerId || !this.isEmoteWheelOpen()) return;
+      const selection = selectionAt(event);
+      const box = button.getBoundingClientRect();
+      const overButton = event.clientX >= box.left && event.clientX <= box.right
+        && event.clientY >= box.top && event.clientY <= box.bottom;
+      if (selection.inside && !overButton) gesture.dragSelect = true;
+      if (gesture.origin === 'wheel' || gesture.dragSelect) this.onEmotePoint?.(selection.dx, selection.dy);
+    };
+    const finish = (event: PointerEvent, aborted: boolean) => {
+      const gesture = this.emoteGesture;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      this.emoteGesture = undefined;
+      if (aborted || this.isBlockingOverlay()) {
+        this.onEmoteAbort?.();
+        return;
+      }
+      if (gesture.origin === 'button' && !gesture.dragSelect) return;
+      const selection = selectionAt(event);
+      this.onEmotePoint?.(selection.dx, selection.dy);
+      this.onEmoteCommit?.();
+    };
+    button.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || this.isBlockingOverlay()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onEmoteOpen?.();
+      if (!this.isEmoteWheelOpen()) return;
+      this.emoteGesture = { pointerId: event.pointerId, origin: 'button', dragSelect: false };
+      this.emoteIgnoreLost = true;
+      try { button.setPointerCapture(event.pointerId); } catch { /* The listener still sees the bubble. */ }
+      this.emoteIgnoreLost = false;
+    });
+    button.addEventListener('pointermove', track);
+    button.addEventListener('pointerup', (event) => finish(event, false));
+    button.addEventListener('pointercancel', (event) => finish(event, true));
+    button.addEventListener('lostpointercapture', (event) => {
+      if (this.emoteIgnoreLost) return;
+      finish(event, true);
+    });
+
+    this.emoteWheel.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || this.emoteGesture) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.emoteGesture = { pointerId: event.pointerId, origin: 'wheel', dragSelect: true };
+      const selection = selectionAt(event);
+      this.onEmotePoint?.(selection.dx, selection.dy);
+      this.emoteIgnoreLost = true;
+      try { this.emoteWheel.setPointerCapture(event.pointerId); } catch { /* Synthetic probes have no capture. */ }
+      this.emoteIgnoreLost = false;
+    });
+    this.emoteWheel.addEventListener('pointermove', track);
+    this.emoteWheel.addEventListener('pointerup', (event) => finish(event, false));
+    this.emoteWheel.addEventListener('pointercancel', (event) => finish(event, true));
+    this.emoteWheel.addEventListener('lostpointercapture', (event) => {
+      if (this.emoteIgnoreLost) return;
+      finish(event, true);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.abortMobileEmote();
+    });
+  }
+
   showEmoteWheel(): void {
     this.emoteDisc.dataset.selected = '';
     this.emoteWheelTitle.textContent = 'Отмена';
@@ -1623,6 +1734,7 @@ export class GameUI {
   }
 
   hideEmoteWheel(): void {
+    this.emoteGesture = undefined;
     this.emoteWheel.classList.add('hidden');
     this.emoteWheel.setAttribute('aria-hidden', 'true');
     this.emoteDisc.dataset.selected = '';
@@ -2147,6 +2259,7 @@ export class GameUI {
 
   closeGameMenu(options?: OverlayCloseOptions): void {
     if (!this.menuState) return;
+    this.pendingNickColor = null;
     this.menuState = undefined;
     this.friendChat = undefined;
     this.friendChatLogicalHeight = undefined;
@@ -2187,18 +2300,62 @@ export class GameUI {
   }
 
   relayoutGameMenu(): void {
-    const state = this.menuState;
-    if (!state || state.screen === 'closed' || !this.modal) return;
-    const scale = this.menuScale(MC_MENU_WIDTH, menuLogicalHeight(state.screen));
-    const stage = this.modal.querySelector<HTMLElement>('.mc-menu-stage');
-    const current = Number(stage?.style.getPropertyValue('--mc-ui-scale'));
-    if (Number.isFinite(current) && Math.abs(current - scale) < 0.01) return;
-    this.menuForceRender = true;
-    try {
-      this.renderGameMenu();
-    } finally {
-      this.menuForceRender = false;
+    this.relayoutOpenOverlays();
+  }
+
+  /**
+   * Viewport changes update the open window's scale variables.
+   * The DOM stays, so scroll position, the focused field, and the carried item remain.
+   * A real size change drops an in-progress inventory drag without sending an action.
+   */
+  relayoutOpenOverlays(): void {
+    const size = viewportMetrics();
+    const key = `${size.width}x${size.height}`;
+    if (key === this.overlayViewportKey) return;
+    const resized = this.overlayViewportKey !== '';
+    this.overlayViewportKey = key;
+    if (resized) this.cancelInventoryGesture();
+    const stage = this.modal?.querySelector<HTMLElement>('.mc-stage');
+    if (!stage) return;
+    if (this.isGameMenuOpen() && this.menuState && this.menuState.screen !== 'closed') {
+      const logicalWidth = menuLogicalWidth(this.menuState.screen, size.width);
+      const logicalHeight = menuLogicalHeight(this.menuState.screen);
+      this.applyStageScale(stage, menuUiScale(size.width, size.height, logicalWidth, logicalHeight), logicalWidth);
+      return;
     }
+    if (this.isTradeOpen()) {
+      const logicalWidth = menuLogicalWidth('trade', size.width);
+      this.applyStageScale(stage, menuUiScale(size.width, size.height, logicalWidth, 248), logicalWidth);
+      return;
+    }
+    if (this.isAuctionOpen() && this.auctionState && this.auctionState.screen !== 'closed') {
+      const logicalHeight = auctionLogicalHeight(this.auctionState.screen);
+      this.applyStageScale(stage, this.containerScale(176, logicalHeight), 176);
+      return;
+    }
+    if (this.isClanOpen()) {
+      const logicalHeight = Number(stage.dataset.logicalHeight) || 248;
+      this.applyStageScale(stage, this.containerScale(220, logicalHeight), 220);
+      return;
+    }
+    if (this.isBuyerOpen()) {
+      const logicalHeight = Number(stage.dataset.logicalHeight) || 218;
+      this.applyStageScale(stage, this.containerScale(176, logicalHeight), 176);
+      return;
+    }
+    if (this.inventoryContext && this.isInventoryOpen()) {
+      const creative = this.inventoryContext.kind === 'inventory' && this.inventoryContext.mode === 'creative';
+      const stageSize = containerStageSize(
+        this.craftMenuOpen ? 'craft' : creative ? 'creative' : this.inventoryContext.kind,
+        this.recipeBookOpen && !creative && !this.craftMenuOpen,
+      );
+      this.applyStageScale(stage, this.containerScale(stageSize.width, stageSize.height), stageSize.width);
+    }
+  }
+
+  private applyStageScale(stage: HTMLElement, scale: number, logicalWidth: number): void {
+    stage.style.setProperty('--mc-ui-scale', String(scale));
+    stage.style.setProperty('--mc-logical-width', String(logicalWidth));
   }
 
   openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
@@ -2795,6 +2952,7 @@ export class GameUI {
       const to = related instanceof Element ? related.closest('[data-slot]') : null;
       if (from && !to) this.hoveredSlotKey = null;
     });
+    this.modal!.querySelector('[data-creative-catalog]')?.addEventListener('scroll', () => this.noteCatalogScroll(), { passive: true });
     this.modal!.addEventListener('pointerdown', (event) => this.onInventoryPointerDown(event, context));
     this.modal!.addEventListener('pointermove', (event) => this.onInventoryPointerMove(event));
     this.modal!.addEventListener('pointerup', (event) => this.onInventoryPointerUp(event));
@@ -3235,7 +3393,10 @@ export class GameUI {
       return;
     }
     const sample = this.pointerSample(event, false);
-    if (sample.zone === 'slot' || sample.zone === 'drop') event.preventDefault();
+    const catalogHost = target?.closest<HTMLElement>('[data-creative-catalog]') ?? null;
+    const catalogScroll = this.coarsePointer && catalogHost !== null;
+    if (catalogScroll && catalogHost) this.catalogScrollBase = catalogHost.scrollTop;
+    if (!catalogScroll && (sample.zone === 'slot' || sample.zone === 'drop')) event.preventDefault();
     const sourceKey = sample.slotKey;
     const sourceClass = sourceKey ? this.sourceClassFor(sourceKey) : 'none';
     const stack = sourceKey ? this.stackAt(sourceKey) : null;
@@ -3247,12 +3408,14 @@ export class GameUI {
         sourceOccupied: sourceClass === 'real' && stack !== null,
         sourceClass,
         allowLongPress: this.coarsePointer && sourceKey !== null && isPlayerAmountSlot(sourceKey) && stack !== null,
+        catalogScroll,
       },
     });
     this.pointerGesture = step.gesture;
     if (!step.gesture) return;
     this.gestureSignature = step.gesture.sourceKey ? itemStackSignature(this.stackAt(step.gesture.sourceKey)) : '';
     this.armLongPress();
+    if (catalogScroll) return;
     try {
       this.modal?.setPointerCapture(event.pointerId);
     } catch {
@@ -3266,6 +3429,8 @@ export class GameUI {
     const before = this.pointerGesture.phase;
     const step = stepInventoryGesture(this.pointerGesture, { type: 'move', sample });
     this.pointerGesture = step.gesture;
+    for (const effect of step.effects) this.applyGestureEffect(effect, sample);
+    if (before === 'pending' && step.gesture?.phase === 'scroll') this.clearLongPressTimer();
     if (before !== 'drag' && step.gesture?.phase === 'drag') {
       this.clearLongPressTimer();
       this.itemTooltip?.hide();
@@ -3279,8 +3444,29 @@ export class GameUI {
     this.syncCursorStackElement();
   }
 
+  private noteCatalogScroll(): void {
+    this.absorbCatalogSwipe();
+  }
+
+  /** Native catalog pan owns scrollTop. This only refuses the tap after a swipe. */
+  private absorbCatalogSwipe(): void {
+    const gesture = this.pointerGesture;
+    if (!gesture?.catalogScroll || gesture.phase === 'scroll') return;
+    const catalog = this.modal?.querySelector<HTMLElement>('[data-creative-catalog]');
+    const scrollDelta = (catalog?.scrollTop ?? this.catalogScrollBase) - this.catalogScrollBase;
+    if (!catalogTapSuppressed({
+      cancelled: false,
+      verticalTravel: gesture.y - gesture.startY,
+      horizontalTravel: gesture.x - gesture.startX,
+      scrollDelta,
+    })) return;
+    this.pointerGesture = { ...gesture, phase: 'scroll' };
+    this.clearLongPressTimer();
+  }
+
   private onInventoryPointerUp(event: PointerEvent): void {
     if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
+    this.absorbCatalogSwipe();
     const sample = this.pointerSample(event, true);
     const step = stepInventoryGesture(this.pointerGesture, { type: 'up', sample });
     this.clearLongPressTimer();
@@ -3338,7 +3524,7 @@ export class GameUI {
   }
 
   private applyGestureEffect(effect: GestureEffect, sample?: PointerSample): void {
-    if (effect.type === 'cancel') return;
+    if (effect.type === 'cancel' || effect.type === 'scroll') return;
     if (effect.type === 'long-press') {
       const pointerId = this.pointerGesture?.pointerId;
       this.openAmountDialog(effect.key);
@@ -3973,6 +4159,16 @@ export class GameUI {
       this.renderAuction();
       return;
     }
+    if (auctionShowsBack(prev.screen, prev.source) !== auctionShowsBack(state.screen, state.source)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
+    if (auctionFormContext(prev) !== auctionFormContext(state)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
     this.auctionState = state;
     if (state.screen === 'browse' || state.screen === 'mine') {
       this.patchAuctionList(state);
@@ -4002,7 +4198,7 @@ export class GameUI {
     empty.hidden = state.totalCount !== 0;
     this.writeAuctionMessage(state.message);
     const search = this.modal?.querySelector<HTMLInputElement>('[data-ah-search]');
-    if (search && !keepAuctionSearchDraft(document.activeElement, search)) search.value = state.search;
+    if (search) this.applyEchoValue(search, state.search, false);
   }
 
   private patchAuctionForm(state: ServerAuctionMessage): void {
@@ -4019,36 +4215,62 @@ export class GameUI {
     if (minus) minus.disabled = amount <= 1;
     if (plus) plus.disabled = amount >= max;
     this.writeAuctionMessage(state.message);
+    const price = this.modal?.querySelector<HTMLInputElement>('[data-ah-price]');
+    if (price) this.applyEchoValue(price, state.selected?.priceText ?? '', false);
+  }
+
+  private presentAuctionBody(state: ServerAuctionMessage): string {
+    return stampScreenContext(
+      this.auctionBodyHtml(state),
+      'data-ah-context',
+      auctionFormContext(state),
+      'data-ah-screen=',
+    );
+  }
+
+  /** Same auction screen and listing: refresh slots, pages, and messages around the live field. */
+  private tryPatchAuctionBody(state: ServerAuctionMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-ah-screen]');
+    if (!live || live.getAttribute('data-ah-screen') !== state.screen) return false;
+    if ((live.dataset.ahContext ?? '') !== auctionFormContext(state)) return false;
+    const hasBack = Boolean(this.modal?.querySelector('[data-ah-action="back"]'));
+    if (hasBack !== auctionShowsBack(state.screen, state.source)) return false;
+    const fresh = parseMarkup(this.presentAuctionBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
   }
 
   private renderAuction(): void {
     const state = this.auctionState;
     const actions = this.auctionActions;
     if (!state || !actions || state.screen === 'closed') return;
-    const keep = this.captureAuctionInputFocus();
-    const logicalHeight = state.screen === 'sell-pick' ? 222
-      : state.screen === 'browse' ? 216
-        : state.screen === 'mine' ? 200
-          : state.screen === 'manage' ? 236
-            : state.screen === 'sell-confirm' ? 204
-              : 218;
+    if (this.tryPatchAuctionBody(state)) return;
+    const liveAuction = this.modal?.querySelector<HTMLElement>('[data-ah-screen]');
+    const sameAuction = liveAuction?.getAttribute('data-ah-screen') === state.screen
+      && (liveAuction.dataset.ahContext ?? '') === auctionFormContext(state);
+    const keep = sameAuction ? this.captureAuctionInputFocus() : undefined;
+    const logicalHeight = auctionLogicalHeight(state.screen);
     const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
-    const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
-      ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
+    const back = auctionShowsBack(state.screen, state.source)
+      ? `<div class="mc-ah-back-row">${auctionBackButtonHtml()}</div>`
       : '';
     this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
-        ${back}
         <div class="mc-panel" data-container-kind="chest">
-          ${this.auctionBodyHtml(state)}
+          ${back}
+          ${this.presentAuctionBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindAuctionChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreAuctionInputFocus(keep);
   }
 
@@ -4094,7 +4316,6 @@ export class GameUI {
         <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4114,7 +4335,6 @@ export class GameUI {
         </label>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4140,7 +4360,6 @@ export class GameUI {
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
           <button type="button" class="mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4154,7 +4373,6 @@ export class GameUI {
         </label>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4165,7 +4383,6 @@ export class GameUI {
       <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
       <div class="mc-ah-actions">
         <button type="button" class="mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
-        <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
       </div>
       ${message}
     </div>`;
@@ -4176,22 +4393,26 @@ export class GameUI {
     this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
     const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
+    if (search) watchFieldComposition(search);
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
     search?.addEventListener('keydown', (event) => event.stopPropagation());
     search?.addEventListener('keyup', (event) => event.stopPropagation());
     search?.addEventListener('input', () => {
+      this.noteFieldSend(search);
       window.clearTimeout(this.auctionSearchTimer);
       this.auctionSearchTimer = window.setTimeout(() => {
         this.auctionActions?.send({ type: 'auction_action', action: 'search', search: search.value });
       }, 160);
     });
     const price = this.modal!.querySelector<HTMLInputElement>('[data-ah-price]');
+    if (price) watchFieldComposition(price);
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
     price?.addEventListener('keyup', (event) => event.stopPropagation());
     price?.addEventListener('input', () => {
       const digits = price.value.replace(/[^\d]/g, '');
       if (price.value !== digits) price.value = digits;
+      this.noteFieldSend(price, digits);
       this.auctionActions?.send({ type: 'auction_action', action: 'set_price', price: digits });
     });
     this.modal!.addEventListener('click', (event) => {
@@ -4276,6 +4497,11 @@ export class GameUI {
       this.renderClan();
       return;
     }
+    if (clanScreenContext(prev) !== clanScreenContext(state)) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
     this.clanState = state;
     if (state.screen === 'ranking' || state.screen === 'add' || state.screen === 'requests') {
       this.patchClanList(state);
@@ -4295,7 +4521,7 @@ export class GameUI {
       this.renderClan();
       return;
     }
-    if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
+    if (search) this.applyEchoValue(search, state.search, false);
     if (list) list.innerHTML = this.clanListHtml(state);
     page.textContent = `Страница ${state.page} из ${state.totalPages}`;
     if (prev) prev.disabled = state.page <= 1;
@@ -4321,7 +4547,7 @@ export class GameUI {
 
   private patchClanInvite(state: ServerClanMessage): void {
     const input = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]');
-    if (input && !keepClanSearchDraft(document.activeElement, input)) input.value = state.inviteName ?? '';
+    if (input) this.applyEchoValue(input, state.inviteName ?? '', false);
     const message = this.modal?.querySelector<HTMLElement>('[data-clan-invite-message]');
     if (!message) return;
     message.hidden = !state.inviteMessage;
@@ -4335,11 +4561,37 @@ export class GameUI {
     node.textContent = message ?? '';
   }
 
+  private presentClanBody(state: ServerClanMessage): string {
+    return stampScreenContext(
+      this.clanBodyHtml(state),
+      'data-clan-context',
+      clanScreenContext(state),
+      'data-clan-screen=',
+    );
+  }
+
+  private tryPatchClanBody(state: ServerClanMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-clan-screen]');
+    if (!live || live.getAttribute('data-clan-screen') !== state.screen) return false;
+    if ((live.dataset.clanContext ?? '') !== clanScreenContext(state)) return false;
+    const hasBack = Boolean(this.modal?.querySelector('[data-clan-action="back"]'));
+    if (hasBack !== showsClanBack(state.screen, state.source)) return false;
+    const fresh = parseMarkup(this.presentClanBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
+  }
+
   private renderClan(): void {
     const state = this.clanState;
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
-    const keep = this.captureClanInputFocus();
+    if (this.tryPatchClanBody(state)) return;
+    const liveClan = this.modal?.querySelector<HTMLElement>('[data-clan-screen]');
+    const sameClan = liveClan?.getAttribute('data-clan-screen') === state.screen
+      && (liveClan.dataset.clanContext ?? '') === clanScreenContext(state);
+    const keep = sameClan ? this.captureClanInputFocus() : undefined;
     const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
       : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
         : 220;
@@ -4354,12 +4606,14 @@ export class GameUI {
       <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
-          ${this.clanBodyHtml(state)}
+          ${this.presentClanBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindClanChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreClanInputFocus(keep);
   }
 
@@ -4710,10 +4964,12 @@ export class GameUI {
     });
     const bindField = (selector: string, action: 'search' | 'set_name') => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
       input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
         window.clearTimeout(this.clanSearchTimer);
         this.clanSearchTimer = window.setTimeout(() => {
           if (action === 'search') this.clanActions?.send({ type: 'clan_action', action: 'search', search: input.value });
@@ -4724,20 +4980,24 @@ export class GameUI {
     bindField('[data-clan-search]', 'search');
     bindField('[data-clan-name]', 'set_name');
     const invite = this.modal!.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    if (invite) watchFieldComposition(invite);
     invite?.addEventListener('pointerdown', (event) => event.stopPropagation());
     invite?.addEventListener('keydown', (event) => event.stopPropagation());
     invite?.addEventListener('keyup', (event) => event.stopPropagation());
     invite?.addEventListener('input', () => {
+      this.noteFieldSend(invite);
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = window.setTimeout(() => {
         this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
       }, 160);
     });
     const announce = this.modal!.querySelector<HTMLInputElement>('[data-clan-announce-text]');
+    if (announce) watchFieldComposition(announce);
     announce?.addEventListener('pointerdown', (event) => event.stopPropagation());
     announce?.addEventListener('keydown', (event) => event.stopPropagation());
     announce?.addEventListener('keyup', (event) => event.stopPropagation());
     announce?.addEventListener('input', () => {
+      this.noteFieldSend(announce);
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = window.setTimeout(() => {
         this.clanActions?.send({ type: 'clan_action', action: 'set_announce_text', text: announce.value });
@@ -4864,18 +5124,18 @@ export class GameUI {
 
   private patchBuyer(state: ServerBuyerMessage): void {
     const prev = this.buyerState;
-    if (!this.modal || !prev || prev.screen !== state.screen || prev.role !== state.role) {
+    if (!this.modal || !prev || prev.screen !== state.screen || prev.buyerId !== state.buyerId || prev.role !== state.role) {
       this.buyerState = state;
       this.renderBuyer();
       return;
     }
     this.buyerState = state;
     const name = this.modal.querySelector<HTMLInputElement>('[data-buyer-name]');
-    if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
+    if (name) this.applyEchoValue(name, state.name, false);
     const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
-    if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
+    if (price) this.applyEchoValue(price, state.priceText, false);
     const stockInput = this.modal.querySelector<HTMLInputElement>('[data-buyer-stock]');
-    if (stockInput && !keepBuyerDraft(document.activeElement, stockInput)) stockInput.value = state.stockText ?? '';
+    if (stockInput) this.applyEchoValue(stockInput, state.stockText ?? '', false);
     const stock = this.modal.querySelector('[data-buyer-stock-count]');
     if (stock) stock.textContent = String(state.stock ?? 0);
     const itemHost = this.modal.querySelector('[data-buyer-item]');
@@ -4903,11 +5163,34 @@ export class GameUI {
     }
   }
 
+  private presentBuyerBody(state: ServerBuyerMessage): string {
+    return stampScreenContext(this.buyerBodyHtml(state), 'data-buyer-id', state.buyerId, 'data-buyer-screen=');
+  }
+
+  private tryPatchBuyerBody(state: ServerBuyerMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-buyer-screen]');
+    if (!live || live.getAttribute('data-buyer-screen') !== state.screen) return false;
+    if ((live.dataset.buyerId ?? '') !== state.buyerId) return false;
+    const nextRole = state.role === 'seller' ? 'seller' : 'buyer';
+    if (state.screen !== 'pick-item' && (live.dataset.buyerRole ?? 'buyer') !== nextRole) return false;
+    const fresh = parseMarkup(this.presentBuyerBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
+  }
+
   private renderBuyer(): void {
     const state = this.buyerState;
     const actions = this.buyerActions;
     if (!state || !actions || state.screen === 'closed') return;
-    const keep = this.captureBuyerInputFocus();
+    if (this.tryPatchBuyerBody(state)) return;
+    const liveBuyer = this.modal?.querySelector<HTMLElement>('[data-buyer-screen]');
+    const nextRole = state.role === 'seller' ? 'seller' : 'buyer';
+    const sameBuyer = liveBuyer?.getAttribute('data-buyer-screen') === state.screen
+      && (liveBuyer.dataset.buyerId ?? '') === state.buyerId
+      && (state.screen === 'pick-item' || (liveBuyer?.dataset.buyerRole ?? 'buyer') === nextRole);
+    const keep = sameBuyer ? this.captureBuyerInputFocus() : undefined;
     const logicalHeight = state.screen === 'pick-item' ? 222
       : state.screen === 'trade' ? (state.role === 'seller' ? 268 : 248)
         : state.role === 'seller' ? 318 : 286;
@@ -4918,12 +5201,14 @@ export class GameUI {
     this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
-          ${this.buyerBodyHtml(state)}
+          ${this.presentBuyerBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindBuyerChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreBuyerInputFocus(keep);
   }
 
@@ -4956,13 +5241,18 @@ export class GameUI {
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
-      input?.addEventListener('input', () => send(input.value));
+      input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
+        send(input.value);
+      });
     };
     bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
     const stock = this.modal!.querySelector<HTMLInputElement>('[data-buyer-stock]');
+    if (stock) watchFieldComposition(stock);
     stock?.addEventListener('pointerdown', (event) => event.stopPropagation());
     stock?.addEventListener('keydown', (event) => event.stopPropagation());
     stock?.addEventListener('keyup', (event) => event.stopPropagation());
@@ -4970,15 +5260,18 @@ export class GameUI {
       if (!stock) return;
       const digits = stock.value.replace(/[^\d]/g, '').slice(0, 7);
       if (stock.value !== digits) stock.value = digits;
+      this.noteFieldSend(stock, digits);
       this.buyerActions?.send({ type: 'buyer_action', action: 'set_stock', stock: digits });
     });
     const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
+    if (price) watchFieldComposition(price);
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
     price?.addEventListener('keyup', (event) => event.stopPropagation());
     price?.addEventListener('input', () => {
       const digits = price.value.replace(/[^\d]/g, '');
       if (price.value !== digits) price.value = digits;
+      this.noteFieldSend(price, digits);
       this.buyerActions?.send({ type: 'buyer_action', action: 'set_price', price: digits });
     });
     this.modal!.addEventListener('click', (event) => {
@@ -5075,6 +5368,7 @@ export class GameUI {
     const actions = this.menuActions;
     if (!state || !actions || state.screen === 'closed') return;
     if (!this.menuForceRender && this.tryPatchFriendChat(state)) return;
+    if (!this.menuForceRender && this.tryPatchMenuBody(state)) return;
     if (state.screen === 'friend-chat') this.rememberFriendsPanelHeight();
     else this.friendChatLogicalHeight = undefined;
     const sameChat = state.screen === 'friend-chat'
@@ -5082,10 +5376,12 @@ export class GameUI {
       && this.friendChat?.friendId === state.activeFriendId;
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
-    const keep = this.captureMenuInputFocus();
-    const logicalWidth = state.screen === 'donate' || state.screen.startsWith('donate-')
-      ? MC_MENU_DONATE_WIDTH
-      : MC_MENU_WIDTH;
+    const liveMenu = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
+    const sameMenu = liveMenu?.getAttribute('data-menu-screen') === state.screen
+      && (liveMenu.dataset.menuContext ?? '') === (state.screen === 'claim-settings' ? (state.claimId ?? '') : (liveMenu?.dataset.menuContext ?? ''))
+      && (state.screen !== 'friend-chat' || liveMenu?.dataset.friendId === (state.activeFriendId ?? ''));
+    const keep = sameMenu ? this.captureMenuInputFocus() : undefined;
+    const logicalWidth = menuLogicalWidth(state.screen, viewportMetrics().width);
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -5096,14 +5392,15 @@ export class GameUI {
     const modal = this.resetOverlayModal();
     modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
-        ${menuBackHtml(state.screen)}
         <div class="${panelClass}" data-container-kind="chest" data-menu-panel>
+          ${menuChromeHtml(menuBackHtml(state.screen), this.closeButtonHtml())}
           ${menuBodyHtml(state, (value) => this.escape(value))}
         </div>
-        ${this.closeButtonHtml()}
       </div>`;
     this.bindGameMenuChrome();
     this.applyFriendChatPanelHeight();
+    this.reconcileDonateLocalState();
+    this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
     if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
@@ -5182,6 +5479,7 @@ export class GameUI {
   private bindFriendChatComposer(): void {
     const input = this.friendChatInput();
     if (input) {
+      watchFieldComposition(input);
       input.addEventListener('pointerdown', (event) => event.stopPropagation());
       input.addEventListener('keydown', (event) => {
         event.stopPropagation();
@@ -5288,6 +5586,116 @@ export class GameUI {
     if (input) input.value = '';
   }
 
+  /**
+   * Same menu screen: refresh lists, counts, and messages around the focused field.
+   * A different screen, or another claim, rebuilds so the old draft cannot leak.
+   */
+  private tryPatchMenuBody(state: ServerMenuMessage): boolean {
+    if (state.screen === 'friend-chat') return false;
+    const live = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
+    if (!live) return false;
+    const fresh = parseMarkup(menuBodyHtml(state, (value) => this.escape(value)));
+    const liveScreen = live.getAttribute('data-menu-screen');
+    const freshScreen = fresh.getAttribute('data-menu-screen');
+    if (!liveScreen || liveScreen !== freshScreen || liveScreen !== state.screen) return false;
+    if ((live.dataset.menuContext ?? '') !== (fresh.dataset.menuContext ?? '')) return false;
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    this.reconcileDonateLocalState();
+    return true;
+  }
+
+  /** Applied nick color comes from the server. A picked swatch stays until confirm, reset, or leave. */
+  private reconcileDonateLocalState(): void {
+    const screen = this.menuState?.screen;
+    const choices = this.menuState?.donate?.nickChoices ?? [];
+    if (screen !== 'donate-color' || (this.pendingNickColor !== null && !choices.includes(this.pendingNickColor))) {
+      this.pendingNickColor = null;
+    } else if (this.pendingNickColor !== null && this.menuState?.donate?.nickColor === this.pendingNickColor) {
+      this.pendingNickColor = null;
+    }
+    this.paintPendingNickColor();
+    if ((screen === 'donate-invsee' || screen === 'donate-invsee-op') && this.modal) {
+      applyDonatePlayerFilter(this.modal);
+    }
+  }
+
+  private paintPendingNickColor(): void {
+    if (!this.modal || this.menuState?.screen !== 'donate-color') return;
+    const pick = this.modal.querySelector<HTMLElement>('[data-donate-color-pick]');
+    if (!pick) {
+      this.pendingNickColor = null;
+      return;
+    }
+    const id = this.pendingNickColor;
+    const preview = this.modal.querySelector<HTMLElement>('[data-donate-preview]');
+    if (!id) {
+      delete pick.dataset.selected;
+      for (const entry of this.modal.querySelectorAll<HTMLElement>('[data-donate-swatch]')) {
+        entry.classList.remove('is-selected');
+      }
+      const applied = this.menuState.donate?.nickColor;
+      if (preview && applied && isDonationColorId(applied)) preview.style.color = DONATION_COLORS[applied];
+      return;
+    }
+    pick.dataset.selected = id;
+    if (preview && isDonationColorId(id)) preview.style.color = DONATION_COLORS[id];
+    for (const entry of this.modal.querySelectorAll<HTMLElement>('[data-donate-swatch]')) {
+      entry.classList.toggle('is-selected', entry.dataset.donateSwatch === id);
+    }
+  }
+
+  private resetFieldEcho(root: ParentNode): void {
+    this.fieldEcho.clear();
+    for (const field of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) {
+      const key = echoFieldKey(field);
+      if (!key) continue;
+      this.fieldEcho.set(key, { echo: field.value, pending: null });
+    }
+  }
+
+  private noteFieldSend(field: HTMLInputElement | HTMLTextAreaElement, sent = field.value): void {
+    const key = echoFieldKey(field);
+    if (!key) return;
+    const slot = this.fieldEcho.get(key) ?? { echo: '', pending: null };
+    slot.pending = sent;
+    this.fieldEcho.set(key, slot);
+  }
+
+  private applyEchoValue(
+    live: HTMLInputElement | HTMLTextAreaElement,
+    server: string,
+    rejected: boolean,
+  ): void {
+    const fresh = document.createElement(live.tagName.toLowerCase()) as HTMLInputElement;
+    fresh.value = server;
+    const key = echoFieldKey(live);
+    if (key) fresh.setAttribute(key, '');
+    this.syncEchoField(live, fresh, rejected);
+  }
+
+  private syncEchoField(
+    live: HTMLInputElement | HTMLTextAreaElement,
+    fresh: HTMLInputElement | HTMLTextAreaElement,
+    rejected: boolean,
+  ): void {
+    const key = echoFieldKey(live);
+    if (!key) return;
+    const slot = this.fieldEcho.get(key) ?? { echo: fresh.value, pending: null };
+    const planned = planAuthoritativeField({
+      focused: document.activeElement === live,
+      composing: fieldIsComposing(live),
+      current: live.value,
+      server: fresh.value,
+      lastEcho: slot.echo,
+      pendingSent: slot.pending,
+      rejectedPending: rejected,
+    });
+    if (planned.value !== live.value) live.value = planned.value;
+    this.fieldEcho.set(key, { echo: planned.lastEcho, pending: planned.pendingSent });
+  }
+
   private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
@@ -5327,10 +5735,14 @@ export class GameUI {
     });
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
-      input?.addEventListener('input', () => send(input.value));
+      input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
+        send(input.value);
+      });
     };
     bindDraft('[data-menu-home-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_home_name', name }));
     bindDraft('[data-menu-friend-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_friend_name', name }));
@@ -5338,23 +5750,13 @@ export class GameUI {
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
     for (const field of this.modal!.querySelectorAll<HTMLElement>('[data-donate-field]')) {
+      watchFieldComposition(field);
       field.addEventListener('pointerdown', (event) => event.stopPropagation());
       field.addEventListener('keydown', (event) => event.stopPropagation());
       field.addEventListener('keyup', (event) => event.stopPropagation());
     }
-    const search = this.modal!.querySelector<HTMLInputElement>('[data-donate-search]');
-    const playerList = this.modal!.querySelector<HTMLElement>('[data-donate-player-list]');
-    const searchEmpty = this.modal!.querySelector<HTMLElement>('[data-donate-search-empty]');
-    search?.addEventListener('input', () => {
-      const query = search.value.trim().toLowerCase();
-      let shown = 0;
-      for (const row of playerList?.querySelectorAll<HTMLElement>('[data-donate-player-row]') ?? []) {
-        const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
-        const match = query.length === 0 || name.includes(query);
-        row.hidden = !match;
-        if (match) shown += 1;
-      }
-      if (searchEmpty) searchEmpty.hidden = shown > 0 || query.length === 0;
+    this.modal!.querySelector<HTMLInputElement>('[data-donate-search]')?.addEventListener('input', () => {
+      applyDonatePlayerFilter(this.modal!);
     });
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
@@ -5500,13 +5902,10 @@ export class GameUI {
       }
       const swatch = target.closest<HTMLElement>('[data-donate-swatch]');
       if (swatch?.dataset.donateSwatch) {
-        const pick = this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]');
-        if (pick) pick.dataset.selected = swatch.dataset.donateSwatch;
-        const preview = this.modal?.querySelector<HTMLElement>('[data-donate-preview]');
-        if (preview) preview.style.color = swatch.style.backgroundColor;
-        for (const entry of this.modal?.querySelectorAll<HTMLElement>('[data-donate-swatch]') ?? []) {
-          entry.classList.toggle('is-selected', entry === swatch);
-        }
+        const choices = current.donate?.nickChoices ?? [];
+        if (!choices.includes(swatch.dataset.donateSwatch)) return;
+        this.pendingNickColor = swatch.dataset.donateSwatch;
+        this.paintPendingNickColor();
         return;
       }
       const button = target.closest<HTMLElement>('[data-menu-action]');
@@ -5540,9 +5939,16 @@ export class GameUI {
         return;
       }
       if (kind === 'donate_color') {
-        const selected = button?.dataset.donateColor
-          ?? this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]')?.dataset.selected;
-        if (!selected) {
+        if (button?.dataset.donateColor === 'reset') {
+          this.pendingNickColor = null;
+          this.paintPendingNickColor();
+          actions.send({ type: 'menu_action', action: 'donate_color', color: 'reset', name: 'reset' });
+          return;
+        }
+        const selected = this.pendingNickColor;
+        const choices = current.donate?.nickChoices ?? [];
+        if (!selected || !choices.includes(selected)) {
+          this.pendingNickColor = null;
           const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
           if (note) {
             note.hidden = false;
@@ -5596,28 +6002,54 @@ export class GameUI {
     });
   }
 
+  /** Same trade session: both offers, ready state, and buttons update around the money field. */
+  private tryPatchTrade(): boolean {
+    const state = this.tradeState;
+    if (!state || state.screen !== 'session' || !this.modal) return false;
+    const live = this.modal.querySelector<HTMLElement>('[data-trade-screen="session"]');
+    if (!live) return false;
+    if ((live.dataset.tradeId ?? '') !== (state.tradeId ?? '')) return false;
+    if ((live.dataset.partnerId ?? '') !== (state.partnerId ?? '')) return false;
+    const fresh = parseMarkup(tradeWindowChrome(state, (value) => this.escape(value), {
+      self: this.tradeSlotCells(state.selfSlots, 'self'),
+      partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
+      inventory: this.tradeInventoryCells(state),
+    }));
+    const rejected = state.message === TRADE_MONEY_ERROR;
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, rejected && echoFieldKey(current) === 'data-trade-money');
+    });
+    return true;
+  }
+
   private renderTrade(): void {
     const state = this.tradeState;
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
-    const keep = this.captureTradeInputFocus();
-    const scale = this.menuScale(MC_MENU_WIDTH, 248);
+    if (this.tryPatchTrade()) return;
+    const liveTrade = this.modal?.querySelector<HTMLElement>('[data-trade-screen="session"]');
+    const sameTrade = (liveTrade?.dataset.tradeId ?? '') === (state.tradeId ?? '')
+      && (liveTrade?.dataset.partnerId ?? '') === (state.partnerId ?? '');
+    const keep = sameTrade ? this.captureTradeInputFocus() : undefined;
+    const logicalWidth = menuLogicalWidth('trade', viewportMetrics().width);
+    const scale = this.menuScale(logicalWidth, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
     this.modal!.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${menuChromeHtml('', this.closeButtonHtml())}
           ${tradeWindowChrome(state, (value) => this.escape(value), {
             self: this.tradeSlotCells(state.selfSlots, 'self'),
             partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
             inventory: this.tradeInventoryCells(state),
           })}
         </div>
-        ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindTradeChrome();
+    this.resetFieldEcho(this.modal!);
     this.restoreTradeInputFocus(keep);
   }
 
@@ -5675,12 +6107,14 @@ export class GameUI {
     this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
     const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
+    if (money) watchFieldComposition(money);
     money?.addEventListener('pointerdown', (event) => event.stopPropagation());
     money?.addEventListener('keydown', (event) => event.stopPropagation());
     money?.addEventListener('keyup', (event) => event.stopPropagation());
     money?.addEventListener('input', () => {
       const digits = money.value.replace(/[^\d]/g, '');
       if (money.value !== digits) money.value = digits;
+      this.noteFieldSend(money, digits || '0');
       this.tradeActions?.send({ type: 'trade_action', action: 'set_money', money: digits || '0' });
     });
     this.modal!.addEventListener('click', (event) => {

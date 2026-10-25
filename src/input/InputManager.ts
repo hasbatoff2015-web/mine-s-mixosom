@@ -18,6 +18,8 @@ import {
   TOUCH_LOOK_SCALE,
   advanceTouchTrack,
   beginTouchTrack,
+  emptyHoldCanBecomeSwipe,
+  touchTravel,
   jumpInputActive,
   jumpLockAfterPolicy,
   jumpLockPolicyAfterMode,
@@ -135,6 +137,9 @@ export class InputManager {
   /** Survival latches a double tap. Creative leaves the button as a flight tap. */
   private jumpLockAllowed = true;
   private touchSprint = false;
+  private joystickPointer: number | undefined;
+  private joystickKnob?: HTMLElement;
+  private jumpPointer: number | undefined;
   /** Ground latch and the physical crouch finger are separate. Descend reads only the finger. */
   private sneak: MobileSneakState = MOBILE_SNEAK_IDLE;
   private touchLayout = false;
@@ -351,8 +356,10 @@ export class InputManager {
     this.useReleased = false;
     this.miningReleased = false;
     this.touchJumpPressed = false;
+    this.jumpPointer = undefined;
     this.jumpLock = JUMP_LOCK_IDLE;
     this.jumpDownAt = 0;
+    this.resetJoystick();
     this.sneak = mobileSneakRelease(this.sneak);
     this.releaseAimPending = false;
     this.interactionAim = null;
@@ -587,8 +594,8 @@ export class InputManager {
       this.touchLayout = this.coarseMedia?.matches === true;
     });
 
-    let joystickPointer: number | undefined;
     const knob = joystick.querySelector<HTMLElement>('.joystick-knob')!;
+    this.joystickKnob = knob;
     const updateJoystick = (event: PointerEvent) => {
       const rect = joystick.getBoundingClientRect();
       const dx = event.clientX - (rect.left + rect.width / 2);
@@ -603,23 +610,21 @@ export class InputManager {
       this.touchSprint = sprintFromStick(this.touchRight, this.touchForward);
     };
     joystick.addEventListener('pointerdown', (event) => {
-      joystickPointer = event.pointerId;
-      joystick.setPointerCapture(event.pointerId);
+      if (this.joystickPointer !== undefined) return;
+      this.joystickPointer = event.pointerId;
+      try { joystick.setPointerCapture(event.pointerId); } catch { /* The move listener still sees the owner. */ }
       updateJoystick(event);
     });
     joystick.addEventListener('pointermove', (event) => {
-      if (event.pointerId === joystickPointer) updateJoystick(event);
+      if (event.pointerId === this.joystickPointer) updateJoystick(event);
     });
     const releaseJoystick = (event: PointerEvent) => {
-      if (event.pointerId !== joystickPointer) return;
-      joystickPointer = undefined;
-      this.touchForward = 0;
-      this.touchRight = 0;
-      this.touchSprint = false;
-      knob.style.transform = '';
+      if (event.pointerId !== this.joystickPointer) return;
+      this.resetJoystick();
     };
     joystick.addEventListener('pointerup', releaseJoystick);
     joystick.addEventListener('pointercancel', releaseJoystick);
+    joystick.addEventListener('lostpointercapture', releaseJoystick);
 
     look.addEventListener('pointerdown', (event) => {
       if (!this.callbacks.canCapture() || !this.touchLayout) return;
@@ -646,23 +651,29 @@ export class InputManager {
       this.worldTouch = { ...this.worldTouch, x: event.clientX, y: event.clientY };
       this.cancelWorldTouchGesture();
     });
+    look.addEventListener('lostpointercapture', (event) => {
+      if (event.pointerId !== this.worldPointer || !this.worldTouch) return;
+      this.cancelWorldTouchGesture();
+    });
 
     for (const button of actions.querySelectorAll<HTMLButtonElement>('button')) {
       const action = button.dataset.action;
       const down = (event: PointerEvent) => {
         event.preventDefault();
+        if (action === 'jump' && this.jumpPointer !== undefined && this.jumpPointer !== event.pointerId) return;
         try { button.setPointerCapture(event.pointerId); } catch { /* lost pointer still counts as a press */ }
-        if (action === 'jump') this.pressJump(performance.now());
+        if (action === 'jump') this.pressJump(event.pointerId, performance.now());
         else if (action === 'sneak') this.pressSneak(event.pointerId);
         else if (action === 'inventory') this.callbacks.toggleInventory();
       };
       const up = (event: PointerEvent) => {
-        if (action === 'jump') this.releaseJump(performance.now(), event.type === 'pointercancel');
+        if (action === 'jump') this.releaseJump(event.pointerId, performance.now(), event.type !== 'pointerup');
         else if (action === 'sneak') this.releaseSneak(event.pointerId);
       };
       button.addEventListener('pointerdown', down);
       button.addEventListener('pointerup', up);
       button.addEventListener('pointercancel', up);
+      button.addEventListener('lostpointercapture', up);
     }
   }
 
@@ -697,6 +708,12 @@ export class InputManager {
       this.clearHoldTimer();
       this.beginWorldHold(next);
       next = this.applyHeldPointer(previous, next, x, y);
+    } else if (previous.phase === 'hold' && emptyHoldCanBecomeSwipe(this.activeHoldIntent, touchTravel({ ...previous, x, y }))) {
+      this.holdingWorldTouch = false;
+      this.activeHoldIntent = null;
+      this.interactionAim = null;
+      if (!this.emotePointer) this.rotate((x - previous.lastX) * TOUCH_LOOK_SCALE, (y - previous.lastY) * TOUCH_LOOK_SCALE);
+      next = { ...next, phase: 'swipe', lastX: x, lastY: y };
     } else if (previous.phase === 'hold') {
       next = this.applyHeldPointer(previous, next, x, y);
     }
@@ -825,12 +842,25 @@ export class InputManager {
     this.activeHoldIntent = null;
   }
 
-  private pressJump(now: number): void {
+  private resetJoystick(): void {
+    this.joystickPointer = undefined;
+    this.touchForward = 0;
+    this.touchRight = 0;
+    this.touchSprint = false;
+    if (this.joystickKnob) this.joystickKnob.style.transform = '';
+  }
+
+  private pressJump(pointerId: number, now: number): void {
+    if (this.jumpPointer !== undefined && this.jumpPointer !== pointerId) return;
+    if (this.jumpPointer === pointerId && this.touchJumpPressed) return;
+    this.jumpPointer = pointerId;
     this.touchJumpPressed = true;
     this.jumpDownAt = now;
   }
 
-  private releaseJump(now: number, cancelled: boolean): void {
+  private releaseJump(pointerId: number, now: number, cancelled: boolean): void {
+    if (this.jumpPointer !== pointerId) return;
+    this.jumpPointer = undefined;
     this.touchJumpPressed = false;
     const next = jumpLockAfterPolicy(
       this.jumpLockAllowed,

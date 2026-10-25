@@ -5,6 +5,22 @@ import type { NetworkClanRow, ServerClanMessage } from '../../shared/protocol';
 
 export const keepClanSearchDraft = keepAuctionSearchDraft;
 
+/** A different clan or member is a different form, even on the same screen name. */
+export function clanScreenContext(state: ServerClanMessage): string {
+  if (state.screen === 'member-card') {
+    return state.playerCard?.playerId ?? state.card?.selectedMemberId ?? '';
+  }
+  if (
+    state.screen === 'card'
+    || state.screen === 'announce'
+    || state.screen === 'add'
+    || state.screen === 'requests'
+  ) {
+    return state.card?.clanId ?? '';
+  }
+  return '';
+}
+
 export const CLAN_COIN_HTML = '<span class="mc-clan-coin" aria-hidden="true"></span>';
 
 export function clanIconGlyph(icon: string | undefined): string {

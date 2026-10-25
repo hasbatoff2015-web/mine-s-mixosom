@@ -98,6 +98,19 @@ export const MC_MENU_DONATE_WIDTH = 440;
 export const MC_MENU_ROOT_HEIGHT = 300;
 export const MC_MENU_MAX_SCALE = 3;
 
+/**
+ * Donate is 440 logical px on a wide viewport. A narrow viewport uses a width
+ * that still fits at scale 1, and the panel scrolls instead of dropping to 0.5.
+ */
+export function menuLogicalWidth(screen: string, viewportWidth = Number.POSITIVE_INFINITY): number {
+  if (screen === 'donate' || screen.startsWith('donate-')) {
+    if (!Number.isFinite(viewportWidth)) return MC_MENU_DONATE_WIDTH;
+    const available = Math.max(160, viewportWidth - 24);
+    return Math.min(MC_MENU_DONATE_WIDTH, available);
+  }
+  return MC_MENU_WIDTH;
+}
+
 export function menuLogicalHeight(screen: string): number {
   if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
   if (screen === 'friends' || screen === 'friend-delete-confirm' || screen === 'friend-chat') return 268;
@@ -121,8 +134,10 @@ export function menuUiScale(
   const availableW = Math.max(160, viewportWidth - pad);
   const availableH = Math.max(140, viewportHeight - pad);
   const raw = Math.min(availableW / logicalWidth, availableH / logicalHeight, MC_MENU_MAX_SCALE);
-  const quantized = Math.max(MC_MIN_UI_SCALE, Math.floor(raw * 2) / 2);
-  return Math.min(MC_MENU_MAX_SCALE, Math.max(MC_MIN_UI_SCALE, quantized));
+  // Below 1 the 7px menu text becomes unreadable. The panel scrolls instead.
+  if (raw < 1) return 1;
+  const quantized = Math.floor(raw * 2) / 2;
+  return Math.min(MC_MENU_MAX_SCALE, Math.max(1, quantized));
 }
 
 export function containerStageSize(
