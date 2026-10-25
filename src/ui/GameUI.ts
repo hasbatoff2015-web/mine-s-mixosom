@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionBackButtonHtml, auctionClaimableClass, auctionIconStack, auctionShowsBack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionBackButtonHtml, auctionClaimableClass, auctionIconStack, auctionLogicalHeight, auctionShowsBack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -49,7 +49,7 @@ import { inventoryKeyDecision } from './inventoryKeys';
 import {
   INVENTORY_DOUBLE_CLICK_MS,
   INVENTORY_TOUCH_LONG_PRESS_MS,
-  nextCatalogScrollTop,
+  catalogTapSuppressed,
   shouldFollowCarriedPointer,
   stepInventoryGesture,
   type GestureEffect,
@@ -500,6 +500,9 @@ export class GameUI {
   onEmoteCommit?: () => void;
   onEmoteAbort?: () => void;
   private emoteGesture?: { pointerId: number; origin: 'button' | 'wheel'; dragSelect: boolean };
+  private emoteIgnoreLost = false;
+  private catalogScrollBase = 0;
+  private overlayViewportKey = '';
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -1656,11 +1659,17 @@ export class GameUI {
       this.onEmoteOpen?.();
       if (!this.isEmoteWheelOpen()) return;
       this.emoteGesture = { pointerId: event.pointerId, origin: 'button', dragSelect: false };
+      this.emoteIgnoreLost = true;
       try { button.setPointerCapture(event.pointerId); } catch { /* The listener still sees the bubble. */ }
+      this.emoteIgnoreLost = false;
     });
     button.addEventListener('pointermove', track);
     button.addEventListener('pointerup', (event) => finish(event, false));
     button.addEventListener('pointercancel', (event) => finish(event, true));
+    button.addEventListener('lostpointercapture', (event) => {
+      if (this.emoteIgnoreLost) return;
+      finish(event, true);
+    });
 
     this.emoteWheel.addEventListener('pointerdown', (event) => {
       if (event.button !== 0 || this.emoteGesture) return;
@@ -1669,11 +1678,20 @@ export class GameUI {
       this.emoteGesture = { pointerId: event.pointerId, origin: 'wheel', dragSelect: true };
       const selection = selectionAt(event);
       this.onEmotePoint?.(selection.dx, selection.dy);
+      this.emoteIgnoreLost = true;
       try { this.emoteWheel.setPointerCapture(event.pointerId); } catch { /* Synthetic probes have no capture. */ }
+      this.emoteIgnoreLost = false;
     });
     this.emoteWheel.addEventListener('pointermove', track);
     this.emoteWheel.addEventListener('pointerup', (event) => finish(event, false));
     this.emoteWheel.addEventListener('pointercancel', (event) => finish(event, true));
+    this.emoteWheel.addEventListener('lostpointercapture', (event) => {
+      if (this.emoteIgnoreLost) return;
+      finish(event, true);
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.abortMobileEmote();
+    });
   }
 
   showEmoteWheel(): void {
@@ -1701,6 +1719,7 @@ export class GameUI {
   }
 
   hideEmoteWheel(): void {
+    this.emoteGesture = undefined;
     this.emoteWheel.classList.add('hidden');
     this.emoteWheel.setAttribute('aria-hidden', 'true');
     this.emoteDisc.dataset.selected = '';
@@ -2265,18 +2284,62 @@ export class GameUI {
   }
 
   relayoutGameMenu(): void {
-    const state = this.menuState;
-    if (!state || state.screen === 'closed' || !this.modal) return;
-    const scale = this.menuScale(menuLogicalWidth(state.screen), menuLogicalHeight(state.screen));
-    const stage = this.modal.querySelector<HTMLElement>('.mc-menu-stage');
-    const current = Number(stage?.style.getPropertyValue('--mc-ui-scale'));
-    if (Number.isFinite(current) && Math.abs(current - scale) < 0.01) return;
-    this.menuForceRender = true;
-    try {
-      this.renderGameMenu();
-    } finally {
-      this.menuForceRender = false;
+    this.relayoutOpenOverlays();
+  }
+
+  /**
+   * Viewport changes update the open window's scale variables.
+   * The DOM stays, so scroll position, the focused field, and the carried item remain.
+   * A real size change drops an in-progress inventory drag without sending an action.
+   */
+  relayoutOpenOverlays(): void {
+    const size = viewportMetrics();
+    const key = `${size.width}x${size.height}`;
+    if (key === this.overlayViewportKey) return;
+    const resized = this.overlayViewportKey !== '';
+    this.overlayViewportKey = key;
+    if (resized) this.cancelInventoryGesture();
+    const stage = this.modal?.querySelector<HTMLElement>('.mc-stage');
+    if (!stage) return;
+    if (this.isGameMenuOpen() && this.menuState && this.menuState.screen !== 'closed') {
+      const logicalWidth = menuLogicalWidth(this.menuState.screen, size.width);
+      const logicalHeight = menuLogicalHeight(this.menuState.screen);
+      this.applyStageScale(stage, menuUiScale(size.width, size.height, logicalWidth, logicalHeight), logicalWidth);
+      return;
     }
+    if (this.isTradeOpen()) {
+      const logicalWidth = menuLogicalWidth('trade', size.width);
+      this.applyStageScale(stage, menuUiScale(size.width, size.height, logicalWidth, 248), logicalWidth);
+      return;
+    }
+    if (this.isAuctionOpen() && this.auctionState && this.auctionState.screen !== 'closed') {
+      const logicalHeight = auctionLogicalHeight(this.auctionState.screen);
+      this.applyStageScale(stage, this.containerScale(176, logicalHeight), 176);
+      return;
+    }
+    if (this.isClanOpen()) {
+      const logicalHeight = Number(stage.dataset.logicalHeight) || 248;
+      this.applyStageScale(stage, this.containerScale(220, logicalHeight), 220);
+      return;
+    }
+    if (this.isBuyerOpen()) {
+      const logicalHeight = Number(stage.dataset.logicalHeight) || 218;
+      this.applyStageScale(stage, this.containerScale(176, logicalHeight), 176);
+      return;
+    }
+    if (this.inventoryContext && this.isInventoryOpen()) {
+      const creative = this.inventoryContext.kind === 'inventory' && this.inventoryContext.mode === 'creative';
+      const stageSize = containerStageSize(
+        this.craftMenuOpen ? 'craft' : creative ? 'creative' : this.inventoryContext.kind,
+        this.recipeBookOpen && !creative && !this.craftMenuOpen,
+      );
+      this.applyStageScale(stage, this.containerScale(stageSize.width, stageSize.height), stageSize.width);
+    }
+  }
+
+  private applyStageScale(stage: HTMLElement, scale: number, logicalWidth: number): void {
+    stage.style.setProperty('--mc-ui-scale', String(scale));
+    stage.style.setProperty('--mc-logical-width', String(logicalWidth));
   }
 
   openTrade(state: ServerTradeMessage, actions: TradeGuiActions): void {
@@ -2873,6 +2936,7 @@ export class GameUI {
       const to = related instanceof Element ? related.closest('[data-slot]') : null;
       if (from && !to) this.hoveredSlotKey = null;
     });
+    this.modal!.querySelector('[data-creative-catalog]')?.addEventListener('scroll', () => this.noteCatalogScroll(), { passive: true });
     this.modal!.addEventListener('pointerdown', (event) => this.onInventoryPointerDown(event, context));
     this.modal!.addEventListener('pointermove', (event) => this.onInventoryPointerMove(event));
     this.modal!.addEventListener('pointerup', (event) => this.onInventoryPointerUp(event));
@@ -3313,8 +3377,10 @@ export class GameUI {
       return;
     }
     const sample = this.pointerSample(event, false);
-    const catalogScroll = this.coarsePointer && target?.closest('[data-creative-catalog]') !== null;
-    if (sample.zone === 'slot' || sample.zone === 'drop') event.preventDefault();
+    const catalogHost = target?.closest<HTMLElement>('[data-creative-catalog]') ?? null;
+    const catalogScroll = this.coarsePointer && catalogHost !== null;
+    if (catalogScroll && catalogHost) this.catalogScrollBase = catalogHost.scrollTop;
+    if (!catalogScroll && (sample.zone === 'slot' || sample.zone === 'drop')) event.preventDefault();
     const sourceKey = sample.slotKey;
     const sourceClass = sourceKey ? this.sourceClassFor(sourceKey) : 'none';
     const stack = sourceKey ? this.stackAt(sourceKey) : null;
@@ -3333,6 +3399,7 @@ export class GameUI {
     if (!step.gesture) return;
     this.gestureSignature = step.gesture.sourceKey ? itemStackSignature(this.stackAt(step.gesture.sourceKey)) : '';
     this.armLongPress();
+    if (catalogScroll) return;
     try {
       this.modal?.setPointerCapture(event.pointerId);
     } catch {
@@ -3361,8 +3428,29 @@ export class GameUI {
     this.syncCursorStackElement();
   }
 
+  private noteCatalogScroll(): void {
+    this.absorbCatalogSwipe();
+  }
+
+  /** Native catalog pan owns scrollTop. This only refuses the tap after a swipe. */
+  private absorbCatalogSwipe(): void {
+    const gesture = this.pointerGesture;
+    if (!gesture?.catalogScroll || gesture.phase === 'scroll') return;
+    const catalog = this.modal?.querySelector<HTMLElement>('[data-creative-catalog]');
+    const scrollDelta = (catalog?.scrollTop ?? this.catalogScrollBase) - this.catalogScrollBase;
+    if (!catalogTapSuppressed({
+      cancelled: false,
+      verticalTravel: gesture.y - gesture.startY,
+      horizontalTravel: gesture.x - gesture.startX,
+      scrollDelta,
+    })) return;
+    this.pointerGesture = { ...gesture, phase: 'scroll' };
+    this.clearLongPressTimer();
+  }
+
   private onInventoryPointerUp(event: PointerEvent): void {
     if (!this.pointerGesture || event.pointerId !== this.pointerGesture.pointerId) return;
+    this.absorbCatalogSwipe();
     const sample = this.pointerSample(event, true);
     const step = stepInventoryGesture(this.pointerGesture, { type: 'up', sample });
     this.clearLongPressTimer();
@@ -3420,18 +3508,7 @@ export class GameUI {
   }
 
   private applyGestureEffect(effect: GestureEffect, sample?: PointerSample): void {
-    if (effect.type === 'cancel') return;
-    if (effect.type === 'scroll') {
-      const catalog = this.modal?.querySelector<HTMLElement>('[data-creative-catalog]');
-      if (!catalog) return;
-      catalog.scrollTop = nextCatalogScrollTop(
-        catalog.scrollTop,
-        catalog.scrollHeight,
-        catalog.clientHeight,
-        effect.dy,
-      );
-      return;
-    }
+    if (effect.type === 'cancel' || effect.type === 'scroll') return;
     if (effect.type === 'long-press') {
       const pointerId = this.pointerGesture?.pointerId;
       this.openAmountDialog(effect.key);
@@ -4123,13 +4200,9 @@ export class GameUI {
     const state = this.auctionState;
     const actions = this.auctionActions;
     if (!state || !actions || state.screen === 'closed') return;
+    if (this.keepFocusedMenuField(state)) return;
     const keep = this.captureAuctionInputFocus();
-    const logicalHeight = state.screen === 'sell-pick' ? 222
-      : state.screen === 'browse' ? 216
-        : state.screen === 'mine' ? 200
-          : state.screen === 'manage' ? 236
-            : state.screen === 'sell-confirm' ? 204
-              : 218;
+    const logicalHeight = auctionLogicalHeight(state.screen);
     const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
@@ -4147,6 +4220,7 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindAuctionChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
     this.restoreAuctionInputFocus(keep);
   }
 
@@ -4432,6 +4506,7 @@ export class GameUI {
     const state = this.clanState;
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
+    if (this.keepFocusedMenuField(state)) return;
     const keep = this.captureClanInputFocus();
     const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
       : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
@@ -4453,6 +4528,7 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindClanChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
     this.restoreClanInputFocus(keep);
   }
 
@@ -4996,6 +5072,7 @@ export class GameUI {
     const state = this.buyerState;
     const actions = this.buyerActions;
     if (!state || !actions || state.screen === 'closed') return;
+    if (this.keepFocusedMenuField(state)) return;
     const keep = this.captureBuyerInputFocus();
     const logicalHeight = state.screen === 'pick-item' ? 222
       : state.screen === 'trade' ? 248
@@ -5013,6 +5090,7 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindBuyerChrome();
+    this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
     this.restoreBuyerInputFocus(keep);
   }
 
@@ -5129,6 +5207,7 @@ export class GameUI {
     const actions = this.menuActions;
     if (!state || !actions || state.screen === 'closed') return;
     if (!this.menuForceRender && this.tryPatchFriendChat(state)) return;
+    if (this.keepFocusedMenuField(state)) return;
     if (state.screen === 'friend-chat') this.rememberFriendsPanelHeight();
     else this.friendChatLogicalHeight = undefined;
     const sameChat = state.screen === 'friend-chat'
@@ -5137,7 +5216,7 @@ export class GameUI {
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = menuLogicalWidth(state.screen);
+    const logicalWidth = menuLogicalWidth(state.screen, viewportMetrics().width);
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -5337,6 +5416,44 @@ export class GameUI {
     if (!directMessageTargetsOpenChat(this.menuState?.screen, this.menuState?.activeFriendId, friendId)) return;
     const input = this.friendChatInput();
     if (input) input.value = '';
+  }
+
+  /**
+   * A server echo for the same screen must not replace the input the player is typing in.
+   * A real screen change still rebuilds and drops focus.
+   */
+  private keepFocusedMenuField(state: { screen: string; message?: string }): boolean {
+    if (this.menuForceRender || !this.modal) return false;
+    const active = document.activeElement;
+    if (!(active instanceof HTMLInputElement) && !(active instanceof HTMLTextAreaElement)) return false;
+    if (!this.modal.contains(active)) return false;
+    const draft = active.hasAttribute('data-menu-home-name')
+      || active.hasAttribute('data-menu-friend-name')
+      || active.hasAttribute('data-menu-claim-name')
+      || active.hasAttribute('data-menu-claim-member')
+      || active.hasAttribute('data-menu-trade-name')
+      || active.hasAttribute('data-friend-chat-input')
+      || active.hasAttribute('data-donate-field')
+      || active.hasAttribute('data-ah-price')
+      || active.hasAttribute('data-ah-search')
+      || active.hasAttribute('data-clan-invite-name')
+      || active.hasAttribute('data-buyer-name')
+      || active.hasAttribute('data-buyer-price');
+    if (!draft) return false;
+    const screenNode = this.modal.querySelector('[data-menu-screen], [data-ah-screen], [data-trade-screen], [data-clan-screen], [data-buyer-screen]');
+    const liveScreen = screenNode?.getAttribute('data-menu-screen')
+      ?? screenNode?.getAttribute('data-ah-screen')
+      ?? screenNode?.getAttribute('data-trade-screen')
+      ?? screenNode?.getAttribute('data-clan-screen')
+      ?? screenNode?.getAttribute('data-buyer-screen');
+    if (liveScreen !== state.screen) return false;
+    const message = this.modal.querySelector<HTMLElement>('[data-menu-message], [data-ah-message]');
+    if (message) {
+      const text = state.message ?? '';
+      message.hidden = text.length === 0;
+      message.textContent = text;
+    }
+    return true;
   }
 
   private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
@@ -5652,7 +5769,7 @@ export class GameUI {
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureTradeInputFocus();
-    const logicalWidth = menuLogicalWidth('trade');
+    const logicalWidth = menuLogicalWidth('trade', viewportMetrics().width);
     const scale = this.menuScale(logicalWidth, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;

@@ -547,6 +547,155 @@ describe('coarse mobile layout rects', () => {
     }
   }, 180_000);
 
+  it('scrolls the creative catalog from a real touch without selecting or double-scrolling', async () => {
+    server?.close();
+    server = createServer((_request, response) => {
+      const slots = Array.from({ length: 90 }, (_unused, index) => (
+        `<button type="button" class="mc-slot" data-slot="creative-${index}">${index}</button>`
+      )).join('');
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>:root{--touch-target:44px;--mc-ui-scale:2;--mc-slot:36px}${style}</style></head><body>
+        <div class="modal-backdrop mc-backdrop"><div class="mc-creative-catalog" id="catalog" data-creative-catalog>${slots}</div></div>
+        <script>
+          const catalog = document.getElementById('catalog');
+          const trace = [];
+          let grants = 0;
+          let base = 0;
+          let y = 0;
+          let active = -1;
+          window.__trace = () => trace.join(',');
+          catalog.addEventListener('pointerdown', (event) => {
+            const slot = event.target.closest('[data-slot]');
+            trace.push('down:' + (slot ? 'slot' : 'miss') + ':' + catalog.scrollTop);
+            if (!slot) return;
+            base = catalog.scrollTop;
+            y = event.clientY;
+            active = event.pointerId;
+          });
+          catalog.addEventListener('pointermove', (event) => {
+            if (event.pointerId !== active) return;
+            y = Math.max(y, Math.abs(event.clientY - y) > 8 ? y : y);
+          });
+          catalog.addEventListener('click', (event) => {
+            const delta = Math.abs(catalog.scrollTop - base);
+            trace.push('click:' + (event.target.closest('[data-slot]') ? 'slot' : 'miss') + ':' + delta);
+            if (!event.target.closest('[data-slot]')) return;
+            if (delta > 2) return;
+            grants += 1;
+          });
+          catalog.addEventListener('pointercancel', () => { active = -1; });
+          window.__catalogGrants = () => grants;
+        </script>
+      </body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('catalog server has no port');
+    const launched = await launchChrome(844, 390, 'about:blank');
+    chromeJobs.push(launched);
+    await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 844, height: 390, deviceScaleFactor: 1, mobile: true,
+    });
+    await launched.cdp.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 2 });
+    await launched.cdp.send('Page.navigate', { url: `http://127.0.0.1:${address.port}/` });
+    let ready = false;
+    for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+      const probe = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: '!!document.querySelector("[data-slot]")',
+      });
+      ready = (probe.result as { value?: boolean } | undefined)?.value === true;
+      if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!ready) throw new Error('catalog touch page did not render');
+    const spot = await launched.cdp.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `(() => {
+        const slot = document.querySelector('[data-slot]');
+        const box = slot.getBoundingClientRect();
+        const catalog = document.getElementById('catalog');
+        return { x: box.left + box.width / 2, y: box.top + box.height / 2, before: catalog.scrollTop, max: catalog.scrollHeight - catalog.clientHeight };
+      })()`,
+    });
+    const point = (spot.result as { value?: { x: number; y: number; before: number; max: number } } | undefined)?.value;
+    expect(point && point.max).toBeGreaterThan(20);
+    const steps = 8;
+    await launched.cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart',
+      touchPoints: [{ x: point!.x, y: point!.y, id: 1 }],
+    });
+    for (let step = 1; step <= steps; step += 1) {
+      await launched.cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove',
+        touchPoints: [{ x: point!.x, y: point!.y - step * 18, id: 1 }],
+      });
+    }
+    await launched.cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const after = await launched.cdp.send('Runtime.evaluate', {
+      returnByValue: true,
+      expression: `JSON.stringify({ top: document.getElementById('catalog').scrollTop, grants: window.__catalogGrants() })`,
+    });
+    const result = JSON.parse((after.result as { value?: string } | undefined)?.value ?? '{}') as { top: number; grants: number };
+    expect(result.top).toBeGreaterThan(point!.before);
+    expect(result.top).toBeLessThan(point!.before + steps * 18 * 2);
+    expect(result.grants).toBe(0);
+  }, 60_000);
+
+  it('keeps the live boss bar clear of the corner buttons', async () => {
+    server?.close();
+    server = createServer((_request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><style>${style}</style></head><body><div id="app"><div id="hud">
+        <div id="boss-bar"><span>Босс</span><div class="boss-bar-track"><span></span></div></div>
+        <div id="hud-corner">
+          <button type="button" id="hud-pause">Пауза</button>
+          <button type="button" id="hud-chat">Чат</button>
+          <button type="button" id="hud-menu">Меню</button>
+          <button type="button" id="hud-emote">Эмоции</button>
+        </div>
+      </div></div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('boss server has no port');
+    const origin = `http://127.0.0.1:${address.port}/`;
+    for (const [width, height] of [[640, 360], [667, 375], [740, 360], [844, 390], [932, 430], [1280, 720], [1920, 1080]] as const) {
+      const launched = await launchChrome(width, height, 'about:blank');
+      chromeJobs.push(launched);
+      await launched.cdp.send('Page.navigate', { url: origin });
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width, height, deviceScaleFactor: 1, mobile: false,
+      });
+      let seen = '';
+      let ready = false;
+      for (let attempt = 0; attempt < 30 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'JSON.stringify({ w: innerWidth, h: innerHeight, bar: !!document.querySelector("#boss-bar:not(.hidden)") })',
+        });
+        seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+        const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; bar: boolean } : undefined;
+        ready = parsed?.bar === true && parsed.w === width && parsed.h === height;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`boss bar page ${width}x${height}: ${seen}`);
+      const measured = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const bar = document.querySelector('#boss-bar').getBoundingClientRect();
+          const corner = document.querySelector('#hud-corner').getBoundingClientRect();
+          const overlap = bar.left < corner.right - 1 && bar.right > corner.left + 1 && bar.top < corner.bottom - 1 && bar.bottom > corner.top + 1;
+          return { overlap, barRight: bar.right, cornerLeft: corner.left, width: bar.width };
+        })()`,
+      });
+      const value = (measured.result as { value?: { overlap: boolean; width: number } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overlap, JSON.stringify(value)).toBe(false);
+      expect(value!.width).toBeGreaterThan(40);
+    }
+  }, 90_000);
+
   it('covers the sun with nearer and farther world fragments while clouds stay in front', async () => {
     server?.close();
     const threeModule = readFileSync('node_modules/three/build/three.module.js');

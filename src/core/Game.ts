@@ -134,6 +134,7 @@ import {
   sunlightPosition,
 } from '../rendering/SkyDome';
 import { skySample, sunDirection } from '../rendering/skyPalette';
+import { shouldSuppressContextMenu } from '../input/contextMenu';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
 import {
@@ -7304,7 +7305,9 @@ export class Game {
         this.cycleLightDebug();
       }
     });
-    document.addEventListener('contextmenu', (event) => event.preventDefault());
+    document.addEventListener('contextmenu', (event) => {
+      if (shouldSuppressContextMenu(event.target)) event.preventDefault();
+    });
   }
 
   private resize(): void {
@@ -7313,6 +7316,6 @@ export class Game {
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.firstPerson?.resize(width, height);
-    this.ui.relayoutGameMenu();
+    this.ui.relayoutOpenOverlays();
   }
 }

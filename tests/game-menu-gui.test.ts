@@ -316,6 +316,11 @@ describe('main menu HUD and chrome', () => {
     expect(gameUi).toContain('menuChromeHtml(');
     expect(gameUi).toContain('menuLogicalWidth(');
     expect(menuLogicalWidth('donate')).toBe(MC_MENU_DONATE_WIDTH);
+    expect(menuLogicalWidth('donate', 1920)).toBe(MC_MENU_DONATE_WIDTH);
+    expect(menuLogicalWidth('donate', 390)).toBeLessThanOrEqual(390 - 24);
+    expect(menuUiScale(390, 844, menuLogicalWidth('donate', 390), 360)).toBe(1);
+    expect(menuUiScale(740, 360, menuLogicalWidth('donate', 740), 360)).toBe(1);
+    expect(menuUiScale(667, 375, menuLogicalWidth('donate', 667), 360)).toBe(1);
     expect(menuLogicalWidth('donate-pets')).toBe(MC_MENU_DONATE_WIDTH);
     expect(menuLogicalWidth('homes')).toBe(MC_MENU_WIDTH);
     expect(menuChromeHtml(menuBackHtml('homes'), '<button class="mc-close"></button>')).toContain('mc-menu-chrome');

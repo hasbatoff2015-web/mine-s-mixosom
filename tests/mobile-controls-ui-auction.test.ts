@@ -11,11 +11,13 @@ import {
   resolveMobileTouchIntent,
   type MobileTouchFacts,
 } from '../src/input/mobileTouch';
-import { TOUCH_HOLD_MS } from '../src/input/touchGesture';
+import { shouldSuppressContextMenu } from '../src/input/contextMenu';
+import { TOUCH_HOLD_MS, TOUCH_SWIPE_THRESHOLD_PX, emptyHoldCanBecomeSwipe } from '../src/input/touchGesture';
 import { pickBuyerInteractTarget } from '../src/net/buyerInteract';
 import { GameUI } from '../src/ui/GameUI';
 import {
   INVENTORY_TOUCH_DRAG_THRESHOLD_PX,
+  catalogTapSuppressed,
   nextCatalogScrollTop,
   stepInventoryGesture,
   type PointerDownContext,
@@ -253,7 +255,25 @@ describe('creative catalog scroll', () => {
       sample: sample({ y: 80 - (INVENTORY_TOUCH_DRAG_THRESHOLD_PX + 12) }),
     });
     expect(scrolled.gesture?.phase).toBe('scroll');
-    expect(scrolled.effects).toEqual([{ type: 'scroll', dy: -(INVENTORY_TOUCH_DRAG_THRESHOLD_PX + 12) }]);
+    expect(scrolled.effects).toEqual([]);
+    expect(catalogTapSuppressed({
+      cancelled: false,
+      verticalTravel: -(INVENTORY_TOUCH_DRAG_THRESHOLD_PX + 12),
+      horizontalTravel: 0,
+      scrollDelta: 20,
+    })).toBe(true);
+    expect(catalogTapSuppressed({
+      cancelled: true,
+      verticalTravel: 1,
+      horizontalTravel: 0,
+      scrollDelta: 0,
+    })).toBe(true);
+    expect(catalogTapSuppressed({
+      cancelled: false,
+      verticalTravel: 2,
+      horizontalTravel: 1,
+      scrollDelta: 0,
+    })).toBe(false);
     const released = stepInventoryGesture(scrolled.gesture, {
       type: 'up',
       sample: sample({ y: 40 }),
@@ -302,8 +322,10 @@ describe('creative catalog scroll', () => {
     Object.defineProperty(catalog, 'scrollHeight', { configurable: true, get: () => 480 });
     Object.defineProperty(catalog, 'clientHeight', { configurable: true, get: () => 90 });
     pointer('pointerdown', slot, { pointerId: 9, clientX: 30, clientY: 120, button: 0 });
+    catalog.scrollTop = 48;
+    catalog.dispatchEvent(new Event('scroll'));
     pointer('pointermove', root.querySelector('.mc-backdrop')!, { pointerId: 9, clientX: 32, clientY: 70, button: 0 });
-    expect(catalog.scrollTop).toBe(50);
+    expect(catalog.scrollTop).toBe(48);
     pointer('pointerup', root.querySelector('.mc-backdrop')!, { pointerId: 9, clientX: 32, clientY: 70, button: 0 });
     expect(messages).toEqual([]);
 
@@ -315,7 +337,7 @@ describe('creative catalog scroll', () => {
     catalog.scrollTop = 40;
     pointer('pointerdown', slot, { pointerId: 11, clientX: 30, clientY: 40, button: 0 });
     pointer('pointermove', root.querySelector('.mc-backdrop')!, { pointerId: 11, clientX: 28, clientY: 90, button: 0 });
-    expect(catalog.scrollTop).toBeLessThan(40);
+    expect(catalog.scrollTop).toBe(40);
     pointer('pointercancel', root.querySelector('.mc-backdrop')!, { pointerId: 11, clientX: 28, clientY: 90 });
     expect(messages).toEqual([]);
 
@@ -510,5 +532,186 @@ describe('auction navigation chrome', () => {
     expect(root.querySelectorAll('[data-ah-action="back"]')).toHaveLength(1);
     root.querySelector<HTMLButtonElement>('[data-ah-action="back"]')!.click();
     expect(sent).toEqual([{ type: 'auction_action', action: 'back' }]);
+  });
+});
+
+describe('follow-up mobile ownership and readable menus', () => {
+  it('keeps the joystick and the jump button on the first finger', () => {
+    installCoarsePointer();
+    document.body.innerHTML = '<div id="app"></div><canvas></canvas>';
+    const input = new InputManager(document.querySelector('canvas')!, {
+      canCapture: () => true,
+      toggleInventory: () => {},
+      togglePause: () => {},
+      openChat: () => {},
+      dropItem: () => {},
+      selectHotbar: () => {},
+      onPointerLockAcquired: () => {},
+      onPointerLockReleased: () => {},
+      onPointerLockRequestFailed: () => {},
+    });
+    const stick = document.querySelector<HTMLElement>('#touch-joystick')!;
+    stick.getBoundingClientRect = () => ({
+      left: 0, top: 0, width: 120, height: 120, right: 120, bottom: 120, x: 0, y: 0, toJSON() { return {}; },
+    }) as DOMRect;
+    const jump = document.querySelector<HTMLButtonElement>('button[data-action="jump"]')!;
+    pointer('pointerdown', stick, { pointerId: 1, clientX: 80, clientY: 40, button: 0 });
+    const owned = input.movement().forward;
+    pointer('pointerdown', stick, { pointerId: 2, clientX: 20, clientY: 120, button: 0 });
+    expect(input.movement().forward).toBeCloseTo(owned, 5);
+    pointer('pointermove', stick, { pointerId: 2, clientX: 20, clientY: 140, button: 0 });
+    expect(input.movement().forward).toBeCloseTo(owned, 5);
+    pointer('pointerup', stick, { pointerId: 2, clientX: 20, clientY: 140, button: 0 });
+    expect(input.movement().forward).toBeCloseTo(owned, 5);
+    pointer('pointermove', stick, { pointerId: 1, clientX: 80, clientY: 20, button: 0 });
+    expect(input.movement().forward).not.toBeCloseTo(owned, 5);
+    pointer('pointerup', stick, { pointerId: 1, clientX: 80, clientY: 20, button: 0 });
+    expect(input.movement().forward).toBe(0);
+    expect(input.movement().sprint).toBe(false);
+
+    pointer('pointerdown', stick, { pointerId: 3, clientX: 70, clientY: 30, button: 0 });
+    expect(input.movement().forward).not.toBe(0);
+    stick.dispatchEvent(new PointerEvent('lostpointercapture', { bubbles: true, pointerId: 3 }));
+    expect(input.movement().forward).toBe(0);
+
+    pointer('pointerdown', jump, { pointerId: 4, clientX: 10, clientY: 10, button: 0 });
+    expect(input.movement().manualJump).toBe(true);
+    pointer('pointerdown', jump, { pointerId: 5, clientX: 12, clientY: 12, button: 0 });
+    pointer('pointerup', jump, { pointerId: 5, clientX: 12, clientY: 12, button: 0 });
+    expect(input.movement().manualJump).toBe(true);
+    pointer('pointerup', jump, { pointerId: 4, clientX: 10, clientY: 10, button: 0 });
+    expect(input.movement().manualJump).toBe(false);
+    pointer('pointerdown', jump, { pointerId: 6, clientX: 10, clientY: 10, button: 0 });
+    jump.dispatchEvent(new PointerEvent('lostpointercapture', { bubbles: true, pointerId: 6 }));
+    expect(input.movement().manualJump).toBe(false);
+  });
+
+  it('turns an empty hold into a camera swipe and leaves a mining hold alone', () => {
+    expect(emptyHoldCanBecomeSwipe('none', TOUCH_SWIPE_THRESHOLD_PX)).toBe(true);
+    expect(emptyHoldCanBecomeSwipe('mine', TOUCH_SWIPE_THRESHOLD_PX + 40)).toBe(false);
+    expect(emptyHoldCanBecomeSwipe('bow-hold', 80)).toBe(false);
+    expect(emptyHoldCanBecomeSwipe('use-hold', 80)).toBe(false);
+    installCoarsePointer();
+    vi.useFakeTimers();
+    document.body.innerHTML = '<div id="app"></div><canvas></canvas>';
+    const canvas = document.querySelector('canvas')!;
+    let yawBefore = 0;
+    const input = new InputManager(canvas, {
+      canCapture: () => true,
+      toggleInventory: () => {},
+      togglePause: () => {},
+      openChat: () => {},
+      dropItem: () => {},
+      selectHotbar: () => {},
+      classifyWorldTouch: (_x, _y, phase) => phase === 'hold'
+        ? { intent: 'none', yaw: 0, pitch: 0 }
+        : { intent: 'none', yaw: 0, pitch: 0 },
+      onPointerLockAcquired: () => {},
+      onPointerLockReleased: () => {},
+      onPointerLockRequestFailed: () => {},
+    });
+    const look = document.querySelector('#touch-look-zone')!;
+    const miningLook = (): Element => {
+      const zones = document.querySelectorAll('#touch-look-zone');
+      return zones.item(zones.length - 1);
+    };
+    pointer('pointerdown', look, { pointerId: 1, clientX: 40, clientY: 40 });
+    vi.advanceTimersByTime(TOUCH_HOLD_MS);
+    expect(input.mining).toBe(false);
+    yawBefore = input.yaw;
+    pointer('pointermove', look, { pointerId: 1, clientX: 40 + TOUCH_SWIPE_THRESHOLD_PX + 8, clientY: 40 });
+    expect(input.yaw).not.toBeCloseTo(yawBefore, 5);
+    expect(input.consumeUsePressed()).toBe(false);
+    expect(input.consumeAttackPresses()).toBe(0);
+    pointer('pointerup', look, { pointerId: 1, clientX: 80, clientY: 40 });
+    expect(input.consumeUsePressed()).toBe(false);
+
+    const mining = new InputManager(canvas, {
+      canCapture: () => true,
+      toggleInventory: () => {},
+      togglePause: () => {},
+      openChat: () => {},
+      dropItem: () => {},
+      selectHotbar: () => {},
+      classifyWorldTouch: () => ({ intent: 'mine', yaw: 0.2, pitch: 0 }),
+      onPointerLockAcquired: () => {},
+      onPointerLockReleased: () => {},
+      onPointerLockRequestFailed: () => {},
+    });
+    pointer('pointerdown', miningLook(), { pointerId: 2, clientX: 10, clientY: 10 });
+    vi.advanceTimersByTime(TOUCH_HOLD_MS);
+    expect(mining.mining).toBe(true);
+    const heldYaw = mining.yaw;
+    pointer('pointermove', miningLook(), { pointerId: 2, clientX: 80, clientY: 10 });
+    expect(mining.mining).toBe(true);
+    expect(mining.yaw).toBeCloseTo(heldYaw, 5);
+  });
+
+  it('keeps the same home-name field when a server echo arrives', () => {
+    const root = document.createElement('div');
+    document.body.append(root);
+    const ui = new GameUI(root);
+    sessions.push(ui);
+    const base = {
+      type: 'menu' as const,
+      screen: 'homes' as const,
+      title: 'Дома',
+      homes: [],
+      homeNameText: '',
+      message: '',
+    };
+    ui.openGameMenu(base, { send() {}, close() {} });
+    const input = root.querySelector<HTMLInputElement>('[data-menu-home-name]');
+    expect(input).toBeTruthy();
+    input!.focus();
+    input!.value = 'Дом';
+    input!.setSelectionRange(3, 3);
+    ui.applyGameMenu({ ...base, homeNameText: 'Д', message: 'Проверка' });
+    expect(document.activeElement).toBe(input);
+    expect(input!.value).toBe('Дом');
+    expect(input!.selectionStart).toBe(3);
+    expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Проверка');
+    ui.applyGameMenu({ ...base, screen: 'friends', title: 'Друзья' });
+    expect(document.activeElement).not.toBe(input);
+    expect(root.querySelector('[data-menu-screen="friends"]')).toBeTruthy();
+  });
+
+  it('rescales an open creative catalog without clearing its scroll or granting an item', () => {
+    installCoarsePointer();
+    const root = document.createElement('div');
+    document.body.append(root);
+    const messages: ClientInventoryActionMessage[] = [];
+    const ui = new GameUI(root);
+    sessions.push(ui);
+    ui.openInventory({
+      inventory: new Inventory(),
+      mode: 'creative',
+      kind: 'inventory',
+      onClose() {},
+      onDrop() {},
+      onChanged() {},
+      submitAction: (message) => messages.push(message),
+    });
+    const catalog = root.querySelector<HTMLElement>('[data-creative-catalog]')!;
+    catalog.scrollTop = 36;
+    const stage = root.querySelector<HTMLElement>('.mc-stage')!;
+    Object.defineProperty(window, 'innerWidth', { configurable: true, value: 740 });
+    Object.defineProperty(window, 'innerHeight', { configurable: true, value: 360 });
+    ui.relayoutOpenOverlays();
+    expect(catalog.scrollTop).toBe(36);
+    expect(stage.style.getPropertyValue('--mc-ui-scale')).not.toBe('');
+    expect(root.querySelector('[data-creative-tab="catalog"]')).toBeTruthy();
+    expect(messages).toEqual([]);
+    ui.relayoutOpenOverlays();
+    expect(messages).toEqual([]);
+  });
+
+  it('allows the browser menu on text fields and blocks it on the canvas', () => {
+    const input = document.createElement('input');
+    const area = document.createElement('textarea');
+    const canvas = document.createElement('canvas');
+    expect(shouldSuppressContextMenu(input)).toBe(false);
+    expect(shouldSuppressContextMenu(area)).toBe(false);
+    expect(shouldSuppressContextMenu(canvas)).toBe(true);
   });
 });

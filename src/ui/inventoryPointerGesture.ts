@@ -86,8 +86,25 @@ export function isCatalogScrollMove(gesture: InventoryGesture, sample: PointerSa
 }
 
 /**
+ * The catalog scrolls natively. A changed scrollTop, a vertical swipe, a
+ * horizontal swipe, or a cancel all refuse the tap that would grant an item.
+ */
+export function catalogTapSuppressed(input: {
+  readonly cancelled: boolean;
+  readonly verticalTravel: number;
+  readonly horizontalTravel: number;
+  readonly scrollDelta: number;
+}): boolean {
+  if (input.cancelled) return true;
+  if (Math.abs(input.scrollDelta) > 2) return true;
+  if (Math.abs(input.horizontalTravel) >= INVENTORY_TOUCH_DRAG_THRESHOLD_PX) return true;
+  return Math.abs(input.verticalTravel) >= INVENTORY_TOUCH_DRAG_THRESHOLD_PX
+    && Math.abs(input.verticalTravel) >= Math.abs(input.horizontalTravel);
+}
+
+/**
  * Finger moving up (negative dy) reveals items below, so scrollTop increases.
- * The result stays inside the catalog.
+ * Kept for callers that clamp a value. The catalog itself scrolls natively.
  */
 export function nextCatalogScrollTop(
   scrollTop: number,
@@ -204,17 +221,12 @@ function moveGesture(gesture: InventoryGesture, sample: PointerSample): GestureS
     return { gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: false }, effects: [] };
   }
   if (gesture.phase === 'scroll') {
-    const dy = sample.y - gesture.y;
-    return {
-      gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: false },
-      effects: dy === 0 ? [] : [{ type: 'scroll', dy }],
-    };
+    return { gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: false }, effects: [] };
   }
   if (gesture.phase === 'pending' && isCatalogScrollMove(gesture, sample)) {
-    const dy = sample.y - gesture.startY;
     return {
       gesture: { ...gesture, phase: 'scroll', x: sample.x, y: sample.y, armedDrop: false },
-      effects: [{ type: 'scroll', dy }],
+      effects: [],
     };
   }
   const past = movedPastThreshold(gesture, sample) || (gesture.pointerClass === 'fine' && sample.zone === 'slot' && sample.slotKey !== gesture.sourceKey);

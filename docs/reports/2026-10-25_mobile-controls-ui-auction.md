@@ -76,4 +76,15 @@ Owner QA on a phone and on desktop, then an independent review before merge.
 
 ## Git
 
-Branch `cursor/mobile-controls-ui-auction-fixes-7178` from `c8da9fc`. Draft PR to `main`. No merge.
+Branch `cursor/mobile-controls-ui-auction-fixes-7178` from `c8da9fc`. Draft PR #139 to `main`. No merge.
+
+## Follow-up after the audit
+
+- Catalog scroll is native only. Coarse presses on catalog slots do not call `preventDefault` or `setPointerCapture`, and the gesture does not write `scrollTop`.
+- `relayoutOpenOverlays()` updates `--mc-ui-scale` on the open stage. A repeated viewport size is ignored. An actual size change cancels an inventory drag without an action.
+- `menuUiScale()` never returns below 1. Donate width shrinks to the viewport so the panel still fits, and the body scrolls.
+- A focused draft field on the same screen is kept when a server menu, auction, clan, or buyer snapshot arrives.
+- The joystick and the jump button ignore a second pointer. `lostpointercapture` releases that control.
+- An empty world hold becomes a camera swipe after the swipe threshold. Mining, bow, and food holds do not.
+- The boss bar stops before the corner buttons. Text fields are exempt from the global context-menu block.
+- Emote `lostpointercapture` and a hidden document abort the wheel gesture without a second emote start.

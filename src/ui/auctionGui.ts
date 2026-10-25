@@ -27,6 +27,15 @@ export function auctionBackButtonHtml(): string {
   return '<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>';
 }
 
+export function auctionLogicalHeight(screen: string): number {
+  if (screen === 'sell-pick') return 222;
+  if (screen === 'browse') return 216;
+  if (screen === 'mine') return 200;
+  if (screen === 'manage') return 236;
+  if (screen === 'sell-confirm') return 204;
+  return 218;
+}
+
 export const AUCTION_CLAIM_HINT = 'Заберите этот предмет';
 export const AUCTION_CLAIMABLE_CLASS = 'mc-ah-claimable';
 
