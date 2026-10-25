@@ -8,7 +8,11 @@ import {
   BUYER_PICK_LABEL,
   BUYER_PICK_PROMPT,
   BUYER_SAVE_LABEL,
+  BUYER_BUY_LABEL,
+  BUYER_ROLE_SELLER_LABEL,
   BUYER_SELL_LABEL,
+  SELLER_ADMIN_TITLE,
+  SELLER_DELETE_LABEL,
   BUYER_TRADE_LABEL,
   BUYER_UNSELECTED_ITEM,
   buyerPriceEachLabel,
@@ -173,5 +177,64 @@ describe('buyer GUI helpers', () => {
     });
     expect(emptyTrade).toContain('data-buyer-action="sell" disabled');
     expect(emptyTrade).not.toMatch(/HP|20\/20/);
+  });
+
+  it('renders a seller setup and a purchase screen with stock and unit price', () => {
+    const admin = buyerScreenHtml({
+      screen: 'admin',
+      title: SELLER_ADMIN_TITLE,
+      name: 'Лавка',
+      role: 'seller',
+      stockText: '32',
+      hologramText: '',
+      priceText: '10',
+      priceLine: buyerPriceEachLabel(10),
+      quantity: 0,
+      maxQuantity: 0,
+      totalLabel: '0 МК',
+      configured: false,
+      messageHtml: '',
+      itemSlotHtml: '<div class="mc-slot"></div>',
+      tradeSlotHtml: '',
+      inventoryHtml: '',
+    });
+    expect(admin).toContain('data-buyer-role="seller"');
+    expect(admin).toContain(SELLER_ADMIN_TITLE);
+    expect(admin).toContain(BUYER_ROLE_SELLER_LABEL);
+    expect(admin).toContain('data-buyer-role="seller"');
+    expect(admin).toContain('is-on');
+    expect(admin).not.toContain('data-buyer-stock');
+    expect(admin).not.toContain('Количество');
+    expect(admin).toContain(SELLER_DELETE_LABEL);
+    expect(admin).toContain('Цена за 1 шт.');
+
+    const trade = buyerScreenHtml({
+      screen: 'trade',
+      title: 'Продавец Лавка',
+      name: 'Лавка',
+      role: 'seller',
+      stock: 32,
+      hologramText: '',
+      priceText: '10',
+      priceLine: buyerPriceEachLabel(10),
+      quantity: 2,
+      maxQuantity: 8,
+      totalLabel: '20 Мегакоинов',
+      configured: true,
+      messageHtml: '',
+      itemSlotHtml: '<div class="mc-slot" data-item="pumpkin"></div>',
+      tradeSlotHtml: '<div class="mc-slot" data-item="pumpkin"></div>',
+      inventoryHtml: '<div class="mc-grid mc-grid-9"></div>',
+    });
+    expect(trade).not.toContain('Количество:');
+    expect(trade).not.toContain('В наличии:');
+    expect(trade).toContain('data-buyer-delta="-1"');
+    expect(trade).toContain('data-buyer-delta="1"');
+    expect(trade).toContain('data-buyer-trade');
+    expect(trade).toContain('Вы заплатите');
+    expect(trade).toContain(BUYER_BUY_LABEL);
+    expect(trade).toContain('data-buyer-action="buy"');
+    expect(trade).not.toContain(BUYER_SELL_LABEL);
+    expect(trade).not.toMatch(/HP|20\/20/);
   });
 });

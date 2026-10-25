@@ -4864,7 +4864,7 @@ export class GameUI {
 
   private patchBuyer(state: ServerBuyerMessage): void {
     const prev = this.buyerState;
-    if (!this.modal || !prev || prev.screen !== state.screen) {
+    if (!this.modal || !prev || prev.screen !== state.screen || prev.role !== state.role) {
       this.buyerState = state;
       this.renderBuyer();
       return;
@@ -4874,6 +4874,10 @@ export class GameUI {
     if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
     const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
     if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
+    const stockInput = this.modal.querySelector<HTMLInputElement>('[data-buyer-stock]');
+    if (stockInput && !keepBuyerDraft(document.activeElement, stockInput)) stockInput.value = state.stockText ?? '';
+    const stock = this.modal.querySelector('[data-buyer-stock-count]');
+    if (stock) stock.textContent = String(state.stock ?? 0);
     const itemHost = this.modal.querySelector('[data-buyer-item]');
     if (itemHost) itemHost.innerHTML = this.slotHtml(this.buyerStack(state.item), 'buyer-item');
     const tradeHost = this.modal.querySelector('[data-buyer-trade]');
@@ -4888,7 +4892,7 @@ export class GameUI {
     const plus = this.modal.querySelector<HTMLButtonElement>('[data-buyer-delta="1"]');
     if (minus) minus.disabled = state.quantity <= 1;
     if (plus) plus.disabled = state.quantity >= state.maxQuantity;
-    const sell = this.modal.querySelector<HTMLButtonElement>('[data-buyer-action="sell"]');
+    const sell = this.modal.querySelector<HTMLButtonElement>('[data-buyer-action="sell"], [data-buyer-action="buy"]');
     if (sell) sell.disabled = !state.configured || state.quantity < 1;
     const inventory = this.modal.querySelector('[data-buyer-inventory]');
     if (inventory) inventory.innerHTML = this.buyerInventoryCells(state);
@@ -4905,8 +4909,8 @@ export class GameUI {
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureBuyerInputFocus();
     const logicalHeight = state.screen === 'pick-item' ? 222
-      : state.screen === 'trade' ? 248
-        : 248;
+      : state.screen === 'trade' ? (state.role === 'seller' ? 268 : 248)
+        : state.role === 'seller' ? 318 : 286;
     const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
@@ -4936,6 +4940,9 @@ export class GameUI {
       maxQuantity: state.maxQuantity,
       totalLabel: state.totalLabel,
       configured: state.configured,
+      role: state.role,
+      stock: state.stock,
+      stockText: state.stockText,
       messageHtml: this.buyerMessageHtml(state.message),
       itemSlotHtml: this.slotHtml(this.buyerStack(state.item), 'buyer-item'),
       tradeSlotHtml: this.slotHtml(this.buyerStack(state.tradeSlot), 'buyer-trade'),
@@ -4955,6 +4962,16 @@ export class GameUI {
       input?.addEventListener('input', () => send(input.value));
     };
     bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
+    const stock = this.modal!.querySelector<HTMLInputElement>('[data-buyer-stock]');
+    stock?.addEventListener('pointerdown', (event) => event.stopPropagation());
+    stock?.addEventListener('keydown', (event) => event.stopPropagation());
+    stock?.addEventListener('keyup', (event) => event.stopPropagation());
+    stock?.addEventListener('input', () => {
+      if (!stock) return;
+      const digits = stock.value.replace(/[^\d]/g, '').slice(0, 7);
+      if (stock.value !== digits) stock.value = digits;
+      this.buyerActions?.send({ type: 'buyer_action', action: 'set_stock', stock: digits });
+    });
     const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
@@ -4993,22 +5010,43 @@ export class GameUI {
       const kind = button?.dataset.buyerAction;
       if (!kind) return;
       if (button instanceof HTMLButtonElement && button.disabled) return;
+      if (kind === 'set_role') {
+        const role = button.dataset.buyerRole === 'seller' ? 'seller' : 'buyer';
+        for (const candidate of this.modal?.querySelectorAll<HTMLButtonElement>('[data-buyer-action="set_role"]') ?? []) {
+          const on = candidate.dataset.buyerRole === role;
+          candidate.classList.toggle('is-on', on);
+          candidate.setAttribute('aria-pressed', on ? 'true' : 'false');
+        }
+        actions.send({ type: 'buyer_action', action: 'set_role', role });
+        return;
+      }
       if (kind === 'save') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-buyer-name]')?.value ?? current.name;
         const priceText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-price]')?.value ?? current.priceText;
-        actions.send({ type: 'buyer_action', action: 'save', name, price: priceText });
+        const selected = this.modal?.querySelector<HTMLButtonElement>('[data-buyer-action="set_role"].is-on');
+        const role = selected?.dataset.buyerRole === 'seller' ? 'seller' : 'buyer';
+        const stockText = this.modal?.querySelector<HTMLInputElement>('[data-buyer-stock]')?.value ?? current.stockText;
+        actions.send({
+          type: 'buyer_action',
+          action: 'save',
+          name,
+          price: priceText,
+          role,
+          ...(role === 'seller' && stockText !== undefined ? { stock: stockText } : {}),
+        });
         return;
       }
       actions.send({ type: 'buyer_action', action: kind as ClientBuyerActionMessage['action'] });
     });
   }
 
-  private captureBuyerInputFocus(): { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined {
+  private captureBuyerInputFocus(): { kind: 'name' | 'price' | 'stock'; value: string; start: number; end: number } | undefined {
     const el = document.activeElement;
     if (!(el instanceof HTMLInputElement) || !this.modal?.contains(el)) return undefined;
     const kind = el.hasAttribute('data-buyer-name') ? 'name'
       : el.hasAttribute('data-buyer-price') ? 'price'
-        : undefined;
+        : el.hasAttribute('data-buyer-stock') ? 'stock'
+          : undefined;
     if (!kind) return undefined;
     return {
       kind,
@@ -5019,11 +5057,12 @@ export class GameUI {
   }
 
   private restoreBuyerInputFocus(
-    keep: { kind: 'name' | 'price'; value: string; start: number; end: number } | undefined,
+    keep: { kind: 'name' | 'price' | 'stock'; value: string; start: number; end: number } | undefined,
   ): void {
     if (!keep || !this.modal) return;
     const selector = keep.kind === 'name' ? '[data-buyer-name]'
-      : '[data-buyer-price]';
+      : keep.kind === 'stock' ? '[data-buyer-stock]'
+        : '[data-buyer-price]';
     const input = this.modal.querySelector<HTMLInputElement>(selector);
     if (!input) return;
     input.value = keep.value;

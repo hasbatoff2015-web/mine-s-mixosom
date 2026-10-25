@@ -1838,6 +1838,11 @@ textarea,
   cursor: default;
 }
 
+/* Seller trade: move «Количество» and «Вы заплатите» closer to the − / + row. */
+[data-buyer-screen="trade"][data-buyer-role="seller"] .mc-ah-amount + .mc-ah-prompt {
+  margin-top: 0;
+}
+
 .mc-ah-actions {
   display: flex;
   flex-direction: column;
@@ -1846,6 +1851,19 @@ textarea,
   gap: calc(4px * var(--mc-ui-scale, 3));
   width: 100%;
   margin-top: calc(6px * var(--mc-ui-scale, 3));
+}
+
+.mc-buyer-roles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  width: 100%;
+  margin-bottom: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-buyer-roles .mc-ah-btn {
+  width: 100%;
+  min-width: 0;
 }
 
 .mc-ah-icon {
