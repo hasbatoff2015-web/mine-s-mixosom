@@ -2135,15 +2135,17 @@ textarea,
 }
 
 .mc-donate-rank strong {
-  font-size: calc(14px * var(--mc-ui-scale, 3));
+  font-size: max(13px, calc(14px * var(--mc-ui-scale, 3)));
   line-height: 1.1;
 }
 
 .mc-donate-rank span,
 .mc-donate-card span {
+  max-width: 100%;
   color: #c8c8c8;
-  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-size: max(12px, calc(7px * var(--mc-ui-scale, 3)));
   line-height: 1.25;
+  overflow-wrap: anywhere;
 }
 
 .mc-donate-chips {
@@ -2187,8 +2189,10 @@ textarea,
 }
 
 .mc-donate-card strong {
-  font-size: calc(8px * var(--mc-ui-scale, 3));
+  max-width: 100%;
+  font-size: max(13px, calc(8px * var(--mc-ui-scale, 3)));
   line-height: 1.15;
+  overflow-wrap: anywhere;
 }
 
 .mc-donate-card:hover,
@@ -2268,13 +2272,15 @@ textarea,
 
 .mc-donate-preview {
   margin: calc(4px * var(--mc-ui-scale, 3)) 0;
+  font-size: max(13px, calc(11px * var(--mc-ui-scale, 3)));
   font-weight: 800;
   text-align: center;
+  overflow-wrap: anywhere;
 }
 
 .mc-donate-swatch {
-  width: calc(16px * var(--mc-ui-scale, 3));
-  height: calc(16px * var(--mc-ui-scale, 3));
+  width: max(44px, calc(16px * var(--mc-ui-scale, 3)));
+  height: max(44px, calc(16px * var(--mc-ui-scale, 3)));
   border: calc(1px * var(--mc-ui-scale, 3)) solid #111;
   padding: 0;
   cursor: pointer;
@@ -2285,14 +2291,23 @@ textarea,
   outline: calc(1px * var(--mc-ui-scale, 3)) solid #fff;
 }
 
+.mc-donate .mc-player-meta,
+.mc-donate .mc-menu-empty {
+  font-size: max(12px, calc(6.5px * var(--mc-ui-scale, 3)));
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .mc-donate-coords input,
 .mc-menu-body textarea[data-donate-announce] {
   box-sizing: border-box;
   width: 100%;
+  min-height: 44px;
   color: #fff;
   background: #1b1e24;
   border: calc(1px * var(--mc-ui-scale, 3)) solid #111;
   font: inherit;
+  font-size: max(16px, max(12px, calc(8px * var(--mc-ui-scale, 3))));
 }
 
 .mc-donate-coords input {

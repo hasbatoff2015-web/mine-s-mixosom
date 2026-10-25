@@ -547,6 +547,253 @@ describe('coarse mobile layout rects', () => {
     }
   }, 180_000);
 
+  it('keeps donate text readable and inside the viewport', async () => {
+    server?.close();
+    const { menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    const { menuDonateHtml } = await import('../src/ui/donateMenuGui');
+    const { menuBackHtml, menuChromeHtml, overlayStageStyle } = await import('../src/ui/gameMenuGui');
+    const escape = (value: string) => value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    const baseDonate = {
+      rankLabel: 'VIP',
+      summary: '',
+      remainingLabel: 'Осталось 3 дня до конца привилегии',
+      perks: [{ title: 'Дома', detail: '4/10' }, { title: 'Приваты', detail: '2/4' }],
+      actions: [
+        { id: 'tp', label: 'Телепорт по координатам', available: true, detail: 'Доступно с привилегии TITAN. Длинная подпись цены 500 Мегакоинов', screen: 'donate-tp' as const },
+        { id: 'announce', label: 'Объявление на сервер', available: true, detail: 'Раз в час', screen: 'donate-announce' as const },
+        { id: 'nickcolor', label: 'Цвет ника', available: true, detail: 'PREMIUM', screen: 'donate-color' as const },
+        { id: 'kits', label: 'Наборы', available: true, detail: 'Стартовые и ранговые наборы', screen: 'donate-kits' as const },
+        { id: 'pets', label: 'Питомцы', available: true, detail: 'Пчёлка и мини-крипер', screen: 'donate-pets' as const },
+      ],
+      kits: [
+        { name: 'vip', label: 'Набор VIP', available: true, detail: 'Можно получить' },
+        { name: 'titan', label: 'Набор TITAN с очень длинным названием', available: false, detail: 'Можно получить через 2 часа' },
+      ],
+      pets: [
+        { id: 'bee' as const, label: 'Пчёлка', available: true, summoned: false, actionLabel: 'Призвать пчёлку', detail: 'Летает рядом' },
+        { id: 'creeper' as const, label: 'Мини-крипер', available: false, summoned: false, actionLabel: 'Призвать', detail: 'Нужна привилегия TITAN' },
+      ],
+      catalog: [{ title: 'VIP', detail: 'Дома 4' }, { title: 'PREMIUM', detail: 'Цвет ника' }, { title: 'BOSS', detail: 'Питомцы' }, { title: 'TITAN', detail: 'Телепорт' }],
+      nickChoices: ['white', 'red', 'gold', 'green', 'aqua', 'blue', 'purple'],
+      nickColor: 'gold',
+      previewName: 'ДлинноеИмяИгрока',
+      onlinePlayers: [],
+      showInvseeOp: false,
+    };
+    const screens = ['donate', 'donate-pets', 'donate-kits', 'donate-color', 'donate-announce', 'donate-tp'] as const;
+    const panels = (width: number, height: number) => screens.map((screen) => {
+      const logicalWidth = menuLogicalWidth(screen, width);
+      const scale = menuUiScale(width, height, logicalWidth, 360);
+      const body = menuDonateHtml({
+        type: 'menu',
+        screen,
+        title: 'Донат',
+        donate: baseDonate,
+      }, escape);
+      return `<section data-donate-panel="${screen}" data-scale="${scale}" data-logical="${logicalWidth}">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              ${menuChromeHtml(menuBackHtml(screen), '<button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>')}
+              ${body}
+            </div>
+          </div>
+        </div>
+      </section>`;
+    }).join('');
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 844);
+      const height = Number(url.searchParams.get('h') ?? 390);
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; }
+        ${style}
+      </style></head><body><div id="app">${panels(width, height)}</div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('donate server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const viewports = [
+      [390, 844],
+      [640, 360],
+      [667, 375],
+      [740, 360],
+      [844, 390],
+      [932, 430],
+      [1280, 720],
+      [1920, 1080],
+    ] as const;
+    const launched = await launchChrome(844, 390, 'about:blank');
+    chromeJobs.push(launched);
+    const measure = `(() => {
+      const parsePx = (value) => Number.parseFloat(value);
+      const panels = [...document.querySelectorAll('[data-donate-panel]')].map((panel) => {
+        const texts = [...panel.querySelectorAll('.mc-donate-rank strong, .mc-donate-rank span, .mc-donate-card strong, .mc-donate-card span, .mc-donate-chip, .mc-donate-preview, .mc-donate-coords input, textarea, .mc-menu-heading, .mc-player-meta')];
+        const fonts = texts.filter((node) => node.textContent.trim().length > 0 || node.matches('input, textarea')).map((node) => ({
+          tag: node.tagName,
+          cls: node.className || '',
+          size: parsePx(getComputedStyle(node).fontSize),
+        }));
+        const cards = [...panel.querySelectorAll('.mc-donate-card')].map((card) => ({
+          scroll: card.scrollWidth,
+          client: card.clientWidth,
+          height: card.getBoundingClientRect().height,
+        }));
+        const swatch = panel.querySelector('.mc-donate-swatch')?.getBoundingClientRect();
+        const button = panel.querySelector('.mc-ah-btn, .mc-donate-card')?.getBoundingClientRect();
+        const back = panel.querySelector('.mc-back')?.getBoundingClientRect();
+        const close = panel.querySelector('[data-ui="close"]')?.getBoundingClientRect();
+        const shell = panel.querySelector('[data-menu-panel]');
+        return {
+          screen: panel.getAttribute('data-donate-panel'),
+          fonts,
+          cards,
+          swatch: swatch ? swatch.width : 0,
+          buttonHeight: button ? button.height : 0,
+          backTop: back ? back.top : null,
+          closeTop: close ? close.top : null,
+          closeRight: close ? close.right : null,
+          panelOverflow: shell ? shell.scrollWidth > shell.clientWidth + 1 : false,
+          screenName: panel.querySelector('[data-menu-screen]')?.getAttribute('data-menu-screen'),
+        };
+      });
+      return {
+        panels,
+        overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+      };
+    })()`;
+    for (const [width, height] of viewports) {
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}` });
+      let ready = false;
+      let seen = '';
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight, panels: document.querySelectorAll("[data-donate-panel]").length })',
+        });
+        seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+        const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; panels: number } : undefined;
+        ready = parsed?.panels === screens.length && parsed.w === width && parsed.h === height;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      if (!ready) throw new Error(`donate did not render at ${width}x${height}: ${seen}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', { returnByValue: true, expression: measure });
+      const value = (evaluated.result as { value?: {
+        overflowX: boolean;
+        viewport: { width: number; height: number };
+        panels: Array<{
+          screen: string;
+          fonts: Array<{ tag: string; cls: string; size: number }>;
+          cards: Array<{ scroll: number; client: number; height: number }>;
+          swatch: number;
+          buttonHeight: number;
+          closeRight: number | null;
+          panelOverflow: boolean;
+          screenName: string;
+        }>;
+      } } | undefined)?.value;
+      expect(value, `${width}x${height}`).toBeTruthy();
+      expect(value!.overflowX, `${width}x${height}`).toBe(false);
+      for (const panel of value!.panels) {
+        expect(panel.screenName, panel.screen).toBe(panel.screen);
+        expect(panel.panelOverflow, JSON.stringify(panel)).toBe(false);
+        expect(panel.fonts.length, panel.screen).toBeGreaterThan(0);
+        for (const font of panel.fonts) {
+          const floor = font.tag === 'STRONG' || font.cls.includes('mc-menu-heading') || font.cls.includes('mc-donate-preview')
+            ? 13
+            : 12;
+          expect(font.size, `${panel.screen} ${font.cls || font.tag} at ${width}x${height}`).toBeGreaterThanOrEqual(floor);
+        }
+        for (const card of panel.cards) {
+          expect(card.scroll, panel.screen).toBeLessThanOrEqual(card.client + 1);
+          expect(card.height, panel.screen).toBeGreaterThanOrEqual(44);
+        }
+        if (panel.screen === 'donate-color') expect(panel.swatch).toBeGreaterThanOrEqual(44);
+        if (panel.closeRight !== null) expect(panel.closeRight).toBeLessThanOrEqual(width + 1);
+      }
+    }
+    await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+      width: 844,
+      height: 390,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await launched.cdp.send('Page.navigate', { url: `${origin}/?w=844&h=390` });
+    let announceReady = false;
+    for (let attempt = 0; attempt < 40 && !announceReady; attempt += 1) {
+      const probe = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: 'document.querySelector("[data-donate-announce]") ? "yes" : ""',
+      });
+      announceReady = (probe.result as { value?: string } | undefined)?.value === 'yes';
+      if (!announceReady) await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    if (!announceReady) throw new Error('donate announce field missing before resize');
+    await launched.cdp.send('Runtime.evaluate', {
+      expression: `(() => {
+        const field = document.querySelector('[data-donate-announce]');
+        field.focus();
+        field.value = 'привет';
+        field.dataset.keep = '1';
+        window.__field = field;
+      })()`,
+    });
+    for (const [width, height] of [[667, 375], [932, 430]] as const) {
+      const logicalWidth = menuLogicalWidth('donate-announce', width);
+      const scale = menuUiScale(width, height, logicalWidth, 360);
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      const resized = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const stage = document.querySelector('[data-donate-panel="donate-announce"] .mc-stage');
+          stage.style.setProperty('--mc-ui-scale', '${scale}');
+          stage.style.setProperty('--mc-logical-width', '${logicalWidth}');
+          const field = document.querySelector('[data-donate-announce]');
+          return {
+            same: field === window.__field,
+            value: field.value,
+            keep: field.dataset.keep,
+            screen: document.querySelector('[data-donate-panel="donate-announce"] [data-menu-screen]').getAttribute('data-menu-screen'),
+            scale: getComputedStyle(stage).getPropertyValue('--mc-ui-scale').trim(),
+          };
+        })()`,
+      });
+      const live = (resized.result as { value?: {
+        same: boolean;
+        value: string;
+        keep: string;
+        screen: string;
+        scale: string;
+      } } | undefined)?.value;
+      expect(live, `${width}x${height}`).toMatchObject({
+        same: true,
+        value: 'привет',
+        keep: '1',
+        screen: 'donate-announce',
+        scale: String(scale),
+      });
+    }
+  }, 120_000);
+
   it('scrolls the creative catalog from a real touch without selecting or double-scrolling', async () => {
     server?.close();
     server = createServer((_request, response) => {

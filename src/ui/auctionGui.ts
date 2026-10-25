@@ -1,5 +1,5 @@
 import type { ItemStack } from '../inventory';
-import type { AuctionScreenKind } from '../../shared/protocol';
+import type { AuctionScreenKind, ServerAuctionMessage } from '../../shared/protocol';
 
 export type AuctionBackParent = 'menu' | 'browse' | 'sell-pick' | 'mine';
 
@@ -25,6 +25,21 @@ export function auctionShowsBack(screen: AuctionScreenKind, source: 'menu' | und
 
 export function auctionBackButtonHtml(): string {
   return '<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>';
+}
+
+/** Buy / sell / manage forms are per listing or inventory slot. Browse is not. */
+export function auctionFormContext(state: Pick<ServerAuctionMessage, 'screen' | 'selected'>): string {
+  if (
+    state.screen === 'buy'
+    || state.screen === 'manage'
+    || state.screen === 'claim'
+    || state.screen === 'relist'
+    || state.screen === 'sell-confirm'
+  ) {
+    if (state.selected?.listingId) return state.selected.listingId;
+    if (state.selected?.slot !== undefined) return `slot:${state.selected.slot}`;
+  }
+  return '';
 }
 
 export function auctionLogicalHeight(screen: string): number {

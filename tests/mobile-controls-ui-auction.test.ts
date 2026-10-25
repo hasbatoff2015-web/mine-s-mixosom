@@ -652,27 +652,47 @@ describe('follow-up mobile ownership and readable menus', () => {
     document.body.append(root);
     const ui = new GameUI(root);
     sessions.push(ui);
+    const sent: string[] = [];
     const base = {
       type: 'menu' as const,
       screen: 'homes' as const,
       title: 'Дома',
-      homes: [],
+      homes: [] as Array<{ name: string; x: number; y: number; z: number }>,
       homeNameText: '',
+      homeCount: 0,
+      homeMax: 3,
       message: '',
     };
-    ui.openGameMenu(base, { send() {}, close() {} });
+    ui.openGameMenu(base, {
+      send: (message) => sent.push(message.action),
+      close() {},
+    });
     const input = root.querySelector<HTMLInputElement>('[data-menu-home-name]');
     expect(input).toBeTruthy();
     input!.focus();
     input!.value = 'Дом';
     input!.setSelectionRange(3, 3);
-    ui.applyGameMenu({ ...base, homeNameText: 'Д', message: 'Проверка' });
+    input!.dispatchEvent(new Event('input'));
+    expect(sent).toEqual(['set_home_name']);
+    ui.applyGameMenu({
+      ...base,
+      homeNameText: 'Д',
+      message: 'Проверка',
+      homes: [{ name: 'Лес', x: 1, y: 2, z: 3 }],
+      homeCount: 1,
+    });
+    expect(root.querySelector('[data-menu-home-name]')).toBe(input);
+    expect(input!.isConnected).toBe(true);
     expect(document.activeElement).toBe(input);
     expect(input!.value).toBe('Дом');
     expect(input!.selectionStart).toBe(3);
+    expect(root.querySelector('.mc-menu-list')?.textContent).toContain('Лес');
+    expect(root.querySelector('.mc-menu-count')?.textContent).toContain('1/3');
     expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Проверка');
+    expect(sent).toEqual(['set_home_name']);
     ui.applyGameMenu({ ...base, screen: 'friends', title: 'Друзья' });
     expect(document.activeElement).not.toBe(input);
+    expect(input!.isConnected).toBe(false);
     expect(root.querySelector('[data-menu-screen="friends"]')).toBeTruthy();
   });
 

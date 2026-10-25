@@ -333,7 +333,7 @@ export function menuClaimsHtml(state: ServerMenuMessage, escape: (value: string)
         <div class="mc-player-main"><span class="mc-player-name">${escape(member.name)}</span></div>
         <button type="button" class="mc-ah-btn mc-btn-danger" data-menu-claim-kick="${escape(member.name)}">Удалить</button>
       </div>`).join('');
-    return `<div class="mc-menu-body" data-menu-screen="claim-settings">
+    return `<div class="mc-menu-body" data-menu-screen="claim-settings" data-menu-context="${escape(state.claimId ?? '')}">
       ${menuHeadingHtml('Приват')}
       <div class="mc-menu-add">
         <input data-menu-claim-name type="text" maxlength="24" value="${escape(state.claimNameText ?? '')}" placeholder="Название привата" autocomplete="off" spellcheck="false" />

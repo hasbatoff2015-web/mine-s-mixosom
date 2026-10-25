@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionBackButtonHtml, auctionClaimableClass, auctionIconStack, auctionLogicalHeight, auctionShowsBack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionBackButtonHtml, auctionClaimableClass, auctionFormContext, auctionIconStack, auctionLogicalHeight, auctionShowsBack, auctionSlotHint, clampAuctionAmount } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -32,7 +32,7 @@ import {
   clanMembersHtml,
   clanRankHtml,
   clanSortButtonsHtml,
-  keepClanSearchDraft,
+  clanScreenContext,
   showsClanBack,
 } from './clanGui';
 import {
@@ -111,7 +111,6 @@ import {
   buyerPriceEachLabel,
   buyerScreenHtml,
   clampBuyerAmount,
-  keepBuyerDraft,
 } from './buyerGui';
 import {
   chatChromeStyle,
@@ -136,6 +135,17 @@ import {
   settleFriendChatSend,
   trackFriendChatSend,
 } from '../../shared/directMessages';
+import {
+  echoFieldKey,
+  fieldIsComposing,
+  parseMarkup,
+  patchPreservingFocus,
+  planAuthoritativeField,
+  stampScreenContext,
+  watchFieldComposition,
+  type FieldEcho,
+} from './preserveFocusedField';
+import { TRADE_MONEY_ERROR } from '../../shared/trade';
 import { tradeSlotCount, tradeWindowChrome } from './tradeGui';
 import type { ClientAuctionActionMessage, ClientBuyerActionMessage, ClientClanActionMessage, ClientInventoryActionMessage, ClientMenuActionMessage, ClientTradeActionMessage, NetworkHologram, ServerAuctionMessage, ServerBuyerMessage, ServerClanMessage, ServerMenuMessage, ServerTradeMessage } from '../../shared/protocol';
 import {
@@ -480,6 +490,8 @@ export class GameUI {
   private menuState?: ServerMenuMessage;
   private menuActions?: MenuGuiActions;
   private menuForceRender = false;
+  /** Last server text applied to each echo field, plus the draft last sent. */
+  private fieldEcho = new Map<string, FieldEcho>();
   /** Logical px copied from the friends panel so opening a chat does not resize it. */
   private friendChatLogicalHeight?: number;
   private readonly friendChatComposer = createFriendChatComposerLedger();
@@ -4148,6 +4160,11 @@ export class GameUI {
       this.renderAuction();
       return;
     }
+    if (auctionFormContext(prev) !== auctionFormContext(state)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
     this.auctionState = state;
     if (state.screen === 'browse' || state.screen === 'mine') {
       this.patchAuctionList(state);
@@ -4177,7 +4194,7 @@ export class GameUI {
     empty.hidden = state.totalCount !== 0;
     this.writeAuctionMessage(state.message);
     const search = this.modal?.querySelector<HTMLInputElement>('[data-ah-search]');
-    if (search && !keepAuctionSearchDraft(document.activeElement, search)) search.value = state.search;
+    if (search) this.applyEchoValue(search, state.search, false);
   }
 
   private patchAuctionForm(state: ServerAuctionMessage): void {
@@ -4194,14 +4211,42 @@ export class GameUI {
     if (minus) minus.disabled = amount <= 1;
     if (plus) plus.disabled = amount >= max;
     this.writeAuctionMessage(state.message);
+    const price = this.modal?.querySelector<HTMLInputElement>('[data-ah-price]');
+    if (price) this.applyEchoValue(price, state.selected?.priceText ?? '', false);
+  }
+
+  private presentAuctionBody(state: ServerAuctionMessage): string {
+    return stampScreenContext(
+      this.auctionBodyHtml(state),
+      'data-ah-context',
+      auctionFormContext(state),
+      'data-ah-screen=',
+    );
+  }
+
+  /** Same auction screen and listing: refresh slots, pages, and messages around the live field. */
+  private tryPatchAuctionBody(state: ServerAuctionMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-ah-screen]');
+    if (!live || live.getAttribute('data-ah-screen') !== state.screen) return false;
+    if ((live.dataset.ahContext ?? '') !== auctionFormContext(state)) return false;
+    const hasBack = Boolean(this.modal?.querySelector('[data-ah-action="back"]'));
+    if (hasBack !== auctionShowsBack(state.screen, state.source)) return false;
+    const fresh = parseMarkup(this.presentAuctionBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
   }
 
   private renderAuction(): void {
     const state = this.auctionState;
     const actions = this.auctionActions;
     if (!state || !actions || state.screen === 'closed') return;
-    if (this.keepFocusedMenuField(state)) return;
-    const keep = this.captureAuctionInputFocus();
+    if (this.tryPatchAuctionBody(state)) return;
+    const liveAuction = this.modal?.querySelector<HTMLElement>('[data-ah-screen]');
+    const sameAuction = liveAuction?.getAttribute('data-ah-screen') === state.screen
+      && (liveAuction.dataset.ahContext ?? '') === auctionFormContext(state);
+    const keep = sameAuction ? this.captureAuctionInputFocus() : undefined;
     const logicalHeight = auctionLogicalHeight(state.screen);
     const scale = this.containerScale(176, logicalHeight);
     this.itemTooltip?.dispose();
@@ -4214,13 +4259,14 @@ export class GameUI {
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
           ${back}
-          ${this.auctionBodyHtml(state)}
+          ${this.presentAuctionBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindAuctionChrome();
     this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreAuctionInputFocus(keep);
   }
 
@@ -4343,22 +4389,26 @@ export class GameUI {
     this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.auctionActions?.close());
     const search = this.modal!.querySelector<HTMLInputElement>('[data-ah-search]');
+    if (search) watchFieldComposition(search);
     search?.addEventListener('pointerdown', (event) => event.stopPropagation());
     search?.addEventListener('keydown', (event) => event.stopPropagation());
     search?.addEventListener('keyup', (event) => event.stopPropagation());
     search?.addEventListener('input', () => {
+      this.noteFieldSend(search);
       window.clearTimeout(this.auctionSearchTimer);
       this.auctionSearchTimer = window.setTimeout(() => {
         this.auctionActions?.send({ type: 'auction_action', action: 'search', search: search.value });
       }, 160);
     });
     const price = this.modal!.querySelector<HTMLInputElement>('[data-ah-price]');
+    if (price) watchFieldComposition(price);
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
     price?.addEventListener('keyup', (event) => event.stopPropagation());
     price?.addEventListener('input', () => {
       const digits = price.value.replace(/[^\d]/g, '');
       if (price.value !== digits) price.value = digits;
+      this.noteFieldSend(price, digits);
       this.auctionActions?.send({ type: 'auction_action', action: 'set_price', price: digits });
     });
     this.modal!.addEventListener('click', (event) => {
@@ -4443,6 +4493,11 @@ export class GameUI {
       this.renderClan();
       return;
     }
+    if (clanScreenContext(prev) !== clanScreenContext(state)) {
+      this.clanState = state;
+      this.renderClan();
+      return;
+    }
     this.clanState = state;
     if (state.screen === 'ranking' || state.screen === 'add' || state.screen === 'requests') {
       this.patchClanList(state);
@@ -4462,7 +4517,7 @@ export class GameUI {
       this.renderClan();
       return;
     }
-    if (search && !keepClanSearchDraft(document.activeElement, search)) search.value = state.search;
+    if (search) this.applyEchoValue(search, state.search, false);
     if (list) list.innerHTML = this.clanListHtml(state);
     page.textContent = `Страница ${state.page} из ${state.totalPages}`;
     if (prev) prev.disabled = state.page <= 1;
@@ -4488,7 +4543,7 @@ export class GameUI {
 
   private patchClanInvite(state: ServerClanMessage): void {
     const input = this.modal?.querySelector<HTMLInputElement>('[data-clan-invite-name]');
-    if (input && !keepClanSearchDraft(document.activeElement, input)) input.value = state.inviteName ?? '';
+    if (input) this.applyEchoValue(input, state.inviteName ?? '', false);
     const message = this.modal?.querySelector<HTMLElement>('[data-clan-invite-message]');
     if (!message) return;
     message.hidden = !state.inviteMessage;
@@ -4502,12 +4557,37 @@ export class GameUI {
     node.textContent = message ?? '';
   }
 
+  private presentClanBody(state: ServerClanMessage): string {
+    return stampScreenContext(
+      this.clanBodyHtml(state),
+      'data-clan-context',
+      clanScreenContext(state),
+      'data-clan-screen=',
+    );
+  }
+
+  private tryPatchClanBody(state: ServerClanMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-clan-screen]');
+    if (!live || live.getAttribute('data-clan-screen') !== state.screen) return false;
+    if ((live.dataset.clanContext ?? '') !== clanScreenContext(state)) return false;
+    const hasBack = Boolean(this.modal?.querySelector('[data-clan-action="back"]'));
+    if (hasBack !== showsClanBack(state.screen, state.source)) return false;
+    const fresh = parseMarkup(this.presentClanBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
+  }
+
   private renderClan(): void {
     const state = this.clanState;
     const actions = this.clanActions;
     if (!state || !actions || state.screen === 'closed') return;
-    if (this.keepFocusedMenuField(state)) return;
-    const keep = this.captureClanInputFocus();
+    if (this.tryPatchClanBody(state)) return;
+    const liveClan = this.modal?.querySelector<HTMLElement>('[data-clan-screen]');
+    const sameClan = liveClan?.getAttribute('data-clan-screen') === state.screen
+      && (liveClan.dataset.clanContext ?? '') === clanScreenContext(state);
+    const keep = sameClan ? this.captureClanInputFocus() : undefined;
     const logicalHeight = state.screen === 'create' || state.screen === 'card' || state.screen === 'member-card' || state.screen === 'announce' ? 268
       : state.screen === 'ranking' || state.screen === 'requests' || state.screen === 'accept' ? 252
         : 220;
@@ -4522,13 +4602,14 @@ export class GameUI {
       <div class="mc-stage mc-clan-stage" style="${overlayStageStyle(scale, 220)}">
         ${back}
         <div class="mc-panel mc-clan-panel" data-container-kind="clan">
-          ${this.clanBodyHtml(state)}
+          ${this.presentClanBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindClanChrome();
     this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreClanInputFocus(keep);
   }
 
@@ -4879,10 +4960,12 @@ export class GameUI {
     });
     const bindField = (selector: string, action: 'search' | 'set_name') => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
       input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
         window.clearTimeout(this.clanSearchTimer);
         this.clanSearchTimer = window.setTimeout(() => {
           if (action === 'search') this.clanActions?.send({ type: 'clan_action', action: 'search', search: input.value });
@@ -4893,20 +4976,24 @@ export class GameUI {
     bindField('[data-clan-search]', 'search');
     bindField('[data-clan-name]', 'set_name');
     const invite = this.modal!.querySelector<HTMLInputElement>('[data-clan-invite-name]');
+    if (invite) watchFieldComposition(invite);
     invite?.addEventListener('pointerdown', (event) => event.stopPropagation());
     invite?.addEventListener('keydown', (event) => event.stopPropagation());
     invite?.addEventListener('keyup', (event) => event.stopPropagation());
     invite?.addEventListener('input', () => {
+      this.noteFieldSend(invite);
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = window.setTimeout(() => {
         this.clanActions?.send({ type: 'clan_action', action: 'set_invite_name', name: invite.value });
       }, 160);
     });
     const announce = this.modal!.querySelector<HTMLInputElement>('[data-clan-announce-text]');
+    if (announce) watchFieldComposition(announce);
     announce?.addEventListener('pointerdown', (event) => event.stopPropagation());
     announce?.addEventListener('keydown', (event) => event.stopPropagation());
     announce?.addEventListener('keyup', (event) => event.stopPropagation());
     announce?.addEventListener('input', () => {
+      this.noteFieldSend(announce);
       window.clearTimeout(this.clanSearchTimer);
       this.clanSearchTimer = window.setTimeout(() => {
         this.clanActions?.send({ type: 'clan_action', action: 'set_announce_text', text: announce.value });
@@ -5033,16 +5120,16 @@ export class GameUI {
 
   private patchBuyer(state: ServerBuyerMessage): void {
     const prev = this.buyerState;
-    if (!this.modal || !prev || prev.screen !== state.screen) {
+    if (!this.modal || !prev || prev.screen !== state.screen || prev.buyerId !== state.buyerId) {
       this.buyerState = state;
       this.renderBuyer();
       return;
     }
     this.buyerState = state;
     const name = this.modal.querySelector<HTMLInputElement>('[data-buyer-name]');
-    if (name && !keepBuyerDraft(document.activeElement, name)) name.value = state.name;
+    if (name) this.applyEchoValue(name, state.name, false);
     const price = this.modal.querySelector<HTMLInputElement>('[data-buyer-price]');
-    if (price && !keepBuyerDraft(document.activeElement, price)) price.value = state.priceText;
+    if (price) this.applyEchoValue(price, state.priceText, false);
     const itemHost = this.modal.querySelector('[data-buyer-item]');
     if (itemHost) itemHost.innerHTML = this.slotHtml(this.buyerStack(state.item), 'buyer-item');
     const tradeHost = this.modal.querySelector('[data-buyer-trade]');
@@ -5068,12 +5155,30 @@ export class GameUI {
     }
   }
 
+  private presentBuyerBody(state: ServerBuyerMessage): string {
+    return stampScreenContext(this.buyerBodyHtml(state), 'data-buyer-id', state.buyerId, 'data-buyer-screen=');
+  }
+
+  private tryPatchBuyerBody(state: ServerBuyerMessage): boolean {
+    const live = this.modal?.querySelector<HTMLElement>('[data-buyer-screen]');
+    if (!live || live.getAttribute('data-buyer-screen') !== state.screen) return false;
+    if ((live.dataset.buyerId ?? '') !== state.buyerId) return false;
+    const fresh = parseMarkup(this.presentBuyerBody(state));
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
+    return true;
+  }
+
   private renderBuyer(): void {
     const state = this.buyerState;
     const actions = this.buyerActions;
     if (!state || !actions || state.screen === 'closed') return;
-    if (this.keepFocusedMenuField(state)) return;
-    const keep = this.captureBuyerInputFocus();
+    if (this.tryPatchBuyerBody(state)) return;
+    const liveBuyer = this.modal?.querySelector<HTMLElement>('[data-buyer-screen]');
+    const sameBuyer = liveBuyer?.getAttribute('data-buyer-screen') === state.screen
+      && (liveBuyer.dataset.buyerId ?? '') === state.buyerId;
+    const keep = sameBuyer ? this.captureBuyerInputFocus() : undefined;
     const logicalHeight = state.screen === 'pick-item' ? 222
       : state.screen === 'trade' ? 248
         : 248;
@@ -5084,13 +5189,14 @@ export class GameUI {
     this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
         <div class="mc-panel" data-container-kind="chest">
-          ${this.buyerBodyHtml(state)}
+          ${this.presentBuyerBody(state)}
         </div>
         ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindBuyerChrome();
     this.modal?.querySelector<HTMLElement>('.mc-stage')?.setAttribute('data-logical-height', String(logicalHeight));
+    this.resetFieldEcho(this.modal!);
     this.restoreBuyerInputFocus(keep);
   }
 
@@ -5120,19 +5226,25 @@ export class GameUI {
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.buyerActions?.close());
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
-      input?.addEventListener('input', () => send(input.value));
+      input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
+        send(input.value);
+      });
     };
     bindDraft('[data-buyer-name]', (name) => this.buyerActions?.send({ type: 'buyer_action', action: 'set_name', name }));
     const price = this.modal!.querySelector<HTMLInputElement>('[data-buyer-price]');
+    if (price) watchFieldComposition(price);
     price?.addEventListener('pointerdown', (event) => event.stopPropagation());
     price?.addEventListener('keydown', (event) => event.stopPropagation());
     price?.addEventListener('keyup', (event) => event.stopPropagation());
     price?.addEventListener('input', () => {
       const digits = price.value.replace(/[^\d]/g, '');
       if (price.value !== digits) price.value = digits;
+      this.noteFieldSend(price, digits);
       this.buyerActions?.send({ type: 'buyer_action', action: 'set_price', price: digits });
     });
     this.modal!.addEventListener('click', (event) => {
@@ -5207,7 +5319,7 @@ export class GameUI {
     const actions = this.menuActions;
     if (!state || !actions || state.screen === 'closed') return;
     if (!this.menuForceRender && this.tryPatchFriendChat(state)) return;
-    if (this.keepFocusedMenuField(state)) return;
+    if (!this.menuForceRender && this.tryPatchMenuBody(state)) return;
     if (state.screen === 'friend-chat') this.rememberFriendsPanelHeight();
     else this.friendChatLogicalHeight = undefined;
     const sameChat = state.screen === 'friend-chat'
@@ -5215,7 +5327,11 @@ export class GameUI {
       && this.friendChat?.friendId === state.activeFriendId;
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
-    const keep = this.captureMenuInputFocus();
+    const liveMenu = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
+    const sameMenu = liveMenu?.getAttribute('data-menu-screen') === state.screen
+      && (liveMenu.dataset.menuContext ?? '') === (state.screen === 'claim-settings' ? (state.claimId ?? '') : (liveMenu?.dataset.menuContext ?? ''))
+      && (state.screen !== 'friend-chat' || liveMenu?.dataset.friendId === (state.activeFriendId ?? ''));
+    const keep = sameMenu ? this.captureMenuInputFocus() : undefined;
     const logicalWidth = menuLogicalWidth(state.screen, viewportMetrics().width);
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
@@ -5234,6 +5350,7 @@ export class GameUI {
       </div>`;
     this.bindGameMenuChrome();
     this.applyFriendChatPanelHeight();
+    this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
     if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
@@ -5312,6 +5429,7 @@ export class GameUI {
   private bindFriendChatComposer(): void {
     const input = this.friendChatInput();
     if (input) {
+      watchFieldComposition(input);
       input.addEventListener('pointerdown', (event) => event.stopPropagation());
       input.addEventListener('keydown', (event) => {
         event.stopPropagation();
@@ -5419,41 +5537,72 @@ export class GameUI {
   }
 
   /**
-   * A server echo for the same screen must not replace the input the player is typing in.
-   * A real screen change still rebuilds and drops focus.
+   * Same menu screen: refresh lists, counts, and messages around the focused field.
+   * A different screen, or another claim, rebuilds so the old draft cannot leak.
    */
-  private keepFocusedMenuField(state: { screen: string; message?: string }): boolean {
-    if (this.menuForceRender || !this.modal) return false;
-    const active = document.activeElement;
-    if (!(active instanceof HTMLInputElement) && !(active instanceof HTMLTextAreaElement)) return false;
-    if (!this.modal.contains(active)) return false;
-    const draft = active.hasAttribute('data-menu-home-name')
-      || active.hasAttribute('data-menu-friend-name')
-      || active.hasAttribute('data-menu-claim-name')
-      || active.hasAttribute('data-menu-claim-member')
-      || active.hasAttribute('data-menu-trade-name')
-      || active.hasAttribute('data-friend-chat-input')
-      || active.hasAttribute('data-donate-field')
-      || active.hasAttribute('data-ah-price')
-      || active.hasAttribute('data-ah-search')
-      || active.hasAttribute('data-clan-invite-name')
-      || active.hasAttribute('data-buyer-name')
-      || active.hasAttribute('data-buyer-price');
-    if (!draft) return false;
-    const screenNode = this.modal.querySelector('[data-menu-screen], [data-ah-screen], [data-trade-screen], [data-clan-screen], [data-buyer-screen]');
-    const liveScreen = screenNode?.getAttribute('data-menu-screen')
-      ?? screenNode?.getAttribute('data-ah-screen')
-      ?? screenNode?.getAttribute('data-trade-screen')
-      ?? screenNode?.getAttribute('data-clan-screen')
-      ?? screenNode?.getAttribute('data-buyer-screen');
-    if (liveScreen !== state.screen) return false;
-    const message = this.modal.querySelector<HTMLElement>('[data-menu-message], [data-ah-message]');
-    if (message) {
-      const text = state.message ?? '';
-      message.hidden = text.length === 0;
-      message.textContent = text;
-    }
+  private tryPatchMenuBody(state: ServerMenuMessage): boolean {
+    if (state.screen === 'friend-chat') return false;
+    const live = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
+    if (!live) return false;
+    const fresh = parseMarkup(menuBodyHtml(state, (value) => this.escape(value)));
+    const liveScreen = live.getAttribute('data-menu-screen');
+    const freshScreen = fresh.getAttribute('data-menu-screen');
+    if (!liveScreen || liveScreen !== freshScreen || liveScreen !== state.screen) return false;
+    if ((live.dataset.menuContext ?? '') !== (fresh.dataset.menuContext ?? '')) return false;
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, false);
+    });
     return true;
+  }
+
+  private resetFieldEcho(root: ParentNode): void {
+    this.fieldEcho.clear();
+    for (const field of root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input, textarea')) {
+      const key = echoFieldKey(field);
+      if (!key) continue;
+      this.fieldEcho.set(key, { echo: field.value, pending: null });
+    }
+  }
+
+  private noteFieldSend(field: HTMLInputElement | HTMLTextAreaElement, sent = field.value): void {
+    const key = echoFieldKey(field);
+    if (!key) return;
+    const slot = this.fieldEcho.get(key) ?? { echo: '', pending: null };
+    slot.pending = sent;
+    this.fieldEcho.set(key, slot);
+  }
+
+  private applyEchoValue(
+    live: HTMLInputElement | HTMLTextAreaElement,
+    server: string,
+    rejected: boolean,
+  ): void {
+    const fresh = document.createElement(live.tagName.toLowerCase()) as HTMLInputElement;
+    fresh.value = server;
+    const key = echoFieldKey(live);
+    if (key) fresh.setAttribute(key, '');
+    this.syncEchoField(live, fresh, rejected);
+  }
+
+  private syncEchoField(
+    live: HTMLInputElement | HTMLTextAreaElement,
+    fresh: HTMLInputElement | HTMLTextAreaElement,
+    rejected: boolean,
+  ): void {
+    const key = echoFieldKey(live);
+    if (!key) return;
+    const slot = this.fieldEcho.get(key) ?? { echo: fresh.value, pending: null };
+    const planned = planAuthoritativeField({
+      focused: document.activeElement === live,
+      composing: fieldIsComposing(live),
+      current: live.value,
+      server: fresh.value,
+      lastEcho: slot.echo,
+      pendingSent: slot.pending,
+      rejectedPending: rejected,
+    });
+    if (planned.value !== live.value) live.value = planned.value;
+    this.fieldEcho.set(key, { echo: planned.lastEcho, pending: planned.pendingSent });
   }
 
   private captureMenuInputFocus(): { selector: string; value: string; start: number; end: number } | undefined {
@@ -5495,10 +5644,14 @@ export class GameUI {
     });
     const bindDraft = (selector: string, send: (value: string) => void) => {
       const input = this.modal!.querySelector<HTMLInputElement>(selector);
+      if (input) watchFieldComposition(input);
       input?.addEventListener('pointerdown', (event) => event.stopPropagation());
       input?.addEventListener('keydown', (event) => event.stopPropagation());
       input?.addEventListener('keyup', (event) => event.stopPropagation());
-      input?.addEventListener('input', () => send(input.value));
+      input?.addEventListener('input', () => {
+        this.noteFieldSend(input);
+        send(input.value);
+      });
     };
     bindDraft('[data-menu-home-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_home_name', name }));
     bindDraft('[data-menu-friend-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_friend_name', name }));
@@ -5506,6 +5659,7 @@ export class GameUI {
     bindDraft('[data-menu-claim-member]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_claim_member', name }));
     bindDraft('[data-menu-trade-name]', (name) => this.menuActions?.send({ type: 'menu_action', action: 'set_trade_name', name }));
     for (const field of this.modal!.querySelectorAll<HTMLElement>('[data-donate-field]')) {
+      watchFieldComposition(field);
       field.addEventListener('pointerdown', (event) => event.stopPropagation());
       field.addEventListener('keydown', (event) => event.stopPropagation());
       field.addEventListener('keyup', (event) => event.stopPropagation());
@@ -5764,11 +5918,35 @@ export class GameUI {
     });
   }
 
+  /** Same trade session: both offers, ready state, and buttons update around the money field. */
+  private tryPatchTrade(): boolean {
+    const state = this.tradeState;
+    if (!state || state.screen !== 'session' || !this.modal) return false;
+    const live = this.modal.querySelector<HTMLElement>('[data-trade-screen="session"]');
+    if (!live) return false;
+    if ((live.dataset.tradeId ?? '') !== (state.tradeId ?? '')) return false;
+    if ((live.dataset.partnerId ?? '') !== (state.partnerId ?? '')) return false;
+    const fresh = parseMarkup(tradeWindowChrome(state, (value) => this.escape(value), {
+      self: this.tradeSlotCells(state.selfSlots, 'self'),
+      partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
+      inventory: this.tradeInventoryCells(state),
+    }));
+    const rejected = state.message === TRADE_MONEY_ERROR;
+    patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
+      this.syncEchoField(current, incoming, rejected && echoFieldKey(current) === 'data-trade-money');
+    });
+    return true;
+  }
+
   private renderTrade(): void {
     const state = this.tradeState;
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
-    const keep = this.captureTradeInputFocus();
+    if (this.tryPatchTrade()) return;
+    const liveTrade = this.modal?.querySelector<HTMLElement>('[data-trade-screen="session"]');
+    const sameTrade = (liveTrade?.dataset.tradeId ?? '') === (state.tradeId ?? '')
+      && (liveTrade?.dataset.partnerId ?? '') === (state.partnerId ?? '');
+    const keep = sameTrade ? this.captureTradeInputFocus() : undefined;
     const logicalWidth = menuLogicalWidth('trade', viewportMetrics().width);
     const scale = this.menuScale(logicalWidth, 248);
     this.itemTooltip?.dispose();
@@ -5787,6 +5965,7 @@ export class GameUI {
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindTradeChrome();
+    this.resetFieldEcho(this.modal!);
     this.restoreTradeInputFocus(keep);
   }
 
@@ -5844,12 +6023,14 @@ export class GameUI {
     this.bindOverlayPointerShield(this.modal!);
     this.modal!.querySelector('[data-ui="close"]')?.addEventListener('click', () => this.tradeActions?.close());
     const money = this.modal!.querySelector<HTMLInputElement>('[data-trade-money]');
+    if (money) watchFieldComposition(money);
     money?.addEventListener('pointerdown', (event) => event.stopPropagation());
     money?.addEventListener('keydown', (event) => event.stopPropagation());
     money?.addEventListener('keyup', (event) => event.stopPropagation());
     money?.addEventListener('input', () => {
       const digits = money.value.replace(/[^\d]/g, '');
       if (money.value !== digits) money.value = digits;
+      this.noteFieldSend(money, digits || '0');
       this.tradeActions?.send({ type: 'trade_action', action: 'set_money', money: digits || '0' });
     });
     this.modal!.addEventListener('click', (event) => {

@@ -7,7 +7,8 @@
 - [x] Buyer NPC joins the mobile use ray through the existing `buyer_interact` send.
 - [x] Emote HUD control is a button and drives the existing wheel. Z stays on the keyboard.
 - [x] Game-menu and trade chrome keeps back and close inside the panel. Auction back follows the server parent.
-- [ ] Not merged. A physical phone pass is still for the owner. Headless Chrome checked the menu rects.
+- [x] The same screen patches around the focused field. Trade money stays one DOM node. Donate text stays at least 12px.
+- [ ] Not merged. A physical phone pass is still for the owner. Headless Chrome checked the menu rects and donate font sizes.
 
 ## 2026-10-20: Skin rarity catalog and store UI
 

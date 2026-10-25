@@ -88,3 +88,17 @@ Branch `cursor/mobile-controls-ui-auction-fixes-7178` from `c8da9fc`. Draft PR #
 - An empty world hold becomes a camera swipe after the swipe threshold. Mining, bow, and food holds do not.
 - The boss bar stops before the corner buttons. Text fields are exempt from the global context-menu block.
 - Emote `lostpointercapture` and a hidden document abort the wheel gesture without a second emote start.
+
+## Third follow-up: live forms
+
+`keepFocusedMenuField()` used to return before `renderGameMenu`, `renderAuction`, `renderClan`, and `renderBuyer`. The focused field survived, and so did every stale list. `renderTrade()` rebuilt the modal, so `[data-trade-money]` was a new node on every snapshot.
+
+`patchPreservingFocus` now updates the open body in place. The active field is the same node. IME composition is not rewritten. Other inputs keep their listeners; an idle echo field takes the server value. Subtrees that do not contain the field are refreshed, including home and friend lists, claim members, auction lots, clan messages, and buyer items.
+
+`planAuthoritativeField` is the draft rule. A focused value that differs from the last applied echo stays. After the server echoes that exact draft and then sends `''`, the field clears. Trade money is replaced while focused only when the snapshot message is `TRADE_MONEY_ERROR` for the amount just sent. A patch never dispatches `input`.
+
+A different `data-menu-screen`, claim id, auction listing, buyer id, or trade id/partner rebuilds the window and does not copy the old draft. Friend chat still uses `tryPatchFriendChat`, so the log and the composer are not rebuilt on a presence update.
+
+Donate text that was `calc(7px * scale)` and `calc(8px * scale)` now uses `max(12px, …)` and `max(13px, …)`. At scale 3 the `max()` does not shrink the desktop sizes. `.mc-donate .mc-player-meta` has the same 12px floor. Swatches and the coordinate inputs are at least 44px. Headless Chrome measured the real donate markup at 390×844, 640×360, 667×375, 740×360, 844×390, 932×430, 1280×720, and 1920×1080: no 7–8px labels, no horizontal overflow, and the announcement field stayed the same node from 844×390 to 667×375 to 932×430.
+
+The earlier full-suite failures were run again on this branch and on `origin/main` `c8da9fc` with the same `node_modules`. All 31 failures matched, including `classic-combat-integration`: its fixture builds `InputManager` with `Object.create` and never runs the constructor, so `sneak` is missing. That method and call already exist on main. `tests/mobile-controls-sky-hud.test.ts` passes after the jump-pointer signature update. A later `npm test` reported 358 files passed, 18 failed, 3544 tests passed, 36 failed, 1 pending. The extra names (`cosmetic-pets`, `fs-world-store`, `lighting-edit-queue`, `urgent-block-mesh`) passed when run again alone. `mega-zombie` timed out in the paired run on both branches and passed in the full run. `tick-load-flight` misses an 80 ms budget on both branches. No GitHub Actions workflows exist. Safari and a physical phone were not used.

@@ -12,6 +12,8 @@ Creative catalog slots set `catalogScroll` on the existing inventory gesture. A 
 
 Game menu and trade put back and close in `.mc-menu-chrome` inside the panel. `menuLogicalWidth` is the width both `renderGameMenu` and `relayoutGameMenu` scale. Auction `source: 'menu'` is set before the first `flushAuction`. Nested screens show one back control. The server parent map is unchanged: buy → browse, sell-confirm → sell-pick, manage/claim/relist → mine, and a menu-opened top screen restores the auction section.
 
+A later snapshot of the same screen patches the open body with `patchPreservingFocus`. The focused text node stays in place, so the mobile keyboard is not recreated. Lists, counts, buttons, partner trade slots, and messages take the server state. `planAuthoritativeField` keeps a draft that is ahead of the last echo, clears it after that echo is accepted and the server sends an empty value, and replaces trade money only when the server returns `TRADE_MONEY_ERROR` for the exact amount just sent. A different screen, claim, listing, buyer, or trade partner still rebuilds the form and drops the old draft. Setting a field value during a patch does not dispatch `input`, so the patch does not send another action.
+
 ## Decorative pets — 2026-10-18
 
 `pet_bee` and `pet_creeper` are `MobKind` values in the existing `MobManager`. They are not members of `PET_KINDS`. `isCosmeticPetKind()` is the gate for damage, raycasts, burning, separation, wolf targets, distance despawn, and mob-list serialization.
