@@ -203,8 +203,8 @@ describe('buyer GUI helpers', () => {
     expect(admin).toContain(BUYER_ROLE_SELLER_LABEL);
     expect(admin).toContain('data-buyer-role="seller"');
     expect(admin).toContain('is-on');
-    expect(admin).toContain('data-buyer-stock');
-    expect(admin).toContain('value="32"');
+    expect(admin).not.toContain('data-buyer-stock');
+    expect(admin).not.toContain('Количество');
     expect(admin).toContain(SELLER_DELETE_LABEL);
     expect(admin).toContain('Цена за 1 шт.');
 
@@ -226,9 +226,11 @@ describe('buyer GUI helpers', () => {
       tradeSlotHtml: '<div class="mc-slot" data-item="pumpkin"></div>',
       inventoryHtml: '<div class="mc-grid mc-grid-9"></div>',
     });
-    expect(trade).toContain('В наличии:');
-    expect(trade).toContain('data-buyer-stock-count');
-    expect(trade).toContain('32');
+    expect(trade).not.toContain('Количество:');
+    expect(trade).not.toContain('В наличии:');
+    expect(trade).toContain('data-buyer-delta="-1"');
+    expect(trade).toContain('data-buyer-delta="1"');
+    expect(trade).toContain('data-buyer-trade');
     expect(trade).toContain('Вы заплатите');
     expect(trade).toContain(BUYER_BUY_LABEL);
     expect(trade).toContain('data-buyer-action="buy"');

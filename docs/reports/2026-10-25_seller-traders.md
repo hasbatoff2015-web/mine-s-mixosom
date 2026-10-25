@@ -6,7 +6,7 @@ Let an admin turn the existing trader NPC into a seller. A buyer still pays Mega
 
 ## Result
 
-`BuyerRecord.role` is `buyer` or `seller`. Missing role loads as `buyer`, so old `plugin-data/buyers/buyers.json` files keep buying. Seller stock is an integer 0…1 000 000 on the same record. Purchases use `EconomyService.withdraw(..., 'TRADER_PURCHASE')` and the existing `returns` overflow path.
+`BuyerRecord.role` is `buyer` or `seller`. Missing role loads as `buyer`, so old `plugin-data/buyers/buyers.json` files keep buying. A seller has unlimited supply: a saved `stock` number is not required and is not spent. Purchases use `EconomyService.withdraw(..., 'TRADER_PURCHASE')` and the existing `returns` overflow path. The seller window has no separate «Количество» line; the − / + slot shows the chosen stack.
 
 ## Implemented
 

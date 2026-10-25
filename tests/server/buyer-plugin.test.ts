@@ -354,7 +354,7 @@ describe('Buyer plugin', () => {
     expect(restored?.yaw).toBeCloseTo(0.8);
   });
 
-  it('creates a seller, sells stock once, and shows the reduced stock to the other player', async () => {
+  it('lets two players buy from a seller without using up a stored stock', async () => {
     const dir = await tempDir();
     dirs.push(dir);
     const world = await boot(dir);
@@ -369,22 +369,23 @@ describe('Buyer plugin', () => {
     world.interactBuyer(ada.player, npc!.id);
     world.interactBuyer(bea.player, npc!.id);
     expect(lastBuyer(ada.sink)?.screen).toBe('trade');
-    expect(lastBuyer(ada.sink)?.stock).toBe(4);
     expect(lastBuyer(ada.sink)?.pricePerItem).toBe(10);
+    expect(lastBuyer(ada.sink)?.quantity).toBe(1);
     ada.sink.payloads.length = 0;
     bea.sink.payloads.length = 0;
     world.handleBuyerAction(ada.player, { type: 'buyer_action', action: 'set_amount', amount: 3 });
     world.handleBuyerAction(ada.player, { type: 'buyer_action', action: 'buy', price: 1, amount: 99 });
     expect(ada.player.inventory.count('pumpkin')).toBe(3);
     expect(world.economy.getBalance(ada.player.id)).toBe(ECONOMY_INITIAL_BALANCE - 30);
-    expect(world.buyer.get(npc!.id)?.stock).toBe(1);
-    expect(lastBuyer(bea.sink)?.stock).toBe(1);
+    expect(world.buyer.get(npc!.id)?.stock).toBe(4);
+    expect(world.buyer.get(npc!.id)?.pricePerItem).toBe(10);
     expect(bea.player.inventory.count('pumpkin')).toBe(0);
     expect(world.economy.getBalance(bea.player.id)).toBe(ECONOMY_INITIAL_BALANCE);
-    world.handleBuyerAction(bea.player, { type: 'buyer_action', action: 'buy', amount: 4, price: 1 });
-    expect(world.buyer.get(npc!.id)?.stock).toBe(0);
-    expect(bea.player.inventory.count('pumpkin')).toBe(1);
-    expect(world.economy.getBalance(bea.player.id)).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    world.handleBuyerAction(bea.player, { type: 'buyer_action', action: 'set_amount', amount: 4 });
+    world.handleBuyerAction(bea.player, { type: 'buyer_action', action: 'buy', amount: 99, price: 1 });
+    expect(world.buyer.get(npc!.id)?.stock).toBe(4);
+    expect(bea.player.inventory.count('pumpkin')).toBe(4);
+    expect(world.economy.getBalance(bea.player.id)).toBe(ECONOMY_INITIAL_BALANCE - 40);
     const denied = world.buyer.handleAction(ada.player.id, ada.player.inventory, {
       type: 'buyer_action', action: 'buy',
     }, { edit: false, delete: false, use: true });
@@ -392,7 +393,7 @@ describe('Buyer plugin', () => {
     await world.stop();
     worlds.pop();
     const again = await boot(dir);
-    expect(again.buyer.findByName('Shop')).toMatchObject({ role: 'seller', stock: 0, itemId: 'pumpkin', pricePerItem: 10 });
+    expect(again.buyer.findByName('Shop')).toMatchObject({ role: 'seller', stock: 4, itemId: 'pumpkin', pricePerItem: 10 });
     const returned = join(again, 'Ada', adaToken);
     expect(returned.player.inventory.count('pumpkin')).toBe(3);
     expect(again.economy.getBalance(returned.player.id)).toBe(ECONOMY_INITIAL_BALANCE - 30);

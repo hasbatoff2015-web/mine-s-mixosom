@@ -5,7 +5,6 @@ import {
   BUYER_HOLOGRAM_Y_OFFSET,
   BUYER_ITEM_INVALID_ERROR,
   BUYER_MAX_PRICE,
-  BUYER_MAX_STOCK,
   BUYER_MIN_PRICE,
   BUYER_NAME_TAKEN_ERROR,
   BUYER_NOT_A_SELLER_ERROR,
@@ -19,10 +18,7 @@ import {
   SELLER_CHOOSE_AMOUNT_ERROR,
   SELLER_NOT_A_BUYER_ERROR,
   SELLER_NOT_CONFIGURED_ERROR,
-  SELLER_OUT_OF_STOCK_ERROR,
-  SELLER_SOLD_OUT_ERROR,
   SELLER_NO_ROOM_ERROR,
-  SELLER_STOCK_EMPTY_ERROR,
   buyerHologramName,
   buyerPayout,
   buyerPriceError,
@@ -165,9 +161,7 @@ export function isBuyerConfigured(buyer: BuyerRecord): buyer is BuyerRecord & { 
     && Number.isInteger(buyer.pricePerItem)
     && buyer.pricePerItem! >= BUYER_MIN_PRICE
     && buyer.pricePerItem! <= BUYER_MAX_PRICE;
-  if (!priced) return false;
-  if (buyer.role === 'seller') return parseBuyerStock(buyer.stock) !== undefined;
-  return true;
+  return priced;
 }
 
 function inventoryRoomFor(inventory: Inventory, itemId: string): number {
@@ -381,8 +375,9 @@ export class BuyerService {
     const buyer = this.buyers.get(id);
     if (!buyer) return { ok: false, error: BUYER_NOT_FOUND_ERROR };
     const nextRole = patch.role !== undefined ? (patch.role === 'seller' ? 'seller' : 'buyer') : buyer.role;
-    if (nextRole === 'seller' && patch.stock !== undefined && patch.stock !== null && parseBuyerStock(patch.stock) === undefined) {
-      return { ok: false, error: buyerStockError(patch.stock) ?? SELLER_STOCK_EMPTY_ERROR };
+    if (nextRole === 'seller' && patch.stock !== undefined && patch.stock !== null) {
+      const stockErr = buyerStockError(patch.stock);
+      if (stockErr) return { ok: false, error: stockErr };
     }
     if (patch.name !== undefined) {
       const named = validateBuyerName(patch.name);
@@ -827,20 +822,12 @@ export class BuyerService {
       session.message = priceErr;
       return { ok: false, error: priceErr };
     }
-    const stockRaw = message.stock ?? session.stockText;
-    if (role === 'seller') {
-      const stockErr = buyerStockError(stockRaw);
-      if (stockErr) {
-        session.message = stockErr;
-        return { ok: false, error: stockErr };
-      }
-    }
     const result = this.configure(session.buyerId, {
       name,
       itemId,
       pricePerItem: parseBuyerPrice(priceRaw),
       role,
-      stock: role === 'seller' ? parseBuyerStock(stockRaw) : null,
+      ...(role === 'buyer' ? { stock: null } : {}),
     });
     if (!result.ok) {
       session.message = result.error;
@@ -908,20 +895,14 @@ export class BuyerService {
         session.message = BUYER_NOT_A_SELLER_ERROR;
         return { ok: false, error: BUYER_NOT_A_SELLER_ERROR };
       }
-      if (!isBuyerConfigured(buyer) || buyer.stock === undefined) {
+      if (!isBuyerConfigured(buyer)) {
         session.message = SELLER_NOT_CONFIGURED_ERROR;
         return { ok: false, error: SELLER_NOT_CONFIGURED_ERROR };
       }
       const quantity = session.orderQuantity;
       if (!Number.isInteger(quantity) || quantity < 1) {
-        const empty = buyer.stock < 1 ? SELLER_SOLD_OUT_ERROR : SELLER_CHOOSE_AMOUNT_ERROR;
-        session.message = empty;
-        return { ok: false, error: empty };
-      }
-      if (quantity > buyer.stock) {
-        const error = buyer.stock < 1 ? SELLER_SOLD_OUT_ERROR : SELLER_OUT_OF_STOCK_ERROR;
-        session.message = error;
-        return { ok: false, error };
+        session.message = SELLER_CHOOSE_AMOUNT_ERROR;
+        return { ok: false, error: SELLER_CHOOSE_AMOUNT_ERROR };
       }
       const total = buyerPayout(quantity, buyer.pricePerItem);
       if (total === undefined) {
@@ -948,12 +929,10 @@ export class BuyerService {
         phase: 'reserved',
         createdAt: this.now(),
       };
-      buyer.stock -= quantity;
       this.purchases.set(purchase.id, purchase);
       this.persist();
       const paid = this.economy.withdraw(playerId, total, 'TRADER_PURCHASE', buyer.id, purchase.id);
       if (!paid.ok) {
-        buyer.stock += quantity;
         this.purchases.delete(purchase.id);
         this.persist();
         session.message = paid.error ?? 'Недостаточно Мегакоинов.';
@@ -978,13 +957,12 @@ export class BuyerService {
     playerId: string,
     buyer: BuyerRecord & { itemId: string; pricePerItem: number },
     inventory: Inventory,
-  ): { stock: number; affordable: number; room: number; max: number } {
-    const stock = buyer.stock ?? 0;
+  ): { affordable: number; room: number; max: number } {
     const affordable = buyer.pricePerItem > 0
       ? Math.floor(this.economy.getBalance(playerId) / buyer.pricePerItem)
       : 0;
     const room = inventoryRoomFor(inventory, buyer.itemId);
-    return { stock, affordable, room, max: Math.max(0, Math.min(stock, affordable, room)) };
+    return { affordable, room, max: Math.max(0, Math.min(affordable, room)) };
   }
 
   private setSellerAmount(
@@ -1039,27 +1017,19 @@ export class BuyerService {
   }
 
   /**
-   * Reserved stock without a matching withdraw is returned.
    * A withdraw (or an explicit paid phase) becomes owed items in `returns`,
    * in the same buyers.json write that drops the journal row.
+   * Seller stock is not part of the purchase: a saved number is left as-is.
    */
   private recoverPurchases(): void {
     if (this.purchases.size === 0) return;
-    let changed = false;
     for (const purchase of [...this.purchases.values()]) {
       if (this.purchaseWasPaid(purchase)) {
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
-      } else {
-        const buyer = this.buyers.get(purchase.buyerId);
-        if (buyer?.role === 'seller' && buyer.stock !== undefined) {
-          const restored = buyer.stock + purchase.quantity;
-          buyer.stock = restored > BUYER_MAX_STOCK ? BUYER_MAX_STOCK : restored;
-        }
       }
       this.purchases.delete(purchase.id);
-      changed = true;
     }
-    if (changed) this.persist();
+    this.persist();
   }
 
   private purchaseWasPaid(purchase: SellerPurchase): boolean {

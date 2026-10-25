@@ -29,14 +29,9 @@ function describeTrader(buyer: {
   role: BuyerRole;
   itemId?: string;
   pricePerItem?: number;
-  stock?: number;
 }): string {
   const role = buyer.role === 'seller' ? 'продавец' : 'скупщик';
-  const goods = itemLabel(buyer.itemId, buyer.pricePerItem);
-  if (buyer.role === 'seller' && buyer.stock !== undefined && buyer.itemId && buyer.pricePerItem !== undefined) {
-    return `${role} — ${goods} — ${buyer.stock} шт.`;
-  }
-  return `${role} — ${goods}`;
+  return `${role} — ${itemLabel(buyer.itemId, buyer.pricePerItem)}`;
 }
 
 function traderNoun(role: BuyerRole): string {

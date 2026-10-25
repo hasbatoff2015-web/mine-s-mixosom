@@ -6,7 +6,7 @@
 npx vitest run tests/server/buyer.test.ts tests/server/buyer-plugin.test.ts tests/buyer-gui.test.ts tests/server/economy.test.ts --maxWorkers=2
 ```
 
-Contracts: old `buyers.json` without `role` still sells as a buyer. A seller charges server price × session quantity, ignores spoofed price/amount, decrements `stock`, and a second buy does not repeat. Out of stock, short balance, and a full inventory fail before the withdraw. A withdraw that fails puts the stock back. Two purchases cannot share one lock. A reserved journal row without `TRADER_PURCHASE` restores stock; a reserved row with that pair id delivers the stack once. Restart keeps seller stock, balance, and the bought items. The other player's open window sees the new stock. `npx tsc --noEmit -p tsconfig.server.json`, `npx tsc --noEmit -p tsconfig.client.json`, and `check:boundaries` passed with these tests (buyer 26, buyer-plugin 7, buyer-gui 7, economy 16).
+Contracts: old `buyers.json` without `role` still sells as a buyer. A seller charges server price × session quantity, ignores spoofed price/amount, does not spend `stock`, and a second buy does not repeat. A stored stock number does not cap the sale. Short balance and a full inventory fail before the withdraw. A withdraw that fails grants nothing. Two purchases cannot share one lock. A reserved journal row with a matching `TRADER_PURCHASE` delivers the stack once; an unpaid row does not. Restart keeps the saved stock number, price, balance, and the bought items. The seller trade markup has no «Количество» line. `npx tsc --noEmit -p tsconfig.server.json` and `npx tsc --noEmit -p tsconfig.client.json` are run with these tests.
 
 ## 2026-10-18 Decorative bee and mini creeper
 

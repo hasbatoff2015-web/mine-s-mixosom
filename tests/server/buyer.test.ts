@@ -27,9 +27,6 @@ import {
   SELLER_NO_ROOM_ERROR,
   SELLER_NOT_A_BUYER_ERROR,
   SELLER_NOT_CONFIGURED_ERROR,
-  SELLER_OUT_OF_STOCK_ERROR,
-  SELLER_SOLD_OUT_ERROR,
-  SELLER_STOCK_EMPTY_ERROR,
   buyerHologramName,
   buyerPayout,
   buyerPriceError,
@@ -556,7 +553,6 @@ describe('BuyerService', () => {
     buyer.openTrade('p1', 'aabbccdd', inventory);
     const view = buyer.buildMessage('p1', inventory);
     expect(view.role).toBe('seller');
-    expect(view.stock).toBe(5);
     expect(view.title).toBe('Продавец Лавка');
     expect(view.quantity).toBe(1);
     expect(view.total).toBe(50);
@@ -573,7 +569,8 @@ describe('BuyerService', () => {
     expect(bought.ok).toBe(true);
     expect(bought.chat).toMatch(/100/);
     expect(inventory.count('pumpkin')).toBe(2);
-    expect(buyer.get('aabbccdd')?.stock).toBe(3);
+    expect(buyer.get('aabbccdd')?.stock).toBe(5);
+    expect(buyer.get('aabbccdd')?.pricePerItem).toBe(50);
     expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 100);
     expect(economy.getTransactionHistory('p1')[0]).toMatchObject({
       reason: 'TRADER_PURCHASE',
@@ -585,7 +582,7 @@ describe('BuyerService', () => {
     });
     expect(again.ok).toBe(false);
     expect(again.error).toBe(SELLER_CHOOSE_AMOUNT_ERROR);
-    expect(buyer.get('aabbccdd')?.stock).toBe(3);
+    expect(buyer.get('aabbccdd')?.stock).toBe(5);
     expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 100);
     expect(buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'sell' }, {
       edit: false, delete: false, use: true,
@@ -593,7 +590,7 @@ describe('BuyerService', () => {
     expect(inventory.count('pumpkin')).toBe(2);
   });
 
-  it('rejects a purchase before taking coins when stock, balance or inventory cannot cover it', async () => {
+  it('rejects a purchase before taking coins when balance or inventory cannot cover it', async () => {
     const { buyer, economy } = await setup();
     buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
     buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 50, role: 'seller', stock: 1 });
@@ -604,24 +601,23 @@ describe('BuyerService', () => {
     expect(buyer.handleAction('p1', first, { type: 'buyer_action', action: 'buy' }, {
       edit: false, delete: false, use: true,
     }).ok).toBe(true);
-    const denied = buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy' }, {
+    expect(buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy' }, {
       edit: false, delete: false, use: true,
-    });
-    expect(denied.ok).toBe(false);
-    expect(denied.error).toBe(SELLER_SOLD_OUT_ERROR);
-    expect(second.count('pumpkin')).toBe(0);
-    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
-    expect(buyer.get('aabbccdd')?.stock).toBe(0);
+    }).ok).toBe(true);
+    expect(first.count('pumpkin')).toBe(1);
+    expect(second.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 50);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE - 50);
+    expect(buyer.get('aabbccdd')?.stock).toBe(1);
 
-    buyer.configure('aabbccdd', { stock: 4 });
     buyer.openTrade('p2', 'aabbccdd', second);
     buyer.session('p2')!.orderQuantity = 3;
     const poor = buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy', price: 1 }, {
       edit: false, delete: false, use: true,
     });
     expect(poor.error).toBe('Недостаточно Мегакоинов.');
-    expect(buyer.get('aabbccdd')?.stock).toBe(4);
-    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(buyer.get('aabbccdd')?.stock).toBe(1);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE - 50);
 
     const packed = new Inventory();
     for (let slot = 0; slot < Inventory.SLOT_COUNT; slot += 1) {
@@ -634,7 +630,7 @@ describe('BuyerService', () => {
     });
     expect(noRoom.error).toBe(SELLER_NO_ROOM_ERROR);
     expect(packed.count('pumpkin')).toBe(0);
-    expect(buyer.get('aabbccdd')?.stock).toBe(4);
+    expect(buyer.get('aabbccdd')?.stock).toBe(1);
     expect(economy.getBalance('p3')).toBe(ECONOMY_INITIAL_BALANCE);
   });
 
@@ -671,7 +667,7 @@ describe('BuyerService', () => {
     expect(buyer.handleAction('p1', first, { type: 'buyer_action', action: 'buy' }, {
       edit: false, delete: false, use: true,
     }).ok).toBe(true);
-    expect(buyer.get('aabbccdd')?.stock).toBe(4);
+    expect(buyer.get('aabbccdd')?.stock).toBe(5);
     expect(first.count('pumpkin')).toBe(1);
     expect(second.count('pumpkin')).toBe(0);
     expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
@@ -750,7 +746,7 @@ describe('BuyerService', () => {
     store.save(BUYER_STORE_KEY, saved);
     const recovered = new BuyerService(store, economy, holograms, () => 'anarchy');
     recovered.load();
-    expect(recovered.get('aabbccdd')?.stock).toBe(4);
+    expect(recovered.get('aabbccdd')?.stock).toBe(3);
     const replay = new BuyerService(store, economy, holograms, () => 'anarchy');
     replay.load();
     const inventory = new Inventory();
@@ -781,18 +777,16 @@ describe('BuyerService', () => {
     expect(buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'select_slot', slot: 0 }, {
       edit: true, delete: true, use: true,
     }).ok).toBe(true);
-    const missingStock = buyer.handleAction('op', inventory, {
-      type: 'buyer_action', action: 'save', name: 'Лавка', price: '50', role: 'seller',
-    }, { edit: true, delete: true, use: true });
-    expect(missingStock.error).toBe(SELLER_STOCK_EMPTY_ERROR);
     expect(buyer.handleAction('op', inventory, {
-      type: 'buyer_action', action: 'save', name: 'Лавка', price: '50', role: 'seller', stock: 8,
+      type: 'buyer_action', action: 'save', name: 'Лавка', price: '50', role: 'seller',
     }, { edit: true, delete: true, use: true }).ok).toBe(true);
-    expect(buyer.get('aabbccdd')).toMatchObject({ role: 'seller', stock: 8, pricePerItem: 50 });
+    expect(buyer.get('aabbccdd')).toMatchObject({ role: 'seller', pricePerItem: 50, itemId: 'pumpkin' });
+    expect(buyer.get('aabbccdd')?.stock).toBeUndefined();
     expect(parseBuyerStock(1_000_001)).toBeUndefined();
     const reloaded = new BuyerService(store, economy, holograms, () => 'anarchy');
     reloaded.load();
-    expect(reloaded.get('aabbccdd')).toMatchObject({ role: 'seller', stock: 8, itemId: 'pumpkin' });
+    expect(reloaded.get('aabbccdd')).toMatchObject({ role: 'seller', itemId: 'pumpkin', pricePerItem: 50 });
+    expect(reloaded.get('aabbccdd')?.stock).toBeUndefined();
     expect(reloaded.configure('aabbccdd', { role: 'buyer' }).ok).toBe(true);
     expect(reloaded.get('aabbccdd')?.role).toBe('buyer');
     expect(reloaded.get('aabbccdd')?.stock).toBeUndefined();
@@ -810,22 +804,34 @@ describe('BuyerService', () => {
     }).ok).toBe(true);
   });
 
-  it('refuses a buyer purchase that asks for more stock than remains', async () => {
-    const { buyer } = await setup();
+  it('sells past a stored stock number without changing that number', async () => {
+    const { store, economy, holograms, buyer } = await setup();
     buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
     buyer.configure('aabbccdd', { itemId: 'melon', pricePerItem: 10, role: 'seller', stock: 2 });
     const inventory = new Inventory();
     buyer.openTrade('p1', 'aabbccdd', inventory);
     buyer.session('p1')!.orderQuantity = 3;
-    const denied = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy' }, {
+    const bought = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy' }, {
       edit: false, delete: false, use: true,
     });
-    expect(denied.error).toBe(SELLER_OUT_OF_STOCK_ERROR);
+    expect(bought.ok).toBe(true);
+    expect(inventory.count('melon')).toBe(3);
     expect(buyer.get('aabbccdd')?.stock).toBe(2);
-    expect(inventory.count('melon')).toBe(0);
+    expect(buyer.get('aabbccdd')?.pricePerItem).toBe(10);
+    const reloaded = new BuyerService(store, economy, holograms, () => 'anarchy');
+    reloaded.load();
+    expect(reloaded.get('aabbccdd')).toMatchObject({ role: 'seller', stock: 2, pricePerItem: 10, itemId: 'melon' });
+    const again = new Inventory();
+    reloaded.openTrade('p1', 'aabbccdd', again);
+    reloaded.session('p1')!.orderQuantity = 2;
+    expect(reloaded.handleAction('p1', again, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    expect(again.count('melon')).toBe(2);
+    expect(reloaded.get('aabbccdd')?.stock).toBe(2);
   });
 
-  it('does not open a seller trade until the item and stock are saved', async () => {
+  it('does not open a seller trade until the item and price are saved', async () => {
     const { buyer } = await setup();
     buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
     const inventory = new Inventory();

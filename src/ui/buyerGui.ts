@@ -100,20 +100,19 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
     const action = buying ? 'buy' : 'sell';
     const actionLabel = buying ? BUYER_BUY_LABEL : BUYER_SELL_LABEL;
     const totalCaption = buying ? 'Вы заплатите' : 'Вы получите';
-    const stockLine = buying
-      ? `<p class="mc-ah-prompt">В наличии: <span data-buyer-stock-count>${Math.max(0, view.stock ?? 0)}</span></p>`
-      : '';
+    const quantityLine = buying
+      ? ''
+      : `<p class="mc-ah-prompt">Количество: <span data-buyer-qty>${amount}</span></p>`;
     return `<div class="mc-ah-body" data-buyer-screen="trade" data-buyer-role="${role}">
         <div class="mc-label">${escapeHtml(view.title)}</div>
         <div class="mc-ah-center" data-buyer-item>${view.itemSlotHtml}</div>
         <p class="mc-ah-prompt" data-buyer-price-line>${escapeHtml(view.priceLine)}</p>
-        ${stockLine}
         <div class="mc-ah-amount">
           <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
           <div data-buyer-trade>${view.tradeSlotHtml}</div>
           <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
         </div>
-        <p class="mc-ah-prompt">Количество: <span data-buyer-qty>${amount}</span></p>
+        ${quantityLine}
         <p class="mc-ah-prompt">${totalCaption}: <span data-buyer-total>${escapeHtml(view.totalLabel)}</span></p>
         <div data-buyer-inventory>${view.inventoryHtml}</div>
         <div class="mc-ah-actions">
@@ -124,11 +123,6 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
   }
   const buyerOn = role === 'buyer';
   const deleteLabel = role === 'seller' ? SELLER_DELETE_LABEL : BUYER_DELETE_LABEL;
-  const stockField = role === 'seller'
-    ? `<label class="mc-ah-field">Количество
-        <input data-buyer-stock type="text" inputmode="numeric" maxlength="7" value="${escapeHtml(view.stockText ?? '')}" autocomplete="off" spellcheck="false" name="buyer-stock" />
-      </label>`
-    : '';
   return `<div class="mc-ah-body" data-buyer-screen="admin" data-buyer-role="${role}">
       <div class="mc-label">${escapeHtml(view.title)}</div>
       <div class="mc-buyer-roles">
@@ -143,7 +137,6 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
       <label class="mc-ah-field">Цена за 1 шт.
         <input data-buyer-price type="text" inputmode="numeric" maxlength="9" value="${escapeHtml(view.priceText)}" autocomplete="off" spellcheck="false" name="buyer-price" />
       </label>
-      ${stockField}
       <div class="mc-ah-actions">
         <button type="button" class="mc-ah-btn mc-ah-btn-2line" data-buyer-action="edit_hologram" aria-label="${BUYER_HOLOGRAM_LABEL}">
           Настроить

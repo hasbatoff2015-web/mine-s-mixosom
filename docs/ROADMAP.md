@@ -3,9 +3,9 @@
 ## 2026-10-25: Seller mode on buyer NPCs
 
 - [x] Same `BuyerService` / `buyer` plugin. `role: seller` sells one item for Megacoins; missing role stays a buyer.
-- [x] Admin GUI mode, unit price, and stock. `/buyer create seller <name>` creates a seller. `/buyer create <name>` stays a buyer.
-- [x] Server purchase checks price, stock, balance, and inventory room before withdraw. Stock is reserved, then `TRADER_PURCHASE` with `pairId`. Owed items land in `returns` before the live inventory.
-- [x] Restart keeps stock. An unpaid journal row gives the stock back. A paid row delivers the items once.
+- [x] Admin GUI mode and unit price. `/buyer create seller <name>` creates a seller. `/buyer create <name>` stays a buyer.
+- [x] Server purchase checks price, balance, and inventory room before withdraw. Seller stock is unlimited and is not decremented. `TRADER_PURCHASE` uses `pairId`. Owed items land in `returns` before the live inventory.
+- [x] A saved `stock` value is left in place and does not limit sales. A paid journal row delivers the items once. The seller window has no «Количество» line.
 - [ ] Live in-game click-through of the seller window was not run in this environment.
 
 ## 2026-10-20: Skin rarity catalog and store UI
