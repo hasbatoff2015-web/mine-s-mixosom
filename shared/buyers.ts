@@ -11,6 +11,12 @@ export const BUYER_HOLOGRAM_TEXT_MAX = 80;
 export const BUYER_MIN_PRICE = 1;
 export const BUYER_MAX_PRICE = 999_999_999;
 export const BUYER_BUSY_ERROR = 'Подождите, скупщик занят.';
+export const SELLER_BUSY_ERROR = 'Подождите, продавец занят.';
+
+export type BuyerRole = 'buyer' | 'seller';
+
+export const BUYER_MIN_STOCK = 0;
+export const BUYER_MAX_STOCK = 1_000_000;
 
 /** Example starting prices for tests and admin setup — not the only allowed values. */
 export const BUYER_EXAMPLE_PUMPKIN_PRICE = 50;
@@ -31,6 +37,15 @@ export const BUYER_STALE_ERROR = 'Этот скупщик больше недо�
 export const BUYER_NAME_LENGTH_ERROR = `Имя скупщика должно содержать от ${BUYER_NAME_MIN} до ${BUYER_NAME_MAX} символов.`;
 export const BUYER_NAME_TAKEN_ERROR = 'Скупщик с таким именем уже существует.';
 export const BUYER_NOT_FOUND_ERROR = 'Скупщик не найден.';
+export const SELLER_NOT_CONFIGURED_ERROR = 'Этот продавец ещё не продаёт товары.';
+export const SELLER_STOCK_EMPTY_ERROR = 'Укажите количество целым числом.';
+export const SELLER_STOCK_RANGE_ERROR = 'Количество должно быть целым числом от 0 до 1 000 000.';
+export const SELLER_OUT_OF_STOCK_ERROR = 'Недостаточно товара.';
+export const SELLER_SOLD_OUT_ERROR = 'Товар закончился.';
+export const SELLER_NO_ROOM_ERROR = 'Недостаточно места в инвентаре.';
+export const SELLER_CHOOSE_AMOUNT_ERROR = 'Выберите количество.';
+export const SELLER_NOT_A_BUYER_ERROR = 'Этот торговец не скупает предметы.';
+export const BUYER_NOT_A_SELLER_ERROR = 'Этот торговец не продаёт товары.';
 
 export function isBuyerHologramName(name: string): boolean {
   return name.trim().toLowerCase().startsWith(BUYER_HOLOGRAM_PREFIX);
@@ -72,6 +87,31 @@ export function buyerPriceError(raw: unknown): string | undefined {
   if (raw === undefined || raw === null) return BUYER_PRICE_EMPTY_ERROR;
   if (typeof raw === 'string' && raw.trim() === '') return BUYER_PRICE_EMPTY_ERROR;
   if (parseBuyerPrice(raw) === undefined) return BUYER_PRICE_RANGE_ERROR;
+  return undefined;
+}
+
+export function normalizeBuyerRole(raw: unknown): BuyerRole {
+  return raw === 'seller' ? 'seller' : 'buyer';
+}
+
+export function parseBuyerStock(raw: unknown): number | undefined {
+  if (typeof raw === 'number') {
+    if (!Number.isInteger(raw) || !Number.isSafeInteger(raw)) return undefined;
+    if (raw < BUYER_MIN_STOCK || raw > BUYER_MAX_STOCK) return undefined;
+    return raw;
+  }
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const value = Number(trimmed);
+  if (!Number.isInteger(value) || value < BUYER_MIN_STOCK || value > BUYER_MAX_STOCK) return undefined;
+  return value;
+}
+
+export function buyerStockError(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return SELLER_STOCK_EMPTY_ERROR;
+  if (typeof raw === 'string' && raw.trim() === '') return SELLER_STOCK_EMPTY_ERROR;
+  if (parseBuyerStock(raw) === undefined) return SELLER_STOCK_RANGE_ERROR;
   return undefined;
 }
 

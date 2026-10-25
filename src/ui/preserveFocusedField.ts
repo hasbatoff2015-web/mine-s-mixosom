@@ -29,6 +29,7 @@ const ECHO_FIELD_ATTRIBUTES = [
   'data-clan-announce-text',
   'data-buyer-name',
   'data-buyer-price',
+  'data-buyer-stock',
   'data-trade-money',
 ] as const;
 

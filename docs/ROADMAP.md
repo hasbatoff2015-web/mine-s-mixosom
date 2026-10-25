@@ -10,6 +10,14 @@
 - [x] The same screen patches around the focused field. Trade money stays one DOM node. Donate text stays at least 12px.
 - [ ] Not merged. A physical phone pass is still for the owner. Headless Chrome checked the menu rects and donate font sizes.
 
+## 2026-10-25: Seller mode on buyer NPCs
+
+- [x] Same `BuyerService` / `buyer` plugin. `role: seller` sells one item for Megacoins; missing role stays a buyer.
+- [x] Admin GUI mode and unit price. `/buyer create seller <name>` creates a seller. `/buyer create <name>` stays a buyer.
+- [x] Server purchase checks price, balance, and inventory room before withdraw. Seller stock is unlimited and is not decremented. `TRADER_PURCHASE` uses `pairId`. Owed items land in `returns` before the live inventory.
+- [x] A saved `stock` value is left in place and does not limit sales. A paid journal row delivers the items once. The seller window has no «Количество» line.
+- [ ] Live in-game click-through of the seller window was not run in this environment.
+
 ## 2026-10-20: Skin rarity catalog and store UI
 
 - [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
@@ -766,7 +774,7 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 - [x] WH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.
 - [x] Focused authority tests, typechecks, boundaries, build and archive size check.
 - [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
-- [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+- [x] Seller mode is the trader. A totem is an ordinary item an admin can put in `stock`; there is no separate totem shop.
 
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 
