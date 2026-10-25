@@ -650,11 +650,14 @@ export type BuyerActionKind =
   | 'set_price'
   | 'set_name'
   | 'set_hologram_text'
+  | 'set_role'
+  | 'set_stock'
   | 'edit_hologram'
   | 'pick_item'
   | 'save'
   | 'delete'
   | 'sell'
+  | 'buy'
   | 'open_trade'
   | 'back';
 
@@ -672,6 +675,8 @@ export interface ClientBuyerActionMessage {
   readonly price?: string | number;
   readonly name?: string;
   readonly hologramText?: string;
+  readonly role?: 'buyer' | 'seller';
+  readonly stock?: string | number;
 }
 
 export type MenuActionKind =
@@ -1451,6 +1456,8 @@ export interface NetworkBuyerNpc {
   readonly pitch: number;
   readonly itemId?: string;
   readonly hologramName: string;
+  readonly role?: 'buyer' | 'seller';
+  readonly stock?: number;
 }
 
 export interface ServerBuyersMessage {
@@ -1479,6 +1486,9 @@ export interface ServerBuyerMessage {
   readonly tradeSlot?: unknown;
   readonly item?: unknown;
   readonly message?: string;
+  readonly role?: 'buyer' | 'seller';
+  readonly stock?: number;
+  readonly stockText?: string;
 }
 
 export interface NetworkMenuHome {
@@ -1861,7 +1871,8 @@ const AUCTION_ACTIONS: readonly AuctionActionKind[] = [
 
 const BUYER_ACTIONS: readonly BuyerActionKind[] = [
   'close', 'select_slot', 'set_amount', 'set_price', 'set_name', 'set_hologram_text',
-  'edit_hologram', 'pick_item', 'save', 'delete', 'sell', 'open_trade', 'back',
+  'set_role', 'set_stock', 'edit_hologram', 'pick_item', 'save', 'delete', 'sell', 'buy',
+  'open_trade', 'back',
 ];
 
 export const CLAN_ACTIONS: readonly ClanActionKind[] = [
@@ -2663,6 +2674,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
       const name = typeof raw.name === 'string' ? raw.name.slice(0, 32) : undefined;
       const hologramText = typeof raw.hologramText === 'string' ? raw.hologramText.slice(0, 80) : undefined;
+      const role = raw.role === 'buyer' || raw.role === 'seller' ? raw.role : undefined;
+      const stock = typeof raw.stock === 'string' || typeof raw.stock === 'number' ? raw.stock : undefined;
       return {
         type: 'buyer_action',
         action: raw.action as BuyerActionKind,
@@ -2672,6 +2685,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(price !== undefined ? { price } : {}),
         ...(name !== undefined ? { name } : {}),
         ...(hologramText !== undefined ? { hologramText } : {}),
+        ...(role ? { role } : {}),
+        ...(stock !== undefined ? { stock } : {}),
       };
     }
     case 'direct_message_action': {

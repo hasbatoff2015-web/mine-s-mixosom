@@ -2,12 +2,17 @@ import { formatCompactMegacoins } from '../../shared/megacoins';
 import type { ItemStack } from '../inventory';
 
 export const BUYER_SELL_LABEL = 'ПРОДАТЬ';
+export const BUYER_BUY_LABEL = 'КУПИТЬ';
 export const BUYER_SAVE_LABEL = 'Сохранить';
 export const BUYER_DELETE_LABEL = 'Удалить скупщика';
+export const SELLER_DELETE_LABEL = 'Удалить продавца';
 export const BUYER_PICK_LABEL = 'Выбрать товар';
 export const BUYER_TRADE_LABEL = 'Открыть торговлю';
 export const BUYER_HOLOGRAM_LABEL = 'Настроить голограмму';
 export const BUYER_ADMIN_TITLE = 'Настройка скупщика';
+export const SELLER_ADMIN_TITLE = 'Настройка продавца';
+export const BUYER_ROLE_BUYER_LABEL = 'Скупщик';
+export const BUYER_ROLE_SELLER_LABEL = 'Продавец';
 export const BUYER_PICK_PROMPT = 'Выберите предмет из инвентаря';
 export const BUYER_UNSELECTED_ITEM = 'Товар не выбран';
 
@@ -23,6 +28,9 @@ export interface BuyerScreenMarkup {
   readonly maxQuantity: number;
   readonly totalLabel: string;
   readonly configured: boolean;
+  readonly role?: 'buyer' | 'seller';
+  readonly stock?: number;
+  readonly stockText?: string;
   readonly messageHtml: string;
   readonly itemSlotHtml: string;
   readonly tradeSlotHtml: string;
@@ -72,6 +80,7 @@ export function buyerSellDisabled(configured: boolean, quantity: number): boolea
 }
 
 export function buyerScreenHtml(view: BuyerScreenMarkup): string {
+  const role = view.role === 'seller' ? 'seller' : 'buyer';
   if (view.screen === 'pick-item') {
     return `<div class="mc-ah-body" data-buyer-screen="pick-item">
         <div class="mc-label">${escapeHtml(view.title)}</div>
@@ -86,27 +95,46 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
   if (view.screen === 'trade') {
     const amount = Math.max(0, view.quantity);
     const max = Math.max(amount, view.maxQuantity);
+    const buying = role === 'seller';
     const sellDisabled = buyerSellDisabled(view.configured, amount) ? ' disabled' : '';
-    return `<div class="mc-ah-body" data-buyer-screen="trade">
+    const action = buying ? 'buy' : 'sell';
+    const actionLabel = buying ? BUYER_BUY_LABEL : BUYER_SELL_LABEL;
+    const totalCaption = buying ? 'Вы заплатите' : 'Вы получите';
+    const stockLine = buying
+      ? `<p class="mc-ah-prompt">В наличии: <span data-buyer-stock-count>${Math.max(0, view.stock ?? 0)}</span></p>`
+      : '';
+    return `<div class="mc-ah-body" data-buyer-screen="trade" data-buyer-role="${role}">
         <div class="mc-label">${escapeHtml(view.title)}</div>
         <div class="mc-ah-center" data-buyer-item>${view.itemSlotHtml}</div>
         <p class="mc-ah-prompt" data-buyer-price-line>${escapeHtml(view.priceLine)}</p>
+        ${stockLine}
         <div class="mc-ah-amount">
           <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="-1"${amount <= 1 ? ' disabled' : ''} aria-label="Меньше">−</button>
           <div data-buyer-trade>${view.tradeSlotHtml}</div>
           <button type="button" class="mc-slot mc-ah-icon" data-buyer-delta="1"${amount >= max ? ' disabled' : ''} aria-label="Больше">+</button>
         </div>
         <p class="mc-ah-prompt">Количество: <span data-buyer-qty>${amount}</span></p>
-        <p class="mc-ah-prompt">Вы получите: <span data-buyer-total>${escapeHtml(view.totalLabel)}</span></p>
+        <p class="mc-ah-prompt">${totalCaption}: <span data-buyer-total>${escapeHtml(view.totalLabel)}</span></p>
         <div data-buyer-inventory>${view.inventoryHtml}</div>
         <div class="mc-ah-actions">
-          <button type="button" class="mc-ah-btn" data-buyer-action="sell"${sellDisabled}>${BUYER_SELL_LABEL}</button>
+          <button type="button" class="mc-ah-btn" data-buyer-action="${action}"${sellDisabled}>${actionLabel}</button>
         </div>
         ${view.messageHtml}
       </div>`;
   }
-  return `<div class="mc-ah-body" data-buyer-screen="admin">
+  const buyerOn = role === 'buyer';
+  const deleteLabel = role === 'seller' ? SELLER_DELETE_LABEL : BUYER_DELETE_LABEL;
+  const stockField = role === 'seller'
+    ? `<label class="mc-ah-field">Количество
+        <input data-buyer-stock type="text" inputmode="numeric" maxlength="7" value="${escapeHtml(view.stockText ?? '')}" autocomplete="off" spellcheck="false" name="buyer-stock" />
+      </label>`
+    : '';
+  return `<div class="mc-ah-body" data-buyer-screen="admin" data-buyer-role="${role}">
       <div class="mc-label">${escapeHtml(view.title)}</div>
+      <div class="mc-buyer-roles">
+        <button type="button" class="mc-ah-btn${buyerOn ? ' is-on' : ''}" data-buyer-action="set_role" data-buyer-role="buyer" aria-pressed="${buyerOn ? 'true' : 'false'}">${BUYER_ROLE_BUYER_LABEL}</button>
+        <button type="button" class="mc-ah-btn${buyerOn ? '' : ' is-on'}" data-buyer-action="set_role" data-buyer-role="seller" aria-pressed="${buyerOn ? 'false' : 'true'}">${BUYER_ROLE_SELLER_LABEL}</button>
+      </div>
       <label class="mc-ah-field">Имя
         <input data-buyer-name type="text" maxlength="32" value="${escapeHtml(view.name)}" autocomplete="off" spellcheck="false" name="buyer-name" />
       </label>
@@ -115,6 +143,7 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
       <label class="mc-ah-field">Цена за 1 шт.
         <input data-buyer-price type="text" inputmode="numeric" maxlength="9" value="${escapeHtml(view.priceText)}" autocomplete="off" spellcheck="false" name="buyer-price" />
       </label>
+      ${stockField}
       <div class="mc-ah-actions">
         <button type="button" class="mc-ah-btn mc-ah-btn-2line" data-buyer-action="edit_hologram" aria-label="${BUYER_HOLOGRAM_LABEL}">
           Настроить
@@ -123,7 +152,7 @@ export function buyerScreenHtml(view: BuyerScreenMarkup): string {
         <button type="button" class="mc-ah-btn" data-buyer-action="pick_item">${BUYER_PICK_LABEL}</button>
         <button type="button" class="mc-ah-btn" data-buyer-action="save">${BUYER_SAVE_LABEL}</button>
         <button type="button" class="mc-ah-btn" data-buyer-action="open_trade">${BUYER_TRADE_LABEL}</button>
-        <button type="button" class="mc-ah-btn" data-buyer-action="delete">${BUYER_DELETE_LABEL}</button>
+        <button type="button" class="mc-ah-btn" data-buyer-action="delete">${deleteLabel}</button>
       </div>
       ${view.messageHtml}
     </div>`;

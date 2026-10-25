@@ -262,14 +262,29 @@ export class EconomyService {
     return this.apply(player, 'deposit', value, reason, relatedPlayerId, pairId);
   }
 
-  withdraw(playerId: string, amount: number, reason: string, relatedPlayerId?: string): EconomyResult {
+  withdraw(
+    playerId: string,
+    amount: number,
+    reason: string,
+    relatedPlayerId?: string,
+    pairId?: string,
+  ): EconomyResult {
     const value = parseIntegerAmount(amount);
     if (value === undefined || value <= 0) return failAmount();
     const player = this.ensurePlayer(playerId);
     if (player.balance < value) {
       return { ok: false, error: 'Недостаточно Мегакоинов.', balance: player.balance };
     }
-    return this.apply(player, 'withdraw', value, reason, relatedPlayerId);
+    return this.apply(player, 'withdraw', value, reason, relatedPlayerId, pairId);
+  }
+
+  /** Latest ledger row linked to `pairId`, if the history still holds it. */
+  findTransactionByPairId(pairId: string): EconomyTransaction | undefined {
+    for (let index = this.transactions.length - 1; index >= 0; index -= 1) {
+      const entry = this.transactions[index];
+      if (entry?.pairId === pairId) return entry;
+    }
+    return undefined;
   }
 
   /**

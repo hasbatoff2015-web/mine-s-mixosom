@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-10-25: Seller mode on buyer NPCs
+
+- [x] Same `BuyerService` / `buyer` plugin. `role: seller` sells one item for Megacoins; missing role stays a buyer.
+- [x] Admin GUI mode, unit price, and stock. `/buyer create seller <name>` creates a seller. `/buyer create <name>` stays a buyer.
+- [x] Server purchase checks price, stock, balance, and inventory room before withdraw. Stock is reserved, then `TRADER_PURCHASE` with `pairId`. Owed items land in `returns` before the live inventory.
+- [x] Restart keeps stock. An unpaid journal row gives the stock back. A paid row delivers the items once.
+- [ ] Live in-game click-through of the seller window was not run in this environment.
+
 ## 2026-10-20: Skin rarity catalog and store UI
 
 - [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
@@ -756,7 +764,7 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 - [x] WH Arrow through the existing bow/arrow authority, viewer-only 200-tick marks, wall-visible outline and invisibility compatibility.
 - [x] Focused authority tests, typechecks, boundaries, build and archive size check.
 - [ ] Three interactive clients visual QA for WH outline, fireworks, sign and book flows.
-- [ ] Trader sell hook for Totem when a real seller system is added; do not turn the existing Buyer NPC into one.
+- [x] Seller mode is the trader. A totem is an ordinary item an admin can put in `stock`; there is no separate totem shop.
 
 ## 2026-09-17: Pause heading off + Creative graphite tabs
 

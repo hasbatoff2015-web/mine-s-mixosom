@@ -1848,6 +1848,19 @@ textarea,
   margin-top: calc(6px * var(--mc-ui-scale, 3));
 }
 
+.mc-buyer-roles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  width: 100%;
+  margin-bottom: calc(4px * var(--mc-ui-scale, 3));
+}
+
+.mc-buyer-roles .mc-ah-btn {
+  width: 100%;
+  min-width: 0;
+}
+
 .mc-ah-icon {
   flex: none;
 }

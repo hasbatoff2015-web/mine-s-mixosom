@@ -18,12 +18,23 @@ import {
   BUYER_NOT_CONFIGURED_ERROR,
   BUYER_PRICE_EMPTY_ERROR,
   BUYER_PRICE_RANGE_ERROR,
+  BUYER_NOT_A_SELLER_ERROR,
+  BUYER_STORE_KEY,
   BUYER_STALE_ERROR,
   BUYER_WRONG_ITEM_ERROR,
+  SELLER_BUSY_ERROR,
+  SELLER_CHOOSE_AMOUNT_ERROR,
+  SELLER_NO_ROOM_ERROR,
+  SELLER_NOT_A_BUYER_ERROR,
+  SELLER_NOT_CONFIGURED_ERROR,
+  SELLER_OUT_OF_STOCK_ERROR,
+  SELLER_SOLD_OUT_ERROR,
+  SELLER_STOCK_EMPTY_ERROR,
   buyerHologramName,
   buyerPayout,
   buyerPriceError,
   parseBuyerPrice,
+  parseBuyerStock,
   validateBuyerName,
 } from '../../shared/buyers';
 import { JsonFileStore } from '../../server/services/jsonStore';
@@ -61,11 +72,14 @@ describe('BuyerService', () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
-  async function setup(nextId: () => string = () => 'aabbccdd') {
+  async function setup(
+    nextId: () => string = () => 'aabbccdd',
+    economyFactory?: (store: JsonFileStore) => EconomyService,
+  ) {
     const dir = await mkdtemp(join(tmpdir(), 'fc-buyer-'));
     dirs.push(dir);
     const store = new JsonFileStore(dir);
-    const economy = new EconomyService(store);
+    const economy = economyFactory ? economyFactory(store) : new EconomyService(store);
     const holograms = new HologramNetwork(() => undefined);
     const buyer = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, nextId);
     return { store, economy, holograms, buyer };
@@ -278,6 +292,18 @@ describe('BuyerService', () => {
       type: 'buyer_action',
       action: 'edit_hologram',
     });
+    expect(parseClientMessage({ type: 'buyer_action', action: 'buy', price: 1, amount: 99, role: 'seller' })).toMatchObject({
+      type: 'buyer_action',
+      action: 'buy',
+      price: 1,
+      amount: 99,
+      role: 'seller',
+    });
+    expect(parseClientMessage({ type: 'buyer_action', action: 'set_stock', stock: '12' })).toMatchObject({
+      type: 'buyer_action',
+      action: 'set_stock',
+      stock: '12',
+    });
   });
 
   it('picks an item from inventory, saves admin config, and ignores spoofed quantity', async () => {
@@ -474,6 +500,339 @@ describe('BuyerService', () => {
     expect(opened.buyer?.id).toBe('aabbccdd');
     expect(opened.buyer?.hologramName).toBe(buyerHologramName('aabbccdd'));
     expect(holograms.get(buyerHologramName('aabbccdd'))).toBe(before);
+  });
+
+  it('keeps an old buyers.json file as a buyer and still accepts a sale', async () => {
+    const { store, economy, holograms } = await setup();
+    store.save(BUYER_STORE_KEY, {
+      buyers: [{
+        id: 'legacy01',
+        name: 'Старый',
+        worldId: 'anarchy',
+        x: 1,
+        y: 64,
+        z: 2,
+        yaw: 0.2,
+        pitch: 0,
+        itemId: 'pumpkin',
+        pricePerItem: 50,
+        hologramName: 'buyer-legacy01',
+        hologramText: 'Старый',
+        createdAt: 1,
+      }],
+    });
+    const again = new BuyerService(store, economy, holograms, () => 'anarchy');
+    again.load();
+    const npc = again.findByName('Старый');
+    expect(npc?.role).toBe('buyer');
+    expect(npc?.stock).toBeUndefined();
+    const inventory = new Inventory();
+    fill(inventory, 'pumpkin', 2);
+    again.openTrade('p1', 'legacy01', inventory);
+    expect(again.handleAction('p1', inventory, { type: 'buyer_action', action: 'select_slot', slot: 0 }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    expect(again.handleAction('p1', inventory, { type: 'buyer_action', action: 'sell' }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE + 100);
+  });
+
+  it('sells from server stock and ignores spoofed price, amount and a second buy', async () => {
+    const { buyer, economy } = await setup();
+    expect(buyer.create({
+      name: 'Лавка',
+      role: 'seller',
+      worldId: 'anarchy',
+      x: 0, y: 64, z: 0, yaw: 0, pitch: 0,
+    }).buyer?.role).toBe('seller');
+    expect(buyer.configure('aabbccdd', {
+      itemId: 'pumpkin',
+      pricePerItem: 50,
+      role: 'seller',
+      stock: 5,
+    }).ok).toBe(true);
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    const view = buyer.buildMessage('p1', inventory);
+    expect(view.role).toBe('seller');
+    expect(view.stock).toBe(5);
+    expect(view.title).toBe('Продавец Лавка');
+    expect(view.quantity).toBe(1);
+    expect(view.total).toBe(50);
+    expect(buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'set_amount', amount: 2 }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    const bought = buyer.handleAction('p1', inventory, {
+      type: 'buyer_action',
+      action: 'buy',
+      price: 1,
+      amount: 100,
+      stock: 100,
+    }, { edit: false, delete: false, use: true });
+    expect(bought.ok).toBe(true);
+    expect(bought.chat).toMatch(/100/);
+    expect(inventory.count('pumpkin')).toBe(2);
+    expect(buyer.get('aabbccdd')?.stock).toBe(3);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 100);
+    expect(economy.getTransactionHistory('p1')[0]).toMatchObject({
+      reason: 'TRADER_PURCHASE',
+      amount: 100,
+      type: 'withdraw',
+    });
+    const again = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy', amount: 2 }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(again.ok).toBe(false);
+    expect(again.error).toBe(SELLER_CHOOSE_AMOUNT_ERROR);
+    expect(buyer.get('aabbccdd')?.stock).toBe(3);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 100);
+    expect(buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'sell' }, {
+      edit: false, delete: false, use: true,
+    }).error).toBe(SELLER_NOT_A_BUYER_ERROR);
+    expect(inventory.count('pumpkin')).toBe(2);
+  });
+
+  it('rejects a purchase before taking coins when stock, balance or inventory cannot cover it', async () => {
+    const { buyer, economy } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 50, role: 'seller', stock: 1 });
+    const first = new Inventory();
+    const second = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', first);
+    buyer.openTrade('p2', 'aabbccdd', second);
+    expect(buyer.handleAction('p1', first, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    const denied = buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toBe(SELLER_SOLD_OUT_ERROR);
+    expect(second.count('pumpkin')).toBe(0);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(buyer.get('aabbccdd')?.stock).toBe(0);
+
+    buyer.configure('aabbccdd', { stock: 4 });
+    buyer.openTrade('p2', 'aabbccdd', second);
+    buyer.session('p2')!.orderQuantity = 3;
+    const poor = buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy', price: 1 }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(poor.error).toBe('Недостаточно Мегакоинов.');
+    expect(buyer.get('aabbccdd')?.stock).toBe(4);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+
+    const packed = new Inventory();
+    for (let slot = 0; slot < Inventory.SLOT_COUNT; slot += 1) {
+      packed.setSlot(slot, createItemStack('cobblestone', 64));
+    }
+    buyer.openTrade('p3', 'aabbccdd', packed);
+    buyer.session('p3')!.orderQuantity = 1;
+    const noRoom = buyer.handleAction('p3', packed, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(noRoom.error).toBe(SELLER_NO_ROOM_ERROR);
+    expect(packed.count('pumpkin')).toBe(0);
+    expect(buyer.get('aabbccdd')?.stock).toBe(4);
+    expect(economy.getBalance('p3')).toBe(ECONOMY_INITIAL_BALANCE);
+  });
+
+  it('does not let a second buyer pass the same reserved stock', async () => {
+    class ReenterEconomy extends EconomyService {
+      hook: (() => void) | undefined;
+      override withdraw(
+        playerId: string,
+        amount: number,
+        reason: string,
+        relatedPlayerId?: string,
+        pairId?: string,
+      ) {
+        const hook = this.hook;
+        this.hook = undefined;
+        hook?.();
+        return super.withdraw(playerId, amount, reason, relatedPlayerId, pairId);
+      }
+    }
+    const { buyer, economy } = await setup(() => 'aabbccdd', (store) => new ReenterEconomy(store));
+    const reenter = economy as ReenterEconomy;
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 5 });
+    const first = new Inventory();
+    const second = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', first);
+    buyer.openTrade('p2', 'aabbccdd', second);
+    reenter.hook = () => {
+      const raced = buyer.handleAction('p2', second, { type: 'buyer_action', action: 'buy', amount: 5 }, {
+        edit: false, delete: false, use: true,
+      });
+      expect(raced.error).toBe(SELLER_BUSY_ERROR);
+    };
+    expect(buyer.handleAction('p1', first, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    expect(buyer.get('aabbccdd')?.stock).toBe(4);
+    expect(first.count('pumpkin')).toBe(1);
+    expect(second.count('pumpkin')).toBe(0);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+  });
+
+  it('returns reserved stock when the withdraw fails and does not grant the item', async () => {
+    class FlakyEconomy extends EconomyService {
+      fail = true;
+      override withdraw(
+        playerId: string,
+        amount: number,
+        reason: string,
+        relatedPlayerId?: string,
+        pairId?: string,
+      ) {
+        if (this.fail) {
+          this.fail = false;
+          return { ok: false, error: 'Недостаточно Мегакоинов.', balance: this.getBalance(playerId) };
+        }
+        return super.withdraw(playerId, amount, reason, relatedPlayerId, pairId);
+      }
+    }
+    const { store, buyer, economy } = await setup(() => 'aabbccdd', (store) => new FlakyEconomy(store));
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 50, role: 'seller', stock: 5 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    const failed = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(failed.ok).toBe(false);
+    expect(inventory.count('pumpkin')).toBe(0);
+    expect(buyer.get('aabbccdd')?.stock).toBe(5);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE);
+    const saved = store.load<{ buyers: Array<{ stock?: number }>; purchases?: unknown[] }>(BUYER_STORE_KEY, { buyers: [] });
+    expect(saved.purchases ?? []).toEqual([]);
+    expect(saved.buyers[0]?.stock).toBe(5);
+  });
+
+  it('replays a paid reservation into owed items exactly once and restores an unpaid one', async () => {
+    const { store, economy, holograms, buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 50, role: 'seller', stock: 5 });
+    expect(economy.withdraw('p1', 50, 'TRADER_PURCHASE', 'aabbccdd', 'sp-paid').ok).toBe(true);
+    const saved = store.load<{
+      buyers: Array<{ stock?: number }>;
+      purchases?: unknown[];
+      returns?: Record<string, unknown>;
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    saved.buyers[0]!.stock = 3;
+    saved.purchases = [
+      {
+        id: 'sp-paid',
+        playerId: 'p1',
+        buyerId: 'aabbccdd',
+        itemId: 'pumpkin',
+        quantity: 1,
+        unitPrice: 50,
+        total: 50,
+        phase: 'reserved',
+        createdAt: 1,
+      },
+      {
+        id: 'sp-open',
+        playerId: 'p2',
+        buyerId: 'aabbccdd',
+        itemId: 'pumpkin',
+        quantity: 1,
+        unitPrice: 50,
+        total: 50,
+        phase: 'reserved',
+        createdAt: 2,
+      },
+    ];
+    store.save(BUYER_STORE_KEY, saved);
+    const recovered = new BuyerService(store, economy, holograms, () => 'anarchy');
+    recovered.load();
+    expect(recovered.get('aabbccdd')?.stock).toBe(4);
+    const replay = new BuyerService(store, economy, holograms, () => 'anarchy');
+    replay.load();
+    const inventory = new Inventory();
+    replay.restoreOverflow('p1', inventory);
+    replay.restoreOverflow('p2', inventory);
+    expect(inventory.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 50);
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+    const once = new BuyerService(store, economy, holograms, () => 'anarchy');
+    once.load();
+    const again = new Inventory();
+    once.restoreOverflow('p1', again);
+    expect(again.count('pumpkin')).toBe(0);
+  });
+
+  it('requires seller stock, then can switch the same NPC back to a buyer', async () => {
+    const { store, economy, holograms, buyer } = await setup();
+    buyer.create({ name: 'Лавка', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    const inventory = new Inventory();
+    fill(inventory, 'pumpkin', 4);
+    buyer.openAdmin('op', 'aabbccdd', inventory);
+    expect(buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'set_role', role: 'seller' }, {
+      edit: true, delete: true, use: true,
+    }).ok).toBe(true);
+    expect(buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'pick_item' }, {
+      edit: true, delete: true, use: true,
+    }).ok).toBe(true);
+    expect(buyer.handleAction('op', inventory, { type: 'buyer_action', action: 'select_slot', slot: 0 }, {
+      edit: true, delete: true, use: true,
+    }).ok).toBe(true);
+    const missingStock = buyer.handleAction('op', inventory, {
+      type: 'buyer_action', action: 'save', name: 'Лавка', price: '50', role: 'seller',
+    }, { edit: true, delete: true, use: true });
+    expect(missingStock.error).toBe(SELLER_STOCK_EMPTY_ERROR);
+    expect(buyer.handleAction('op', inventory, {
+      type: 'buyer_action', action: 'save', name: 'Лавка', price: '50', role: 'seller', stock: 8,
+    }, { edit: true, delete: true, use: true }).ok).toBe(true);
+    expect(buyer.get('aabbccdd')).toMatchObject({ role: 'seller', stock: 8, pricePerItem: 50 });
+    expect(parseBuyerStock(1_000_001)).toBeUndefined();
+    const reloaded = new BuyerService(store, economy, holograms, () => 'anarchy');
+    reloaded.load();
+    expect(reloaded.get('aabbccdd')).toMatchObject({ role: 'seller', stock: 8, itemId: 'pumpkin' });
+    expect(reloaded.configure('aabbccdd', { role: 'buyer' }).ok).toBe(true);
+    expect(reloaded.get('aabbccdd')?.role).toBe('buyer');
+    expect(reloaded.get('aabbccdd')?.stock).toBeUndefined();
+    const trade = new Inventory();
+    fill(trade, 'pumpkin', 1);
+    reloaded.openTrade('p1', 'aabbccdd', trade);
+    expect(reloaded.handleAction('p1', trade, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    }).error).toBe(BUYER_NOT_A_SELLER_ERROR);
+    expect(reloaded.handleAction('p1', trade, { type: 'buyer_action', action: 'select_slot', slot: 0 }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+    expect(reloaded.handleAction('p1', trade, { type: 'buyer_action', action: 'sell' }, {
+      edit: false, delete: false, use: true,
+    }).ok).toBe(true);
+  });
+
+  it('refuses a buyer purchase that asks for more stock than remains', async () => {
+    const { buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'melon', pricePerItem: 10, role: 'seller', stock: 2 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    buyer.session('p1')!.orderQuantity = 3;
+    const denied = buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    });
+    expect(denied.error).toBe(SELLER_OUT_OF_STOCK_ERROR);
+    expect(buyer.get('aabbccdd')?.stock).toBe(2);
+    expect(inventory.count('melon')).toBe(0);
+  });
+
+  it('does not open a seller trade until the item and stock are saved', async () => {
+    const { buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    expect(buyer.handleAction('p1', inventory, { type: 'buyer_action', action: 'buy' }, {
+      edit: false, delete: false, use: true,
+    }).error).toBe(SELLER_NOT_CONFIGURED_ERROR);
   });
 });
 
