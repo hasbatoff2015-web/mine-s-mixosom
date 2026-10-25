@@ -118,6 +118,7 @@ import {
   isTapUseItem,
   mobileAutoJumpArmed,
   mobileSneakFlightHold,
+  isMobileBreakableTarget,
   resolveMobileTouchIntent,
   type MobileTouchDecision,
 } from '../input/mobileTouch';
@@ -280,6 +281,7 @@ import {
   selectedLocalServer,
 } from '../net';
 import { BuyerNpcView } from '../net/BuyerNpcView';
+import { pickBuyerInteractTarget, type BuyerRayHit } from '../net/buyerInteract';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
 import { loadPlayerAppearance, savePlayerAppearance } from '../net/playerAppearance';
 import {
@@ -870,6 +872,18 @@ export class Game {
     this.ui.onHudPause = () => this.togglePause();
     this.ui.onHudChat = () => this.openChat();
     this.ui.onHudMenu = () => this.toggleGameMenu();
+    this.ui.onEmoteOpen = () => this.beginEmoteWheel();
+    this.ui.onEmotePoint = (dx, dy) => {
+      const selected = this.emotes.point(dx, dy, this.ui.emoteWheelRadius());
+      this.ui.setEmoteWheelSelection(selected);
+      this.ui.placeEmoteCursor(this.emotes.pointer.x, this.emotes.pointer.y);
+    };
+    this.ui.onEmoteCommit = () => this.releaseEmoteWheel();
+    this.ui.onEmoteAbort = () => {
+      if (this.emotes.phaseName !== 'wheel') return;
+      this.emotes.point(0, 0, Math.max(1, this.ui.emoteWheelRadius()));
+      this.releaseEmoteWheel();
+    };
     this.canvas.addEventListener('click', () => {
       if (this.ui.isBlockingOverlay()) return;
       this.lifecycle.resumePlayingIfVisible();
@@ -2591,26 +2605,51 @@ export class Game {
     if (!session.online || this.ui?.isHologramEditorOpen()) return false;
     const aim = this.lastLocalAim;
     if (!aim) return false;
-    let closest: { id: string; distance: number } | undefined;
-    for (const view of session.online.buyers.values()) {
-      const distance = view.raycast(aim.origin, aim.direction, PLAYER_REACH);
-      if (distance === undefined) continue;
-      if (closest && distance >= closest.distance) continue;
-      closest = { id: view.id, distance };
-    }
-    const hologramHit = this.holograms?.raycast(aim.origin, aim.direction, PLAYER_REACH);
-    if (hologramHit) {
-      for (const view of session.online.buyers.values()) {
-        if (view.hologramName !== hologramHit.name) continue;
-        if (!closest || hologramHit.distance <= closest.distance + 0.05) {
-          closest = { id: view.id, distance: hologramHit.distance };
-        }
-      }
-    }
-    if (!closest) return false;
-    if (session.target && session.target.distance < closest.distance) return false;
-    session.online.client.send({ type: 'buyer_interact', buyerId: closest.id });
+    const target = this.buyerInteractTarget(session, aim.origin, aim.direction, {
+      block: session.target?.distance,
+      mob: session.mobs?.raycastRendered(aim.origin, aim.direction, Math.min(3, PLAYER_REACH))?.distance,
+      cart: session.minecarts?.raycast(aim.origin, aim.direction, PLAYER_REACH, session.ridingCartId)?.distance,
+      remote: raycastRemotePlayers(session.online.remotes, aim.origin, aim.direction, Math.min(3, PLAYER_REACH))?.distance,
+    });
+    if (!target) return false;
+    session.online.client.send({ type: 'buyer_interact', buyerId: target.id });
     return true;
+  }
+
+  /**
+   * Closest buyer along this ray, inside the same reach as a block use.
+   * A nearer block, mob, cart, or player hides the NPC. The hologram counts
+   * only when it already belongs to a buyer.
+   */
+  private buyerInteractTarget(
+    session: GameSession,
+    origin: { x: number; y: number; z: number },
+    direction: { x: number; y: number; z: number },
+    occluders: { block?: number; mob?: number; cart?: number; remote?: number },
+  ): BuyerRayHit | undefined {
+    const online = session.online;
+    if (!online || online.buyers.size === 0) return undefined;
+    const buyers: BuyerRayHit[] = [];
+    for (const view of online.buyers.values()) {
+      const distance = view.raycast(origin, direction, PLAYER_REACH);
+      if (distance === undefined) continue;
+      buyers.push({ id: view.id, distance });
+    }
+    const hologramHit = this.holograms?.raycast(origin, direction, PLAYER_REACH);
+    const occluderDistance = [occluders.block, occluders.mob, occluders.cart, occluders.remote]
+      .filter((distance): distance is number => distance !== undefined && Number.isFinite(distance))
+      .reduce<number | undefined>((best, distance) => (best === undefined || distance < best ? distance : best), undefined);
+    return pickBuyerInteractTarget({
+      buyers,
+      ...(hologramHit ? { hologram: { name: hologramHit.name, distance: hologramHit.distance } } : {}),
+      buyerIdForHologram: (name) => {
+        for (const view of online.buyers.values()) {
+          if (view.hologramName === name) return view.id;
+        }
+        return undefined;
+      },
+      ...(occluderDistance !== undefined ? { occluderDistance } : {}),
+    });
   }
 
   private tryInteractHologram(session: GameSession): boolean {
@@ -5153,13 +5192,13 @@ export class Game {
       || liquidUse,
     );
     const hasBlockTarget = Boolean(blockInFront && blockHit);
-    const breakableBlock = Boolean(
-      hasBlockTarget
-      && !interactiveBlock
-      && definition
-      && definition.breakable !== false
-      && definition.hardness >= 0,
-    );
+    const breakableBlock = isMobileBreakableTarget(hasBlockTarget, definition);
+    const buyer = this.buyerInteractTarget(session, aim.origin, aim.direction, {
+      block: blockHit?.distance,
+      mob: mobHit?.distance,
+      cart: cartHit?.distance,
+      remote: remoteHit?.distance,
+    });
     return {
       yaw: look.yaw,
       pitch: look.pitch,
@@ -5167,6 +5206,7 @@ export class Game {
         phase,
         attackEntity,
         useEntity,
+        buyerUse: buyer !== undefined,
         interactiveBlock,
         hasBlockTarget,
         breakableBlock,
@@ -7063,6 +7103,7 @@ export class Game {
 
   private releaseEmoteWheel(): void {
     if (this.emotes.phaseName !== 'wheel') return;
+    if (!this.emoteAllowed()) this.emotes.point(0, 0, Math.max(1, this.ui.emoteWheelRadius()));
     const started = this.emotes.release();
     this.closeEmoteWheel();
     if (started) {

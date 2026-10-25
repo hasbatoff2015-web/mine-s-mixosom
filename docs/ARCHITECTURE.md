@@ -1,5 +1,17 @@
 # Архитектура
 
+## Mobile touch, menu chrome, auction back — 2026-10-25
+
+`resolveMobileTouchIntent` keeps tap and hold on the same attack, use, and mine commands. `interactiveBlock` and `breakableBlock` are independent. A hold mines a breakable interactive block. A tap still uses it. Bow draw and food stay ahead of mining. Reach is unchanged.
+
+`pickBuyerInteractTarget` is the only buyer choice. `Game.tryInteractBuyer` and `classifyWorldTouch` both call it with the current aim. A closer block, mob, cart, or remote player hides the NPC. The client sends one `buyer_interact`. The server still decides the trade.
+
+Creative catalog slots set `catalogScroll` on the existing inventory gesture. A coarse vertical move past the 8px threshold becomes `scroll` and changes `scrollTop`. Pointerup and pointercancel do not grant the item. Other slots keep drag and drop.
+
+`#hud-emote` calls `beginEmoteWheel`, `EmoteSession.point`, and `releaseEmoteWheel`. It does not synthesize Z. Pointer-lock mouse still nudges the same session.
+
+Game menu and trade put back and close in `.mc-menu-chrome` inside the panel. `menuLogicalWidth` is the width both `renderGameMenu` and `relayoutGameMenu` scale. Auction `source: 'menu'` is set before the first `flushAuction`. Nested screens show one back control. The server parent map is unchanged: buy → browse, sell-confirm → sell-pick, manage/claim/relist → mine, and a menu-opened top screen restores the auction section.
+
 ## Decorative pets — 2026-10-18
 
 `pet_bee` and `pet_creeper` are `MobKind` values in the existing `MobManager`. They are not members of `PET_KINDS`. `isCosmeticPetKind()` is the gate for damage, raycasts, burning, separation, wolf targets, distance despawn, and mob-list serialization.

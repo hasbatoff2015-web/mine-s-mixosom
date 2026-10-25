@@ -33,7 +33,13 @@ export interface MobileTouchFacts {
   readonly interactiveBlock: boolean;
   /** Any selected block, including bedrock and other unbreakable surfaces. */
   readonly hasBlockTarget: boolean;
+  /**
+   * The aimed block can be broken. Independent of `interactiveBlock`:
+   * a crafting table, furnace, or chest is both usable and breakable.
+   */
   readonly breakableBlock: boolean;
+  /** Buyer NPC or its linked hologram is the closest reachable target. */
+  readonly buyerUse?: boolean;
   /** Block item, hoe, empty bucket, flint, minecart — one use. Milk is not in this set. */
   readonly tapUseItem: boolean;
   /** Bow or food, including milk. Hold draws or eats even when a block is under the finger. */
@@ -224,11 +230,31 @@ export function centerCrosshairRelease(
 }
 
 /**
+ * A block the player can break. Usable blocks stay in this set.
+ * Bedrock and liquids fail `breakable` or have negative hardness.
+ */
+export function isMobileBreakableTarget(
+  hasBlockTarget: boolean,
+  definition: { readonly breakable?: boolean; readonly hardness: number } | undefined,
+): boolean {
+  return Boolean(
+    hasBlockTarget
+    && definition
+    && definition.breakable !== false
+    && definition.hardness >= 0,
+  );
+}
+
+/**
  * Tap and hold share one finger. They become the same attack/use/mine intents
  * desktop already sends. No reach change, no aim assist.
+ *
+ * Tap uses an interactive block. Hold mines it when the block is breakable.
+ * Those are separate facts: interactivity does not make a block unbreakable.
  */
 export function resolveMobileTouchIntent(facts: MobileTouchFacts): MobileTouchIntent {
   if (facts.phase === 'tap') {
+    if (facts.buyerUse) return 'use';
     if (facts.attackEntity) return 'attack';
     if (facts.useEntity) return 'use';
     if (facts.interactiveBlock) return 'use';
@@ -238,10 +264,11 @@ export function resolveMobileTouchIntent(facts: MobileTouchFacts): MobileTouchIn
   }
   if (facts.bow) return 'bow-hold';
   if (facts.priorityHeldUse) return 'use-hold';
+  if (facts.buyerUse) return 'use';
   if (facts.attackEntity) return 'attack';
   if (facts.useEntity) return 'use';
-  if (facts.interactiveBlock) return 'use';
   if (facts.breakableBlock) return 'mine';
+  if (facts.interactiveBlock) return 'use';
   if (facts.continuousUse) return 'use-hold';
   return 'none';
 }

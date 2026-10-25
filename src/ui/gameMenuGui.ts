@@ -107,6 +107,12 @@ export function menuBackHtml(screen: ServerMenuMessage['screen']): string {
   return '<button type="button" class="mc-close mc-back" data-menu-action="back" aria-label="Назад">←</button>';
 }
 
+/** Back and close live in one row of the panel, not as siblings floating beside it. */
+export function menuChromeHtml(backHtml: string, closeHtml: string): string {
+  const closeOnly = backHtml.trim().length === 0;
+  return `<div class="mc-menu-chrome${closeOnly ? ' is-close-only' : ''}">${backHtml}${closeHtml}</div>`;
+}
+
 export function menuBalanceHtml(state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel'>): string {
   const amount = state?.balanceLabel ?? formatMegacoinAmount(state?.balance ?? 0);
   return `<div class="mc-menu-balance">

@@ -231,19 +231,22 @@ describe('emote protocol and HUD hint', () => {
     });
   });
 
-  it('places the supplied Z hint under the corner buttons without taking pointer events', () => {
+  it('places the Z art on a real button under the corner controls', () => {
     expect(gameUi.indexOf('id="hud-menu"')).toBeLessThan(gameUi.indexOf('id="hud-emote"'));
+    expect(gameUi).toContain('<button type="button" id="hud-emote"');
     expect(gameUi).toContain('hud-corner-key">Z');
     expect(gameUi).toContain('EMOTE_LABELS[id]');
     expect(menuGui).toContain("'emote_z.png?v=2'");
     expect(css).toContain('#hud-emote');
     expect(css).toContain('background-image: var(--hud-emote-img);');
     expect(css).toContain('background-size: contain;');
-    expect(css).toMatch(/#hud-emote \{[^}]*pointer-events: none;/s);
+    expect(css).toMatch(/#hud-corner #hud-emote \{[^}]*pointer-events: auto;/s);
+    expect(css).not.toMatch(/#hud-emote \{[^}]*pointer-events: none;/s);
     expect(css).toMatch(/#hud-emote \{[^}]*aspect-ratio: 1;/s);
     expect(inputSource).toContain("event.code === 'KeyZ'");
     expect(css).toContain('#emote-wheel');
     expect(gameUi).toContain('id="emote-wheel"');
+    expect(gameUi).toContain('bindMobileEmote');
     expect(css).toMatch(/#hud-emote \{[^}]*width: calc\(76px \* var\(--hud-scale\)\);/s);
     expect(css).toMatch(/#hud-emote \{[^}]*height: calc\(76px \* var\(--hud-scale\)\);/s);
     const png = readFileSync(new URL('../public/ui/menu/emote_z.png', import.meta.url));

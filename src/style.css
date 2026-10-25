@@ -899,7 +899,16 @@ textarea,
   background-size: contain;
   image-rendering: pixelated;
   image-rendering: crisp-edges;
-  pointer-events: none;
+}
+
+#hud-corner #hud-emote {
+  color: transparent;
+  background-color: transparent;
+  background-image: var(--hud-emote-img);
+  box-shadow: none;
+  pointer-events: auto;
+  touch-action: manipulation;
+  cursor: pointer;
 }
 
 #hud-pause:hover,
@@ -1957,6 +1966,17 @@ textarea,
   padding: 0 calc(3px * var(--mc-ui-scale, 3));
 }
 
+.mc-ah-back-row {
+  display: flex;
+  justify-content: flex-start;
+  margin: 0 0 calc(2px * var(--mc-ui-scale, 3));
+}
+
+.mc-ah-back-row .mc-close.mc-back {
+  position: static;
+  margin: 0;
+}
+
 .mc-ah-center {
   display: flex;
   justify-content: center;
@@ -1976,7 +1996,7 @@ textarea,
 
 .mc-menu-heading {
   margin: 0;
-  padding: 0 calc(22px * var(--mc-ui-scale, 3)) 0 0;
+  padding: 0;
   color: #f4f4f4;
   font-family: var(--font-ui);
   font-size: calc(11px * var(--mc-ui-scale, 3));
@@ -2472,17 +2492,17 @@ textarea,
 .mc-panel.mc-menu-panel,
 .mc-menu-panel {
   box-sizing: border-box;
-  width: min(calc(var(--mc-logical-width, 248) * 1px * var(--mc-ui-scale, 3)), calc(100vw - 28px));
-  max-width: calc(100vw - 28px);
+  display: flex;
+  flex-direction: column;
+  width: min(calc(var(--mc-logical-width, 248) * 1px * var(--mc-ui-scale, 3)), 100%);
+  max-width: calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
   height: auto;
-  max-height: calc(100dvh - 24px);
-  overflow-x: hidden;
-  overflow-y: auto;
+  max-height: calc(100dvh - 16px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow: hidden;
   overscroll-behavior: contain;
-  touch-action: pan-y;
   scrollbar-width: none;
   -ms-overflow-style: none;
-  padding: calc(10px * var(--mc-ui-scale, 3)) calc(10px * var(--mc-ui-scale, 3)) calc(9px * var(--mc-ui-scale, 3));
+  padding: calc(6px * var(--mc-ui-scale, 3)) calc(10px * var(--mc-ui-scale, 3)) calc(9px * var(--mc-ui-scale, 3));
   color: #ececec;
   background:
     linear-gradient(180deg, rgba(36, 39, 45, 0.96) 0%, rgba(20, 22, 26, 0.96) 100%);
@@ -2498,9 +2518,45 @@ textarea,
 
 .mc-menu-stage {
   position: relative;
+  justify-content: center;
+  align-items: flex-start;
+  width: min(100%, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  max-width: 100%;
+  margin-inline: auto;
+}
+
+.mc-menu-chrome {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: calc(4px * var(--mc-ui-scale, 3));
+  min-height: max(32px, calc(22px * var(--mc-ui-scale, 3)));
+  margin-bottom: calc(2px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-chrome.is-close-only {
+  justify-content: flex-end;
+}
+
+.mc-menu-chrome > .mc-close {
+  position: static;
+  margin: 0;
+  align-self: center;
+}
+
+.mc-menu-panel > .mc-menu-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: none;
 }
 
 .mc-stage > .mc-close:not(.mc-back),
+.mc-menu-chrome > .mc-close:not(.mc-back),
 .mc-container-side-rail > .mc-close:not(.mc-back) {
   width: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
   height: max(var(--touch-target), calc(22px * var(--mc-ui-scale, 3)));
@@ -2520,8 +2576,10 @@ textarea,
 }
 
 .mc-stage > .mc-close:not(.mc-back):hover,
+.mc-menu-chrome > .mc-close:not(.mc-back):hover,
 .mc-container-side-rail > .mc-close:not(.mc-back):hover,
 .mc-stage > .mc-close:not(.mc-back):focus-visible,
+.mc-menu-chrome > .mc-close:not(.mc-back):focus-visible,
 .mc-container-side-rail > .mc-close:not(.mc-back):focus-visible {
   background-color: transparent;
   background-image: var(--mc-menu-close-hover);
@@ -2529,6 +2587,7 @@ textarea,
 }
 
 .mc-stage > .mc-close:not(.mc-back):active,
+.mc-menu-chrome > .mc-close:not(.mc-back):active,
 .mc-container-side-rail > .mc-close:not(.mc-back):active {
   padding: 0;
   background-color: transparent;
@@ -2537,8 +2596,10 @@ textarea,
 }
 
 .mc-stage > .mc-close:not(.mc-back) .mc-close-x,
+.mc-menu-chrome > .mc-close:not(.mc-back) .mc-close-x,
 .mc-container-side-rail > .mc-close:not(.mc-back) .mc-close-x,
 .mc-stage > .mc-close:not(.mc-back) .mc-close-hotkey,
+.mc-menu-chrome > .mc-close:not(.mc-back) .mc-close-hotkey,
 .mc-container-side-rail > .mc-close:not(.mc-back) .mc-close-hotkey {
   opacity: 0;
 }
@@ -4164,6 +4225,11 @@ textarea,
 
 .mc-backdrop [data-slot] {
   touch-action: none;
+}
+
+.mc-backdrop .mc-creative-catalog,
+.mc-backdrop .mc-creative-catalog [data-slot] {
+  touch-action: pan-y;
 }
 
 .mc-backdrop [data-slot] img,

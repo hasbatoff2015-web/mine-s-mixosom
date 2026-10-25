@@ -23,6 +23,8 @@ export interface PointerDownContext {
   readonly sourceOccupied: boolean;
   readonly sourceClass: SourceClass;
   readonly allowLongPress: boolean;
+  /** Coarse press that started on the creative catalog. Vertical movement scrolls it. */
+  readonly catalogScroll?: boolean;
 }
 
 export interface InventoryGesture {
@@ -30,12 +32,13 @@ export interface InventoryGesture {
   readonly pointerClass: PointerClass;
   readonly button: 'left' | 'right';
   readonly shift: boolean;
-  readonly phase: 'pending' | 'drag' | 'long-press';
+  readonly phase: 'pending' | 'drag' | 'long-press' | 'scroll';
   readonly sourceKey: string | null;
   readonly sourceClass: SourceClass;
   readonly sourceOccupied: boolean;
   readonly cursorOccupied: boolean;
   readonly allowLongPress: boolean;
+  readonly catalogScroll: boolean;
   readonly downZone: PointerZone;
   readonly startX: number;
   readonly startY: number;
@@ -53,6 +56,7 @@ export type GestureEffect =
   | { readonly type: 'drop-slot'; readonly key: string }
   | { readonly type: 'drop-cursor'; readonly mode: 'all' | 'one' }
   | { readonly type: 'long-press'; readonly key: string }
+  | { readonly type: 'scroll'; readonly dy: number }
   | { readonly type: 'cancel' };
 
 export interface GestureStep {
@@ -71,6 +75,30 @@ function movedPastThreshold(gesture: InventoryGesture, sample: PointerSample): b
   const dx = sample.x - gesture.startX;
   const dy = sample.y - gesture.startY;
   return Math.hypot(dx, dy) >= INVENTORY_TOUCH_DRAG_THRESHOLD_PX;
+}
+
+/** Finger delta past the shared drag threshold, and more vertical than horizontal. */
+export function isCatalogScrollMove(gesture: InventoryGesture, sample: PointerSample): boolean {
+  if (!gesture.catalogScroll || gesture.pointerClass !== 'coarse') return false;
+  const dx = sample.x - gesture.startX;
+  const dy = sample.y - gesture.startY;
+  return Math.abs(dy) >= INVENTORY_TOUCH_DRAG_THRESHOLD_PX && Math.abs(dy) >= Math.abs(dx);
+}
+
+/**
+ * Finger moving up (negative dy) reveals items below, so scrollTop increases.
+ * The result stays inside the catalog.
+ */
+export function nextCatalogScrollTop(
+  scrollTop: number,
+  scrollHeight: number,
+  clientHeight: number,
+  fingerDy: number,
+): number {
+  const max = Math.max(0, scrollHeight - clientHeight);
+  const current = Number.isFinite(scrollTop) ? scrollTop : 0;
+  const delta = Number.isFinite(fingerDy) ? fingerDy : 0;
+  return Math.min(max, Math.max(0, current - delta));
 }
 
 function withVisit(gesture: InventoryGesture, sample: PointerSample, phase: InventoryGesture['phase']): InventoryGesture {
@@ -157,7 +185,8 @@ function beginGesture(sample: PointerSample, context: PointerDownContext): Gestu
     sourceClass: onSlot ? context.sourceClass : 'none',
     sourceOccupied: context.sourceOccupied,
     cursorOccupied: context.cursorOccupied,
-    allowLongPress: sample.pointerClass === 'coarse' && context.allowLongPress && onSlot,
+    allowLongPress: sample.pointerClass === 'coarse' && context.allowLongPress && onSlot && context.catalogScroll !== true,
+    catalogScroll: context.catalogScroll === true && onSlot,
     downZone: sample.zone,
     startX: sample.x,
     startY: sample.y,
@@ -174,6 +203,20 @@ function moveGesture(gesture: InventoryGesture, sample: PointerSample): GestureS
   if (gesture.phase === 'long-press') {
     return { gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: false }, effects: [] };
   }
+  if (gesture.phase === 'scroll') {
+    const dy = sample.y - gesture.y;
+    return {
+      gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: false },
+      effects: dy === 0 ? [] : [{ type: 'scroll', dy }],
+    };
+  }
+  if (gesture.phase === 'pending' && isCatalogScrollMove(gesture, sample)) {
+    const dy = sample.y - gesture.startY;
+    return {
+      gesture: { ...gesture, phase: 'scroll', x: sample.x, y: sample.y, armedDrop: false },
+      effects: [{ type: 'scroll', dy }],
+    };
+  }
   const past = movedPastThreshold(gesture, sample) || (gesture.pointerClass === 'fine' && sample.zone === 'slot' && sample.slotKey !== gesture.sourceKey);
   if (gesture.phase === 'pending' && !past) {
     return { gesture: { ...gesture, x: sample.x, y: sample.y, armedDrop: sample.zone === 'drop' }, effects: [] };
@@ -182,6 +225,7 @@ function moveGesture(gesture: InventoryGesture, sample: PointerSample): GestureS
 }
 
 function finishGesture(gesture: InventoryGesture, sample: PointerSample): GestureStep {
+  if (gesture.phase === 'scroll') return { gesture: null, effects: [] };
   const current = withVisit(gesture, sample, gesture.phase);
   if (current.phase === 'long-press') return { gesture: null, effects: [] };
   if (current.pointerClass === 'coarse') return finishCoarse(current, sample);

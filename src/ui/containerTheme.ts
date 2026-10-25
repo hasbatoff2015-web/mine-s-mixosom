@@ -98,6 +98,12 @@ export const MC_MENU_DONATE_WIDTH = 440;
 export const MC_MENU_ROOT_HEIGHT = 300;
 export const MC_MENU_MAX_SCALE = 3;
 
+/** Donate screens are wider than the social menu. Relayout must use the same width as render. */
+export function menuLogicalWidth(screen: string): number {
+  if (screen === 'donate' || screen.startsWith('donate-')) return MC_MENU_DONATE_WIDTH;
+  return MC_MENU_WIDTH;
+}
+
 export function menuLogicalHeight(screen: string): number {
   if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
   if (screen === 'friends' || screen === 'friend-delete-confirm' || screen === 'friend-chat') return 268;

@@ -396,6 +396,157 @@ describe('coarse mobile layout rects', () => {
     }
   }, 90_000);
 
+  it('keeps menu back and close inside the panel on phone and desktop viewports', async () => {
+    server?.close();
+    const { menuLogicalHeight, menuLogicalWidth, menuUiScale } = await import('../src/ui/containerTheme');
+    server = createServer((request, response) => {
+      const url = new URL(request.url ?? '/', 'http://127.0.0.1');
+      const width = Number(url.searchParams.get('w') ?? 844);
+      const height = Number(url.searchParams.get('h') ?? 390);
+      const screen = url.searchParams.get('screen') ?? 'homes';
+      const logicalWidth = menuLogicalWidth(screen);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight(screen === 'trade' ? 'trade' : screen));
+      const back = screen === 'root' || screen === 'trade'
+        ? ''
+        : '<button type="button" class="mc-close mc-back" data-menu-action="back" aria-label="Назад">←</button>';
+      const chromeClass = back ? 'mc-menu-chrome' : 'mc-menu-chrome is-close-only';
+      const title = screen === 'trade' ? 'Обмен' : screen === 'root' ? 'Меню' : 'Дома';
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
+        :root { --touch-target: 44px; }
+        html, body, #app { margin: 0; width: 100%; height: 100%; }
+        ${style}
+      </style></head><body><div id="app">
+        <div class="modal-backdrop mc-backdrop">
+          <div class="mc-stage mc-menu-stage" style="--mc-ui-scale:${scale}; --mc-logical-width:${logicalWidth}">
+            <div class="mc-panel mc-menu-panel" data-menu-panel>
+              <div class="${chromeClass}">
+                ${back}
+                <button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>
+              </div>
+              <div class="mc-menu-body">
+                <div class="mc-menu-heading">${title}</div>
+                <form class="mc-menu-form">
+                  <label class="mc-ah-field">Название
+                    <input type="text" data-menu-field value="дом" />
+                  </label>
+                  <button type="button" class="mc-ah-btn" data-menu-submit>Создать</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div></body></html>`);
+    });
+    await new Promise<void>((resolve) => server?.listen(0, '127.0.0.1', () => resolve()));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('menu server has no port');
+    const origin = `http://127.0.0.1:${address.port}`;
+    const viewports = [
+      [844, 390],
+      [932, 430],
+      [740, 360],
+      [390, 844],
+      [1280, 720],
+      [1920, 1080],
+    ] as const;
+    for (const screen of ['homes', 'trade', 'root'] as const) {
+      for (const [width, height] of viewports) {
+        const launched = await launchChrome(width, height, 'about:blank');
+        chromeJobs.push(launched);
+        await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height,
+          deviceScaleFactor: 1,
+          mobile: false,
+        });
+        await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}&screen=${screen}` });
+        let ready = false;
+        let seen = '';
+        for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+          const probe = await launched.cdp.send('Runtime.evaluate', {
+            returnByValue: true,
+            expression: 'JSON.stringify({ w: window.innerWidth, h: window.innerHeight, panel: !!document.querySelector("[data-menu-panel]") })',
+          });
+          seen = (probe.result as { value?: string } | undefined)?.value ?? '';
+          const parsed = seen.startsWith('{') ? JSON.parse(seen) as { w: number; h: number; panel: boolean } : undefined;
+          ready = parsed?.panel === true && parsed.w === width && parsed.h === height;
+          if (!ready) await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!ready) throw new Error(`menu did not render for ${screen} ${width}x${height}: ${seen}`);
+        const evaluated = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: `(() => {
+            const overlaps = (a, b) => !!a && !!b && a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1;
+            const box = (node) => {
+              if (!node) return null;
+              const rect = node.getBoundingClientRect();
+              return { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+            };
+            const panel = document.querySelector('[data-menu-panel]');
+            const heading = document.querySelector('.mc-menu-heading');
+            const back = document.querySelector('.mc-back');
+            const close = document.querySelector('[data-ui="close"]');
+            const field = document.querySelector('[data-menu-field]');
+            const submit = document.querySelector('[data-menu-submit]');
+            const panelBox = box(panel);
+            const headingBox = box(heading);
+            const backBox = box(back);
+            const closeBox = box(close);
+            const fieldBox = box(field);
+            const submitBox = box(submit);
+            return {
+              panel: panelBox,
+              heading: headingBox,
+              back: backBox,
+              close: closeBox,
+              field: fieldBox,
+              backOverlapsHeading: overlaps(backBox, headingBox),
+              closeOverlapsHeading: overlaps(closeBox, headingBox),
+              closeOverlapsField: overlaps(closeBox, fieldBox),
+              backInsidePanel: !backBox || (backBox.left >= panelBox.left - 1 && backBox.right <= panelBox.right + 1 && backBox.top >= panelBox.top - 1),
+              closeInsidePanel: closeBox.left >= panelBox.left - 1 && closeBox.right <= panelBox.right + 1 && closeBox.top >= panelBox.top - 1,
+              panelInside: panelBox.left >= -1 && panelBox.top >= -1 && panelBox.right <= window.innerWidth + 1 && panelBox.bottom <= window.innerHeight + 1,
+              overflowX: document.documentElement.scrollWidth > window.innerWidth + 1,
+              headingWidth: headingBox.width,
+              closeWidth: closeBox.width,
+              submitWidth: submitBox.width,
+              viewport: { width: window.innerWidth, height: window.innerHeight },
+            };
+          })()`,
+        });
+        const value = (evaluated.result as { value?: {
+          backOverlapsHeading: boolean;
+          closeOverlapsHeading: boolean;
+          closeOverlapsField: boolean;
+          backInsidePanel: boolean;
+          closeInsidePanel: boolean;
+          panelInside: boolean;
+          overflowX: boolean;
+          headingWidth: number;
+          closeWidth: number;
+          submitWidth: number;
+          panel: { width: number; height: number };
+          viewport: { width: number; height: number };
+        } } | undefined)?.value;
+        expect(value, `${screen} ${width}x${height}`).toBeTruthy();
+        expect(value!.viewport).toEqual({ width, height });
+        expect(value!.backOverlapsHeading, JSON.stringify(value)).toBe(false);
+        expect(value!.closeOverlapsHeading, JSON.stringify(value)).toBe(false);
+        expect(value!.closeOverlapsField, JSON.stringify(value)).toBe(false);
+        expect(value!.backInsidePanel, JSON.stringify(value)).toBe(true);
+        expect(value!.closeInsidePanel, JSON.stringify(value)).toBe(true);
+        expect(value!.panelInside, JSON.stringify(value)).toBe(true);
+        expect(value!.overflowX, JSON.stringify(value)).toBe(false);
+        expect(value!.headingWidth).toBeGreaterThan(20);
+        expect(value!.closeWidth).toBeGreaterThanOrEqual(32);
+        expect(value!.submitWidth).toBeGreaterThan(20);
+        expect(value!.panel.width).toBeGreaterThan(80);
+        expect(value!.panel.height).toBeGreaterThan(40);
+      }
+    }
+  }, 180_000);
+
   it('covers the sun with nearer and farther world fragments while clouds stay in front', async () => {
     server?.close();
     const threeModule = readFileSync('node_modules/three/build/three.module.js');

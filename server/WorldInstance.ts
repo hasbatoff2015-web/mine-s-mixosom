@@ -2291,9 +2291,8 @@ export class WorldInstance {
     if (outcome.kind === 'open-auction') {
       this.menuReturn.set(player.id, 'auction');
       this.menuSessions.delete(player.id);
-      this.openAuction(player.id, outcome.view);
       this.auction.markOpenedFromMenu(player.id);
-      this.flushAuction(player);
+      this.openAuction(player.id, outcome.view);
       return;
     }
     if (outcome.kind === 'trade-session') {

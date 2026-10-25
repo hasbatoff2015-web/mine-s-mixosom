@@ -21,7 +21,7 @@ import { inventoryPaintMode, patchContainerDynamic, patchCreativeDynamic, patchR
 import {
   CONTAINER_STRINGS,
 } from './containerStrings';
-import { auctionClaimableClass, auctionIconStack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
+import { auctionBackButtonHtml, auctionClaimableClass, auctionIconStack, auctionShowsBack, auctionSlotHint, clampAuctionAmount, keepAuctionSearchDraft } from './auctionGui';
 import {
   clanBalanceHtml,
   clanIconHtml,
@@ -39,9 +39,8 @@ import {
   containerStageSize,
   containerUiScaleWithClose,
   cursorStackClientPosition,
-  MC_MENU_DONATE_WIDTH,
-  MC_MENU_WIDTH,
   menuLogicalHeight,
+  menuLogicalWidth,
   menuUiScale,
 } from './containerTheme';
 import { viewportMetrics } from './visualViewport';
@@ -50,6 +49,7 @@ import { inventoryKeyDecision } from './inventoryKeys';
 import {
   INVENTORY_DOUBLE_CLICK_MS,
   INVENTORY_TOUCH_LONG_PRESS_MS,
+  nextCatalogScrollTop,
   shouldFollowCarriedPointer,
   stepInventoryGesture,
   type GestureEffect,
@@ -59,6 +59,7 @@ import {
   type PointerZone,
   type SourceClass,
 } from './inventoryPointerGesture';
+import { emoteTouchSelection } from './emotePointer';
 import { resolveInventoryPointerZone } from './inventoryPointerHit';
 import { mobileDropHitContains } from './mobileDropTarget';
 import {
@@ -117,6 +118,7 @@ import {
   friendChatMessageHtml,
   hudChromeStyle,
   menuBackHtml,
+  menuChromeHtml,
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
@@ -492,6 +494,12 @@ export class GameUI {
   onHudPause?: () => void;
   onHudChat?: () => void;
   onHudMenu?: () => void;
+  /** Mobile emote button. Desktop Z stays on InputManager. */
+  onEmoteOpen?: () => void;
+  onEmotePoint?: (dx: number, dy: number) => void;
+  onEmoteCommit?: () => void;
+  onEmoteAbort?: () => void;
+  private emoteGesture?: { pointerId: number; origin: 'button' | 'wheel'; dragSelect: boolean };
   private chatOpen = false;
   private chatHistoryIndex = -1;
   private chatDraft = '';
@@ -599,10 +607,10 @@ export class GameUI {
             <span class="hud-corner-key">M</span>
             <span class="hud-corner-label">Меню</span>
           </button>
-          <div id="hud-emote" role="img" aria-label="Эмоции, клавиша Z">
+          <button type="button" id="hud-emote" data-hud="emote" aria-label="Эмоции">
             <span class="hud-corner-key">Z</span>
             <span class="hud-corner-label">Эмоции</span>
-          </div>
+          </button>
         </div>
         ${emoteWheelHtml()}
         <div id="debug-panel" class="hidden"></div>
@@ -648,6 +656,7 @@ export class GameUI {
     this.root.querySelector('#hud-pause')?.addEventListener('click', () => this.onHudPause?.());
     this.root.querySelector('#hud-chat')?.addEventListener('click', () => this.onHudChat?.());
     this.root.querySelector('#hud-menu')?.addEventListener('click', () => this.onHudMenu?.());
+    this.bindMobileEmote();
     document.addEventListener('pointermove', (event) => {
       if (this.pointerGesture?.pointerId === event.pointerId) return;
       if (!shouldFollowCarriedPointer({
@@ -664,6 +673,7 @@ export class GameUI {
     window.addEventListener('blur', () => {
       this.cancelInventoryGesture();
       this.closeAmountDialog();
+      this.abortMobileEmote();
     });
     this.chatForm.addEventListener('submit', (event) => {
       event.preventDefault();
@@ -1598,6 +1608,74 @@ export class GameUI {
     return !this.emoteWheel.classList.contains('hidden');
   }
 
+  private abortMobileEmote(): void {
+    if (!this.emoteGesture) return;
+    this.emoteGesture = undefined;
+    this.onEmoteAbort?.();
+  }
+
+  /**
+   * Tap opens the existing wheel. A later tap on a sector starts that emote.
+   * Dragging from the button onto a sector also commits. The center and the
+   * dim close the wheel without starting one.
+   */
+  private bindMobileEmote(): void {
+    const button = this.root.querySelector<HTMLButtonElement>('#hud-emote');
+    if (!button) return;
+    const selectionAt = (event: PointerEvent) => {
+      const rect = this.emoteDisc.getBoundingClientRect();
+      return emoteTouchSelection(rect, event.clientX, event.clientY);
+    };
+    const track = (event: PointerEvent) => {
+      const gesture = this.emoteGesture;
+      if (!gesture || gesture.pointerId !== event.pointerId || !this.isEmoteWheelOpen()) return;
+      const selection = selectionAt(event);
+      const box = button.getBoundingClientRect();
+      const overButton = event.clientX >= box.left && event.clientX <= box.right
+        && event.clientY >= box.top && event.clientY <= box.bottom;
+      if (selection.inside && !overButton) gesture.dragSelect = true;
+      if (gesture.origin === 'wheel' || gesture.dragSelect) this.onEmotePoint?.(selection.dx, selection.dy);
+    };
+    const finish = (event: PointerEvent, aborted: boolean) => {
+      const gesture = this.emoteGesture;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      this.emoteGesture = undefined;
+      if (aborted || this.isBlockingOverlay()) {
+        this.onEmoteAbort?.();
+        return;
+      }
+      if (gesture.origin === 'button' && !gesture.dragSelect) return;
+      const selection = selectionAt(event);
+      this.onEmotePoint?.(selection.dx, selection.dy);
+      this.onEmoteCommit?.();
+    };
+    button.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || this.isBlockingOverlay()) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.onEmoteOpen?.();
+      if (!this.isEmoteWheelOpen()) return;
+      this.emoteGesture = { pointerId: event.pointerId, origin: 'button', dragSelect: false };
+      try { button.setPointerCapture(event.pointerId); } catch { /* The listener still sees the bubble. */ }
+    });
+    button.addEventListener('pointermove', track);
+    button.addEventListener('pointerup', (event) => finish(event, false));
+    button.addEventListener('pointercancel', (event) => finish(event, true));
+
+    this.emoteWheel.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0 || this.emoteGesture) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.emoteGesture = { pointerId: event.pointerId, origin: 'wheel', dragSelect: true };
+      const selection = selectionAt(event);
+      this.onEmotePoint?.(selection.dx, selection.dy);
+      try { this.emoteWheel.setPointerCapture(event.pointerId); } catch { /* Synthetic probes have no capture. */ }
+    });
+    this.emoteWheel.addEventListener('pointermove', track);
+    this.emoteWheel.addEventListener('pointerup', (event) => finish(event, false));
+    this.emoteWheel.addEventListener('pointercancel', (event) => finish(event, true));
+  }
+
   showEmoteWheel(): void {
     this.emoteDisc.dataset.selected = '';
     this.emoteWheelTitle.textContent = 'Отмена';
@@ -2189,7 +2267,7 @@ export class GameUI {
   relayoutGameMenu(): void {
     const state = this.menuState;
     if (!state || state.screen === 'closed' || !this.modal) return;
-    const scale = this.menuScale(MC_MENU_WIDTH, menuLogicalHeight(state.screen));
+    const scale = this.menuScale(menuLogicalWidth(state.screen), menuLogicalHeight(state.screen));
     const stage = this.modal.querySelector<HTMLElement>('.mc-menu-stage');
     const current = Number(stage?.style.getPropertyValue('--mc-ui-scale'));
     if (Number.isFinite(current) && Math.abs(current - scale) < 0.01) return;
@@ -3235,6 +3313,7 @@ export class GameUI {
       return;
     }
     const sample = this.pointerSample(event, false);
+    const catalogScroll = this.coarsePointer && target?.closest('[data-creative-catalog]') !== null;
     if (sample.zone === 'slot' || sample.zone === 'drop') event.preventDefault();
     const sourceKey = sample.slotKey;
     const sourceClass = sourceKey ? this.sourceClassFor(sourceKey) : 'none';
@@ -3247,6 +3326,7 @@ export class GameUI {
         sourceOccupied: sourceClass === 'real' && stack !== null,
         sourceClass,
         allowLongPress: this.coarsePointer && sourceKey !== null && isPlayerAmountSlot(sourceKey) && stack !== null,
+        catalogScroll,
       },
     });
     this.pointerGesture = step.gesture;
@@ -3266,6 +3346,8 @@ export class GameUI {
     const before = this.pointerGesture.phase;
     const step = stepInventoryGesture(this.pointerGesture, { type: 'move', sample });
     this.pointerGesture = step.gesture;
+    for (const effect of step.effects) this.applyGestureEffect(effect, sample);
+    if (before === 'pending' && step.gesture?.phase === 'scroll') this.clearLongPressTimer();
     if (before !== 'drag' && step.gesture?.phase === 'drag') {
       this.clearLongPressTimer();
       this.itemTooltip?.hide();
@@ -3339,6 +3421,17 @@ export class GameUI {
 
   private applyGestureEffect(effect: GestureEffect, sample?: PointerSample): void {
     if (effect.type === 'cancel') return;
+    if (effect.type === 'scroll') {
+      const catalog = this.modal?.querySelector<HTMLElement>('[data-creative-catalog]');
+      if (!catalog) return;
+      catalog.scrollTop = nextCatalogScrollTop(
+        catalog.scrollTop,
+        catalog.scrollHeight,
+        catalog.clientHeight,
+        effect.dy,
+      );
+      return;
+    }
     if (effect.type === 'long-press') {
       const pointerId = this.pointerGesture?.pointerId;
       this.openAmountDialog(effect.key);
@@ -3973,6 +4066,11 @@ export class GameUI {
       this.renderAuction();
       return;
     }
+    if (auctionShowsBack(prev.screen, prev.source) !== auctionShowsBack(state.screen, state.source)) {
+      this.auctionState = state;
+      this.renderAuction();
+      return;
+    }
     this.auctionState = state;
     if (state.screen === 'browse' || state.screen === 'mine') {
       this.patchAuctionList(state);
@@ -4036,13 +4134,13 @@ export class GameUI {
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
-    const back = state.source === 'menu' && (state.screen === 'browse' || state.screen === 'sell-pick' || state.screen === 'mine')
-      ? `<button type="button" class="mc-close mc-back" data-ah-action="back" aria-label="Назад">←</button>`
+    const back = auctionShowsBack(state.screen, state.source)
+      ? `<div class="mc-ah-back-row">${auctionBackButtonHtml()}</div>`
       : '';
     this.modal!.innerHTML = `
       <div class="mc-stage" style="${overlayStageStyle(scale, 176)}">
-        ${back}
         <div class="mc-panel" data-container-kind="chest">
+          ${back}
           ${this.auctionBodyHtml(state)}
         </div>
         ${this.closeButtonHtml()}
@@ -4094,7 +4192,6 @@ export class GameUI {
         <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="buy">КУПИТЬ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4114,7 +4211,6 @@ export class GameUI {
         </label>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="create">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4140,7 +4236,6 @@ export class GameUI {
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="cancel">СНЯТЬ С ПРОДАЖИ</button>
           <button type="button" class="mc-ah-btn" data-ah-action="relist">ИЗМЕНИТЬ ЦЕНУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4154,7 +4249,6 @@ export class GameUI {
         </label>
         <div class="mc-ah-actions">
           <button type="button" class="mc-ah-btn" data-ah-action="confirm-relist">ВЫСТАВИТЬ НА ПРОДАЖУ</button>
-          <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
         </div>
         ${message}
       </div>`;
@@ -4165,7 +4259,6 @@ export class GameUI {
       <p class="mc-ah-prompt">${this.escape(state.selected?.prompt ?? '')}</p>
       <div class="mc-ah-actions">
         <button type="button" class="mc-ah-btn" data-ah-action="claim">ЗАБРАТЬ</button>
-        <button type="button" class="mc-ah-btn" data-ah-action="back">ОТМЕНА</button>
       </div>
       ${message}
     </div>`;
@@ -5044,9 +5137,7 @@ export class GameUI {
     const preservedScroll = sameChat ? this.captureFriendChatScroll() : undefined;
     if (!sameChat) this.friendChat = undefined;
     const keep = this.captureMenuInputFocus();
-    const logicalWidth = state.screen === 'donate' || state.screen.startsWith('donate-')
-      ? MC_MENU_DONATE_WIDTH
-      : MC_MENU_WIDTH;
+    const logicalWidth = menuLogicalWidth(state.screen);
     const logicalHeight = menuLogicalHeight(state.screen);
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
@@ -5057,11 +5148,10 @@ export class GameUI {
     const modal = this.resetOverlayModal();
     modal.innerHTML = `
       <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
-        ${menuBackHtml(state.screen)}
         <div class="${panelClass}" data-container-kind="chest" data-menu-panel>
+          ${menuChromeHtml(menuBackHtml(state.screen), this.closeButtonHtml())}
           ${menuBodyHtml(state, (value) => this.escape(value))}
         </div>
-        ${this.closeButtonHtml()}
       </div>`;
     this.bindGameMenuChrome();
     this.applyFriendChatPanelHeight();
@@ -5562,20 +5652,21 @@ export class GameUI {
     const actions = this.tradeActions;
     if (!state || !actions || state.screen === 'closed') return;
     const keep = this.captureTradeInputFocus();
-    const scale = this.menuScale(MC_MENU_WIDTH, 248);
+    const logicalWidth = menuLogicalWidth('trade');
+    const scale = this.menuScale(logicalWidth, 248);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
     this.resetOverlayModal();
     this.modal!.innerHTML = `
-      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, MC_MENU_WIDTH)}">
+      <div class="mc-stage mc-menu-stage" style="${overlayStageStyle(scale, logicalWidth)}">
         <div class="mc-panel mc-menu-panel" data-container-kind="chest" data-menu-panel>
+          ${menuChromeHtml('', this.closeButtonHtml())}
           ${tradeWindowChrome(state, (value) => this.escape(value), {
             self: this.tradeSlotCells(state.selfSlots, 'self'),
             partner: this.tradeSlotCells(state.partnerSlots, 'partner'),
             inventory: this.tradeInventoryCells(state),
           })}
         </div>
-        ${this.closeButtonHtml()}
         <div class="mc-item-tooltip"></div>
       </div>`;
     this.bindTradeChrome();

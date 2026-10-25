@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-10-25: Mobile touch, menu chrome, auction back
+
+- [x] Separate usable and breakable block facts. Hold mines a crafting table, furnace, or chest. Tap still opens it.
+- [x] Creative catalog: vertical swipe scrolls, tap still grants one item, regular slot drags stay.
+- [x] Buyer NPC joins the mobile use ray through the existing `buyer_interact` send.
+- [x] Emote HUD control is a button and drives the existing wheel. Z stays on the keyboard.
+- [x] Game-menu and trade chrome keeps back and close inside the panel. Auction back follows the server parent.
+- [ ] Not merged. A physical phone pass is still for the owner. Headless Chrome checked the menu rects.
+
 ## 2026-10-20: Skin rarity catalog and store UI
 
 - [x] Classify the 64 production skins as 40 common, 14 rare, 8 epic, and 2 legendary.
