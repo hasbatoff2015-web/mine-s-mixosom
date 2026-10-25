@@ -1838,6 +1838,11 @@ textarea,
   cursor: default;
 }
 
+/* Seller trade: move «Количество» and «Вы заплатите» closer to the − / + row. */
+[data-buyer-screen="trade"][data-buyer-role="seller"] .mc-ah-amount + .mc-ah-prompt {
+  margin-top: 0;
+}
+
 .mc-ah-actions {
   display: flex;
   flex-direction: column;
