@@ -5457,7 +5457,7 @@ export class Game {
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
             attackerId: LOCAL_PLAYER_FOCUS_ID,
-            ...(godSwordHit ? { lethal: true } : {}),
+            ...(godSwordHit && mobTarget.mob.kind === 'mega_zombie' ? { lethal: true } : {}),
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {

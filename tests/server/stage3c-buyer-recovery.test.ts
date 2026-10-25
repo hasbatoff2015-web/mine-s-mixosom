@@ -114,8 +114,10 @@ describe.skipIf(databaseUrl === '')('stage 3C buyer sale recovery', () => {
     let world = await boot(dataDir, schema);
     let ada = await enter(world, 'Ada');
     ada.inventory.clear();
+    world.permissions.op(ada.id);
     const balance = (world.money as EconomyService).getBalance(ada.id);
     world.handleChat(ada, '/give diamond 16');
+    expect(ada.inventory.count(ItemId.Diamond)).toBe(16);
     const created = world.buyer.create({
       name: 'Ювелир', worldId: world.worldId, x: 2, y: 64, z: 2, yaw: 0, pitch: 0,
     });
@@ -136,6 +138,7 @@ describe.skipIf(databaseUrl === '')('stage 3C buyer sale recovery', () => {
     expect(paidSinks).toEqual([expect.objectContaining({ quantity: 16, sourceId: soldId })]);
 
     world.handleChat(ada, '/give diamond 8');
+    expect(ada.inventory.count(ItemId.Diamond)).toBe(8);
     expect(world.buyer.openTrade(ada.id, created.buyer!.id, ada.inventory).ok).toBe(true);
     expect(world.buyer.handleAction(ada.id, ada.inventory, {
       type: 'buyer_action', action: 'select_slot', slot: 0,

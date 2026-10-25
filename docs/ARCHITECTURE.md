@@ -162,7 +162,7 @@ The sprite is generated from `iron_sword.png` without changing alpha. Blade gray
 
 Rendering classifies every `kind: 'weapon', weapon: 'sword'` item as handheld with the third-person `sword` pose. God Sword does not add a mesh, scale, or grip.
 
-`ServerGameplay.meleePlayer` reads `attacker.inventory.getSlot(selectedSlot)`, where `selectedSlot` is the attack action slot. If that stack is `god_sword`, `hurtPlayerResult` passes `forceLethal: true` into `SurvivalSystem.damage`. The client attack packet stays the existing `attack` intent. Mob melee does not set the flag, so a mob takes the normal 10 damage. PvP permission, `playerDamage` cancellation, reach, line of sight, and Creative immunity still run before `damage()`.
+`ServerGameplay.meleePlayer` reads `attacker.inventory.getSlot(selectedSlot)`, where `selectedSlot` is the attack action slot. If that stack is `god_sword`, `hurtPlayerResult` passes `forceLethal: true` into `SurvivalSystem.damage`. The client attack packet stays the existing `attack` intent. Mob melee sets `lethal` only for `mega_zombie`. Every other mob takes the normal 10 damage and can survive it. PvP permission, `playerDamage` cancellation, reach, line of sight, and Creative immunity still run before `damage()`.
 
 `forceLethal` is not a large damage number. The branch ignores hurt resistance, sword blocking, armor, and absorption, does not wear armor, sets health to 0, and records `dealt` as the health that was present. The following lines are the existing death-protection hook: offhand Totem only, then 1 HP, Regeneration II for 900 ticks, Fire Resistance for 800 ticks, and Absorption II for 100 ticks. `WorldInstance` still emits `totem.activate` and `totem_activate` on the next tick from `totemActivated`.
 

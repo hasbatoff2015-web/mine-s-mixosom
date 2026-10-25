@@ -4536,6 +4536,7 @@ export class WorldInstance {
   ): { ok: true } | { ok: false; reason: string } {
     const { action } = pending;
     if (pose.dead) return { ok: false, reason: 'dead' };
+    if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
     const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
     if (!slot.ok) return { ok: false, reason: slot.reason === 'stale' ? 'stale' : 'slot' };
     const mob = this.gameplay.mobs.get(pending.target.mobId);

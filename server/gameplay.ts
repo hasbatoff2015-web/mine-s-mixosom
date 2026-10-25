@@ -2049,7 +2049,7 @@ export class ServerGameplay {
       attackerYaw: result.attackerYaw,
       extraKnockbackLevel: result.extraKnockbackLevel,
       attackerId: attacker.id,
-      ...(godSwordHit ? { lethal: true } : {}),
+      ...(godSwordHit && mob.kind === 'mega_zombie' ? { lethal: true } : {}),
     });
     if (accepted) {
       this.events.emit('entityDamaged', { entityId: mob.id, amount: result.damage, cause: 'melee' });
