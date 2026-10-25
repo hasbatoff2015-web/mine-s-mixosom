@@ -2612,6 +2612,10 @@ textarea,
   scrollbar-width: none;
 }
 
+.mc-menu-panel > .mc-menu-body.mc-menu-root {
+  padding-top: calc(4px * var(--mc-ui-scale, 3));
+}
+
 .mc-stage > .mc-close:not(.mc-back),
 .mc-menu-chrome > .mc-close:not(.mc-back),
 .mc-container-side-rail > .mc-close:not(.mc-back) {

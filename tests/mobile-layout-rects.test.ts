@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -582,22 +582,25 @@ describe('coarse mobile layout rects', () => {
     const { menuChromeHtml, menuRootHtml, overlayStageStyle } = await import('../src/ui/gameMenuGui');
     const body = menuRootHtml({ balance: 1200, balanceLabel: '1.2K' });
     const close = '<button type="button" class="mc-close" data-ui="close" aria-label="Закрыть"><span class="mc-close-x">×</span></button>';
+    const mainStyle = execFileSync('git', ['show', 'origin/main:src/style.css'], { encoding: 'utf8' });
     server = createServer((request, response) => {
       const url = new URL(request.url ?? '/', 'http://127.0.0.1');
       const width = Number(url.searchParams.get('w') ?? 1280);
       const height = Number(url.searchParams.get('h') ?? 720);
+      const legacy = url.searchParams.get('legacy') === '1';
       const logicalWidth = menuLogicalWidth('root', width);
       const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      const chrome = legacy ? '' : menuChromeHtml('', close);
       response.setHeader('content-type', 'text/html; charset=utf-8');
       response.end(`<!doctype html><html><head><meta charset="utf-8"><style>
         :root { --touch-target: 44px; }
         html, body, #app { margin: 0; width: 100%; height: 100%; }
-        ${style}
+        ${legacy ? mainStyle : style}
       </style></head><body><div id="app">
         <div class="modal-backdrop mc-backdrop">
           <div class="mc-stage mc-menu-stage" data-root-stage style="${overlayStageStyle(scale, logicalWidth)}">
             <div class="mc-panel mc-menu-panel" data-menu-panel>
-              ${menuChromeHtml('', close)}
+              ${chrome}
               ${body}
             </div>
           </div>
@@ -608,6 +611,14 @@ describe('coarse mobile layout rects', () => {
     const address = server.address();
     if (!address || typeof address === 'string') throw new Error('root menu server has no port');
     const origin = `http://127.0.0.1:${address.port}`;
+    const featureGeometry = new Map<string, {
+      panelWidth: number;
+      panelHeight: number;
+      headingInset: number;
+      firstTileInset: number;
+      tileHeight: number;
+      lastBottom: number;
+    }>();
     const viewports = [
       [640, 360],
       [667, 375],
@@ -689,11 +700,20 @@ describe('coarse mobile layout rects', () => {
             headingSize: Number.parseFloat(getComputedStyle(heading).fontSize),
             headingColor: getComputedStyle(heading).color,
             headingPadLeft: Number.parseFloat(getComputedStyle(heading).paddingLeft),
+            panelPadTop: Number.parseFloat(getComputedStyle(panel).paddingTop),
+            bodyPadTop: Number.parseFloat(getComputedStyle(menuBody).paddingTop),
+            headingInset: box(heading).top - box(panel).top,
+            firstTileInset: tiles[0].top - box(panel).top,
+            closeOverlapsTile: tiles.some((tile) => {
+              const button = close.getBoundingClientRect();
+              return button.left < tile.right - 1 && button.right > tile.left + 1
+                && button.top < tile.bottom - 1 && button.bottom > tile.top + 1;
+            }),
           };
         })()`,
       });
       const value = (evaluated.result as { value?: {
-        panel: { width: number; height: number };
+        panel: { width: number; height: number; top: number };
         tiles: Array<{ width: number; height: number; bottom: number }>;
         close: { width: number; height: number };
         scale: string;
@@ -706,6 +726,11 @@ describe('coarse mobile layout rects', () => {
         headingSize: number;
         headingColor: string;
         headingPadLeft: number;
+        panelPadTop: number;
+        bodyPadTop: number;
+        headingInset: number;
+        firstTileInset: number;
+        closeOverlapsTile: boolean;
       } } | undefined)?.value;
       expect(value, `${width}x${height}`).toBeTruthy();
       expect(value!.overflowX, `${width}x${height}`).toBe(false);
@@ -723,10 +748,75 @@ describe('coarse mobile layout rects', () => {
       expect(value!.headingSize, `${width}x${height}`).toBeCloseTo(Math.max(13, 11 * scale), 0);
       expect(value!.headingColor.replace(/\s/g, ''), `${width}x${height}`).toBe('rgb(244,244,244)');
       expect(value!.headingPadLeft, `${width}x${height}`).toBeLessThan(1);
+      expect(value!.panelPadTop + value!.bodyPadTop, `${width}x${height} top inset`).toBeCloseTo(10 * scale, 0);
+      expect(value!.headingInset, `${width}x${height} heading`).toBeCloseTo(10 * scale, 0);
+      expect(value!.closeOverlapsTile, `${width}x${height}`).toBe(false);
       if (height >= 720) {
         expect(value!.bodyScroll, `${width}x${height} scroll`).toBeLessThan(2);
         expect(value!.tiles[9]!.bottom, `${width}x${height} last tile`).toBeLessThanOrEqual(value!.body.bottom + 2);
       }
+      featureGeometry.set(`${width}x${height}`, {
+        panelWidth: value!.panel.width,
+        panelHeight: value!.panel.height,
+        headingInset: value!.headingInset,
+        firstTileInset: value!.firstTileInset,
+        tileHeight: value!.tiles[0]!.height,
+        lastBottom: value!.tiles[9]!.bottom - value!.panel.top,
+      });
+    }
+    for (const [width, height] of [[844, 390], [1280, 720], [1920, 1080]] as const) {
+      const logicalWidth = menuLogicalWidth('root', width);
+      const scale = menuUiScale(width, height, logicalWidth, menuLogicalHeight('root'));
+      await launched.cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await launched.cdp.send('Page.navigate', { url: `${origin}/?w=${width}&h=${height}&legacy=1` });
+      let ready = false;
+      for (let attempt = 0; attempt < 40 && !ready; attempt += 1) {
+        const probe = await launched.cdp.send('Runtime.evaluate', {
+          returnByValue: true,
+          expression: 'document.querySelectorAll(".mc-menu-tile").length === 10 && !document.querySelector("[data-ui=\\"close\\"]")',
+        });
+        ready = (probe.result as { value?: boolean } | undefined)?.value === true;
+        if (!ready) await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!ready) throw new Error(`legacy root menu did not render at ${width}x${height}`);
+      const evaluated = await launched.cdp.send('Runtime.evaluate', {
+        returnByValue: true,
+        expression: `(() => {
+          const panel = document.querySelector('[data-menu-panel]').getBoundingClientRect();
+          const heading = document.querySelector('.mc-menu-heading').getBoundingClientRect();
+          const tile = document.querySelector('.mc-menu-tile').getBoundingClientRect();
+          const last = [...document.querySelectorAll('.mc-menu-tile')].at(-1).getBoundingClientRect();
+          return {
+            panelWidth: panel.width,
+            panelHeight: panel.height,
+            headingInset: heading.top - panel.top,
+            firstTileInset: tile.top - panel.top,
+            tileHeight: tile.height,
+            lastBottom: last.bottom - panel.top,
+          };
+        })()`,
+      });
+      const legacy = (evaluated.result as { value?: {
+        panelWidth: number;
+        panelHeight: number;
+        headingInset: number;
+        firstTileInset: number;
+        tileHeight: number;
+        lastBottom: number;
+      } } | undefined)?.value;
+      const feature = featureGeometry.get(`${width}x${height}`)!;
+      expect(legacy, `${width}x${height} legacy`).toBeTruthy();
+      expect(legacy!.headingInset, `${width}x${height} main heading`).toBeCloseTo(10 * scale, 0);
+      expect(Math.abs(feature.panelWidth - legacy!.panelWidth), `${width}x${height} width`).toBeLessThan(20);
+      expect(Math.abs(feature.panelHeight - legacy!.panelHeight), `${width}x${height} height`).toBeLessThan(24);
+      expect(Math.abs(feature.headingInset - legacy!.headingInset), `${width}x${height} heading inset`).toBeLessThan(4);
+      expect(Math.abs(feature.tileHeight - legacy!.tileHeight), `${width}x${height} tile`).toBeLessThan(4);
+      expect(Math.abs(feature.firstTileInset - legacy!.firstTileInset), `${width}x${height} first tile`).toBeLessThan(16);
     }
   }, 90_000);
 
