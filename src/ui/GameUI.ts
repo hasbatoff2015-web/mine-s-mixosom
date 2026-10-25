@@ -94,7 +94,7 @@ import {
   type ChatMessage,
 } from '../chat';
 import { MAX_CHAT_LENGTH, MAX_PLAYER_NAME_LENGTH, MIN_PLAYER_NAME_LENGTH } from '../../shared/config';
-import { DONATION_COLORS, sanitizePlayerNameStyle } from '../../shared/donationRanks';
+import { DONATION_COLORS, isDonationColorId, sanitizePlayerNameStyle } from '../../shared/donationRanks';
 import { playerNicknameError } from '../../shared/playerName';
 import {
   FRIENDS_ALREADY_LABEL,
@@ -121,6 +121,7 @@ import {
   menuBodyHtml,
   overlayStageStyle,
 } from './gameMenuGui';
+import { applyDonatePlayerFilter } from './donateMenuGui';
 import { EMOTE_IDS, EMOTE_LABELS, type EmoteId } from '../../shared/emotes';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
@@ -492,6 +493,8 @@ export class GameUI {
   private menuForceRender = false;
   /** Last server text applied to each echo field, plus the draft last sent. */
   private fieldEcho = new Map<string, FieldEcho>();
+  /** Nick color picked locally and not yet confirmed by donate_color. */
+  private pendingNickColor: string | null = null;
   /** Logical px copied from the friends panel so opening a chat does not resize it. */
   private friendChatLogicalHeight?: number;
   private readonly friendChatComposer = createFriendChatComposerLedger();
@@ -2256,6 +2259,7 @@ export class GameUI {
 
   closeGameMenu(options?: OverlayCloseOptions): void {
     if (!this.menuState) return;
+    this.pendingNickColor = null;
     this.menuState = undefined;
     this.friendChat = undefined;
     this.friendChatLogicalHeight = undefined;
@@ -5350,6 +5354,7 @@ export class GameUI {
       </div>`;
     this.bindGameMenuChrome();
     this.applyFriendChatPanelHeight();
+    this.reconcileDonateLocalState();
     this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
@@ -5552,7 +5557,48 @@ export class GameUI {
     patchPreservingFocus(live, fresh, document.activeElement, (current, incoming) => {
       this.syncEchoField(current, incoming, false);
     });
+    this.reconcileDonateLocalState();
     return true;
+  }
+
+  /** Applied nick color comes from the server. A picked swatch stays until confirm, reset, or leave. */
+  private reconcileDonateLocalState(): void {
+    const screen = this.menuState?.screen;
+    const choices = this.menuState?.donate?.nickChoices ?? [];
+    if (screen !== 'donate-color' || (this.pendingNickColor !== null && !choices.includes(this.pendingNickColor))) {
+      this.pendingNickColor = null;
+    } else if (this.pendingNickColor !== null && this.menuState?.donate?.nickColor === this.pendingNickColor) {
+      this.pendingNickColor = null;
+    }
+    this.paintPendingNickColor();
+    if ((screen === 'donate-invsee' || screen === 'donate-invsee-op') && this.modal) {
+      applyDonatePlayerFilter(this.modal);
+    }
+  }
+
+  private paintPendingNickColor(): void {
+    if (!this.modal || this.menuState?.screen !== 'donate-color') return;
+    const pick = this.modal.querySelector<HTMLElement>('[data-donate-color-pick]');
+    if (!pick) {
+      this.pendingNickColor = null;
+      return;
+    }
+    const id = this.pendingNickColor;
+    const preview = this.modal.querySelector<HTMLElement>('[data-donate-preview]');
+    if (!id) {
+      delete pick.dataset.selected;
+      for (const entry of this.modal.querySelectorAll<HTMLElement>('[data-donate-swatch]')) {
+        entry.classList.remove('is-selected');
+      }
+      const applied = this.menuState.donate?.nickColor;
+      if (preview && applied && isDonationColorId(applied)) preview.style.color = DONATION_COLORS[applied];
+      return;
+    }
+    pick.dataset.selected = id;
+    if (preview && isDonationColorId(id)) preview.style.color = DONATION_COLORS[id];
+    for (const entry of this.modal.querySelectorAll<HTMLElement>('[data-donate-swatch]')) {
+      entry.classList.toggle('is-selected', entry.dataset.donateSwatch === id);
+    }
   }
 
   private resetFieldEcho(root: ParentNode): void {
@@ -5664,19 +5710,8 @@ export class GameUI {
       field.addEventListener('keydown', (event) => event.stopPropagation());
       field.addEventListener('keyup', (event) => event.stopPropagation());
     }
-    const search = this.modal!.querySelector<HTMLInputElement>('[data-donate-search]');
-    const playerList = this.modal!.querySelector<HTMLElement>('[data-donate-player-list]');
-    const searchEmpty = this.modal!.querySelector<HTMLElement>('[data-donate-search-empty]');
-    search?.addEventListener('input', () => {
-      const query = search.value.trim().toLowerCase();
-      let shown = 0;
-      for (const row of playerList?.querySelectorAll<HTMLElement>('[data-donate-player-row]') ?? []) {
-        const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
-        const match = query.length === 0 || name.includes(query);
-        row.hidden = !match;
-        if (match) shown += 1;
-      }
-      if (searchEmpty) searchEmpty.hidden = shown > 0 || query.length === 0;
+    this.modal!.querySelector<HTMLInputElement>('[data-donate-search]')?.addEventListener('input', () => {
+      applyDonatePlayerFilter(this.modal!);
     });
     this.bindFriendChatComposer();
     const lists = this.modal!.querySelectorAll<HTMLElement>('.mc-menu-list, .mc-friend-chat-log');
@@ -5822,13 +5857,10 @@ export class GameUI {
       }
       const swatch = target.closest<HTMLElement>('[data-donate-swatch]');
       if (swatch?.dataset.donateSwatch) {
-        const pick = this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]');
-        if (pick) pick.dataset.selected = swatch.dataset.donateSwatch;
-        const preview = this.modal?.querySelector<HTMLElement>('[data-donate-preview]');
-        if (preview) preview.style.color = swatch.style.backgroundColor;
-        for (const entry of this.modal?.querySelectorAll<HTMLElement>('[data-donate-swatch]') ?? []) {
-          entry.classList.toggle('is-selected', entry === swatch);
-        }
+        const choices = current.donate?.nickChoices ?? [];
+        if (!choices.includes(swatch.dataset.donateSwatch)) return;
+        this.pendingNickColor = swatch.dataset.donateSwatch;
+        this.paintPendingNickColor();
         return;
       }
       const button = target.closest<HTMLElement>('[data-menu-action]');
@@ -5862,9 +5894,16 @@ export class GameUI {
         return;
       }
       if (kind === 'donate_color') {
-        const selected = button?.dataset.donateColor
-          ?? this.modal?.querySelector<HTMLElement>('[data-donate-color-pick]')?.dataset.selected;
-        if (!selected) {
+        if (button?.dataset.donateColor === 'reset') {
+          this.pendingNickColor = null;
+          this.paintPendingNickColor();
+          actions.send({ type: 'menu_action', action: 'donate_color', color: 'reset', name: 'reset' });
+          return;
+        }
+        const selected = this.pendingNickColor;
+        const choices = current.donate?.nickChoices ?? [];
+        if (!selected || !choices.includes(selected)) {
+          this.pendingNickColor = null;
           const note = this.modal?.querySelector<HTMLElement>('[data-menu-message]');
           if (note) {
             note.hidden = false;

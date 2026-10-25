@@ -21,6 +21,24 @@ function card(action: NetworkDonateAction, escape: (value: string) => string): s
   </button>`;
 }
 
+/** Local nick search over the rows the latest server list actually rendered. */
+export function applyDonatePlayerFilter(root: ParentNode): void {
+  const search = root.querySelector<HTMLInputElement>('[data-donate-search]');
+  const list = root.querySelector<HTMLElement>('[data-donate-player-list]');
+  const empty = root.querySelector<HTMLElement>('[data-donate-search-empty]');
+  if (!search || !list) return;
+  const query = search.value.trim().toLowerCase();
+  const rows = list.querySelectorAll<HTMLElement>('[data-donate-player-row]');
+  let shown = 0;
+  for (const row of rows) {
+    const name = (row.dataset.donatePlayerRow ?? '').toLowerCase();
+    const match = query.length === 0 || name.includes(query);
+    row.hidden = !match;
+    if (match) shown += 1;
+  }
+  if (empty) empty.hidden = rows.length === 0 || shown > 0 || query.length === 0;
+}
+
 function messageHtml(message: string, escape: (value: string) => string): string {
   return `<div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message)}</div>`;
 }

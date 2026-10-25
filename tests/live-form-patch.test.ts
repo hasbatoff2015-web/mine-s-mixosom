@@ -452,6 +452,177 @@ describe('auction, clan, and buyer patches', () => {
   });
 });
 
+function donateShell(
+  screen: 'donate-color' | 'donate-invsee' | 'donate-invsee-op',
+  donate: Partial<NonNullable<ServerMenuMessage['donate']>>,
+  message?: string,
+): ServerMenuMessage {
+  return {
+    type: 'menu',
+    screen,
+    title: 'Донат',
+    ...(message ? { message } : {}),
+    donate: {
+      rankLabel: 'PREMIUM',
+      summary: '',
+      remainingLabel: '30 дней',
+      perks: [],
+      actions: [
+        { id: 'nickcolor', label: 'Цвет ника', available: true, detail: 'PREMIUM', screen: 'donate-color' },
+        { id: 'invsee', label: 'Смотреть', available: true, detail: 'Только просмотр', screen: 'donate-invsee' },
+        { id: 'invseeop', label: 'Изменить', available: true, detail: 'Только для OP', screen: 'donate-invsee-op' },
+      ],
+      kits: [],
+      catalog: [],
+      nickChoices: ['white', 'gold', 'red'],
+      nickColor: 'white',
+      previewName: 'Ada',
+      onlinePlayers: [],
+      showInvseeOp: true,
+      ...donate,
+    },
+  };
+}
+
+function visiblePlayers(root: ParentNode): string[] {
+  return [...root.querySelectorAll<HTMLElement>('[data-donate-player-row]')]
+    .filter((row) => !row.hidden)
+    .map((row) => row.dataset.donatePlayerRow ?? '');
+}
+
+describe('donate pending color and player search', () => {
+  it('keeps a picked nick color across a server snapshot and applies that color once', () => {
+    const { root, ui } = mount();
+    const sent: ClientMenuActionMessage[] = [];
+    ui.openGameMenu(donateShell('donate-color', { nickColor: 'white' }), {
+      send: (message) => sent.push(message),
+      close() {},
+    });
+    root.querySelector<HTMLButtonElement>('[data-donate-swatch="gold"]')!.click();
+    expect(root.querySelector('[data-donate-swatch="gold"]')!.classList.contains('is-selected')).toBe(true);
+    expect(root.querySelector('[data-donate-swatch="white"]')!.classList.contains('is-selected')).toBe(false);
+    expect(root.querySelector<HTMLElement>('[data-donate-preview]')!.style.color.toLowerCase()).toContain('ffd700');
+    expect(sent).toEqual([]);
+    ui.applyGameMenu(donateShell('donate-color', { nickColor: 'white' }, 'Баланс обновлён'));
+    expect(root.querySelector('[data-donate-swatch="gold"]')!.classList.contains('is-selected')).toBe(true);
+    expect(root.querySelector<HTMLElement>('[data-donate-color-pick]')!.dataset.selected).toBe('gold');
+    expect(root.querySelector<HTMLElement>('[data-donate-preview]')!.style.color.toLowerCase()).toContain('ffd700');
+    expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Баланс обновлён');
+    root.querySelector<HTMLButtonElement>('[data-menu-action="donate_color"]:not([data-donate-color])')!.click();
+    expect(sent).toEqual([{ type: 'menu_action', action: 'donate_color', color: 'gold', name: 'gold' }]);
+  });
+
+  it('drops the pending color after the server applies it, after reset, and after the menu closes', () => {
+    const { root, ui } = mount();
+    const sent: ClientMenuActionMessage[] = [];
+    const actions = { send: (message: ClientMenuActionMessage) => sent.push(message), close() {} };
+    ui.openGameMenu(donateShell('donate-color', { nickColor: 'white' }), actions);
+    root.querySelector<HTMLButtonElement>('[data-donate-swatch="gold"]')!.click();
+    ui.applyGameMenu(donateShell('donate-color', { nickColor: 'gold' }));
+    expect(root.querySelector('[data-donate-swatch="gold"]')!.classList.contains('is-current')).toBe(true);
+    expect(root.querySelector('[data-donate-swatch="gold"]')!.classList.contains('is-selected')).toBe(false);
+    expect(root.querySelector<HTMLElement>('[data-donate-color-pick]')!.dataset.selected).toBeUndefined();
+
+    root.querySelector<HTMLButtonElement>('[data-donate-swatch="red"]')!.click();
+    root.querySelector<HTMLButtonElement>('[data-donate-color="reset"]')!.click();
+    expect(sent).toEqual([{ type: 'menu_action', action: 'donate_color', color: 'reset', name: 'reset' }]);
+    expect(root.querySelector('[data-donate-swatch="red"]')!.classList.contains('is-selected')).toBe(false);
+    expect(root.querySelector<HTMLElement>('[data-donate-preview]')!.style.color.toLowerCase()).toContain('ffd700');
+
+    root.querySelector<HTMLButtonElement>('[data-donate-swatch="gold"]')!.click();
+    ui.closeGameMenu();
+    ui.openGameMenu(donateShell('donate-color', { nickColor: 'white' }), actions);
+    expect(root.querySelector('[data-donate-swatch="gold"]')!.classList.contains('is-selected')).toBe(false);
+    expect(root.querySelector('[data-donate-swatch="white"]')!.classList.contains('is-current')).toBe(true);
+    root.querySelector<HTMLButtonElement>('[data-menu-action="donate_color"]:not([data-donate-color])')!.click();
+    expect(sent.filter((message) => message.color === 'gold')).toEqual([]);
+    expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Выберите цвет.');
+  });
+
+  it('refuses a pending color the server removed from the palette', () => {
+    const { root, ui } = mount();
+    const sent: ClientMenuActionMessage[] = [];
+    ui.openGameMenu(donateShell('donate-color', { nickColor: 'white', nickChoices: ['white', 'gold', 'red'] }), {
+      send: (message) => sent.push(message),
+      close() {},
+    });
+    root.querySelector<HTMLButtonElement>('[data-donate-swatch="gold"]')!.click();
+    ui.applyGameMenu(donateShell('donate-color', {
+      nickColor: 'white',
+      nickChoices: ['white', 'red'],
+      actions: [{ id: 'nickcolor', label: 'Цвет ника', available: true, detail: 'PREMIUM', screen: 'donate-color' }],
+    }));
+    expect(root.querySelector('[data-donate-swatch="gold"]')).toBeNull();
+    expect(root.querySelector('[data-donate-swatch="red"]')!.classList.contains('is-selected')).toBe(false);
+    root.querySelector<HTMLButtonElement>('[data-menu-action="donate_color"]:not([data-donate-color])')!.click();
+    expect(sent.filter((message) => message.action === 'donate_color')).toEqual([]);
+    expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Выберите цвет.');
+  });
+
+  it('filters the latest online player list without losing the search text', () => {
+    const { root, ui } = mount();
+    const sent: ClientMenuActionMessage[] = [];
+    const players = (names: string[]) => names.map((name) => ({ playerId: name.toLowerCase(), name }));
+    const open = (screen: 'donate-invsee' | 'donate-invsee-op', names: string[], available = true) => donateShell(screen, {
+      onlinePlayers: players(names),
+      showInvseeOp: screen === 'donate-invsee-op',
+      actions: [
+        { id: 'invsee', label: 'Смотреть', available: screen === 'donate-invsee' ? available : true, detail: 'Только просмотр', screen: 'donate-invsee' },
+        { id: 'invseeop', label: 'Изменить', available: screen === 'donate-invsee-op' ? available : false, detail: 'Только для OP', screen: 'donate-invsee-op' },
+      ],
+    });
+    ui.openGameMenu(open('donate-invsee', ['Alex', 'Bob', 'Alice']), {
+      send: (message) => sent.push(message),
+      close() {},
+    });
+    const search = root.querySelector<HTMLInputElement>('[data-donate-search]')!;
+    typeInto(search, 'Al');
+    expect(visiblePlayers(root)).toEqual(['Alex', 'Alice']);
+    expect(root.querySelector<HTMLElement>('[data-donate-player-row="Bob"]')!.hidden).toBe(true);
+    ui.applyGameMenu(open('donate-invsee', ['Alex', 'Bob', 'Alice']));
+    expect(root.querySelector('[data-donate-search]')).toBe(search);
+    expect(search.value).toBe('Al');
+    expect(document.activeElement).toBe(search);
+    expect(visiblePlayers(root)).toEqual(['Alex', 'Alice']);
+
+    ui.applyGameMenu(open('donate-invsee', ['Alice', 'Alexey', 'Bob']));
+    expect(visiblePlayers(root)).toEqual(['Alice', 'Alexey']);
+    expect(root.querySelector('[data-donate-player-row="Alex"]')).toBeNull();
+    expect(root.querySelector<HTMLElement>('[data-donate-player-row="Bob"]')!.hidden).toBe(true);
+
+    search.value = 'zzz';
+    search.dispatchEvent(new Event('input'));
+    expect(visiblePlayers(root)).toEqual([]);
+    expect(root.querySelector<HTMLElement>('[data-donate-search-empty]')!.hidden).toBe(false);
+    ui.applyGameMenu(open('donate-invsee', ['Alice', 'Alexey', 'Bob', 'Zzz']));
+    expect(root.querySelector<HTMLElement>('[data-donate-search-empty]')!.hidden).toBe(true);
+    expect(visiblePlayers(root)).toEqual(['Zzz']);
+
+    search.value = '';
+    search.dispatchEvent(new Event('input'));
+    expect(visiblePlayers(root)).toEqual(['Alice', 'Alexey', 'Bob', 'Zzz']);
+
+    ui.openGameMenu(open('donate-invsee-op', ['Alex', 'Bob']), { send: (message) => sent.push(message), close() {} });
+    const opSearch = root.querySelector<HTMLInputElement>('[data-donate-search]')!;
+    typeInto(opSearch, 'bo');
+    ui.applyGameMenu(open('donate-invsee-op', ['Bob', 'Boris']));
+    expect(opSearch.value).toBe('bo');
+    expect(visiblePlayers(root)).toEqual(['Bob', 'Boris']);
+    root.querySelector<HTMLButtonElement>('[data-donate-player="Bob"]')!.click();
+    expect(sent.filter((message) => message.action === 'donate_invseeop')).toEqual([
+      { type: 'menu_action', action: 'donate_invseeop', name: 'Bob' },
+    ]);
+
+    ui.applyGameMenu(open('donate-invsee', ['Alex', 'Bob'], false));
+    expect(root.querySelector('[data-donate-player-row]')).toBeNull();
+    expect(root.querySelector('[data-donate-player]')).toBeNull();
+    expect(root.textContent).toContain('Только просмотр');
+    const before = sent.length;
+    root.querySelector<HTMLButtonElement>('[data-menu-action="donate_invsee"]')?.click();
+    expect(sent).toHaveLength(before);
+  });
+});
+
 describe('trade window patch', () => {
   it('keeps the money field while the partner offer, ready state, and buttons update', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'fc-trade-ui-'));
@@ -555,6 +726,46 @@ describe('trade window patch', () => {
     expect(root.querySelector('[data-trade-money]')).toBe(money);
     expect(money.value).toBe('10');
     expect(root.querySelector('[data-trade-message]')?.textContent).toBe(TRADE_MONEY_ERROR);
+    expect(sent.filter((message) => message.action === 'set_money')).toHaveLength(1);
+  });
+
+  it('does not apply the partner money error to the local draft', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-trade-ui-'));
+    dirs.push(dir);
+    const inventories = new Map<string, Inventory>([
+      ['ada', new Inventory()],
+      ['bob', new Inventory()],
+    ]);
+    const economy = new EconomyService(new JsonFileStore(dir));
+    const trade = new TradeService(economy);
+    trade.setRuntime({
+      isOnline: () => true,
+      displayName: (id) => id,
+      lookupPlayer: (raw) => {
+        const name = raw.trim().toLowerCase();
+        if (name === 'ada' || name === 'bob') return { id: name, name, connected: true };
+        return undefined;
+      },
+      inventory: (id) => inventories.get(id),
+      balance: (id) => economy.getBalance(id),
+      sendMessage: () => undefined,
+    });
+    expect(trade.request('ada', 'Bob').ok).toBe(true);
+    expect(trade.acceptRequest('bob', trade.incomingRequests('bob')[0]!.requestId).ok).toBe(true);
+    const denied = trade.setMoney('bob', economy.getBalance('bob') + 50);
+    expect(denied.ok).toBe(false);
+    expect(denied.affected).toEqual(['bob']);
+    const { root, ui } = mount();
+    const sent: ClientTradeActionMessage[] = [];
+    const view = () => buildTradeMessage(trade, 'ada', inventories.get('ada')!.slots);
+    ui.openTrade(view(), { send: (message) => sent.push(message), close() {} });
+    const money = root.querySelector<HTMLInputElement>('[data-trade-money]')!;
+    typeInto(money, '100', 3);
+    ui.applyTrade(view());
+    expect(root.querySelector('[data-trade-money]')).toBe(money);
+    expect(money.value).toBe('100');
+    expect(money.selectionStart).toBe(3);
+    expect(root.querySelector('[data-trade-message]')?.textContent ?? '').not.toContain(TRADE_MONEY_ERROR);
     expect(sent.filter((message) => message.action === 'set_money')).toHaveLength(1);
   });
 });

@@ -234,8 +234,12 @@ export class TradeService {
   setMoney(playerId: string, raw: string | number): TradeResult {
     return this.mutateOffer(playerId, (offer) => {
       const value = typeof raw === 'number' ? raw : Number(String(raw).trim());
-      if (!Number.isInteger(value) || value < 0) return { ok: false, error: TRADE_MONEY_ERROR };
-      if (value > this.runtime.balance(playerId)) return { ok: false, error: TRADE_MONEY_ERROR };
+      if (!Number.isInteger(value) || value < 0) {
+        return { ok: false, error: TRADE_MONEY_ERROR, affected: [playerId] };
+      }
+      if (value > this.runtime.balance(playerId)) {
+        return { ok: false, error: TRADE_MONEY_ERROR, affected: [playerId] };
+      }
       offer.money = value;
       return { ok: true };
     });
