@@ -200,13 +200,13 @@ describe('collectible painting explosion drops', () => {
   it('uses the same previousState snapshot in the local explosion path', () => {
     const source = readFileSync(new URL('../src/core/Game.ts', import.meta.url), 'utf8');
     const server = readFileSync(new URL('../server/gameplay.ts', import.meta.url), 'utf8');
-    expect(source).toContain('collectiblePaintingDropItemId(block.previous, block.previousState)');
-    expect(server).toContain('collectiblePaintingDropItemId(entry.previous, entry.previousState)');
+    expect(source).toContain('collectiblePaintingDroppedStack(block.previous, block.previousState)');
+    expect(server).toContain('collectiblePaintingDroppedStack(entry.previous, entry.previousState)');
     const localDrop = source.slice(
       source.indexOf('private processExplosionQueue'),
       source.indexOf('private applyExplosionDamage'),
     );
-    expect(localDrop).toContain('collectiblePaintingDropItemId(block.previous, block.previousState)');
+    expect(localDrop).toContain('collectiblePaintingDroppedStack(block.previous, block.previousState)');
     expect(localDrop).not.toContain("summary.mode === 'creative'");
   });
 });

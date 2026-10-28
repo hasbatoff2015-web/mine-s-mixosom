@@ -85,7 +85,7 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
 
   it('rejects wolf, cat, and console use without creating an animal', async () => {
     const { world, player, sink } = await boot();
-    world.permissions.op(player.name);
+    world.permissions.op(player.id);
     world.permissions.op(player.id);
     sink.payloads.length = 0;
     world.handleChat(player, '/spawnpet wolf');
@@ -135,7 +135,7 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
     expect(cosmetic().map((mob) => mob.kind)).toEqual(['pet_creeper']);
 
     expect(world.donation.revoke(player.id).ok).toBe(true);
-    world.permissions.op(player.name);
+    world.permissions.op(player.id);
     expect(world.donation.effectiveRank(player.id)).toBe('default');
     expect(say('/spawnpet bee').some((line) => line.includes('пчела'))).toBe(true);
     expect(say('/spawnpet creeper').some((line) => line.includes('мини-крипер'))).toBe(true);
@@ -143,7 +143,7 @@ describe('/spawnpet operator command', { timeout: 30_000 }, () => {
     const vipOp = say('/spawnpet creeper');
     expect(vipOp.some((line) => line.includes('TITAN'))).toBe(false);
     expect(cosmetic().some((mob) => mob.kind === 'pet_creeper')).toBe(true);
-    expect(world.permissions.deop(player.name).ok).toBe(true);
+    expect(world.permissions.deop(player.id).ok).toBe(true);
     world.tick();
     expect(cosmetic()).toHaveLength(0);
     expect(say('/spawnpet creeper').some((line) => line.includes('TITAN'))).toBe(true);

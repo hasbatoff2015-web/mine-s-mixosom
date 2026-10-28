@@ -26,7 +26,6 @@ export function createDuelsPlugin(ctx: BuiltinPluginContext): Plugin {
       const admin = (playerId: string, name: string): boolean => (
         api.hasPermission(playerId, 'duels.admin')
         || api.hasPermission(playerId, 'server.admin')
-        || api.isOperator(name)
         || api.isOperator(playerId)
       );
 

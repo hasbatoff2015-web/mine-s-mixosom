@@ -358,6 +358,7 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     const a = new TestClient();
     const b = new TestClient();
     const welcomeA = await a.connect(server.wsUrl(), { name: 'Ada' });
+    server.world.permissions.op(welcomeA.playerId);
     const welcomeB = await b.connect(server.wsUrl(), { name: 'B' });
     expect(welcomeB.players.some((player) => player.id === welcomeA.playerId)).toBe(true);
     await a.waitFor('player_joined');
@@ -438,6 +439,7 @@ describe('local authoritative Anarchy server', { timeout: 20_000 }, () => {
     await first.start();
     const client = new TestClient();
     const welcome = await client.connect(first.wsUrl(), { name: 'Builder' });
+    first.world.permissions.op(welcome.playerId);
     client.send({ type: 'chat', text: '/gamemode creative' });
     await new Promise((resolve) => setTimeout(resolve, 40));
     const x = Math.floor(welcome.you.x) + 1;
@@ -707,7 +709,7 @@ describe('WorldInstance foundation simulation', () => {
     return world;
   }
 
-  function join(world: WorldInstance, name = 'Sim'): ReturnType<WorldInstance['join']> {
+  function join(world: WorldInstance, name = 'Sim') {
     return world.join({ sink: new MemorySink(), name });
   }
 
@@ -808,7 +810,7 @@ describe('WorldInstance foundation simulation', () => {
     const sink = new MemorySink();
     const joined = world.join({ sink, name: 'Sim' });
     if ('error' in joined) throw new Error(joined.error);
-    world.permissions.op(joined.player.name);
+    world.permissions.op(joined.player.id);
     world.handleChat(joined.player, '/predsim 5');
     const result = [...sink.payloads].reverse().find((payload) => (
       payload as { type?: string }).type === 'command_result'

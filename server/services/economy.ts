@@ -65,6 +65,7 @@ export interface EconomyResult {
   readonly toBalance?: number;
   readonly transaction?: EconomyTransaction;
   readonly transactions?: readonly EconomyTransaction[];
+  readonly replayed?: boolean;
 }
 
 export interface EconomyTopEntry {
@@ -267,7 +268,7 @@ export class EconomyService {
     amount: number,
     reason: string,
     relatedPlayerId?: string,
-    pairId?: string,
+    pairOrRequest?: string | import('../economy/currencyPort').EconomyCommandRequest,
   ): EconomyResult {
     const value = parseIntegerAmount(amount);
     if (value === undefined || value <= 0) return failAmount();
@@ -275,6 +276,7 @@ export class EconomyService {
     if (player.balance < value) {
       return { ok: false, error: 'Недостаточно Мегакоинов.', balance: player.balance };
     }
+    const pairId = typeof pairOrRequest === 'string' ? pairOrRequest : undefined;
     return this.apply(player, 'withdraw', value, reason, relatedPlayerId, pairId);
   }
 

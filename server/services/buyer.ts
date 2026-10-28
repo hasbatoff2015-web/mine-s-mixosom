@@ -40,8 +40,13 @@ import {
   type ItemStack,
 } from '../../src/inventory';
 import { isKnownItemId, tryGetItemDefinition } from '../../src/items';
-import { formatMegacoins } from './economy';
-import type { EconomyService } from './economy';
+import { formatMegacoins, type EconomyResult } from './economy';
+import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
+import { clientMoneyRequest, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { ItemDurability } from '../settlements/durability';
+import { buyerConsumedReceipt, stackRecord } from '../settlements/receipts';
+import type { SettlementService } from '../settlements/service';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 import { createHologramRecord, type HologramNetwork } from './holograms';
 import type { JsonFileStore } from './jsonStore';
 
@@ -76,6 +81,8 @@ export interface BuyerResult {
   readonly broadcast?: boolean;
   readonly affectedPlayerIds?: readonly string[];
   readonly openHologramEditor?: boolean;
+  /** Set when a durable sale has permanently consumed the trade stack. */
+  readonly consumedSettlementId?: string;
 }
 
 interface BuyerSession {
@@ -185,6 +192,92 @@ function inventoryRoomFor(inventory: Inventory, itemId: string): number {
 export class BuyerService {
   private buyers = new Map<string, BuyerRecord>();
   private sessions = new Map<string, BuyerSession>();
+  private settlements?: SettlementService;
+  private durability?: ItemDurability;
+  haltAfter?: string;
+  /** Paid durable sale. Settlement id dedupes a later recovery of the same sale. */
+  onDurableConsumption?: (itemId: string, count: number, settlementId: string) => void;
+
+  setStage2C(input: { settlements?: SettlementService; durability?: ItemDurability }): void {
+    this.settlements = input.settlements;
+    this.durability = input.durability;
+  }
+
+  unsavedTradeSlot(playerId: string): ItemStack | null {
+    return this.sessions.get(playerId)?.tradeSlot ?? null;
+  }
+
+  /** The open window and stacks waiting to return. Not the crash-save mirror. */
+  physicalHolders(): Array<{
+    readonly kind: 'window' | 'return';
+    readonly playerId: string;
+    readonly index: number;
+    readonly stack: ItemStack;
+  }> {
+    const rows: Array<{ kind: 'window' | 'return'; playerId: string; index: number; stack: ItemStack }> = [];
+    for (const [playerId, session] of this.sessions) {
+      if (session.tradeSlot) rows.push({ kind: 'window', playerId, index: 0, stack: session.tradeSlot });
+    }
+    for (const [playerId, stacks] of this.returns) {
+      stacks.forEach((stack, index) => rows.push({ kind: 'return', playerId, index, stack }));
+    }
+    return rows;
+  }
+
+  async recoverSales(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
+    if (!this.settlements || !this.durability) return 0;
+    let changed = 0;
+    for (const row of await this.settlements.listOpen()) {
+      if (row.kind !== 'BUYER_SALE') continue;
+      const playerId = String(row.payload.playerId ?? '');
+      const receipt = buyerConsumedReceipt(row.settlementId);
+      const hasItem = this.durability.hasReceipt(playerId, receipt);
+      const money = await paid(row.settlementId);
+      const item = row.payload.item;
+      if (!money && !hasItem) {
+        if (row.phase === 'PREPARED') await this.settlements.transition(row.settlementId, 'PREPARED', 'CANCELLED');
+        changed += 1;
+        continue;
+      }
+      if (money) {
+        if (hasItem && item && typeof item === 'object') {
+          const stack = item as ItemStack;
+          if (typeof stack.itemId === 'string' && stack.count > 0) {
+            try {
+              this.onDurableConsumption?.(stack.itemId, stack.count, row.settlementId);
+            } catch {
+              // Diagnostics must not stop a paid settlement.
+            }
+          }
+        }
+        if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+          await this.settlements.advance(row.settlementId, row.phase, 'MONEY_COMMITTED');
+        }
+        const current = await this.settlements.get(row.settlementId);
+        if (current && (current.phase === 'MONEY_COMMITTED' || current.phase === 'DOMAIN_DURABLE' || current.phase === 'DELIVERY_DURABLE')) {
+          await this.settlements.advance(row.settlementId, current.phase, 'COMPLETE');
+        }
+        changed += 1;
+        continue;
+      }
+      let restored: 'restored' | 'already' | 'full' | 'missing' | 'delivered' = 'already';
+      if (item && typeof item === 'object') {
+        const stack = item as ItemStack;
+        restored = await this.durability.restore(playerId, receipt, {
+          itemId: stack.itemId,
+          count: stack.count,
+          ...(stack.durability !== undefined ? { durability: stack.durability } : {}),
+          ...(stack.metadata !== undefined ? { metadata: stack.metadata } : {}),
+        });
+      }
+      if (restored === 'full' || restored === 'missing') continue;
+      if (row.phase === 'PREPARED' || row.phase === 'ESCROW_DURABLE') {
+        await this.settlements.transition(row.settlementId, row.phase, 'CANCELLED');
+      }
+      changed += 1;
+    }
+    return changed;
+  }
   private returns = new Map<string, ItemStack[]>();
   private readonly locks = new Set<string>();
   private affectedPlayers = new Set<string>();
@@ -192,7 +285,7 @@ export class BuyerService {
 
   constructor(
     private readonly store: JsonFileStore,
-    private readonly economy: EconomyService,
+    private readonly economy: CurrencyPort,
     private readonly holograms: HologramNetwork,
     private readonly worldId: () => string = () => 'anarchy',
     private readonly now: () => number = Date.now,
@@ -548,11 +641,11 @@ export class BuyerService {
     }
     if (message.action === 'sell') {
       if (!can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
-      return this.sell(playerId, inventory, session);
+      return this.sell(playerId, inventory, session, saleRequest(playerId, message)) as BuyerResult;
     }
     if (message.action === 'buy') {
       if (!can.use) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
-      return this.buy(playerId, inventory, session);
+      return this.buy(playerId, inventory, session, purchaseRequest(playerId, message));
     }
     return { ok: true };
   }
@@ -656,7 +749,12 @@ export class BuyerService {
       if (purchase.buyerId !== buyer.id) continue;
       if (this.purchaseWasPaid(purchase)) {
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
+        this.purchases.delete(id);
+        continue;
       }
+      // A postgres debit cannot be seen synchronously. Leave the row so
+      // recoverSellerPurchases can grant the item or drop an unpaid reserve.
+      if (this.economy.backend === 'postgres') continue;
       this.purchases.delete(id);
     }
     this.holograms.remove(buyer.hologramName);
@@ -846,7 +944,12 @@ export class BuyerService {
     return { ok: true, buyer: result.buyer, broadcast: true };
   }
 
-  private sell(playerId: string, inventory: Inventory, session: BuyerSession): BuyerResult {
+  private sell(
+    playerId: string,
+    inventory: Inventory,
+    session: BuyerSession,
+    request?: EconomyCommandRequest,
+  ): BuyerResult {
     return this.withLocks([`player:${playerId}`, `buyer:${session.buyerId}`], () => {
       const buyer = this.buyers.get(session.buyerId);
       if (!buyer) return { ok: false, error: BUYER_STALE_ERROR };
@@ -872,22 +975,36 @@ export class BuyerService {
         session.message = BUYER_PRICE_EMPTY_ERROR;
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
-      const held = cloneStack(slot)!;
-      session.tradeSlot = null;
-      const paid = this.economy.deposit(playerId, total, 'TRADER_SELL');
-      if (!paid.ok) {
-        session.tradeSlot = held;
-        session.message = paid.error ?? 'Не удалось начислить Мегакоины.';
-        return { ok: false, error: session.message };
+      if (this.economy.backend === 'postgres' && !request) {
+        session.message = MONEY_REQUEST_REQUIRED;
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
       }
-      const name = itemName(buyer.itemId) ?? buyer.itemId;
-      const chat = `Вы продали ${held.count} × ${name} за ${formatMegacoins(total)}.`;
-      session.message = undefined;
-      return { ok: true, chat, inventoryDirty: true };
-    });
+      if (this.settlements && this.durability && request) {
+        return this.sellDurable(playerId, session, slot, total, request);
+      }
+      const held = cloneStack(slot)!;
+      const paid = this.economy.deposit(playerId, total, 'TRADER_SELL', undefined, undefined, request);
+      return thenResult(paid, (result) => {
+        if (!result.ok) {
+          session.tradeSlot = held;
+          session.message = result.error ?? 'Не удалось начислить Мегакоины.';
+          return { ok: false as const, error: session.message };
+        }
+        session.tradeSlot = null;
+        const name = itemName(buyer.itemId) ?? buyer.itemId;
+        const chat = `Вы продали ${held.count} × ${name} за ${formatMegacoins(total)}.`;
+        session.message = undefined;
+        return { ok: true as const, chat, inventoryDirty: true };
+      });
+    }) as BuyerResult;
   }
 
-  private buy(playerId: string, inventory: Inventory, session: BuyerSession): BuyerResult {
+  private buy(
+    playerId: string,
+    inventory: Inventory,
+    session: BuyerSession,
+    request?: EconomyCommandRequest,
+  ): BuyerResult {
     return this.withLocks([`player:${playerId}`, `buyer:${session.buyerId}`], () => {
       const buyer = this.buyers.get(session.buyerId);
       if (!buyer) return { ok: false, error: BUYER_STALE_ERROR };
@@ -909,17 +1026,18 @@ export class BuyerService {
         session.message = BUYER_PRICE_EMPTY_ERROR;
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
-      if (!this.economy.hasBalance(playerId, total)) {
-        session.message = 'Недостаточно Мегакоинов.';
-        return { ok: false, error: session.message };
+      if (request && this.economy.backend !== 'postgres') {
+        const replay = this.replayJsonSellerPurchase(playerId, inventory, session, buyer, request.requestId, quantity);
+        if (replay) return replay;
       }
-      const room = inventoryRoomFor(inventory, buyer.itemId);
-      if (quantity > room) {
-        session.message = SELLER_NO_ROOM_ERROR;
-        return { ok: false, error: SELLER_NO_ROOM_ERROR };
+      const funds = this.sellerFunds(playerId, inventory, session, buyer.itemId, quantity, total);
+      if (this.economy.backend !== 'postgres' && funds) return funds;
+      if (this.economy.backend === 'postgres' && !request) {
+        session.message = MONEY_REQUEST_REQUIRED;
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
       }
       const purchase: SellerPurchase = {
-        id: `sp-${randomBytes(8).toString('hex')}`,
+        id: request?.requestId ?? `sp-${randomBytes(8).toString('hex')}`,
         playerId,
         buyerId: buyer.id,
         itemId: buyer.itemId,
@@ -929,28 +1047,150 @@ export class BuyerService {
         phase: 'reserved',
         createdAt: this.now(),
       };
-      this.purchases.set(purchase.id, purchase);
-      this.persist();
-      const paid = this.economy.withdraw(playerId, total, 'TRADER_PURCHASE', buyer.id, purchase.id);
-      if (!paid.ok) {
-        this.purchases.delete(purchase.id);
-        this.persist();
-        session.message = paid.error ?? 'Недостаточно Мегакоинов.';
+      const stored = this.purchases.get(purchase.id);
+      if (
+        stored
+        && (stored.playerId !== playerId || stored.buyerId !== buyer.id || stored.itemId !== buyer.itemId)
+      ) {
+        session.message = 'Этот запрос уже обработан.';
         return { ok: false, error: session.message };
       }
-      purchase.phase = 'paid';
-      this.persist();
-      this.rememberReturn(playerId, createItemStack(buyer.itemId, quantity));
-      this.purchases.delete(purchase.id);
-      this.persist();
-      this.restoreOverflow(playerId, inventory);
-      session.orderQuantity = 0;
-      session.message = undefined;
-      this.noteWatchers(buyer.id);
-      const name = itemName(buyer.itemId) ?? buyer.itemId;
-      const chat = `Вы купили ${quantity} × ${name} за ${formatMegacoins(total)}.`;
-      return { ok: true, chat, inventoryDirty: true, broadcast: true };
-    }, SELLER_BUSY_ERROR);
+      // A saved row is the purchase that may already have been debited. A retry
+      // must finish that row, even when the repeated request asks for another amount.
+      const reserved = stored ?? purchase;
+      const acknowledge = () => {
+        session.orderQuantity = 0;
+        session.message = undefined;
+        const name = itemName(reserved.itemId) ?? reserved.itemId;
+        return {
+          ok: true as const,
+          chat: `Вы купили ${reserved.quantity} × ${name} за ${formatMegacoins(reserved.total)}.`,
+          inventoryDirty: true,
+          broadcast: true,
+        };
+      };
+      // `hadRow` is a reserved purchase from before this call. A replayed debit
+      // grants only that row. A new row plus a replayed debit is not a second stack.
+      const finish = (result: EconomyResult, hadRow: boolean) => {
+        if (!result.ok) {
+          if (!hadRow) {
+            this.purchases.delete(reserved.id);
+            this.persist();
+          }
+          session.message = result.error ?? 'Недостаточно Мегакоинов.';
+          return { ok: false as const, error: session.message };
+        }
+        if (result.replayed && !hadRow) {
+          this.purchases.delete(reserved.id);
+          this.persist();
+          return acknowledge();
+        }
+        return this.deliverSellerPurchase(
+          reserved,
+          inventory,
+          session,
+          reserved.itemId,
+          reserved.quantity,
+          reserved.total,
+        );
+      };
+      const settle = (hadRow: boolean) => {
+        if (!hadRow) {
+          this.purchases.set(reserved.id, reserved);
+          this.persist();
+        }
+        return thenResult(
+          this.chargeSellerPurchase(playerId, reserved.total, buyer.id, reserved.id, request),
+          (result) => finish(result, hadRow),
+        );
+      };
+      if (this.economy.backend === 'postgres') {
+        const run = async () => {
+          const known = this.economy.hasEconomicSource;
+          if (known && await known.call(this.economy, 'TRADER_PURCHASE', reserved.id)) {
+            if (stored) {
+              return this.deliverSellerPurchase(
+                stored,
+                inventory,
+                session,
+                stored.itemId,
+                stored.quantity,
+                stored.total,
+              );
+            }
+            return acknowledge();
+          }
+          const blocked = this.sellerFunds(playerId, inventory, session, buyer.itemId, reserved.quantity, reserved.total);
+          if (blocked) return blocked;
+          return settle(Boolean(stored));
+        };
+        return run() as unknown as BuyerResult;
+      }
+      const ledger = this.sellerPurchaseLedger(reserved);
+      if (ledger === 'conflict') {
+        session.message = 'Этот запрос уже обработан.';
+        return { ok: false, error: session.message };
+      }
+      if (stored && this.purchaseWasPaid(stored)) {
+        return this.deliverSellerPurchase(stored, inventory, session, stored.itemId, stored.quantity, stored.total);
+      }
+      if (!stored && ledger === 'match') return acknowledge();
+      const blocked = funds ?? this.sellerFunds(playerId, inventory, session, buyer.itemId, reserved.quantity, reserved.total);
+      if (blocked) return blocked;
+      return settle(false);
+    }, SELLER_BUSY_ERROR) as BuyerResult;
+  }
+
+  private chargeSellerPurchase(
+    playerId: string,
+    total: number,
+    buyerId: string,
+    purchaseId: string,
+    request?: EconomyCommandRequest,
+  ): EconomyResult | Promise<EconomyResult> {
+    if (this.economy.backend === 'postgres') {
+      const charge = this.economy.withdrawSource;
+      if (!charge) return { ok: false, error: 'Экономика временно недоступна.' };
+      return charge.call(this.economy, playerId, total, 'TRADER_PURCHASE', purchaseId, request);
+    }
+    const json = this.economy as CurrencyPort & {
+      withdraw(
+        playerId: string,
+        amount: number,
+        reason: string,
+        relatedPlayerId?: string,
+        pairId?: string,
+      ): EconomyResult;
+    };
+    return json.withdraw(playerId, total, 'TRADER_PURCHASE', buyerId, purchaseId);
+  }
+
+  private deliverSellerPurchase(
+    purchase: SellerPurchase,
+    inventory: Inventory,
+    session: BuyerSession,
+    itemId: string,
+    quantity: number,
+    total: number,
+  ): BuyerResult {
+    const live = this.purchases.get(purchase.id) ?? purchase;
+    live.phase = 'paid';
+    this.purchases.set(live.id, live);
+    this.persist();
+    this.rememberReturn(live.playerId, createItemStack(itemId, quantity));
+    this.purchases.delete(live.id);
+    this.persist();
+    this.restoreOverflow(live.playerId, inventory);
+    session.orderQuantity = 0;
+    session.message = undefined;
+    this.noteWatchers(live.buyerId);
+    const name = itemName(itemId) ?? itemId;
+    return {
+      ok: true,
+      chat: `Вы купили ${quantity} × ${name} за ${formatMegacoins(total)}.`,
+      inventoryDirty: true,
+      broadcast: true,
+    };
   }
 
   private sellerLimit(
@@ -1023,23 +1263,138 @@ export class BuyerService {
    */
   private recoverPurchases(): void {
     if (this.purchases.size === 0) return;
+    let changed = false;
     for (const purchase of [...this.purchases.values()]) {
-      if (this.purchaseWasPaid(purchase)) {
+      if (purchase.phase === 'paid' || (this.economy.backend !== 'postgres' && this.purchaseWasPaid(purchase))) {
+        this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
+        this.purchases.delete(purchase.id);
+        changed = true;
+        continue;
+      }
+      if (this.economy.backend === 'postgres') continue;
+      this.purchases.delete(purchase.id);
+      changed = true;
+    }
+    if (changed) this.persist();
+  }
+
+  /**
+   * Reserved seller rows whose debit already landed must deliver once.
+   * A row with no debit is dropped and does not create an item.
+   */
+  async recoverSellerPurchases(wasCharged: (purchaseId: string) => Promise<boolean>): Promise<number> {
+    let changed = 0;
+    for (const purchase of [...this.purchases.values()]) {
+      const outcome = this.withLocks(
+        [`player:${purchase.playerId}`, `buyer:${purchase.buyerId}`],
+        () => this.finishSellerRecovery(purchase, wasCharged),
+        SELLER_BUSY_ERROR,
+      );
+      if (!isPromise(outcome)) continue;
+      const done = await outcome;
+      if (done.ok) changed += 1;
+    }
+    return changed;
+  }
+
+  private finishSellerRecovery(
+    purchase: SellerPurchase,
+    wasCharged: (purchaseId: string) => Promise<boolean>,
+  ): Promise<BuyerResult> {
+    const run = (async () => {
+      if (!this.purchases.has(purchase.id)) return { ok: true as const };
+      const charged = await wasCharged(purchase.id);
+      if (!this.purchases.has(purchase.id)) return { ok: true as const };
+      if (charged) {
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
       }
       this.purchases.delete(purchase.id);
+      this.persist();
+      return { ok: true as const };
+    })();
+    return run;
+  }
+
+  private sellerFunds(
+    playerId: string,
+    inventory: Inventory,
+    session: BuyerSession,
+    itemId: string,
+    quantity: number,
+    total: number,
+  ): { ok: false; error: string } | undefined {
+    if (!this.economy.hasBalance(playerId, total)) {
+      session.message = 'Недостаточно Мегакоинов.';
+      return { ok: false, error: session.message };
     }
-    this.persist();
+    if (quantity > inventoryRoomFor(inventory, itemId)) {
+      session.message = SELLER_NO_ROOM_ERROR;
+      return { ok: false, error: SELLER_NO_ROOM_ERROR };
+    }
+    return undefined;
+  }
+
+  /**
+   * A JSON ledger row for this request id is final. A repeat must not debit again,
+   * including when the player no longer has the price sitting in their balance.
+   */
+  private replayJsonSellerPurchase(
+    playerId: string,
+    inventory: Inventory,
+    session: BuyerSession,
+    buyer: { itemId?: string },
+    requestId: string,
+    quantity: number,
+  ): BuyerResult | undefined {
+    const finder = this.economy as CurrencyPort & {
+      findTransactionByPairId?: (pairId: string) => { type: string; playerId: string; amount: number; reason: string } | undefined;
+    };
+    if (typeof finder.findTransactionByPairId !== 'function') return undefined;
+    const tx = finder.findTransactionByPairId(requestId);
+    if (!tx || tx.type !== 'withdraw' || tx.reason !== 'TRADER_PURCHASE') return undefined;
+    if (tx.playerId !== playerId) {
+      session.message = 'Этот запрос уже обработан.';
+      return { ok: false, error: session.message };
+    }
+    const stored = this.purchases.get(requestId);
+    if (stored) {
+      if (stored.playerId !== playerId || stored.total !== tx.amount || stored.itemId !== buyer.itemId) {
+        session.message = 'Этот запрос уже обработан.';
+        return { ok: false, error: session.message };
+      }
+      return this.deliverSellerPurchase(stored, inventory, session, stored.itemId, stored.quantity, stored.total);
+    }
+    session.orderQuantity = 0;
+    session.message = undefined;
+    const name = itemName(buyer.itemId) ?? buyer.itemId ?? 'предмет';
+    return {
+      ok: true,
+      chat: `Вы купили ${quantity} × ${name} за ${formatMegacoins(tx.amount)}.`,
+      inventoryDirty: true,
+      broadcast: true,
+    };
   }
 
   private purchaseWasPaid(purchase: SellerPurchase): boolean {
     if (purchase.phase === 'paid') return true;
-    const tx = this.economy.findTransactionByPairId(purchase.id);
-    return !!tx
-      && tx.type === 'withdraw'
+    return this.sellerPurchaseLedger(purchase) === 'match';
+  }
+
+  /** JSON ledger only. Postgres seller rows are resolved with `hasEconomicSource`. */
+  private sellerPurchaseLedger(purchase: SellerPurchase): 'match' | 'conflict' | 'none' {
+    const finder = this.economy as CurrencyPort & {
+      findTransactionByPairId?: (pairId: string) => { type: string; playerId: string; amount: number; reason: string } | undefined;
+    };
+    if (typeof finder.findTransactionByPairId !== 'function') return 'none';
+    const tx = finder.findTransactionByPairId(purchase.id);
+    if (!tx) return 'none';
+    if (
+      tx.type === 'withdraw'
       && tx.playerId === purchase.playerId
       && tx.amount === purchase.total
-      && tx.reason === 'TRADER_PURCHASE';
+      && tx.reason === 'TRADER_PURCHASE'
+    ) return 'match';
+    return 'conflict';
   }
 
   private returnTradeSlot(playerId: string, session: BuyerSession, inventory?: Inventory): ItemStack | null {
@@ -1104,16 +1459,133 @@ export class BuyerService {
     };
   }
 
-  private withLocks(keys: readonly string[], fn: () => BuyerResult, busyError = BUYER_BUSY_ERROR): BuyerResult {
+  private sellDurable(
+    playerId: string,
+    session: BuyerSession,
+    slot: ItemStack,
+    total: number,
+    request: EconomyCommandRequest,
+  ): BuyerResult {
+    const settlements = this.settlements;
+    const durability = this.durability;
+    if (!settlements || !durability) return { ok: false, error: SETTLEMENT_RECOVERING };
+    const payload = {
+      playerId,
+      total,
+      item: stackRecord(slot),
+      buyerId: session.buyerId,
+    };
+    const run = (async () => {
+      if (this.haltAfter === 'sale-prepared') {
+        await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'BUYER_SALE',
+          payload,
+          requestId: request.requestId,
+        });
+        return { ok: false as const, error: 'halt:sale-prepared' };
+      }
+      const existing = await settlements.get(request.requestId);
+      const begun = existing ?? await settlements.begin({
+        settlementId: request.requestId,
+        kind: 'BUYER_SALE',
+        payload,
+        requestId: request.requestId,
+      });
+      if (!existing || existing.phase === 'PREPARED') {
+        const receipt = buyerConsumedReceipt(request.requestId);
+        if (!durability.hasReceipt(playerId, receipt)) {
+          if (this.haltAfter === 'sale-removal') return { ok: false as const, error: 'halt:sale-removal' };
+          const held = cloneStack(session.tradeSlot);
+          session.tradeSlot = null;
+          try {
+            await durability.escrow(playerId, receipt);
+          } catch (error) {
+            if (!durability.hasReceipt(playerId, receipt)) session.tradeSlot = held;
+            throw error;
+          }
+        }
+        if (this.haltAfter === 'sale-escrowed') return { ok: false as const, error: 'halt:sale-escrowed' };
+        const paid = await this.economy.deposit(playerId, total, 'BUYER_SALE', undefined, undefined, request);
+        if (!paid.ok) {
+          const restored = await durability.restore(playerId, receipt, slot);
+          if (restored === 'already') session.tradeSlot = cloneStack(slot);
+          else session.tradeSlot = null;
+          if (restored === 'restored' || restored === 'already') {
+            const phase = (await settlements.get(request.requestId))?.phase;
+            if (phase === 'PREPARED' || phase === 'ESCROW_DURABLE') {
+              await settlements.transition(request.requestId, phase, 'CANCELLED');
+            }
+          }
+          return { ok: false as const, error: paid.error ?? 'Не удалось начислить Мегакоины.' };
+        }
+        if (begun.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
+        try {
+          this.onDurableConsumption?.(slot.itemId, slot.count, request.requestId);
+        } catch {
+          // The payout already landed. Accounting retries from the open settlement.
+        }
+      }
+      if (existing?.phase === 'CANCELLED') {
+        return { ok: false as const, error: 'Не удалось начислить Мегакоины.' };
+      }
+      if (this.haltAfter === 'sale-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      const current = await settlements.get(request.requestId);
+      if (current && current.phase !== 'COMPLETE') {
+        await settlements.advance(request.requestId, current.phase === 'PREPARED' ? 'MONEY_COMMITTED' : current.phase, 'COMPLETE');
+      }
+      const name = itemName(slot.itemId) ?? slot.itemId;
+      return {
+        ok: true as const,
+        chat: `Вы продали ${slot.count} × ${name} за ${formatMegacoins(total)}.`,
+        inventoryDirty: true,
+        consumedSettlementId: request.requestId,
+      };
+    })();
+    return run as unknown as BuyerResult;
+  }
+
+  private withLocks<T extends BuyerResult | Promise<BuyerResult>>(
+    keys: readonly string[],
+    fn: () => T,
+    busyError = BUYER_BUSY_ERROR,
+  ): T {
     const unique = [...new Set(keys.filter(Boolean))].sort();
     for (const key of unique) {
-      if (this.locks.has(key)) return { ok: false, error: busyError };
+      if (this.locks.has(key)) return { ok: false, error: busyError } as T;
     }
     for (const key of unique) this.locks.add(key);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       for (const key of unique) this.locks.delete(key);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
+}
+
+function saleRequest(playerId: string, message: ClientBuyerActionMessage): EconomyCommandRequest | undefined {
+  return clientMoneyRequest(
+    message.clientRequestId,
+    'economy.trader_sell',
+    playerId,
+    { action: 'sell', buyerId: message.buyerId ?? null, slot: message.slot ?? null, amount: message.amount ?? null },
+  );
+}
+
+function purchaseRequest(playerId: string, message: ClientBuyerActionMessage): EconomyCommandRequest | undefined {
+  return clientMoneyRequest(
+    message.clientRequestId,
+    'economy.trader_purchase',
+    playerId,
+    { action: 'buy', buyerId: message.buyerId ?? null, amount: message.amount ?? null },
+  );
 }

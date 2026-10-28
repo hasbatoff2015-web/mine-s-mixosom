@@ -19,6 +19,7 @@ import {
   conversationKey,
 } from '../../shared/directMessages';
 import type { ServerDirectMessage, ServerMenuMessage } from '../../shared/protocol';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 describe('DirectMessageService', () => {
   const dirs: string[] = [];
@@ -312,6 +313,7 @@ describe('direct messages on the authoritative server', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, ...(sessionToken ? { sessionToken } : {}) });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

@@ -43,7 +43,7 @@ sudo chmod 750 /var/lib/frontier-cubes /var/lib/frontier-cubes/worlds \
 
 ## Установка релиза
 
-Сборка и выкладка описаны в `docs/DEPLOYMENT.md`. Коротко: `npm run build:server`, `npm run pack:release`, затем на сервере `scripts/deploy-release.sh`. Каталоги миров этот шаг не изменяет. `npm install` на VPS не нужен: в релиз уже входит `dist/server/index.mjs` и external-пакет `ws`.
+Сборка и выкладка описаны в `docs/DEPLOYMENT.md`. Коротко: `npm run build:server`, `npm run pack:release`, затем на сервере `scripts/deploy-release.sh`. Каталоги миров этот шаг не изменяет. `npm install` на VPS не нужен: в релиз уже входят `dist/server/index.mjs` и external-пакеты `ws` и `pg` вместе с production-зависимостями `pg`. PostgreSQL для текущего геймплея не требуется. Если его позже включат, URL задаётся в env, а не в unit. См. `docs/POSTGRESQL.md`. Unit-ы не ждут локальный `postgresql.service`: база может быть на другой машине.
 
 ## Unit-файлы и env
 
@@ -106,6 +106,14 @@ sudo systemctl restart frontier-cubes-anarchy frontier-cubes-survival frontier-c
 
 `restart` для каждого сервиса шлёт SIGTERM, ждёт до 30 секунд, пока `stop()` сохранит мир и удалит `.instance.lock`, затем запускает процесс заново. После этого снова `npm run status:servers`.
 
+## Закрытая админка
+
+Игровой порт наружу не получает маршрутов `/admin`. Если на процессе нужен вход администратора, в его приватном env задают `FC_ADMIN_PORT` и хэши двух токенов. Слушатель остаётся на `127.0.0.1`. Порт в файрволе не открывают. С Windows к нему ходят через SSH-туннель. Как выпустить токены, войти и выключить слушатель: `docs/ADMIN.md`. Этот шаг файрвол и живой VPS не меняет.
+
 ## Обновление и откат
 
 Новый релиз ставится через `scripts/deploy-release.sh`: каталог создаётся рядом со старым, `current` переключается атомарно, три сервиса получают SIGTERM и проходят `/status`. Предыдущий релиз не удаляется. Откат: `scripts/rollback-release.sh`. Подробности и очистка старых каталогов: `docs/DEPLOYMENT.md`. `daemon-reload` нужен только после смены unit-файлов, не после смены релиза.
+
+## Резервная копия
+
+`frontier-cubes-backup.service` и `frontier-cubes-backup.timer` вызывают `/usr/local/sbin/fc-backup`. Таймер по умолчанию срабатывает в 04:00 местного времени VPS. `Persistent=false`: пропущенное окно само не догоняется. Выкладка релиза эти unit-ы не включает. Установка, скачивание и восстановление: `docs/BACKUPS.md`.
