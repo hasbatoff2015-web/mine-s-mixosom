@@ -1148,5 +1148,335 @@ describe('BuyerService', () => {
       edit: false, delete: false, use: true,
     }).error).toBe(SELLER_NOT_CONFIGURED_ERROR);
   });
+
+  it('rejects a different quantity, item, price, player, or NPC while an unpaid reservation is open', async () => {
+    const requestId = '12121212-1212-4121-8121-121212121212';
+    const { store, economy, holograms, buyer } = await setup();
+    const ids = ['aabbccdd', '11223344'];
+    let next = 0;
+    const sequenced = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => ids[next++] ?? 'ccdd1122');
+    sequenced.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    sequenced.create({ name: 'Вторая', role: 'seller', worldId: 'anarchy', x: 2, y: 64, z: 0, yaw: 0, pitch: 0 });
+    sequenced.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    sequenced.configure('11223344', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const inventory = new Inventory();
+    sequenced.openTrade('p1', 'aabbccdd', inventory);
+    sequenced.session('p1')!.orderQuantity = 1;
+    sequenced.haltBeforeSellerCharge = true;
+    expect(() => sequenced.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toThrow('halt:before-charge');
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(inventory.count('pumpkin')).toBe(0);
+    const reserved = store.load<{ buyers: unknown[]; purchases?: Array<{ id: string; quantity: number; total: number; phase: string }> }>(BUYER_STORE_KEY, { buyers: [] });
+    expect(reserved.purchases).toEqual([expect.objectContaining({ id: requestId, quantity: 1, total: 10, phase: 'reserved' })]);
+
+    sequenced.session('p1')!.orderQuantity = 2;
+    const otherQuantity = sequenced.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true });
+    expect(otherQuantity).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(inventory.count('pumpkin')).toBe(0);
+
+    sequenced.configure('aabbccdd', { pricePerItem: 15 });
+    sequenced.openTrade('p1', 'aabbccdd', inventory);
+    sequenced.session('p1')!.orderQuantity = 1;
+    const otherPrice = sequenced.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true });
+    expect(otherPrice).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE);
+    sequenced.configure('aabbccdd', { pricePerItem: 10 });
+
+    sequenced.openTrade('p1', '11223344', inventory);
+    sequenced.session('p1')!.orderQuantity = 1;
+    const otherNpc = sequenced.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true });
+    expect(otherNpc).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+
+    const otherPlayerInventory = new Inventory();
+    sequenced.openTrade('p2', 'aabbccdd', otherPlayerInventory);
+    sequenced.session('p2')!.orderQuantity = 1;
+    const otherPlayer = sequenced.handleAction('p2', otherPlayerInventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true });
+    expect(otherPlayer).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(economy.getBalance('p2')).toBe(ECONOMY_INITIAL_BALANCE);
+    expect(otherPlayerInventory.count('pumpkin')).toBe(0);
+
+    const restarted = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    restarted.load();
+    const again = new Inventory();
+    restarted.openTrade('p1', 'aabbccdd', again);
+    restarted.session('p1')!.orderQuantity = 2;
+    expect(restarted.handleAction('p1', again, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    restarted.session('p1')!.orderQuantity = 1;
+    expect(restarted.handleAction('p1', again, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true }).ok).toBe(true);
+    expect(again.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    restarted.session('p1')!.orderQuantity = 1;
+    expect(restarted.handleAction('p1', again, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true }).ok).toBe(true);
+    expect(again.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    expect(economy.getTransactionHistory('p1').filter((row) => row.reason === 'TRADER_PURCHASE')).toHaveLength(1);
+  });
+
+  it('rejects an unpaid postgres reservation when the same UUID changes quantity, item, or player', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-buyer-pg-'));
+    dirs.push(dir);
+    const store = new JsonFileStore(dir);
+    const holograms = new HologramNetwork(() => undefined);
+    const requestId = '34343434-3434-4343-8343-343434343434';
+    let debits = 0;
+    const balances = new Map<string, number>([['p1', 100], ['p2', 100]]);
+    const economy = {
+      backend: 'postgres' as const,
+      getBalance: (id: string) => balances.get(id) ?? 0,
+      hasBalance: (id: string, amount: number) => (balances.get(id) ?? 0) >= amount,
+      hasEconomicSource: async () => false,
+      withdrawSource: async (playerId: string, amount: number) => {
+        balances.set(playerId, (balances.get(playerId) ?? 0) - amount);
+        debits += 1;
+        return { ok: true, amount };
+      },
+    } as unknown as CurrencyPort;
+    const buyer = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const saved = store.load<{ buyers: unknown[]; purchases?: unknown[] }>(BUYER_STORE_KEY, { buyers: [] });
+    saved.purchases = [{
+      id: requestId, playerId: 'p1', buyerId: 'aabbccdd', itemId: 'melon',
+      quantity: 1, unitPrice: 10, total: 10, phase: 'reserved', createdAt: 1,
+    }];
+    store.save(BUYER_STORE_KEY, saved);
+    const loaded = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    loaded.load();
+    const inventory = new Inventory();
+    loaded.openTrade('p1', 'aabbccdd', inventory);
+    loaded.session('p1')!.orderQuantity = 1;
+    expect(await loaded.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(debits).toBe(0);
+    expect(inventory.count('pumpkin')).toBe(0);
+    const replaced = store.load<{
+      buyers: unknown[];
+      purchases?: Array<{
+        id: string;
+        playerId: string;
+        buyerId: string;
+        itemId: string;
+        quantity: number;
+        unitPrice: number;
+        total: number;
+        phase: string;
+        createdAt: number;
+      }>;
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    replaced.purchases = [{
+      id: requestId, playerId: 'p1', buyerId: 'aabbccdd', itemId: 'pumpkin',
+      quantity: 1, unitPrice: 10, total: 10, phase: 'reserved', createdAt: 1,
+    }];
+    store.save(BUYER_STORE_KEY, replaced);
+    const retry = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    retry.load();
+    const first = new Inventory();
+    const second = new Inventory();
+    retry.openTrade('p1', 'aabbccdd', first);
+    retry.openTrade('p2', 'aabbccdd', second);
+    retry.session('p1')!.orderQuantity = 3;
+    expect(await retry.handleAction('p1', first, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    retry.session('p2')!.orderQuantity = 1;
+    expect(await retry.handleAction('p2', second, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(debits).toBe(0);
+    expect(balances.get('p1')).toBe(100);
+    expect(balances.get('p2')).toBe(100);
+    retry.session('p1')!.orderQuantity = 1;
+    expect((await retry.handleAction('p1', first, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).ok).toBe(true);
+    expect(first.count('pumpkin')).toBe(1);
+    expect(debits).toBe(1);
+    retry.session('p1')!.orderQuantity = 1;
+    expect((await retry.handleAction('p1', first, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).ok).toBe(true);
+    expect(first.count('pumpkin')).toBe(1);
+    expect(debits).toBe(1);
+    expect(balances.get('p1')).toBe(90);
+  });
+
+  it('restarts seller purchases from each saved step without a second debit or a second item', async () => {
+    const requestId = '56565656-5656-4565-8565-565656565656';
+    const { store, economy, holograms, buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    buyer.session('p1')!.orderQuantity = 1;
+    let persistCalls = 0;
+    buyer.haltBuyerPersist = () => {
+      persistCalls += 1;
+      return persistCalls === 2;
+    };
+    expect(() => buyer.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toThrow('halt:buyer-persist');
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    expect(inventory.count('pumpkin')).toBe(0);
+    buyer.haltBuyerPersist = undefined;
+    const charged = new BuyerService(store, new EconomyService(store), holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    charged.load();
+    const owed = new Inventory();
+    charged.restoreOverflow('p1', owed);
+    expect(owed.count('pumpkin')).toBe(1);
+    const chargedEconomy = new EconomyService(store);
+    expect(chargedEconomy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    charged.openTrade('p1', 'aabbccdd', owed);
+    charged.session('p1')!.orderQuantity = 1;
+    expect(charged.handleAction('p1', owed, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true }).ok).toBe(true);
+    expect(owed.count('pumpkin')).toBe(1);
+    expect(new EconomyService(store).getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+
+    const paidFile = store.load<{
+      buyers: unknown[];
+      purchases?: unknown[];
+      returns?: Record<string, unknown>;
+      settledPurchases?: unknown[];
+      grantedPurchaseIds?: string[];
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    paidFile.purchases = [{
+      id: requestId, playerId: 'p1', buyerId: 'aabbccdd', itemId: 'pumpkin',
+      quantity: 1, unitPrice: 10, total: 10, phase: 'paid', createdAt: 1,
+    }];
+    paidFile.returns = {};
+    paidFile.grantedPurchaseIds = [];
+    store.save(BUYER_STORE_KEY, paidFile);
+    const paidOnly = new BuyerService(store, new EconomyService(store), holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    paidOnly.load();
+    const paidInventory = new Inventory();
+    paidOnly.restoreOverflow('p1', paidInventory);
+    expect(paidInventory.count('pumpkin')).toBe(1);
+    expect(new EconomyService(store).getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+
+    const both = store.load<typeof paidFile>(BUYER_STORE_KEY, { buyers: [] });
+    both.purchases = [{
+      id: requestId, playerId: 'p1', buyerId: 'aabbccdd', itemId: 'pumpkin',
+      quantity: 1, unitPrice: 10, total: 10, phase: 'paid', createdAt: 1,
+    }];
+    both.returns = { p1: { itemId: 'pumpkin', count: 1 } };
+    both.grantedPurchaseIds = [requestId];
+    store.save(BUYER_STORE_KEY, both);
+    const returnedAndReserved = new BuyerService(store, new EconomyService(store), holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    returnedAndReserved.load();
+    const once = new Inventory();
+    returnedAndReserved.restoreOverflow('p1', once);
+    expect(once.count('pumpkin')).toBe(1);
+    const after = store.load<typeof paidFile>(BUYER_STORE_KEY, { buyers: [] });
+    expect(after.purchases ?? []).toEqual([]);
+    expect(new EconomyService(store).getTransactionHistory('p1').filter((row) => row.reason === 'TRADER_PURCHASE')).toHaveLength(1);
+  });
+
+  it('does not report success when the buyer file write fails, and the retry grants once', async () => {
+    const requestId = '78787878-7878-4787-8787-787878787878';
+    const { economy, buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    buyer.session('p1')!.orderQuantity = 1;
+    let persistCalls = 0;
+    buyer.haltBuyerPersist = () => {
+      persistCalls += 1;
+      return persistCalls === 2;
+    };
+    expect(() => buyer.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toThrow('halt:buyer-persist');
+    expect(inventory.count('pumpkin')).toBe(0);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    buyer.haltBuyerPersist = undefined;
+    buyer.session('p1')!.orderQuantity = 1;
+    expect(buyer.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true }).ok).toBe(true);
+    expect(inventory.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    expect(economy.getTransactionHistory('p1').filter((row) => row.reason === 'TRADER_PURCHASE')).toHaveLength(1);
+  });
+
+  it('grants one postgres item when the buyer file write fails after the debit', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-buyer-pg-'));
+    dirs.push(dir);
+    const store = new JsonFileStore(dir);
+    const holograms = new HologramNetwork(() => undefined);
+    const requestId = '90909090-9090-4909-8909-909090909090';
+    let debits = 0;
+    const sources = new Set<string>();
+    const balances = new Map<string, number>([['p1', 100]]);
+    const economy = {
+      backend: 'postgres' as const,
+      getBalance: (id: string) => balances.get(id) ?? 0,
+      hasBalance: (id: string, amount: number) => (balances.get(id) ?? 0) >= amount,
+      hasEconomicSource: async (_type: string, id: string) => sources.has(id),
+      withdrawSource: async (playerId: string, amount: number, _reason: string, sourceId: string) => {
+        if (sources.has(sourceId)) return { ok: true, replayed: true, amount };
+        balances.set(playerId, (balances.get(playerId) ?? 0) - amount);
+        sources.add(sourceId);
+        debits += 1;
+        return { ok: true, amount };
+      },
+    } as unknown as CurrencyPort;
+    const buyer = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    buyer.session('p1')!.orderQuantity = 1;
+    let persistCalls = 0;
+    buyer.haltBuyerPersist = () => {
+      persistCalls += 1;
+      return persistCalls === 2;
+    };
+    await expect(buyer.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).rejects.toThrow('halt:buyer-persist');
+    expect(debits).toBe(1);
+    expect(inventory.count('pumpkin')).toBe(0);
+    const restarted = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    restarted.load();
+    expect(await restarted.recoverSellerPurchases(async (id) => sources.has(id))).toBe(1);
+    const owed = new Inventory();
+    restarted.restoreOverflow('p1', owed);
+    expect(owed.count('pumpkin')).toBe(1);
+    restarted.openTrade('p1', 'aabbccdd', owed);
+    restarted.session('p1')!.orderQuantity = 1;
+    expect((await restarted.handleAction('p1', owed, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).ok).toBe(true);
+    expect(owed.count('pumpkin')).toBe(1);
+    expect(debits).toBe(1);
+    expect(balances.get('p1')).toBe(90);
+    restarted.session('p1')!.orderQuantity = 4;
+    expect(await restarted.handleAction('p1', owed, {
+      type: 'buyer_action', action: 'buy', clientRequestId: requestId,
+    }, { edit: false, delete: false, use: true })).toMatchObject({ ok: false, error: 'Этот запрос уже обработан.' });
+    expect(debits).toBe(1);
+    expect(owed.count('pumpkin')).toBe(1);
+  });
 });
 

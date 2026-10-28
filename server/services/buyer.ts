@@ -129,6 +129,8 @@ interface BuyerStoreFile {
   returns?: Record<string, ItemStack | ItemStack[]>;
   purchases?: SellerPurchase[];
   settledPurchases?: SettledSellerPurchase[];
+  /** Purchase ids whose owed stack is already in `returns` or was delivered. */
+  grantedPurchaseIds?: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -228,6 +230,10 @@ export class BuyerService {
   private settlements?: SettlementService;
   private durability?: ItemDurability;
   haltAfter?: string;
+  /** When true, the next seller charge throws after the reservation is saved. */
+  haltBeforeSellerCharge = false;
+  /** Return true to throw before that buyer-file write. Tests use this for crash points. */
+  haltBuyerPersist?: () => boolean;
   /** Paid durable sale. Settlement id dedupes a later recovery of the same sale. */
   onDurableConsumption?: (itemId: string, count: number, settlementId: string) => void;
 
@@ -317,6 +323,8 @@ export class BuyerService {
   private purchases = new Map<string, SellerPurchase>();
   /** Completed request ids. Survives economy-history trim and process restart. */
   private settled = new Map<string, SettledSellerPurchase>();
+  /** Ids whose item was written into `returns`. A later load must not grant them again. */
+  private granted = new Set<string>();
 
   constructor(
     private readonly store: JsonFileStore,
@@ -359,15 +367,23 @@ export class BuyerService {
         if (settled) this.settled.set(settled.id, settled);
       }
     }
+    this.granted.clear();
+    if (Array.isArray(raw.grantedPurchaseIds)) {
+      for (const id of raw.grantedPurchaseIds) {
+        if (typeof id === 'string' && id.length > 0) this.granted.add(id);
+      }
+    }
     this.recoverPurchases();
   }
 
   persist(): void {
+    if (this.haltBuyerPersist?.()) throw new Error('halt:buyer-persist');
     this.store.save(BUYER_STORE_KEY, {
       buyers: this.list(),
       returns: Object.fromEntries(this.returns.entries()),
       purchases: [...this.purchases.values()],
       settledPurchases: [...this.settled.values()],
+      grantedPurchaseIds: [...this.granted],
     });
   }
 
@@ -1070,7 +1086,20 @@ export class BuyerService {
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
       if (request) {
-        const settled = this.replaySettledPurchase(playerId, session, buyer, request.requestId, quantity, total);
+        const pending = this.purchases.get(request.requestId);
+        if (pending && !this.sameSellerReservation(pending, playerId, buyer.id, buyer.itemId, quantity, buyer.pricePerItem, total)) {
+          session.message = 'Этот запрос уже обработан.';
+          return { ok: false, error: session.message };
+        }
+        const settled = this.replaySettledPurchase(
+          playerId,
+          session,
+          buyer,
+          request.requestId,
+          quantity,
+          buyer.pricePerItem,
+          total,
+        );
         if (settled) return settled;
       }
       if (request && this.economy.backend !== 'postgres') {
@@ -1095,15 +1124,9 @@ export class BuyerService {
         createdAt: this.now(),
       };
       const stored = this.purchases.get(purchase.id);
-      if (
-        stored
-        && (stored.playerId !== playerId || stored.buyerId !== buyer.id || stored.itemId !== buyer.itemId)
-      ) {
-        session.message = 'Этот запрос уже обработан.';
-        return { ok: false, error: session.message };
-      }
-      // A saved row is the purchase that may already have been debited. A retry
-      // must finish that row, even when the repeated request asks for another amount.
+      // A saved row may already have been debited. Only the same player, NPC,
+      // item, quantity, unit price, and total may finish it. Different terms
+      // are rejected and leave the saved row unchanged.
       const reserved = stored ?? purchase;
       const acknowledge = () => {
         session.orderQuantity = 0;
@@ -1146,6 +1169,10 @@ export class BuyerService {
           this.purchases.set(reserved.id, reserved);
           this.persist();
         }
+        if (this.haltBeforeSellerCharge) {
+          this.haltBeforeSellerCharge = false;
+          throw new Error('halt:before-charge');
+        }
         return thenResult(
           this.chargeSellerPurchase(playerId, reserved.total, buyer.id, reserved.id, request),
           (result) => finish(result, hadRow),
@@ -1184,7 +1211,7 @@ export class BuyerService {
       if (!stored && ledger === 'match') return acknowledge();
       const blocked = funds ?? this.sellerFunds(playerId, inventory, session, buyer.itemId, reserved.quantity, reserved.total);
       if (blocked) return blocked;
-      return settle(false);
+      return settle(Boolean(stored));
     }, SELLER_BUSY_ERROR) as BuyerResult;
   }
 
@@ -1221,13 +1248,28 @@ export class BuyerService {
     total: number,
   ): BuyerResult {
     const live = this.purchases.get(purchase.id) ?? purchase;
+    const priorPhase = live.phase;
+    const hadPurchase = this.purchases.has(live.id);
+    const priorSettled = this.settled.get(live.id.toLowerCase());
+    const hadGranted = this.granted.has(live.id);
     live.phase = 'paid';
     this.purchases.set(live.id, live);
     this.noteSettled(live, itemId, quantity, total);
-    this.persist();
     this.rememberReturn(live.playerId, createItemStack(itemId, quantity));
+    this.granted.add(live.id);
     this.purchases.delete(live.id);
-    this.persist();
+    try {
+      this.persist();
+    } catch (error) {
+      this.undoReturn(live.playerId, itemId, quantity);
+      if (priorSettled) this.settled.set(live.id.toLowerCase(), priorSettled);
+      else this.settled.delete(live.id.toLowerCase());
+      if (!hadGranted) this.granted.delete(live.id);
+      live.phase = priorPhase;
+      if (hadPurchase) this.purchases.set(live.id, live);
+      else this.purchases.delete(live.id);
+      throw error;
+    }
     this.restoreOverflow(live.playerId, inventory);
     session.orderQuantity = 0;
     session.message = undefined;
@@ -1304,23 +1346,45 @@ export class BuyerService {
     this.returns.set(playerId, existing);
   }
 
+  private undoReturn(playerId: string, itemId: string, quantity: number): void {
+    const held = this.returns.get(playerId);
+    if (!held) return;
+    for (let index = held.length - 1; index >= 0; index -= 1) {
+      const stack = held[index];
+      if (stack?.itemId === itemId && stack.count === quantity) {
+        held.splice(index, 1);
+        break;
+      }
+    }
+    if (held.length === 0) this.returns.delete(playerId);
+  }
+
   /**
    * A withdraw (or an explicit paid phase) becomes owed items in `returns`,
    * in the same buyers.json write that drops the journal row.
    * Seller stock is not part of the purchase: a saved number is left as-is.
+   * An id already listed in `grantedPurchaseIds` is not granted again.
    */
   private recoverPurchases(): void {
     if (this.purchases.size === 0) return;
     let changed = false;
     for (const purchase of [...this.purchases.values()]) {
-      if (purchase.phase === 'paid' || (this.economy.backend !== 'postgres' && this.purchaseWasPaid(purchase))) {
+      if (this.granted.has(purchase.id)) {
+        this.purchases.delete(purchase.id);
+        changed = true;
+        continue;
+      }
+      const paid = purchase.phase === 'paid' || (this.economy.backend !== 'postgres' && this.purchaseWasPaid(purchase));
+      if (paid) {
         this.noteSettled(purchase, purchase.itemId, purchase.quantity, purchase.total);
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
+        this.granted.add(purchase.id);
         this.purchases.delete(purchase.id);
         changed = true;
         continue;
       }
       if (this.economy.backend === 'postgres') continue;
+      if (isClientMoneyRequestId(purchase.id)) continue;
       this.purchases.delete(purchase.id);
       changed = true;
     }
@@ -1354,9 +1418,15 @@ export class BuyerService {
       if (!this.purchases.has(purchase.id)) return { ok: true as const };
       const charged = await wasCharged(purchase.id);
       if (!this.purchases.has(purchase.id)) return { ok: true as const };
+      if (this.granted.has(purchase.id)) {
+        this.purchases.delete(purchase.id);
+        this.persist();
+        return { ok: true as const };
+      }
       if (charged) {
         this.noteSettled(purchase, purchase.itemId, purchase.quantity, purchase.total);
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
+        this.granted.add(purchase.id);
       }
       this.purchases.delete(purchase.id);
       this.persist();
@@ -1373,9 +1443,10 @@ export class BuyerService {
   private replaySettledPurchase(
     playerId: string,
     session: BuyerSession,
-    buyer: { id: string; itemId?: string },
+    buyer: { id: string; itemId?: string; pricePerItem?: number },
     requestId: string,
     quantity: number,
+    unitPrice: number,
     total: number,
   ): BuyerResult | undefined {
     const prior = this.settled.get(requestId);
@@ -1385,6 +1456,7 @@ export class BuyerService {
       || prior.buyerId !== buyer.id
       || prior.itemId !== buyer.itemId
       || prior.quantity !== quantity
+      || prior.unitPrice !== unitPrice
       || prior.total !== total
     ) {
       session.message = 'Этот запрос уже обработан.';
@@ -1415,6 +1487,23 @@ export class BuyerService {
       unitPrice,
       total,
     });
+  }
+
+  private sameSellerReservation(
+    stored: SellerPurchase,
+    playerId: string,
+    buyerId: string,
+    itemId: string | undefined,
+    quantity: number,
+    unitPrice: number,
+    total: number,
+  ): boolean {
+    return stored.playerId === playerId
+      && stored.buyerId === buyerId
+      && stored.itemId === itemId
+      && stored.quantity === quantity
+      && stored.unitPrice === unitPrice
+      && stored.total === total;
   }
 
   private sellerFunds(
