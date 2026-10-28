@@ -42,7 +42,7 @@ import {
 import { isKnownItemId, tryGetItemDefinition } from '../../src/items';
 import { formatMegacoins, type EconomyResult } from './economy';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
-import { clientMoneyRequest, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import { clientMoneyRequest, isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 import type { ItemDurability } from '../settlements/durability';
 import { buyerConsumedReceipt, stackRecord } from '../settlements/receipts';
 import type { SettlementService } from '../settlements/service';
@@ -113,10 +113,22 @@ interface SellerPurchase {
   createdAt: number;
 }
 
+/** A finished seller purchase. This is not the rolling economy history. */
+interface SettledSellerPurchase {
+  id: string;
+  playerId: string;
+  buyerId: string;
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  total: number;
+}
+
 interface BuyerStoreFile {
   buyers: BuyerRecord[];
   returns?: Record<string, ItemStack | ItemStack[]>;
   purchases?: SellerPurchase[];
+  settledPurchases?: SettledSellerPurchase[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -144,6 +156,27 @@ function normalizePurchase(raw: unknown): SellerPurchase | undefined {
     total,
     phase: raw.phase,
     createdAt: typeof raw.createdAt === 'number' && Number.isFinite(raw.createdAt) ? raw.createdAt : 0,
+  };
+}
+
+function normalizeSettled(raw: unknown): SettledSellerPurchase | undefined {
+  if (!isRecord(raw) || typeof raw.id !== 'string' || !isClientMoneyRequestId(raw.id)) return undefined;
+  if (typeof raw.playerId !== 'string' || raw.playerId.length === 0) return undefined;
+  if (typeof raw.buyerId !== 'string' || raw.buyerId.length === 0) return undefined;
+  if (typeof raw.itemId !== 'string' || !isKnownItemId(raw.itemId)) return undefined;
+  const quantity = raw.quantity;
+  const unitPrice = parseBuyerPrice(raw.unitPrice);
+  if (typeof quantity !== 'number' || !Number.isInteger(quantity) || quantity < 1 || unitPrice === undefined) return undefined;
+  const total = buyerPayout(quantity, unitPrice);
+  if (total === undefined || total !== raw.total) return undefined;
+  return {
+    id: raw.id.toLowerCase(),
+    playerId: raw.playerId,
+    buyerId: raw.buyerId,
+    itemId: raw.itemId,
+    quantity,
+    unitPrice,
+    total,
   };
 }
 
@@ -282,6 +315,8 @@ export class BuyerService {
   private readonly locks = new Set<string>();
   private affectedPlayers = new Set<string>();
   private purchases = new Map<string, SellerPurchase>();
+  /** Completed request ids. Survives economy-history trim and process restart. */
+  private settled = new Map<string, SettledSellerPurchase>();
 
   constructor(
     private readonly store: JsonFileStore,
@@ -317,6 +352,13 @@ export class BuyerService {
         if (purchase) this.purchases.set(purchase.id, purchase);
       }
     }
+    this.settled.clear();
+    if (Array.isArray(raw.settledPurchases)) {
+      for (const entry of raw.settledPurchases) {
+        const settled = normalizeSettled(entry);
+        if (settled) this.settled.set(settled.id, settled);
+      }
+    }
     this.recoverPurchases();
   }
 
@@ -325,6 +367,7 @@ export class BuyerService {
       buyers: this.list(),
       returns: Object.fromEntries(this.returns.entries()),
       purchases: [...this.purchases.values()],
+      settledPurchases: [...this.settled.values()],
     });
   }
 
@@ -1026,6 +1069,10 @@ export class BuyerService {
         session.message = BUYER_PRICE_EMPTY_ERROR;
         return { ok: false, error: BUYER_PRICE_EMPTY_ERROR };
       }
+      if (request) {
+        const settled = this.replaySettledPurchase(playerId, session, buyer, request.requestId, quantity, total);
+        if (settled) return settled;
+      }
       if (request && this.economy.backend !== 'postgres') {
         const replay = this.replayJsonSellerPurchase(playerId, inventory, session, buyer, request.requestId, quantity);
         if (replay) return replay;
@@ -1176,6 +1223,7 @@ export class BuyerService {
     const live = this.purchases.get(purchase.id) ?? purchase;
     live.phase = 'paid';
     this.purchases.set(live.id, live);
+    this.noteSettled(live, itemId, quantity, total);
     this.persist();
     this.rememberReturn(live.playerId, createItemStack(itemId, quantity));
     this.purchases.delete(live.id);
@@ -1266,6 +1314,7 @@ export class BuyerService {
     let changed = false;
     for (const purchase of [...this.purchases.values()]) {
       if (purchase.phase === 'paid' || (this.economy.backend !== 'postgres' && this.purchaseWasPaid(purchase))) {
+        this.noteSettled(purchase, purchase.itemId, purchase.quantity, purchase.total);
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
         this.purchases.delete(purchase.id);
         changed = true;
@@ -1306,6 +1355,7 @@ export class BuyerService {
       const charged = await wasCharged(purchase.id);
       if (!this.purchases.has(purchase.id)) return { ok: true as const };
       if (charged) {
+        this.noteSettled(purchase, purchase.itemId, purchase.quantity, purchase.total);
         this.rememberReturn(purchase.playerId, createItemStack(purchase.itemId, purchase.quantity));
       }
       this.purchases.delete(purchase.id);
@@ -1313,6 +1363,58 @@ export class BuyerService {
       return { ok: true as const };
     })();
     return run;
+  }
+
+  /**
+   * A completed seller request stays here after `economy/transactions` drops the
+   * pair id. The same id never debits again. Different player, item, quantity,
+   * or total is a conflict and also does not debit.
+   */
+  private replaySettledPurchase(
+    playerId: string,
+    session: BuyerSession,
+    buyer: { id: string; itemId?: string },
+    requestId: string,
+    quantity: number,
+    total: number,
+  ): BuyerResult | undefined {
+    const prior = this.settled.get(requestId);
+    if (!prior) return undefined;
+    if (
+      prior.playerId !== playerId
+      || prior.buyerId !== buyer.id
+      || prior.itemId !== buyer.itemId
+      || prior.quantity !== quantity
+      || prior.total !== total
+    ) {
+      session.message = 'Этот запрос уже обработан.';
+      return { ok: false, error: session.message };
+    }
+    session.orderQuantity = 0;
+    session.message = undefined;
+    const name = itemName(prior.itemId) ?? prior.itemId;
+    return {
+      ok: true,
+      chat: `Вы купили ${prior.quantity} × ${name} за ${formatMegacoins(prior.total)}.`,
+      inventoryDirty: true,
+      broadcast: true,
+    };
+  }
+
+  private noteSettled(purchase: SellerPurchase, itemId: string, quantity: number, total: number): void {
+    if (!isClientMoneyRequestId(purchase.id)) return;
+    const unitPrice = purchase.unitPrice;
+    const expected = buyerPayout(quantity, unitPrice);
+    if (expected === undefined || expected !== total) return;
+    this.settled.set(purchase.id.toLowerCase(), {
+      id: purchase.id.toLowerCase(),
+      playerId: purchase.playerId,
+      buyerId: purchase.buyerId,
+      itemId,
+      quantity,
+      unitPrice,
+      total,
+    });
   }
 
   private sellerFunds(
