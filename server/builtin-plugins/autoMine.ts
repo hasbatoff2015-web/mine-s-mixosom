@@ -81,7 +81,7 @@ export function createAutoMinePlugin(ctx: BuiltinPluginContext): Plugin {
       manager.enabled = true;
 
       const canManage = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'automine.manage') || api.isOperator(name)
+        api.hasPermission(playerId, 'automine.manage') || api.isOperator(playerId)
       );
 
       const holdingWand = (playerId: string): boolean => {

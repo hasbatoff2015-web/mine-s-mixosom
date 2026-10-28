@@ -14,10 +14,15 @@ import {
   type ServerWelcomeMessage,
 } from '../shared/protocol';
 import { blockIntentFromFields, hasCapturedBlockIntent } from '../shared/playerActions';
-import type { ServerConfig } from './config';
+import { existsSync } from 'node:fs';
+import { AdminHttpServer } from './admin/http';
+import { adminAssetIndex, resolveAdminAssetsRoot } from './admin/assets';
+import { AdminPanelHost } from './admin/panelHost';
+import { yandexAuthLogLabel, type ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
-import { WorldInstance, type ConnectedSink, type ServerPlayer } from './WorldInstance';
+import { isPromise } from './economy/currencyPort';
+import { WorldInstance, type ConnectedSink, type ServerPlayer, type WorldInstanceOptions } from './WorldInstance';
 
 interface SocketBinding {
   playerId: string;
@@ -44,15 +49,22 @@ export class AnarchyServer {
   readonly world: WorldInstance;
   private http?: HttpServer;
   private wss?: WebSocketServer;
+  private adminHttp?: AdminHttpServer;
+  private readonly startedAt = Date.now();
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
 
-  constructor(readonly config: ServerConfig) {
-    this.world = new WorldInstance(config);
+  constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
+    this.world = new WorldInstance(config, options);
   }
 
   get port(): number {
     return this.listeningPort;
+  }
+
+  /** Loopback admin listener, or 0 when admin HTTP is off or already stopped. */
+  get adminPort(): number {
+    return this.adminHttp?.port ?? 0;
   }
 
   get host(): string {
@@ -68,6 +80,18 @@ export class AnarchyServer {
   }
 
   async start(): Promise<void> {
+    // Bind admin HTTP before the world loads. A failed admin port must not
+    // create a snapshot, and it must not fall back onto the public listener.
+    await this.openAdminHttp();
+    try {
+      await this.startWorld();
+    } catch (error) {
+      await this.closeAdminHttp();
+      throw error;
+    }
+  }
+
+  private async startWorld(): Promise<void> {
     await this.world.initialize();
     await this.world.loadPlugins();
     await this.world.plugins.enableAll();
@@ -111,11 +135,13 @@ export class AnarchyServer {
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
     serverLog(`mode: ${this.config.serverMode}`);
+    serverLog(yandexAuthLogLabel(this.config.yandexAuth));
     serverLog(`world loaded: ${this.config.worldId}`);
     console.log(`${readyLabel(this.config.serverMode)} server ready`);
   }
 
   async stop(): Promise<void> {
+    await this.closeAdminHttp();
     this.world.prepareForServerShutdown();
     const seen = new Set<string>();
     for (const [socket, binding] of this.sockets) {
@@ -136,6 +162,57 @@ export class AnarchyServer {
       if (!this.http) resolve();
     });
     serverLog('stopped');
+  }
+
+  private async openAdminHttp(): Promise<void> {
+    const admin = this.config.adminHttp;
+    if (!admin.enabled) return;
+    const assetsRoot = resolveAdminAssetsRoot(import.meta.url);
+    if (!existsSync(adminAssetIndex(assetsRoot))) {
+      throw new Error(
+        `admin ui bundle is missing (${adminAssetIndex(assetsRoot)}). Run npm run build:admin before enabling FC_ADMIN_PORT.`,
+      );
+    }
+    const panel = new AdminPanelHost(
+      this.world,
+      (playerId, connectionId) => this.closeAdminKick(playerId, connectionId),
+      this.world.database,
+      this.config.database.enabled ? this.config.database.deploymentId : 'disabled',
+    );
+    const listener = new AdminHttpServer({
+      port: admin.port,
+      credentials: admin.credentials,
+      assetsRoot,
+      panel,
+      startedAt: this.startedAt,
+      inspect: (adminId, playerId) => this.world.inspectPlayer(adminId, playerId),
+      describe: () => ({
+        serverMode: this.config.serverMode,
+        worldId: this.config.worldId,
+      }),
+    });
+    this.adminHttp = listener;
+    try {
+      await listener.start();
+    } catch (error) {
+      this.adminHttp = undefined;
+      await listener.stop();
+      throw error;
+    }
+    serverLog(`admin http: 127.0.0.1:${listener.port}`);
+  }
+
+  private closeAdminKick(playerId: string, connectionId: string): void {
+    for (const [socket, binding] of this.sockets) {
+      if (binding.playerId !== playerId || binding.connectionId !== connectionId || binding.superseded) continue;
+      socket.close();
+    }
+  }
+
+  private async closeAdminHttp(): Promise<void> {
+    const listener = this.adminHttp;
+    this.adminHttp = undefined;
+    await listener?.stop();
   }
 
   private handleHttp(req: IncomingMessage, res: ServerResponse): void {
@@ -253,15 +330,40 @@ export class AnarchyServer {
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     const sink = new WsSink(socket);
-    const result = this.world.join({
+    const pending = this.world.join({
       sink,
       name: message.name,
       sessionToken: message.sessionToken,
       appearance: message.appearance,
+      freshGuest: message.freshGuest,
+      durableFresh: true,
     });
+    if (isPromise(pending)) {
+      pending.then(
+        (result) => this.finishJoin(socket, result, onJoin),
+        () => this.finishJoin(socket, { error: 'Сервер временно недоступен.' }, onJoin),
+      );
+      return;
+    }
+    this.finishJoin(socket, pending, onJoin);
+  }
+
+  private finishJoin(
+    socket: WebSocket,
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string },
+    onJoin: (playerId: string, connectionId: string) => void,
+  ): void {
     if ('error' in result) {
-      this.send(socket, { type: 'error', code: 'join_failed', message: result.error });
+      this.send(socket, {
+        type: 'error',
+        code: result.code ?? 'join_failed',
+        message: result.error,
+      });
       socket.close();
+      return;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.world.disconnect(result.player.id, true, result.player.connectionId);
       return;
     }
     const { player, resumed, previousConnectionId } = result;
@@ -430,7 +532,7 @@ export class AnarchyServer {
         return;
       }
       case 'chat':
-        this.world.handleChat(player, message.text, message.channel ?? 'global');
+        this.world.handleChat(player, message.text, message.channel ?? 'global', message.clientRequestId);
         return;
       case 'view':
         this.world.setView(player, message.cx, message.cz, message.radius);
@@ -440,14 +542,6 @@ export class AnarchyServer {
         return;
       case 'inventory_action':
         this.world.applyInventoryAction(player, message);
-        return;
-      case 'craft':
-        this.world.applyInventoryAction(player, {
-          type: 'inventory_action',
-          action: 'click',
-          key: 'result',
-          shift: message.shift === true,
-        });
         return;
       case 'interact': {
         const intent = blockIntentFromFields(message);
@@ -526,7 +620,7 @@ export class AnarchyServer {
         this.world.updateHologramAppearance(player, message);
         return;
       case 'auction_action':
-        this.world.handleAuctionAction(player, message);
+        this.world.handleAuctionAction(player, message, { connectionId });
         return;
       case 'clan_action':
         this.world.handleClanAction(player, message);

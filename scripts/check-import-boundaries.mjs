@@ -116,6 +116,14 @@ for (const file of walk(join(ROOT, 'src')).concat(walk(join(ROOT, 'shared'))).co
     }
   }
 
+  if (!rel.startsWith('server/')) {
+    for (const spec of specs) {
+      if (spec === 'pg' || spec.startsWith('pg/')) {
+        errors.push(`${rel} imports ${spec}; PostgreSQL is server-only`);
+      }
+    }
+  }
+
   if (rel.startsWith('server/')) {
     for (const spec of specs) {
       if (isThree(spec)) errors.push(`${rel} (server) imports ${spec}`);
@@ -123,6 +131,13 @@ for (const file of walk(join(ROOT, 'src')).concat(walk(join(ROOT, 'shared'))).co
         || spec.includes('InputManager') || spec.includes('/Lifecycle') || spec.includes('ThreeEntityHost')
         || spec.includes('IdbWorldStore') || spec.includes('SaveService')) {
         errors.push(`${rel} (server) imports client module ${spec}`);
+      }
+      const gameplayStore = rel.startsWith('server/services/')
+        || rel === 'server/gameplay.ts'
+        || rel === 'server/FsWorldStore.ts'
+        || rel === 'server/persistence.ts';
+      if (gameplayStore && (spec.includes('/db/') || spec.endsWith('/db'))) {
+        errors.push(`${rel} imports database infrastructure (${spec}). World and plugin JSON stay on the filesystem.`);
       }
     }
   }

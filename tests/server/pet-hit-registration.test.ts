@@ -176,8 +176,10 @@ describe('pet hit registration timing', { timeout: 30_000 }, () => {
     const look = lookAt(owner, { x: wolf.position.x, y: wolf.position.y + 0.4, z: wolf.position.z });
     const renderTick = world.tickNumber;
     for (let seq = 2; seq <= 8; seq += 1) {
-      world.applyInput(owner, input(seq, 0, 0, 0));
+      // Alternating cart intent is an edge, so the latency budget does not drop this wait.
+      world.applyInput(owner, { ...input(seq, 0, 0, 0), vehicleForward: seq % 2 === 0 ? 1 : -1 });
     }
+    expect(owner.commandQueue.length).toBe(7);
     expect(owner.pendingEntityUses).toHaveLength(0);
     expect(world.handleSequencedEntityUse(
       owner,

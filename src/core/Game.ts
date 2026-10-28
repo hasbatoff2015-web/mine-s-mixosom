@@ -146,6 +146,7 @@ import {
 import { consumeOffhandTotem } from '../gameplay/totemDeathProtection';
 import {
   Inventory,
+  collectiblePaintingDroppedStack,
   createItemStack,
   damageItem,
   normalizePortalChestSlots,
@@ -154,7 +155,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
-import { ItemId, collectiblePaintingDropItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
+import { ItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { megaZombieHealthBarVisible } from '../entities/megaZombie';
 import { restoreBucketInventory } from '../items/bucketInteraction';
 import { PlayerController, syncCreativeFlightAllowed } from '../player';
@@ -337,6 +338,7 @@ import {
   parseNetworkItemStacks,
   shouldOpenOnlineContainer,
 } from '../net/onlineContainerSync';
+import { transmitInventoryIntent } from '../net/inventoryIntent';
 import {
   shouldAcceptSnapshot,
   splitPlayerSnapshots,
@@ -429,7 +431,7 @@ import {
   bufferPendingAppearance,
   takePendingAppearance,
 } from '../net/remoteAppearance';
-import type { ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ClientInventoryActionMessage, ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { sanitizePlayerNameStyle, type PlayerNameStyle } from '../../shared/donationRanks';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
@@ -514,6 +516,10 @@ export interface OnlineAnarchySession {
   urgentMeshKeys: Set<string>;
   lastViewKey?: string;
   lastStateTick: number;
+  /** Last server inventory generation. Clicks send this; they do not invent the next one. */
+  inventoryRevision: number;
+  /** Set while a chest, furnace, or portal chest snapshot is open. */
+  containerRevision?: number;
   lastAliveTick?: number;
   pendingBlockAction?: { kind: 'break' | 'place'; x: number; y: number; z: number };
   rejectedBlockKey?: string;
@@ -1093,28 +1099,77 @@ export class Game {
     if (!url) return;
     const nicknameDraft = this.ui.onlineNicknameDraft();
     this.onlineStatus.cancel();
-    await runOnlineConnectAttempt({
-      url,
-      onLoading: (endpoint) => {
-        this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(endpoint));
-      },
-      connect: async (endpoint) => {
-        const client = new AnarchyClient();
-        try {
-          const welcome = await client.connect(endpoint, loadPlayerNickname(), this.playerAppearance);
-          await this.startOnlineAnarchy(client, welcome);
-        } catch (error) {
-          client.disconnect();
-          throw error;
+    this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url));
+    const client = new AnarchyClient();
+    try {
+      const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, { targetServer: id });
+      this.toastGuestIdentity(client);
+      await this.startOnlineAnarchy(client, welcome);
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error
+        ? String((error as { code?: string }).code ?? '')
+        : '';
+      if (code === 'cancelled') return;
+      client.disconnect();
+      if (code === 'unknown_guest' || code === 'world_changed') {
+        this.ui.toast(error instanceof Error ? error.message : 'Сохранённый персонаж не подключён.');
+        const startNew = typeof window !== 'undefined' && typeof window.confirm === 'function'
+          && window.confirm('Начать отдельного гостя в этом мире? Прежний ключ останется в браузере и сам не сотрётся.');
+        const offer = client.freshGuestOffer;
+        if (startNew && offer) {
+          try {
+            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
+              targetServer: id,
+              freshConsent: offer,
+            });
+            this.toastGuestIdentity(client);
+            await this.startOnlineAnarchy(client, welcome);
+            return;
+          } catch (retryError) {
+            this.ui.toast(retryError instanceof Error ? retryError.message : 'Новый гость не создан');
+          }
+        } else if (startNew) {
+          this.ui.toast('Новый гость не создан');
         }
-      },
-      onFailure: (retry) => {
-        this.ui.showOnlineConnectError({
-          retry,
-          back: () => this.showOnlineServerList(id, nicknameDraft),
-        });
-      },
-    });
+        await this.showOnlineServerList();
+        return;
+      }
+      if (code === 'storage_unavailable') {
+        this.ui.toast(error instanceof Error ? error.message : 'Браузер не прочитал сохранённую личность.');
+        const ephemeral = typeof window !== 'undefined' && typeof window.confirm === 'function'
+          && window.confirm('Продолжить без сохранения? После закрытия браузера этот персонаж может не вернуться. Запись в браузере не будет стёрта.');
+        if (ephemeral) {
+          try {
+            const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
+              targetServer: id,
+              allowEphemeral: true,
+            });
+            this.ui.toast('Сессия без сохранения. После закрытия браузера персонаж может не вернуться.');
+            await this.startOnlineAnarchy(client, welcome);
+            return;
+          } catch {
+            this.ui.toast('Временный вход не начат');
+          }
+        }
+        await this.showOnlineServerList();
+        return;
+      }
+      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'status_timeout' || code === 'mode_mismatch' || code === 'world_mismatch' || code === 'consent_mismatch') {
+        this.ui.toast(error instanceof Error ? error.message : 'Подключение остановлено');
+        await this.showOnlineServerList();
+        return;
+      }
+      this.ui.showOnlineConnectError({
+        retry: () => { void this.connectOnlineServer(id); },
+        back: () => this.showOnlineServerList(id, nicknameDraft),
+      });
+    }
+  }
+
+  private toastGuestIdentity(client: AnarchyClient): void {
+    if (client.identityWarning === 'storage') {
+      this.ui.toast('Ключ не записался в браузер. После закрытия вкладки персонаж может не вернуться. Прежние ключи не стёрты.');
+    }
   }
 
   private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
@@ -1171,6 +1226,7 @@ export class Game {
         prediction: createPredictionBuffer(),
         urgentMeshKeys: new Set<string>(),
         lastStateTick: -1,
+        inventoryRevision: 0,
         ownHurtSeq: presentationHurtSeq(welcome.you.presentation ?? IDLE_PLAYER_PRESENTATION),
         ...(() => {
           const isolation = resolvePredIsolation();
@@ -1512,6 +1568,11 @@ export class Game {
           }
         }
         applyAuthoritativeContainerSlots(session.world, message.window, parseNetworkItemStack, session.portalChest, session.viewedInventory);
+        if (typeof message.inventoryRevision === 'number') session.online.inventoryRevision = message.inventoryRevision;
+        session.online.containerRevision = typeof message.containerRevision === 'number'
+          ? message.containerRevision
+          : undefined;
+        this.ui.noteInventoryRevisions(session.online.inventoryRevision, session.online.containerRevision);
         this.ui.applyAuthoritativeCursor(
           parseNetworkItemStack(message.cursor),
           parseNetworkItemStacks(message.craftSlots),
@@ -1530,6 +1591,10 @@ export class Game {
         return;
       case 'furnace_sync':
         applyFurnaceSync(session.world, message, parseNetworkItemStack);
+        if (typeof message.containerRevision === 'number') {
+          session.online.containerRevision = message.containerRevision;
+          this.ui.noteInventoryRevisions(session.online.inventoryRevision, message.containerRevision);
+        }
         if (this.ui.isInventoryOpen()) this.ui.refreshOpenInventory();
         return;
       case 'furnace_lit':
@@ -2731,7 +2796,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openAuction(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeAuctionAndResumeLook(true),
     });
   }
@@ -2772,7 +2837,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openClan(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeClanAndResumeLook(true),
     });
   }
@@ -2828,7 +2893,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openTrade(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeTradeAndResumeLook(true),
     });
   }
@@ -2894,7 +2959,7 @@ export class Game {
       this.openGameplayModal();
     }
     this.ui.openBuyer(message, {
-      send: (action) => session.online?.client.send(action),
+      send: (action) => session.online?.client.send({ ...action, clientRequestId: globalThis.crypto.randomUUID() }),
       close: () => this.closeBuyerAndResumeLook(true),
     });
   }
@@ -4372,7 +4437,7 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => session.online?.client.send(message)
+        ? (message) => this.sendInventoryAction(message)
         : undefined,
     });
     session.online?.client.send({ type: 'inventory_action', action: 'open', kind: 'inventory' });
@@ -4417,7 +4482,7 @@ export class Game {
       onDrop: (stack) => this.spawnDroppedStack(stack),
       onChanged: () => this.refreshHud(),
       submitAction: session.online
-        ? (message) => session.online?.client.send(message)
+        ? (message) => this.sendInventoryAction(message)
         : undefined,
     });
   }
@@ -5433,7 +5498,7 @@ export class Game {
             attackerYaw: result.attackerYaw,
             extraKnockbackLevel: result.extraKnockbackLevel,
             attackerId: LOCAL_PLAYER_FOCUS_ID,
-            ...(godSwordHit ? { lethal: true } : {}),
+            ...(godSwordHit && mobTarget.mob.kind === 'mega_zombie' ? { lethal: true } : {}),
           });
           completeMeleeAttack(result, accepted, session.player);
           if (accepted && session.summary.mode === 'survival') {
@@ -5583,10 +5648,10 @@ export class Game {
     this.firstPerson?.swing();
 
     if (session.summary.mode === 'survival') {
-      const paintingItemId = collectiblePaintingDropItemId(hit.block, blockState);
-      if (paintingItemId) {
+      const paintingDrop = collectiblePaintingDroppedStack(hit.block, blockState);
+      if (paintingDrop) {
         this.spawnDroppedStack(
-          createItemStack(paintingItemId, 1),
+          paintingDrop,
           new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
         );
       } else {
@@ -5650,13 +5715,13 @@ export class Game {
     if (hit.block === BlockId.Chest || hit.block === BlockId.EventChest) {
       const chest = session.world.chests.get(key);
       if (chest) for (const stack of chest.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
-      session.world.chests.delete(key);
+      session.world.removeChestState(hit.x, hit.y, hit.z);
     } else if (hit.block === BlockId.PortalChest) {
       // Personal portal storage stays with the player.
     } else if (hit.block === BlockId.Furnace) {
       const furnace = session.world.furnaces.get(key);
       if (furnace) for (const stack of furnace.slots) if (stack) this.spawnDroppedStack(stack, new THREE.Vector3(hit.x + 0.5, hit.y + 0.6, hit.z + 0.5));
-      session.world.furnaces.delete(key);
+      session.world.removeFurnaceState(hit.x, hit.y, hit.z);
     }
   }
 
@@ -5905,10 +5970,10 @@ export class Game {
     for (const event of events) {
       // Environmental drops also exist in Creative; lava destroys without loot.
       if (event.reason === 'lava') continue;
-      const paintingItemId = collectiblePaintingDropItemId(event.block, event.state);
-      if (paintingItemId) {
+      const paintingDrop = collectiblePaintingDroppedStack(event.block, event.state);
+      if (paintingDrop) {
         this.spawnDroppedStack(
-          createItemStack(paintingItemId, 1),
+          paintingDrop,
           new THREE.Vector3(event.x + 0.5, event.y + 0.3, event.z + 0.5),
         );
         continue;
@@ -6021,10 +6086,10 @@ export class Game {
           normal: new Vec3(),
           point: new Vec3(block.x + 0.5, block.y + 0.5, block.z + 0.5),
         });
-        const paintingItemId = collectiblePaintingDropItemId(block.previous, block.previousState);
-        if (paintingItemId) {
+        const paintingDrop = collectiblePaintingDroppedStack(block.previous, block.previousState);
+        if (paintingDrop) {
           this.spawnDroppedStack(
-            createItemStack(paintingItemId, 1),
+            paintingDrop,
             new THREE.Vector3(block.x + 0.5, block.y + 0.3, block.z + 0.5),
           );
         }
@@ -6076,18 +6141,25 @@ export class Game {
     }
   }
 
+  /** Forwards a GameUI-stamped inventory mutation. Does not stamp again. */
+  private sendInventoryAction(message: ClientInventoryActionMessage): void {
+    const online = this.session?.online;
+    if (!online) return;
+    transmitInventoryIntent((payload) => online.client.send(payload), message);
+  }
+
   private dropSelectedItem(): void {
     const session = this.session;
     if (!session || this.lifecycle.state !== 'PLAYING') return;
     const stack = this.selectedStack();
     if (!stack) return;
     if (session.online) {
-      session.online.client.send({
+      this.sendInventoryAction(this.ui.stampInventorySubmission({
         type: 'inventory_action',
         action: 'drop_selected',
         slot: session.selectedSlot,
         count: 1,
-      });
+      }));
       return;
     }
     const dropped = { ...stack, count: 1 };
@@ -6252,7 +6324,12 @@ export class Game {
     this.ui.setChatInputHistory(this.chat.history);
     this.ui.clearChatDraft();
     if (session.online) {
-      session.online.client.send({ type: 'chat', text: trimmed, channel });
+      session.online.client.send({
+        type: 'chat',
+        text: trimmed,
+        channel,
+        clientRequestId: globalThis.crypto.randomUUID(),
+      });
       return;
     }
     const dispatched = dispatchChatLine(trimmed, this.commandContext());

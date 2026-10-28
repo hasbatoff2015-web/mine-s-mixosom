@@ -359,9 +359,11 @@ describe('online block intent WorldInstance', { timeout: 20_000 }, () => {
     player.inventory.setSlot(0, createItemStack('bow', 1));
     player.inventory.setSlot(1, createItemStack('arrow', 16));
     for (let seq = 1; seq <= 4; seq += 1) {
-      world.applyInput(player, input(seq, { use: false, forward: 1 }));
+      // Alternating cart intent keeps each use:false command in the FIFO.
+      world.applyInput(player, input(seq, { use: false, forward: 1, vehicleForward: seq % 2 === 0 ? 1 : -1 }));
     }
     world.applyInput(player, input(5, { use: true, forward: 1 }));
+    expect(player.commandQueue.length).toBe(5);
     expect(world.interact(player, undefined, 1, 5, 0)).toEqual({ ok: true });
     expect(player.bowUseTicks).toBeGreaterThan(0);
     for (let tick = 0; tick < 4; tick += 1) world.tick();

@@ -1,10 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { BlockId } from '../../src/blocks';
+import { FsWorldStore } from '../../server/FsWorldStore';
+import { inventoryWithDiamond, sampleSnapshot } from '../persistFixture';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const ENTRY = join(ROOT, 'dist/server/index.mjs');
@@ -34,6 +37,44 @@ async function exists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+const CANONICAL_FILES = ['meta.json', 'world.json', 'players.json'] as const;
+
+async function canonicalBytes(worldDir: string): Promise<Buffer[]> {
+  return Promise.all(CANONICAL_FILES.map((name) => readFile(join(worldDir, name))));
+}
+
+async function seedAuthoritativeWorld(worldPath: string, worldId: string): Promise<void> {
+  const store = new FsWorldStore(worldPath);
+  const base = sampleSnapshot();
+  await store.save(sampleSnapshot({
+    summary: { ...base.summary, id: worldId, name: worldId, seed: 'canary-seed' },
+    serverWorld: {
+      id: worldId,
+      initialized: true,
+      spawnImported: true,
+      importVersion: 3,
+      spawn: [8.5, 64, 8.5],
+    },
+    modifications: { '4,5': { '11': BlockId.GoldBlock } },
+    players: {
+      'canary-player': {
+        id: 'canary-player',
+        name: 'PersistenceCanary',
+        x: 123.25,
+        y: 70,
+        z: 56.5,
+        yaw: 1.5,
+        pitch: 0.25,
+        health: 17,
+        gamemode: 'survival',
+        selectedSlot: 3,
+        inventory: inventoryWithDiamond(),
+        updatedAt: 424242,
+      },
+    },
+  }));
 }
 
 function startServer(env: NodeJS.ProcessEnv): Session {
@@ -66,6 +107,13 @@ function baseEnv(worldPath: string, world: string, port: string, extra: NodeJS.P
     FC_EXAMPLE_PLUGIN: '',
     FC_NO_BUILTIN_PLUGINS: '',
     FC_TEST_FATAL: '',
+    FC_DATABASE_URL: '',
+    FC_DEPLOYMENT_ID: '',
+    FC_DB_POOL_MAX: '',
+    FC_TEST_DATABASE_URL: '',
+    FC_ADMIN_IDS: '',
+    FC_ADMIN_PORT: '',
+    FC_ADMIN_AUTH_HASHES: '',
     ...extra,
   };
 }
@@ -142,11 +190,21 @@ describe('production server process lifecycle', () => {
       const contenderLock = join(worldPath, 'contender', '.instance.lock');
       expect(await exists(holderLock)).toBe(true);
 
+      await seedAuthoritativeWorld(worldPath, 'contender');
+      const contenderDir = join(worldPath, 'contender');
+      const metaBeforeListen = await readFile(join(contenderDir, 'meta.json'));
       contender = startServer(baseEnv(worldPath, 'contender', String(port)));
       const code = await waitClose(contender.child, START_TIMEOUT_MS);
       const log = contender.output();
       expect(code.code).toBe(1);
       expect(log).toContain('EADDRINUSE');
+      expect(log).toContain('world saved');
+      expect(log).not.toContain('world created');
+      const playersAfter = await readFile(join(contenderDir, 'players.json'), 'utf8');
+      const worldAfter = await readFile(join(contenderDir, 'world.json'), 'utf8');
+      expect(playersAfter).toContain('PersistenceCanary');
+      expect(worldAfter).toContain(String(BlockId.GoldBlock));
+      expect((await readFile(join(contenderDir, 'meta.json'))).equals(metaBeforeListen)).toBe(false);
       expect(log).toContain('mode=anarchy');
       expect(log).toContain('world=contender');
       expect(log).toContain('host=127.0.0.1');
@@ -232,6 +290,102 @@ describe('production server process lifecycle', () => {
       expect(log).toContain('world saved');
       expect(log.match(/\[server\] stopped/g)).toHaveLength(1);
       expect(await exists(lockPath)).toBe(false);
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
+      await rm(worldPath, { recursive: true, force: true });
+    }
+  }, START_TIMEOUT_MS);
+
+  it('fails startup when the configured database is unreachable and does not keep the world lock', async () => {
+    const worldPath = await mkdtemp(join(tmpdir(), 'fc-db-down-'));
+    const world = 'db-down';
+    const password = 'super-secret-password';
+    const user = 'fc_audit_user';
+    const session = startServer(baseEnv(worldPath, world, '0', {
+      FC_DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:1/megacraft_dev`,
+      FC_DEPLOYMENT_ID: 'dev',
+    }));
+    const lockPath = join(worldPath, world, '.instance.lock');
+    try {
+      const code = await waitClose(session.child, START_TIMEOUT_MS);
+      const log = session.output();
+      expect(code.code).toBe(1);
+      expect(log).toContain('startup failed');
+      expect(log).not.toContain('server ready');
+      expect(log).not.toContain('database: ready');
+      expect(log).not.toContain(password);
+      expect(log).not.toContain(user);
+      expect(log).not.toContain('postgresql://');
+      expect(log).not.toContain('world saved');
+      expect(log).not.toContain('world created');
+      expect(log).not.toContain('world loaded');
+      expect(await exists(lockPath)).toBe(false);
+      for (const name of CANONICAL_FILES) {
+        expect(await exists(join(worldPath, world, name))).toBe(false);
+      }
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
+      await rm(worldPath, { recursive: true, force: true });
+    }
+  }, START_TIMEOUT_MS);
+
+  it('does not rewrite an existing world when the configured database is unreachable', async () => {
+    const worldPath = await mkdtemp(join(tmpdir(), 'fc-db-keep-'));
+    const world = 'db-keep';
+    const worldDir = join(worldPath, world);
+    const password = 'super-secret-password';
+    const user = 'fc_audit_user';
+    await seedAuthoritativeWorld(worldPath, world);
+    const before = await canonicalBytes(worldDir);
+    const session = startServer(baseEnv(worldPath, world, '0', {
+      FC_DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:1/megacraft_dev`,
+      FC_DEPLOYMENT_ID: 'dev',
+    }));
+    try {
+      const code = await waitClose(session.child, START_TIMEOUT_MS);
+      const log = session.output();
+      expect(code.code).toBe(1);
+      expect(log).toContain('startup failed');
+      expect(log).not.toContain('world saved');
+      expect(log).not.toContain('server ready');
+      expect(log).not.toContain(password);
+      expect(log).not.toContain(user);
+      const after = await canonicalBytes(worldDir);
+      expect(after[0]?.equals(before[0] ?? Buffer.alloc(0))).toBe(true);
+      expect(after[1]?.equals(before[1] ?? Buffer.alloc(0))).toBe(true);
+      expect(after[2]?.equals(before[2] ?? Buffer.alloc(0))).toBe(true);
+      expect(after[2]?.toString('utf8')).toContain('PersistenceCanary');
+      expect(after[1]?.toString('utf8')).toContain(String(BlockId.GoldBlock));
+      expect(await exists(join(worldDir, '.instance.lock'))).toBe(false);
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
+      await rm(worldPath, { recursive: true, force: true });
+    }
+  }, START_TIMEOUT_MS);
+
+  it('does not replace corrupt world files when load fails before initialization', async () => {
+    const worldPath = await mkdtemp(join(tmpdir(), 'fc-corrupt-'));
+    const world = 'corrupt-world';
+    const worldDir = join(worldPath, world);
+    const meta = '{not-json';
+    const worldBody = 'CORRUPT-WORLD-MARKER';
+    const players = 'CORRUPT-PLAYERS-MARKER';
+    await mkdir(worldDir, { recursive: true });
+    await writeFile(join(worldDir, 'meta.json'), meta, 'utf8');
+    await writeFile(join(worldDir, 'world.json'), worldBody, 'utf8');
+    await writeFile(join(worldDir, 'players.json'), players, 'utf8');
+    const session = startServer(baseEnv(worldPath, world, '0'));
+    try {
+      const code = await waitClose(session.child, START_TIMEOUT_MS);
+      const log = session.output();
+      expect(code.code).toBe(1);
+      expect(log).toContain('startup failed');
+      expect(log).not.toContain('world saved');
+      expect(log).not.toContain('world created');
+      expect(await readFile(join(worldDir, 'meta.json'), 'utf8')).toBe(meta);
+      expect(await readFile(join(worldDir, 'world.json'), 'utf8')).toBe(worldBody);
+      expect(await readFile(join(worldDir, 'players.json'), 'utf8')).toBe(players);
+      expect(await exists(join(worldDir, '.instance.lock'))).toBe(false);
     } finally {
       if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill('SIGKILL');
       await rm(worldPath, { recursive: true, force: true });

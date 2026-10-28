@@ -7,15 +7,19 @@ import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld, relocateStan
 import { inputSeqAfterReconnect } from '../src/core/onlineSession';
 import {
   Inventory,
+  cloneStack,
   createItemStack,
   createPortalChestInventory,
+  createTrackedItemInstances,
+  ensureInventoryInstanceIds,
+  ensureItemInstanceId,
+  readItemInstanceId,
   normalizePortalChestSlots,
   playerEquipmentFromInventory,
   type ItemStack,
   type PortalChestInventory,
 } from '../src/inventory';
 import { applyInventoryUiAction, sameSharedContainerWindow, type InventoryWindow } from '../src/inventory/inventoryUiAction';
-import { cloneStack } from '../src/inventory/stack';
 import { readInvseeSlots, writeInvseeSlots } from './services/invsee';
 import { isKnownItemId, ItemId, readBookContent, sanitizeBookDraft, tryGetItemDefinition, writeBookInSlot } from '../src/items';
 import { emoteDurationTicks, emoteMovementInterrupts } from '../shared/emotes';
@@ -109,6 +113,16 @@ import { PlayerCommandQueue } from './playerCommandQueue';
 import type { ServerConfig, ServerMode } from './config';
 import { acquireWorldDirectoryLock, type WorldDirectoryLock } from './worldLock';
 import {
+  InventoryRequestLog,
+  inventoryIntentHash,
+  isMutatingInventoryAction,
+} from './inventoryRequests';
+import { clearCarryState, loadCarryState } from './carryState';
+import { isSharedWorldChestBlock } from '../src/inventory/portalChest';
+import { AdminInspectionService, type AdminPlayerSnapshot } from './admin/inspection';
+import { AdminIdentityPolicy } from './admin/identity';
+import { createDatabase, type Database } from './db/database';
+import {
   CommandRegistry,
   createConsoleCommandSender,
   fail,
@@ -123,17 +137,35 @@ import { EventBus } from './events';
 import { PluginManager, PLUGIN_API_VERSION, type PlayerView, type PluginEntityView, type PluginHost, type WorldView } from './PluginManager';
 import { createBuiltinPlugins } from './builtin-plugins';
 import { JsonFileStore } from './services/jsonStore';
+import { IdentityIncidentLog } from './identity/incidents';
+import { countMonitoredResources, ResourceLedger } from './resources/accounting';
+import { isMonitoredResource } from './resources/monitored';
+import {
+  IDENTITY_TRANSFER_BLOCKED,
+  scanIdentity,
+  type IdentityPlayerStacks,
+  type IdentityReport,
+} from './identity/locationScan';
 import { PermissionService } from './services/permissions';
+import { canonicalPlayerId, isPlayerId } from './services/permissionSubject';
+import { AdminBanList, type AdminBanRecord } from './admin/bans';
+import { importLegacyBan, listActiveBans } from './admin/banAuthority';
 import { DonationRankService } from './services/donationRanks';
 import { resolvePetLimit } from './services/playerLimits';
 import { PluginConfigService } from './services/pluginConfig';
 import { PlayerSelectionService, volumeContains } from './services/selection';
 import { AutoMineManager, mineVolume } from './services/autoMine';
 import { WorldEventsManager, overlayEventPlacementOnChunkModifications, overlayEventPlacementOnModifications } from './services/worldEvents';
-import { AUCTION_MAX_ACTIVE, AuctionService, auctionPriceError, parseAuctionPrice, type AuctionView } from './services/auction';
+import { AUCTION_MAX_ACTIVE, AuctionService, auctionPriceError, parseAuctionPrice, type AuctionResult, type AuctionView } from './services/auction';
 import { ClanService, type ClanResult, type ClanView } from './services/clan';
 import { BuyerService, type BuyerRecord } from './services/buyer';
 import { EconomyService, formatMegacoinAmount, formatMegacoins } from './services/economy';
+import { createGameplayEconomy } from './economy/createGameplayEconomy';
+import { isPromise } from './economy/currencyPort';
+import { clientMoneyRequest } from './economy/moneyRequest';
+import type { ItemDurability } from './settlements/durability';
+import { BlockRewardBarrier } from './settlements/blockRewardBarrier';
+import { SettlementService } from './settlements/service';
 import { HomeService } from './services/home';
 import { FriendsService } from './services/friends';
 import { DirectMessageService } from './services/directMessages';
@@ -305,6 +337,9 @@ function skippedCommandFields(queue: PlayerCommandQueue): {
 export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
+  readonly settlementReceipts = new Set<string>();
+  /** Stacks removed from a trade or buyer window that did not fit back into inventory. */
+  heldReturns: ItemStack[] = [];
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
   /** Highest received command seq (packet filter). Snapshot uses appliedCommandSeq. */
   lastInputSeq = -1;
@@ -377,6 +412,15 @@ export class ServerPlayer implements GameplayPlayer {
   /** Last furnace_sync payload sent while this player's furnace GUI is open. */
   furnaceSyncSignature?: string;
   readonly portalChest: PortalChestInventory = createPortalChestInventory();
+  /** Cursor and craft-grid changes that are not inventory slots. */
+  carryRevision = 0;
+  portalChestRevision = 0;
+  readonly inventoryRequests = new InventoryRequestLog();
+  lastInventoryConflictAt = 0;
+
+  get inventoryRevision(): number {
+    return this.inventory.revision + this.carryRevision;
+  }
   healthSignature = '';
   effectSignature = '';
   appearance: PlayerAppearance = DEFAULT_PLAYER_APPEARANCE;
@@ -622,8 +666,19 @@ function inputFromCommand(command: PlayerCommand): ClientInputMessage {
   };
 }
 
+export interface WorldInstanceOptions {
+  /** Tests inject a fake. Production builds one from `config.database`. */
+  readonly database?: Database;
+}
+
 export class WorldInstance {
   readyState: WorldReadyState = 'UNINITIALIZED';
+  /**
+   * True only after `loadOrCreateWorld` finishes a canonical load or a new-world create.
+   * Constructor state, the world lock, and a started database are not enough.
+   * `stop()` must not write snapshots while this is false.
+   */
+  private canonicalWorldLoaded = false;
   readonly world: VoxelWorld;
   readonly events = new EventBus();
   readonly commands = new CommandRegistry();
@@ -640,6 +695,8 @@ export class WorldInstance {
   readonly autoMine: AutoMineManager;
   readonly worldEvents: WorldEventsManager;
   readonly economy: EconomyService;
+  /** Currency port. Same object as `economy` in legacy_json mode. */
+  readonly money: import('./economy/currencyPort').CurrencyPort;
   readonly auction: AuctionService;
   readonly clan: ClanService;
   readonly buyer: BuyerService;
@@ -658,12 +715,34 @@ export class WorldInstance {
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
   readonly gameplay: ServerGameplay;
+  readonly database: Database;
+  readonly adminIdentity: AdminIdentityPolicy;
+  private readonly adminInspection: AdminInspectionService;
   private worldLock?: WorldDirectoryLock;
   tickNumber = 0;
   spawn: [number, number, number];
   lastTickMs = 0;
   maxTickMs = 0;
   private dirty = false;
+  private readonly identityIncidents = new IdentityIncidentLog();
+  private readonly adminBans = new AdminBanList();
+  private adminBansLoaded = false;
+  /** PostgreSQL bans are loaded. JSON mode does not use this gate. */
+  private adminBansReady = false;
+  /** Newest applied observation time per canonical player id. Older reads are ignored. */
+  private banStamp = new Map<string, number>();
+  private banFloor = 0;
+  private banInflight = new Map<string, number>();
+  private banUnsynced = new Set<string>();
+  private adminRecheckBusy = false;
+  private adminRecheckAt = 0;
+  private identityLogLoaded = false;
+  /** A failed incident write stays pending until the next allowed checkpoint. */
+  private identityPersistPending = false;
+  private unresolvedIdentitySources = 0;
+  private readonly resources = new ResourceLedger();
+  private resourceLogLoaded = false;
+  private resourcePersistPending = false;
   private readonly worldStore: FsWorldStore;
   private storedPlayers: Record<string, SerializedPersistedPlayer> = {};
   private cosmeticEnsureTicks = 0;
@@ -673,6 +752,13 @@ export class WorldInstance {
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private saveGeneration = 0;
   private saveQueue: Promise<void> = Promise.resolve();
+  private settlements?: SettlementService;
+  private rewardBarrier?: BlockRewardBarrier<{
+    playerId: string;
+    blockId: number;
+    placed: boolean;
+    rewardEventId?: string;
+  }>;
   private tickTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly dt: number;
   private tickAccumulator = 0;
@@ -712,7 +798,46 @@ export class WorldInstance {
   /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
   private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
 
-  constructor(readonly config: ServerConfig) {
+  constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
+    this.database = options?.database ?? createDatabase(config);
+    this.adminIdentity = new AdminIdentityPolicy(config.adminIdentity);
+    this.adminInspection = new AdminInspectionService(this.adminIdentity, {
+      worldId: config.worldId,
+      findOnline: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player?.connected) return undefined;
+        const position = player.controller.position;
+        const window = player.window;
+        const container = this.containerRevisionFor(player);
+        return {
+          id: player.id,
+          name: player.name,
+          gamemode: player.gamemode,
+          x: position.x,
+          y: position.y,
+          z: position.z,
+          health: player.survival.health,
+          inventory: player.inventory.serialize(),
+          inventoryRevision: player.inventoryRevision,
+          ...(container !== undefined ? { containerKind: window.kind, containerRevision: container } : {}),
+        };
+      },
+      findStored: (playerId) => {
+        const stored = this.storedPlayers[playerId];
+        if (!stored) return undefined;
+        const gamemode = stored.gamemode === 'creative' ? 'creative' : 'survival';
+        let inventory;
+        try {
+          inventory = stored.inventory
+            ? Inventory.deserialize(stored.inventory).serialize()
+            : new Inventory().serialize();
+        } catch {
+          inventory = new Inventory().serialize();
+        }
+        return { id: stored.id, name: stored.name, gamemode, inventory };
+      },
+      balance: (playerId) => this.money.getBalance(playerId),
+    });
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
     this.world.onFurnaceLitChanged = (change) => {
@@ -730,23 +855,34 @@ export class WorldInstance {
     });
     this.gameplay.serverMode = config.serverMode;
     this.gameplay.onPersistentStateChanged = () => { this.dirty = true; };
+    this.gameplay.onAcceptedBlockDrop = (itemId, count, sourceId) => this.resources.noteMine(itemId, count, sourceId);
+    this.gameplay.onProducedResource = (itemId, count) => this.resources.noteReward(itemId, count);
+    this.gameplay.onCraftedResource = (commit) => this.resources.noteCraft(commit);
+    this.gameplay.onCreativeResource = (previous, next) => this.resources.noteCreative(previous, next);
+    this.world.onFurnaceCompleted = (inputItemId, outputItemId, outputCount) => {
+      this.resources.noteSmelt(inputItemId, outputItemId, outputCount);
+    };
     this.gameplay.listPlayers = () => this.players.values();
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
     this.pluginStore = new JsonFileStore(join(this.worldStore.directoryFor(config.worldId), 'plugin-data'));
     this.economy = new EconomyService(this.pluginStore);
-    this.auction = new AuctionService(this.pluginStore, this.economy);
-    this.clan = new ClanService(this.pluginStore, this.economy);
+    this.money = createGameplayEconomy(config, this.database, this.pluginStore, this.economy);
+    this.auction = new AuctionService(this.pluginStore, this.money);
+    this.clan = new ClanService(this.pluginStore, this.money);
     this.homes = new HomeService(this.pluginStore);
     this.friends = new FriendsService(this.pluginStore);
     this.directMessages = new DirectMessageService(this.pluginStore, (a, b) => this.friends.isFriend(a, b));
-    this.trade = new TradeService(this.economy);
+    this.trade = new TradeService(this.money);
     this.notifications = new NotificationService(this.pluginStore);
     const notifyUnread = (playerId: string, category: 'friends' | 'clans' | 'auction' | 'trade') => {
       this.notifyUnread(playerId, category);
     };
-    this.auction.setRuntime({ notifyUnread });
+    this.auction.setRuntime({
+      notifyUnread,
+      retainStack: (playerId, stack) => this.retainHeldReturn(playerId, stack),
+    });
     this.clan.setRuntime({
       onlinePlayers: () => this.connectedPlayers().map((player) => ({ id: player.id, name: player.name })),
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
@@ -755,7 +891,7 @@ export class WorldInstance {
         if (live) return live.name;
         const stored = this.storedPlayers[playerId];
         if (stored) return stored.name;
-        return this.economy.displayName(playerId);
+        return this.money.displayName(playerId);
       },
       sendMessage: (playerId, text, extra) => {
         const target = this.players.get(playerId);
@@ -795,9 +931,9 @@ export class WorldInstance {
     });
     this.friends.setRuntime({
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
-      displayName: (playerId) => this.economy.displayName(playerId) === playerId.slice(0, 8)
+      displayName: (playerId) => this.money.displayName(playerId) === playerId.slice(0, 8)
         ? (this.players.get(playerId)?.name ?? this.storedPlayers[playerId]?.name ?? playerId.slice(0, 8))
-        : this.economy.displayName(playerId),
+        : this.money.displayName(playerId),
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       sendMessage: (playerId, text) => {
         const target = this.players.get(playerId);
@@ -816,10 +952,10 @@ export class WorldInstance {
       isOnline: (playerId) => this.players.get(playerId)?.connected === true,
       displayName: (playerId) => this.players.get(playerId)?.name
         ?? this.storedPlayers[playerId]?.name
-        ?? this.economy.displayName(playerId),
+        ?? this.money.displayName(playerId),
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       inventory: (playerId) => this.players.get(playerId)?.inventory,
-      balance: (playerId) => this.economy.getBalance(playerId),
+      balance: (playerId) => this.money.getBalance(playerId),
       sendMessage: (playerId, text) => {
         const target = this.players.get(playerId);
         if (!target?.connected) return;
@@ -832,6 +968,7 @@ export class WorldInstance {
         });
       },
       notifyUnread,
+      retainStack: (playerId, stack) => this.retainHeldReturn(playerId, stack),
     });
     this.gameplay.loadRegularClaimVolumes = () => {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
@@ -839,13 +976,7 @@ export class WorldInstance {
         .filter((claim) => !claim.anchor && claim.worldId === this.worldId)
         .map((claim) => claim.volume);
     };
-    this.permissions = new PermissionService(this.pluginStore, config.operators, (idOrName) => {
-      const direct = this.players.get(idOrName);
-      if (direct) return direct.name;
-      const lower = idOrName.toLowerCase();
-      const named = [...this.players.values()].find((player) => player.name.toLowerCase() === lower);
-      return named?.name ?? idOrName;
-    });
+    this.permissions = new PermissionService(this.pluginStore, config.operators);
     this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
     this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
     this.clan.setCreateCost((playerId) => (
@@ -917,7 +1048,7 @@ export class WorldInstance {
       notifyAdmins: (text) => {
         serverLog(`plugin automine ${text}`);
         for (const player of this.connectedPlayers()) {
-          if (!this.permissions.has(player.name, 'automine.manage') && !this.permissions.isOperator(player.name)) {
+          if (!this.permissions.has(player.id, 'automine.manage') && !this.permissions.isOperator(player.id)) {
             continue;
           }
           this.sendTo(player, {
@@ -930,7 +1061,7 @@ export class WorldInstance {
         }
       },
       log: (message) => serverLog(`plugin automine ${message}`),
-      onBlocksWritten: (cells) => this.economy.clearPlacedCells(cells),
+      onBlocksWritten: (cells) => this.money.clearPlacedCells(cells),
     });
     this.worldEvents = new WorldEventsManager({
       world: this.world,
@@ -999,6 +1130,8 @@ export class WorldInstance {
         });
       },
       log: (message) => serverLog(`plugin world-events ${message}`),
+      noteResourceStacks: (stacks, sourceId) => this.noteMonitoredStacks(stacks, sourceId, false),
+      noteResourceRemoval: (stacks, sourceId) => this.noteMonitoredStacks(stacks, sourceId, true),
       loadedWorldgenVersion: () => this.loadedWorldgenVersion,
       acknowledgeWorldgenMigration: () => {
         this.loadedWorldgenVersion = WORLDGEN_VERSION;
@@ -1150,17 +1283,42 @@ export class WorldInstance {
         z: mob.position.z,
       });
     };
-    this.buyer = new BuyerService(this.pluginStore, this.economy, this.holograms, () => this.worldId);
+    this.buyer = new BuyerService(this.pluginStore, this.money, this.holograms, () => this.worldId);
+    this.buyer.onDurableConsumption = (itemId, count, settlementId) => {
+      this.resources.noteSink(itemId, count, 'buyer-sale', settlementId);
+    };
+    if (config.economy.backend === 'postgres' && this.database.enabled && config.database.enabled) {
+      this.settlements = SettlementService.postgres(
+        this.database,
+        config.database.deploymentId,
+        config.serverMode,
+        config.worldId,
+      );
+      const durability = this.itemDurability();
+      this.auction.setStage2C({ durability, settlements: this.settlements });
+      this.buyer.setStage2C({ durability, settlements: this.settlements });
+      this.trade.setStage2C({ durability, settlements: this.settlements });
+      this.clan.setStage2C(this.settlements);
+    }
+    this.rewardBarrier = new BlockRewardBarrier(async () => {
+      try {
+        await this.save();
+        return true;
+      } catch {
+        return false;
+      }
+    }, async (reward) => {
+      const paid = this.money.rewardBlockBreak(reward.playerId, reward.blockId, { placed: reward.placed, source: 'player' }, reward.rewardEventId);
+      if (isPromise(paid)) await paid;
+    });
     this.claimBoundaries = new ClaimBoundaryNetwork((playerId, message) => {
       const player = this.players.get(playerId);
       if (player) this.sendTo(player, message);
     });
     this.commands.setPermissionCheck((sender, permission) => {
       if (isConsoleSender(sender) || sender.hasPermission?.(permission) === true) return true;
-      if (permission === 'operator') {
-        return this.permissions.isOperator(sender.name) || this.permissions.isOperator(sender.playerId);
-      }
-      return this.permissions.has(sender.playerId, permission) || this.permissions.has(sender.name, permission);
+      if (permission === 'operator') return this.permissions.isOperator(sender.playerId);
+      return this.permissions.has(sender.playerId, permission);
     });
     this.registerBuiltinCommands();
     this.plugins.attachHost(this.createPluginHost());
@@ -1178,11 +1336,308 @@ export class WorldInstance {
     return this.world.seed;
   }
 
+  /** Authoritative world state is in memory and safe to write back to disk. */
+  get isPersistenceReady(): boolean {
+    return this.canonicalWorldLoaded;
+  }
+
+  /**
+   * Read-only admin view. Both configured admin ids are accepted.
+   * Game operators are not. Returns null when the player is unknown.
+   */
+  inspectPlayer(adminId: string, playerId: string): AdminPlayerSnapshot | null {
+    return this.adminInspection.inspect(adminId, playerId);
+  }
+
+  /** Names and ids only. Inventories stay on the single-player inspection. */
+  listAdminPlayers(query: string, cursor: string | undefined, limit: number): {
+    readonly players: readonly {
+      readonly playerId: string;
+      readonly name: string;
+      readonly online: boolean;
+      readonly gamemode: string;
+    }[];
+    readonly nextCursor?: string;
+  } {
+    const rows: Array<{ playerId: string; name: string; online: boolean; gamemode: string }> = [];
+    const seen = new Set<string>();
+    for (const player of this.players.values()) {
+      seen.add(player.id);
+      rows.push({
+        playerId: player.id,
+        name: player.name,
+        online: player.connected,
+        gamemode: player.gamemode,
+      });
+    }
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (seen.has(stored.id)) continue;
+      rows.push({
+        playerId: stored.id,
+        name: stored.name,
+        online: false,
+        gamemode: stored.gamemode,
+      });
+    }
+    const needle = query.trim().toLowerCase();
+    const filtered = needle
+      ? rows.filter((row) => row.playerId.toLowerCase() === needle
+        || row.playerId.toLowerCase().includes(needle)
+        || row.name.toLowerCase().includes(needle))
+      : rows;
+    filtered.sort((a, b) => Number(b.online) - Number(a.online)
+      || a.name.localeCompare(b.name, 'ru')
+      || a.playerId.localeCompare(b.playerId));
+    const start = cursor ? Math.max(0, filtered.findIndex((row) => row.playerId === cursor) + 1) : 0;
+    const page = filtered.slice(start, start + limit);
+    const last = page[page.length - 1];
+    return {
+      players: page,
+      ...(start + page.length < filtered.length && last ? { nextCursor: last.playerId } : {}),
+    };
+  }
+
+  adminIncidents(): ReturnType<IdentityIncidentLog['list']> {
+    this.ensureIdentityLog();
+    return this.identityIncidents.list().slice(-80);
+  }
+
+  adminResources(): ReturnType<ResourceLedger['storedView']> {
+    this.ensureResourceLog();
+    return this.resources.storedView(this.worldId);
+  }
+
+  /**
+   * Explicit operator recheck. Ordinary panel reads do not call this.
+   * One scan at a time, and not more often than once every 15 seconds.
+   */
+  adminRecheck(now = Date.now()):
+    | { ok: false; error: 'busy' | 'rate' }
+    | {
+      ok: true;
+      incidents: ReturnType<IdentityIncidentLog['list']>;
+      resources: ReturnType<WorldInstance['inspectValuableResources']>;
+    } {
+    if (this.adminRecheckBusy) return { ok: false, error: 'busy' };
+    if (now - this.adminRecheckAt < 15_000) return { ok: false, error: 'rate' };
+    this.adminRecheckBusy = true;
+    try {
+      const incidents = this.inspectUniqueItems();
+      const resources = this.inspectValuableResources();
+      this.adminRecheckAt = now;
+      return { ok: true, incidents: incidents.incidents.slice(-80), resources };
+    } finally {
+      this.adminRecheckBusy = false;
+    }
+  }
+
+  isPlayerBanned(playerId: string): boolean {
+    if (this.database.enabled && !this.adminBansReady) return true;
+    if (this.banBlocked(playerId)) return true;
+    return this.storedBan(playerId);
+  }
+
+  /** Cache only. In-flight reconciliation does not change this answer. */
+  storedBan(playerId: string): boolean {
+    this.ensureAdminBans();
+    return this.adminBans.has(playerId);
+  }
+
+  banView(playerId: string): { readonly banned: boolean; readonly reason?: string } {
+    if (this.database.enabled && !this.adminBansReady) return { banned: true, reason: 'Состояние банов не загружено.' };
+    if (this.banBlocked(playerId)) return { banned: true, reason: 'Состояние бана обновляется.' };
+    this.ensureAdminBans();
+    const row = this.adminBans.get(playerId);
+    if (!row) return { banned: false };
+    return { banned: true, reason: row.reason };
+  }
+
+  beginBanSync(playerId: string): void {
+    const id = canonicalPlayerId(playerId);
+    this.banInflight.set(id, (this.banInflight.get(id) ?? 0) + 1);
+  }
+
+  endBanSync(playerId: string): void {
+    const id = canonicalPlayerId(playerId);
+    const next = (this.banInflight.get(id) ?? 1) - 1;
+    if (next <= 0) this.banInflight.delete(id);
+    else this.banInflight.set(id, next);
+  }
+
+  markBanUnsynced(playerId: string): void {
+    this.banUnsynced.add(canonicalPlayerId(playerId));
+  }
+
+  clearBanUnsynced(playerId: string): void {
+    this.banUnsynced.delete(canonicalPlayerId(playerId));
+  }
+
+  /**
+   * JSON bans are only for a process without PostgreSQL.
+   * The file is not the authority once the database is enabled.
+   */
+  setPlayerBan(record: { playerId: string; reason: string; adminId: string; at: number }): void {
+    if (this.database.enabled) throw new Error('postgres bans are authoritative');
+    this.ensureAdminBans();
+    this.adminBans.add(record);
+    this.pluginStore.save('admin-bans', this.adminBans.serialize());
+  }
+
+  clearPlayerBan(playerId: string): boolean {
+    if (this.database.enabled) throw new Error('postgres bans are authoritative');
+    this.ensureAdminBans();
+    const removed = this.adminBans.remove(playerId);
+    if (removed) this.pluginStore.save('admin-bans', this.adminBans.serialize());
+    return removed;
+  }
+
+  /** Replace the in-memory index from a committed database read. */
+  replaceBanCache(rows: readonly AdminBanRecord[], observedAt: Date = new Date(0)): void {
+    const stamp = observedAt.getTime();
+    this.banFloor = stamp;
+    this.banStamp.clear();
+    this.adminBans.load({ version: 1, bans: rows });
+    for (const row of this.adminBans.list()) this.banStamp.set(row.playerId, stamp);
+    this.adminBansLoaded = true;
+    this.adminBansReady = true;
+  }
+
+  /**
+   * Apply one player's committed row. A snapshot older than the last applied
+   * observation is ignored, so a delayed read cannot undo a newer result.
+   */
+  syncBanCache(playerId: string, row: {
+    banned: boolean;
+    reason: string;
+    adminId: string;
+    observedAt?: Date;
+  } | null): boolean {
+    const id = canonicalPlayerId(playerId);
+    const observedMs = row?.observedAt?.getTime() ?? Date.now();
+    const prev = Math.max(this.banStamp.get(id) ?? 0, this.banFloor);
+    if (observedMs < prev) return false;
+    this.banStamp.set(id, observedMs);
+    this.adminBansLoaded = true;
+    this.adminBansReady = true;
+    if (!row?.banned) {
+      this.adminBans.remove(id);
+      return true;
+    }
+    this.adminBans.add({
+      playerId: id,
+      reason: row.reason,
+      adminId: row.adminId,
+      at: observedMs,
+    });
+    return true;
+  }
+
+  private banBlocked(playerId: string): boolean {
+    if (!isPlayerId(playerId)) return false;
+    const id = canonicalPlayerId(playerId);
+    return this.banInflight.has(id) || this.banUnsynced.has(id);
+  }
+
+  peekAdminConnection(playerId: string): string | undefined {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return undefined;
+    return player.connectionId;
+  }
+
+  /**
+   * Closes only the captured connection. A newer connectionId is left alone.
+   */
+  disconnectAdminConnection(playerId: string, connectionId: string): 'closed' | 'replaced' | 'offline' {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return 'offline';
+    if (player.connectionId !== connectionId) return 'replaced';
+    this.disconnect(playerId, true, connectionId);
+    if (player.connectionId !== connectionId) return 'replaced';
+    if (player.connected) return 'offline';
+    return 'closed';
+  }
+
+  private ensureAdminBans(): void {
+    if (this.adminBansLoaded || this.database.enabled) return;
+    this.adminBansLoaded = true;
+    this.adminBansReady = true;
+    try {
+      this.adminBans.load(this.pluginStore.load('admin-bans', { version: 1, bans: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`admin ban load failed: ${detail}`, 'warn');
+    }
+  }
+
+  /**
+   * PostgreSQL is the ban authority when it is enabled. A legacy JSON file
+   * is imported once per missing player id and is not deleted. A failed
+   * load aborts startup instead of publishing an empty ban set.
+   */
+  private async loadBanAuthority(): Promise<void> {
+    if (!this.database.enabled) {
+      this.ensureAdminBans();
+      return;
+    }
+    const deploymentId = this.config.database.enabled
+      ? this.config.database.deploymentId
+      : (this.database.deploymentId ?? '');
+    if (!deploymentId) throw new Error('admin bans require a deployment id');
+    const legacy = new AdminBanList();
+    try {
+      legacy.load(this.pluginStore.load('admin-bans', { version: 1, bans: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`legacy admin ban file could not be read: ${detail}`);
+    }
+    await this.database.transaction(async (tx) => {
+      for (const ban of legacy.list()) {
+        if (!isPlayerId(ban.playerId)) continue;
+        await importLegacyBan(tx, {
+          deploymentId,
+          worldId: this.worldId,
+          playerId: ban.playerId,
+          reason: ban.reason.slice(0, 4000) || 'legacy',
+          adminId: ban.adminId.slice(0, 128) || 'legacy',
+        });
+      }
+    });
+    const active = await listActiveBans(this.database, deploymentId, this.worldId);
+    this.replaceBanCache(active.map((row) => ({
+      playerId: row.playerId,
+      reason: row.reason,
+      adminId: row.adminId,
+      at: Date.now(),
+    })));
+  }
+
+  private containerRevisionFor(player: ServerPlayer): number | undefined {
+    const window = player.window;
+    if (window.kind === 'portal-chest') return player.portalChestRevision;
+    if ((window.kind === 'chest' || window.kind === 'furnace')
+      && window.x !== undefined && window.y !== undefined && window.z !== undefined) {
+      return this.world.containerRevision(window.kind, window.x, window.y, window.z);
+    }
+    return undefined;
+  }
+
   async initialize(): Promise<void> {
+    if (this.config.economy.backend === 'postgres' && !this.database.enabled) {
+      throw new Error('FC_ECONOMY_BACKEND=postgres requires a configured database.');
+    }
+    // The lock is taken first so a configured database failure can release it
+    // before gameplay services load. Migrations finish before readyState is READY.
     await this.acquireWorldLock();
     try {
+      await this.database.start();
       await this.loadOrCreateWorld();
     } catch (error) {
+      try {
+        await this.database.close();
+      } catch (closeError) {
+        const detail = closeError instanceof Error ? closeError.message : String(closeError);
+        serverLog(`database close after failed startup: ${detail}`, 'error');
+      }
       await this.releaseWorldLock();
       throw error;
     }
@@ -1218,6 +1673,7 @@ export class WorldInstance {
       this.gameplay.restoreEntities(existing);
       this.permissions.load();
       this.donation.load();
+      this.money.load();
       this.economy.load();
       this.auction.load();
       this.clan.load();
@@ -1226,6 +1682,12 @@ export class WorldInstance {
       this.directMessages.load();
       this.notifications.load();
       this.buyer.load();
+      this.canonicalWorldLoaded = true;
+      this.ensureResourceLog();
+      await this.recoverSettlements();
+      this.observeIdentity('startup');
+      this.observeResources('startup');
+      await this.loadBanAuthority();
       this.preloadSpawnChunks();
       this.readyState = 'READY';
       serverLog(`world loaded: ${this.worldId} from ${this.worldStore.directoryFor(this.worldId)}`);
@@ -1235,6 +1697,7 @@ export class WorldInstance {
     this.createdAt = Date.now();
     this.permissions.load();
     this.donation.load();
+    this.money.load();
     this.economy.load();
     this.auction.load();
     this.clan.load();
@@ -1243,10 +1706,16 @@ export class WorldInstance {
     this.directMessages.load();
     this.notifications.load();
     this.buyer.load();
+    await this.loadBanAuthority();
     this.preloadSpawnChunks();
     this.dirty = true;
-    await this.save();
+    // The in-memory create is complete. This write commits it. The flag stays
+    // false until the write resolves, so a failed create is not saved again from stop().
+    await this.writeCanonicalSnapshot();
+    this.observeIdentity('startup');
+    this.observeResources('startup');
     this.readyState = 'READY';
+    this.canonicalWorldLoaded = true;
     serverLog(`world created: ${this.worldId} at ${this.worldStore.directoryFor(this.worldId)}`);
     if (this.config.serverMode === 'anarchy') {
       serverLog(
@@ -1284,7 +1753,7 @@ export class WorldInstance {
         selection: this.selection,
         autoMine: this.autoMine,
         worldEvents: this.worldEvents,
-        economy: this.economy,
+        economy: this.money,
         auction: this.auction,
         clan: this.clan,
         buyer: this.buyer,
@@ -1299,11 +1768,13 @@ export class WorldInstance {
         openGameMenu: (playerId, screen) => this.openGameMenu(playerId, (screen as GameMenuScreenKind | undefined) ?? 'root'),
         broadcastBuyers: () => this.broadcastBuyers(),
         lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
+        resolvePermissionSubject: (target) => this.resolvePermissionSubject(target),
         config: this.pluginConfig,
         plugins: this.plugins,
         world: this.world,
         worldId: () => this.worldId,
         markDirty: () => { this.dirty = true; },
+        scheduleRewardedBreak: (reward) => this.scheduleRewardedBreak(reward),
         holograms: this.holograms,
         claimBoundaries: this.claimBoundaries,
         donation: this.donation,
@@ -1381,12 +1852,42 @@ export class WorldInstance {
     if (this.persistTimer) clearInterval(this.persistTimer);
     this.eventLoopDelay?.disable();
     this.eventLoopDelay = undefined;
-    await this.plugins.disableAll();
-    await this.save();
-    await this.releaseWorldLock();
+    // A failed save must not skip these. The next process needs the directory,
+    // and a configured pool must not stay open after shutdown.
+    let failure: unknown;
+    try {
+      // disableAll is idle when plugins were never loaded or enabled.
+      await this.plugins.disableAll();
+      if (this.canonicalWorldLoaded) await this.save();
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      await this.money.shutdown?.();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    try {
+      await this.releaseWorldLock();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    try {
+      await this.database.close();
+    } catch (error) {
+      if (!failure) failure = error;
+    }
+    if (failure) throw failure;
   }
 
   async save(): Promise<void> {
+    if (!this.canonicalWorldLoaded) {
+      throw new Error('Cannot save before the canonical world is loaded.');
+    }
+    return this.writeCanonicalSnapshot();
+  }
+
+  private async writeCanonicalSnapshot(): Promise<void> {
     const generation = ++this.saveGeneration;
     const run = this.saveQueue.then(() => this.flushWorldSnapshot(generation));
     this.saveQueue = run.then(() => undefined, () => undefined);
@@ -1396,7 +1897,7 @@ export class WorldInstance {
   private async flushWorldSnapshot(generation: number): Promise<void> {
     const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
     for (const player of this.players.values()) {
-      players[player.id] = this.toStored(player);
+      players[player.id] = this.durablePlayerRecord(player);
     }
     this.storedPlayers = players;
     const entities = this.gameplay.persistEntities();
@@ -1432,12 +1933,15 @@ export class WorldInstance {
     await this.worldStore.save(snapshot);
     if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
     this.donation.persist();
+    this.money.persist();
     this.economy.persist();
     this.auction.persist();
     this.clan.persist();
     this.notifications.persist();
     this.buyer.persist();
     this.dirty = false;
+    this.observeIdentity('save');
+    this.observeResources('save');
   }
 
   onlineCount(): number {
@@ -1497,56 +2001,171 @@ export class WorldInstance {
     name?: string;
     sessionToken?: string;
     appearance?: PlayerAppearance;
-  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string } {
-    if (this.readyState !== 'READY') return { error: 'world not ready' };
-    if (this.onlineCount() >= this.config.maxPlayers) return { error: 'server full' };
+    freshGuest?: boolean;
+    durableFresh?: false;
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
+  join(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+    freshGuest?: boolean;
+    durableFresh: true;
+  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }>;
+  join(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+    freshGuest?: boolean;
+    durableFresh?: boolean;
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }
+    | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }> {
+    if (this.readyState !== 'READY') return options.durableFresh
+      ? Promise.resolve({ error: 'world not ready' })
+      : { error: 'world not ready' };
+    if (this.onlineCount() >= this.config.maxPlayers) return options.durableFresh
+      ? Promise.resolve({ error: 'server full' })
+      : { error: 'server full' };
 
+    const prepared = this.prepareJoin(options);
+    if ('error' in prepared) return options.durableFresh ? Promise.resolve(prepared) : prepared;
+    const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string } => {
+      if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
+      if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
+      return prepared.publish();
+    };
+    if (prepared.fresh && options.durableFresh) {
+      return this.persistCandidate(prepared.player).then(
+        async () => {
+          if (this.money.backend === 'postgres') {
+            const prepare = this.money.preparePlayer;
+            if (!prepare) {
+              await this.rollbackCandidate(prepared.player);
+              return { error: 'Сервер временно недоступен.' };
+            }
+            try {
+              await prepare.call(this.money, prepared.player.id, options.name?.trim() || prepared.player.name);
+            } catch {
+              serverLog('player join economy prepare failed', 'error');
+              await this.rollbackCandidate(prepared.player);
+              return { error: 'Сервер временно недоступен.' };
+            }
+          }
+          const published = publishIfAllowed();
+          if ('error' in published) await this.rollbackCandidate(prepared.player);
+          return published;
+        },
+        () => {
+          serverLog('guest identity save failed', 'error');
+          return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
+        },
+      );
+    }
+    if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
+    if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
+    if (this.money.backend !== 'postgres') return prepared.publish();
+    const prepare = this.money.preparePlayer;
+    if (!prepare) return { error: 'Сервер временно недоступен.' };
+    const displayName = options.name?.trim() || prepared.player.name;
+    const work = prepare.call(this.money, prepared.player.id, displayName).then(
+      () => {
+        if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
+        if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
+        return prepared.publish();
+      },
+      () => {
+        serverLog('player join economy prepare failed', 'error');
+        return { error: 'Сервер временно недоступен.' };
+      },
+    );
+    return work as unknown as { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
+  }
+
+  /**
+   * Builds the joining player without publishing online state.
+   * PostgreSQL `preparePlayer` runs before `publish`, so a failed account
+   * load never emits `playerJoin` or leaves a connected player behind.
+   */
+  private prepareJoin(options: {
+    sink: ConnectedSink;
+    name?: string;
+    sessionToken?: string;
+    appearance?: PlayerAppearance;
+    freshGuest?: boolean;
+  }): { error: string; code?: string } | {
+    player: ServerPlayer;
+    fresh: boolean;
+    publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string };
+  } {
     if (options.sessionToken) {
       const existingId = this.tokens.get(options.sessionToken);
       const existing = existingId ? this.players.get(existingId) : undefined;
       if (existing) {
         const wasConnected = existing.connected;
         const previousConnectionId = existing.connectionId;
-        existing.connected = true;
-        existing.disconnectedAt = 0;
-        existing.sink = options.sink;
-        existing.connectionId = crypto.randomUUID();
-        existing.joinCount += 1;
-        existing.resumeCount += 1;
-        existing.lastInputConnectionId = existing.connectionId;
-        if (options.name) existing.name = options.name;
-        const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
-        if (joinedAppearance) existing.appearance = joinedAppearance;
-        this.resetConnectionInput(existing);
-        this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
-        const fp = sessionTokenFingerprint(existing.sessionToken);
-        serverLog(
-          `player joined: ${existing.name} (${existing.id}, resume) `
-          + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
-          + `resumeCount=${existing.resumeCount}`,
-        );
-        this.events.emit('playerJoin', { playerId: existing.id, name: existing.name, firstJoin: false });
-        this.buyer.restoreOverflow(existing.id, existing.inventory);
-        if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
-        this.ensureCosmeticPet(existing);
-        return { player: existing, resumed: true, previousConnectionId };
+        return {
+          player: existing,
+          fresh: false,
+          publish: () => {
+            existing.connected = true;
+            existing.disconnectedAt = 0;
+            existing.sink = options.sink;
+            existing.connectionId = crypto.randomUUID();
+            existing.joinCount += 1;
+            existing.resumeCount += 1;
+            existing.lastInputConnectionId = existing.connectionId;
+            if (options.name) existing.name = options.name;
+            const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
+            if (joinedAppearance) existing.appearance = joinedAppearance;
+            this.resetConnectionInput(existing);
+            this.syncChunksFor(existing, { maxNewGenerates: Number.POSITIVE_INFINITY });
+            const fp = sessionTokenFingerprint(existing.sessionToken);
+            serverLog(
+              `player joined: ${existing.name} (${existing.id}, resume) `
+              + `conn=${existing.connectionId.slice(0, 8)} prev=${previousConnectionId.slice(0, 8)} fp=${fp} `
+              + `resumeCount=${existing.resumeCount}`,
+            );
+            this.events.emit('playerJoin', { playerId: existing.id, name: existing.name, firstJoin: false });
+            this.buyer.restoreOverflow(existing.id, existing.inventory);
+            if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
+            this.ensureCosmeticPet(existing);
+            return { player: existing, resumed: true, previousConnectionId };
+          },
+        };
       }
-      const stored = existingId ? this.storedPlayers[existingId] : undefined;
+      const stored = (existingId ? this.storedPlayers[existingId] : undefined)
+        ?? this.storedPlayerByToken(options.sessionToken);
       if (stored) {
-        const restored = this.materializeStoredPlayer(stored, options.sink, options.name);
+        const restored = this.materializeStoredPlayer(stored, options.sink, options.name, false);
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) restored.appearance = joinedAppearance;
         restored.joinCount += 1;
         restored.resumeCount += 1;
-        serverLog(
-          `player joined: ${restored.name} (${restored.id}, resume) `
-          + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
-        );
-        this.events.emit('playerJoin', { playerId: restored.id, name: restored.name, firstJoin: false });
-        this.buyer.restoreOverflow(restored.id, restored.inventory);
-        this.notifyFriendsOfPresence(restored, 'joined');
-        this.ensureCosmeticPet(restored);
-        return { player: restored, resumed: true };
+        return {
+          player: restored,
+          fresh: false,
+          publish: () => {
+            this.players.set(restored.id, restored);
+            this.tokens.set(restored.sessionToken, restored.id);
+            this.syncChunksFor(restored, { maxNewGenerates: Number.POSITIVE_INFINITY });
+            serverLog(
+              `player joined: ${restored.name} (${restored.id}, resume) `
+              + `conn=${restored.connectionId.slice(0, 8)} fp=${sessionTokenFingerprint(restored.sessionToken)}`,
+            );
+            this.events.emit('playerJoin', { playerId: restored.id, name: restored.name, firstJoin: false });
+            this.buyer.restoreOverflow(restored.id, restored.inventory);
+            this.notifyFriendsOfPresence(restored, 'joined');
+            this.ensureCosmeticPet(restored);
+            return { player: restored, resumed: true };
+          },
+        };
+      }
+      if (!options.freshGuest) {
+        return {
+          error: 'Этот гостевой ключ не найден в этом мире.',
+          code: 'unknown_guest',
+        };
       }
     }
 
@@ -1570,24 +2189,30 @@ export class WorldInstance {
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
     player.lastInputConnectionId = player.connectionId;
-    this.players.set(id, player);
-    this.tokens.set(sessionToken, id);
     const spawnChunkX = floorDiv(Math.floor(player.controller.position.x), 16);
     const spawnChunkZ = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewCx = spawnChunkX;
     player.viewCz = spawnChunkZ;
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
-    serverLog(
-      `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
-      + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
-    );
-    this.events.emit('playerJoin', { playerId: player.id, name: player.name, firstJoin: true });
-    this.buyer.restoreOverflow(player.id, player.inventory);
-    this.dirty = true;
-    this.notifyFriendsOfPresence(player, 'joined');
-    this.ensureCosmeticPet(player);
-    return { player, resumed: false };
+    return {
+      player,
+      fresh: true,
+      publish: () => {
+        this.players.set(id, player);
+        this.tokens.set(sessionToken, id);
+        this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+        serverLog(
+          `player joined: ${player.name} (${player.id}) conn=${player.connectionId.slice(0, 8)} `
+          + `fp=${sessionTokenFingerprint(player.sessionToken)}`,
+        );
+        this.events.emit('playerJoin', { playerId: player.id, name: player.name, firstJoin: true });
+        this.buyer.restoreOverflow(player.id, player.inventory);
+        this.dirty = true;
+        this.notifyFriendsOfPresence(player, 'joined');
+        this.ensureCosmeticPet(player);
+        return { player, resumed: false };
+      },
+    };
   }
 
   /**
@@ -1610,6 +2235,34 @@ export class WorldInstance {
         kind: 'system',
       });
     }
+  }
+
+  /**
+   * Command target only. One stored or online identity, or a rejection.
+   * Authorization never calls this.
+   */
+  resolvePermissionSubject(target: string): { ok: true; playerId: string; name: string } | { ok: false; error: string } {
+    const trimmed = target.trim();
+    if (!trimmed || trimmed.length > 80 || /\s/.test(trimmed)) return { ok: false, error: 'Unknown player.' };
+    const wanted = trimmed.toLowerCase();
+    const rows: { id: string; name: string }[] = [];
+    const seen = new Set<string>();
+    const add = (id: string, name: string) => {
+      if (!isPlayerId(id)) return;
+      const canonical = canonicalPlayerId(id);
+      if (seen.has(canonical)) return;
+      seen.add(canonical);
+      rows.push({ id: canonical, name });
+    };
+    for (const player of this.players.values()) add(player.id, player.name);
+    for (const stored of Object.values(this.storedPlayers)) add(stored.id, stored.name);
+    const byId = rows.filter((row) => row.id === wanted);
+    if (byId.length === 1) return { ok: true, playerId: byId[0]!.id, name: byId[0]!.name };
+    if (byId.length > 1) return { ok: false, error: 'Ambiguous player. Use the player id.' };
+    const byName = rows.filter((row) => row.name.toLowerCase() === wanted);
+    if (byName.length === 1) return { ok: true, playerId: byName[0]!.id, name: byName[0]!.name };
+    if (byName.length > 1) return { ok: false, error: 'Ambiguous player. Use the player id.' };
+    return { ok: false, error: 'Unknown player.' };
   }
 
   findPlayerIdentity(idOrName: string): { id: string; name: string; connected: boolean } | undefined {
@@ -1640,7 +2293,11 @@ export class WorldInstance {
     this.flushAuction(player);
   }
 
-  handleAuctionAction(player: ServerPlayer, message: ClientAuctionActionMessage): void {
+  handleAuctionAction(
+    player: ServerPlayer,
+    message: ClientAuctionActionMessage,
+    source?: { readonly connectionId?: string },
+  ): void {
     if (!this.hasAuctionPermission(player, message.action)) {
       this.sendTo(player, {
         type: 'auction',
@@ -1725,33 +2382,52 @@ export class WorldInstance {
     }
     if (action === 'buy' && (message.listingId || session.listingId)) {
       const listingId = message.listingId ?? session.listingId!;
-      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId);
-      if (!result.ok) {
-        session.message = result.error;
-        if (result.error === 'Этот товар уже продан.' || result.error === 'Срок продажи этого товара истёк.') {
-          session.screen = 'browse';
-          session.listingId = undefined;
-        }
+      const existing = this.auction.getListing(listingId);
+      if (this.trackedTransferBlocked(readItemInstanceId(existing?.item))) {
+        session.message = IDENTITY_TRANSFER_BLOCKED;
         this.flushAuction(player);
         return;
       }
-      player.inventoryDirty = true;
-      this.flushPlayerInventory(player);
-      const search = session.search;
-      const page = session.page;
-      this.auction.openBrowse(player.id, search);
-      this.auction.session(player.id).page = page;
-      const seller = this.players.get(result.listing!.sellerPlayerId);
-      if (seller?.connected) {
-        this.sendTo(seller, {
-          type: 'chat',
-          from: 'server',
-          playerId: 'server',
-          text: `${player.name} купил ваш лот за ${formatMegacoins(result.listing!.price)}.`,
-          kind: 'system',
-        });
+      const purchaseRequest = clientMoneyRequest(
+        message.clientRequestId,
+        'economy.auction_purchase',
+        player.id,
+        { listingId },
+      );
+      const result = this.auction.buyListing(player.id, player.name, player.inventory, listingId, purchaseRequest);
+      const finishBuy = (bought: Awaited<typeof result>): void => {
+        if (!bought.ok) {
+          session.message = bought.error;
+          if (bought.error === 'Этот товар уже продан.' || bought.error === 'Срок продажи этого товара истёк.') {
+            session.screen = 'browse';
+            session.listingId = undefined;
+          }
+          this.flushAuction(player);
+          return;
+        }
+        player.inventoryDirty = true;
+        this.flushPlayerInventory(player);
+        const search = session.search;
+        const page = session.page;
+        this.auction.openBrowse(player.id, search);
+        this.auction.session(player.id).page = page;
+        const seller = this.players.get(bought.listing!.sellerPlayerId);
+        if (seller?.connected) {
+          this.sendTo(seller, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: `${player.name} купил ваш лот за ${formatMegacoins(bought.listing!.price)}.`,
+            kind: 'system',
+          });
+        }
+        this.flushAuction(player);
+      };
+      if (isPromise(result)) {
+        this.money.track?.(result.then(finishBuy, () => finishBuy({ ok: false, error: 'Экономика временно недоступна.' })));
+        return;
       }
-      this.flushAuction(player);
+      finishBuy(result);
       return;
     }
     if (action === 'select_slot' && message.slot !== undefined) {
@@ -1789,6 +2465,15 @@ export class WorldInstance {
         return;
       }
       const parsedPrice = parseAuctionPrice(priceRaw)!;
+      const held = slot !== undefined ? player.inventory.getSlot(slot) : undefined;
+      if (this.trackedTransferBlocked(readItemInstanceId(held))) {
+        session.message = IDENTITY_TRANSFER_BLOCKED;
+        this.flushAuction(player);
+        return;
+      }
+      const connectionId = source?.connectionId ?? player.connectionId;
+      const revisionBefore = player.inventory.revision;
+      const origin = this.auctionOrigin(player.id);
       const result = this.auction.createListing(
         player.id,
         player.name,
@@ -1799,16 +2484,13 @@ export class WorldInstance {
         session.expectedItem,
         this.auctionLimitFor(player),
       );
-      if (!result.ok) {
-        session.message = result.error;
-        this.flushAuction(player);
-        return;
-      }
-      player.inventoryDirty = true;
-      this.flushPlayerInventory(player);
-      this.auction.openSell(player.id);
-      this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
-      this.flushAuction(player);
+      this.settleAuction(result, (done) => {
+        this.completeAuction(player, connectionId, revisionBefore, origin, done, () => {
+          this.auction.openSell(player.id);
+          this.auction.session(player.id).message = 'Товар выставлен на аукцион.';
+          this.flushAuction(player);
+        }, done.error ?? 'Предмет больше недоступен для продажи.');
+      });
       return;
     }
     if (action === 'cancel' && (message.listingId || session.listingId)) {
@@ -1859,23 +2541,97 @@ export class WorldInstance {
       return;
     }
     if (action === 'claim' && (message.listingId || session.listingId)) {
+      const connectionId = source?.connectionId ?? player.connectionId;
+      const revisionBefore = player.inventory.revision;
+      const origin = this.auctionOrigin(player.id);
       const result = this.auction.claimListing(
         player.id,
         player.inventory,
         message.listingId ?? session.listingId!,
       );
-      if (!result.ok) {
-        session.message = result.error;
-        this.flushAuction(player);
-        return;
-      }
-      player.inventoryDirty = true;
-      this.flushPlayerInventory(player);
-      this.auction.openMine(player.id);
-      this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
-      this.flushAuction(player);
+      this.settleAuction(result, (done) => {
+        this.completeAuction(player, connectionId, revisionBefore, origin, done, () => {
+          this.auction.openMine(player.id);
+          this.auction.session(player.id).message = 'Предмет возвращён в инвентарь.';
+          this.flushAuction(player);
+        }, done.error ?? 'Этот товар уже продан.');
+      });
       return;
     }
+    this.flushAuction(player);
+  }
+
+  private settleAuction(result: AuctionResult | Promise<AuctionResult>, finish: (done: AuctionResult) => void): void {
+    if (!isPromise(result)) {
+      finish(result);
+      return;
+    }
+    const guarded = result.then(
+      (done) => finish(done),
+      () => finish({ ok: false, error: 'Сохранение не завершилось. Предмет не потерян.' }),
+    );
+    this.money.track?.(guarded);
+  }
+
+  private auctionOrigin(playerId: string): { screen: string; search: string; page: number; listingId?: string } {
+    const session = this.auction.session(playerId);
+    return {
+      screen: session.screen,
+      search: session.search,
+      page: session.page,
+      listingId: session.listingId,
+    };
+  }
+
+  private completeAuction(
+    player: ServerPlayer,
+    connectionId: string,
+    revisionBefore: number,
+    origin: { screen: string; search: string; page: number; listingId?: string },
+    done: AuctionResult,
+    present: () => void,
+    failure: string,
+  ): void {
+    const live = this.players.get(player.id);
+    if (live?.connected && (live.inventory.revision !== revisionBefore || live.inventoryDirty)) {
+      live.inventoryDirty = true;
+      this.flushPlayerInventory(live);
+    }
+    if (!this.auctionCallerCurrent(player, connectionId)) return;
+    if (!this.auctionOriginCurrent(player, origin)) return;
+    if (!done.ok) {
+      this.noteAuction(player, failure);
+      return;
+    }
+    present();
+  }
+
+  private auctionCallerCurrent(player: ServerPlayer, connectionId: string): boolean {
+    const live = this.players.get(player.id);
+    return Boolean(live?.connected && live === player && live.connectionId === connectionId);
+  }
+
+  private auctionOriginCurrent(
+    player: ServerPlayer,
+    origin: { screen: string; search: string; page: number; listingId?: string },
+  ): boolean {
+    if (this.menuSessions.has(player.id)) return false;
+    const session = this.auction.session(player.id);
+    return session.screen !== 'closed'
+      && session.screen === origin.screen
+      && session.search === origin.search
+      && session.page === origin.page
+      && session.listingId === origin.listingId;
+  }
+
+  private auctionScreenCurrent(player: ServerPlayer): boolean {
+    if (this.menuSessions.has(player.id)) return false;
+    return this.auction.session(player.id).screen !== 'closed';
+  }
+
+  private noteAuction(player: ServerPlayer, message: string): void {
+    if (!this.auctionScreenCurrent(player)) return;
+    this.auction.session(player.id).message = message;
     this.flushAuction(player);
   }
 
@@ -1885,7 +2641,7 @@ export class WorldInstance {
         ? 'auction.sell'
         : action === 'cancel' || action === 'relist' || action === 'claim' ? 'auction.list'
           : 'auction.use';
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushAuction(player: ServerPlayer): void {
@@ -1895,7 +2651,7 @@ export class WorldInstance {
   openClan(playerId: string, view: ClanView, extra?: string): ClanResult | void {
     const player = this.players.get(playerId);
     if (!player || !player.connected) return { ok: false, error: 'Игрок не в сети.' };
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     this.clan.purgeExpired();
     let result: ClanResult = { ok: true };
     if (view === 'ranking') this.clan.openRanking(playerId);
@@ -1935,10 +2691,11 @@ export class WorldInstance {
       });
       return;
     }
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     const beforeIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     const isClose = message.action === 'close';
-    this.clan.handleAction(player.id, message);
+    const clanOutcome = this.clan.handleAction(player.id, message);
+    const finishClan = (): void => {
     if (isClose) this.menuReturn.delete(player.id);
     const afterIds = new Set(this.clan.playerClan(player.id)?.memberIds ?? []);
     const notify = new Set<string>([...beforeIds, ...afterIds, player.id]);
@@ -1949,6 +2706,12 @@ export class WorldInstance {
       if (other?.connected) this.flushClan(other);
     }
     if (restoring) this.tryRestoreMenu(player);
+    };
+    if (isPromise(clanOutcome)) {
+      this.money.track?.(clanOutcome.then(finishClan, finishClan));
+      return;
+    }
+    finishClan();
   }
 
   private hasClanPermission(player: ServerPlayer, action: ClientClanActionMessage['action']): boolean {
@@ -1973,7 +2736,7 @@ export class WorldInstance {
                   : action === 'open_requests' || action === 'select_request' || action === 'confirm_accept_request' || action === 'cancel_accept_request'
                     ? 'clan.add'
                     : 'clan.use';
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushClan(player: ServerPlayer): void {
@@ -2053,23 +2816,40 @@ export class WorldInstance {
       });
       return;
     }
+    if (message.action === 'sell' && this.buyerSaleBlocked(player.id)) {
+      const session = this.buyer.session(player.id);
+      if (session) session.message = IDENTITY_TRANSFER_BLOCKED;
+      this.flushBuyer(player);
+      return;
+    }
+    const sold = message.action === 'sell' ? this.buyer.unsavedTradeSlot(player.id) : null;
     const result = this.buyer.handleAction(player.id, player.inventory, message, can);
-    if (result.inventoryDirty) this.flushPlayerInventory(player);
-    if (result.broadcast) this.broadcastBuyers();
-    if (result.chat) {
+    const finishBuyer = (done: Awaited<typeof result>): void => {
+    if (sold && done.ok !== false && !this.buyer.unsavedTradeSlot(player.id)) {
+      this.resources.noteSink(sold.itemId, sold.count, 'buyer-sale', done.consumedSettlementId);
+    }
+    if (done.inventoryDirty) this.flushPlayerInventory(player);
+    if (done.broadcast) this.broadcastBuyers();
+    if (done.chat) {
       this.sendTo(player, {
         type: 'chat',
         from: 'server',
         playerId: 'server',
-        text: result.chat,
+        text: done.chat,
         kind: 'system',
       });
     }
-    if (result.openHologramEditor && result.buyer) {
-      this.openBuyerHologramEditor(player, result.buyer.hologramName);
+    if (done.openHologramEditor && done.buyer) {
+      this.openBuyerHologramEditor(player, done.buyer.hologramName);
       return;
     }
     this.flushBuyer(player);
+    };
+    if (isPromise(result)) {
+      this.money.track?.(result.then(finishBuyer, () => finishBuyer({ ok: false, error: 'Экономика временно недоступна.' })));
+      return;
+    }
+    finishBuyer(result);
   }
 
   private openBuyerHologramEditor(player: ServerPlayer, hologramName: string): void {
@@ -2088,7 +2868,7 @@ export class WorldInstance {
   }
 
   private hasBuyerPermission(player: ServerPlayer, node: string): boolean {
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   private flushBuyer(player: ServerPlayer): void {
@@ -2106,7 +2886,7 @@ export class WorldInstance {
   }
 
   handleMenuAction(player: ServerPlayer, message: ClientMenuActionMessage): void {
-    this.economy.rememberName(player.id, player.name);
+    this.money.rememberName(player.id, player.name);
     if (message.action === 'close') {
       this.menuSessions.delete(player.id);
       this.menuReturn.delete(player.id);
@@ -2125,6 +2905,14 @@ export class WorldInstance {
       this.flushTradeResult(result);
       return;
     }
+    if (message.action === 'accept' && this.tradeAcceptBlocked(player.id)) {
+      const session = this.trade.sessionFor(player.id);
+      this.flushTradeResult(
+        { affected: session ? [session.playerA, session.playerB] : [player.id] },
+        IDENTITY_TRANSFER_BLOCKED,
+      );
+      return;
+    }
     const result = message.action === 'put_item'
       ? this.trade.putItem(player.id, message.slot ?? -1, message.tradeSlot)
       : message.action === 'return_item'
@@ -2133,8 +2921,15 @@ export class WorldInstance {
           ? this.trade.setMoney(player.id, message.money ?? 0)
           : message.action === 'ready'
             ? this.trade.ready(player.id)
-            : this.trade.accept(player.id);
-    this.flushTradeResult(result, result.ok ? undefined : result.error);
+            : this.trade.accept(player.id, message.clientRequestId);
+    const finishTrade = (done: Awaited<typeof result>): void => {
+      this.flushTradeResult(done, done.ok ? undefined : done.error);
+    };
+    if (isPromise(result)) {
+      this.money.track?.(result.then(finishTrade, () => finishTrade({ ok: false, error: 'Экономика временно недоступна.' })));
+      return;
+    }
+    finishTrade(result);
   }
 
   private menuPlayer(player: ServerPlayer): MenuPlayer {
@@ -2167,6 +2962,7 @@ export class WorldInstance {
         const live = this.players.get(entry.id);
         return live ? this.findOwnedClaim(live, claimId) : undefined;
       },
+      resolvePlayer: (target) => this.resolvePermissionSubject(target),
       duels: this.duels,
       reloadDonation: () => {
         this.donation.load();
@@ -2212,7 +3008,7 @@ export class WorldInstance {
       return;
     }
     if (outcome.kind === 'home-teleport') {
-      const dest = this.homes.get(player.name, outcome.name);
+      const dest = this.homes.get(player.id, outcome.name);
       if (!dest) {
         session.message = HOME_MISSING_ERROR;
         this.flushMenu(player);
@@ -2331,7 +3127,7 @@ export class WorldInstance {
     const def = Number(this.pluginConfig.get('home', 'maxHomesDefault', HOME_MAX_DEFAULT));
     const vip = Number(this.pluginConfig.get('home', 'maxHomesVip', 4));
     const premium = Number(this.pluginConfig.get('home', 'maxHomesPremium', 5));
-    const has = (node: string) => this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    const has = (node: string) => this.permissions.has(player.id, node);
     return resolveHomeLimit({
       donation: this.donation.limit(player.id, 'homes'),
       operator: this.isOperator(player),
@@ -2354,9 +3150,9 @@ export class WorldInstance {
   }
 
   private findOwnedClaim(player: ServerPlayer, claimId: string) {
-    const key = player.name.toLowerCase();
+    const id = canonicalPlayerId(player.id);
     return this.loadClaimStore().claims.find((claim) => claim.id === claimId && (
-      claim.owner === key || this.permissions.has(player.id, 'claim.admin') || this.permissions.isOperator(player.id)
+      claim.owner === id || this.permissions.has(player.id, 'claim.admin') || this.permissions.isOperator(player.id)
     ));
   }
 
@@ -2402,19 +3198,28 @@ export class WorldInstance {
         ...payload,
         partnerName: this.players.get(partnerId)?.name
           ?? this.storedPlayers[partnerId]?.name
-          ?? this.economy.displayName(partnerId),
-        balance: this.economy.getBalance(player.id),
+          ?? this.money.displayName(partnerId),
+        balance: this.money.getBalance(player.id),
       });
       return;
     }
     this.sendTo(player, payload);
   }
 
+  private menuClaimMember(member: string): { playerId?: string; name: string } {
+    if (!isPlayerId(member)) return { name: member };
+    const playerId = canonicalPlayerId(member);
+    const name = this.players.get(playerId)?.name
+      ?? this.storedPlayers[playerId]?.name
+      ?? `Игрок ${playerId.slice(0, 8)}`;
+    return { playerId, name };
+  }
+
   private buildMenuMessage(player: ServerPlayer): import('../shared/protocol').ServerMenuMessage {
     const session = this.menuSessions.get(player.id);
     if (!session || session.screen === 'closed') return closedMenuMessage();
     const inClan = Boolean(this.clan.playerClan(player.id));
-    const balance = this.economy.getBalance(player.id);
+    const balance = this.money.getBalance(player.id);
     const storedNotifications = this.notifications.counts(player.id);
     const notifications = {
       ...storedNotifications,
@@ -2431,7 +3236,7 @@ export class WorldInstance {
       ...(session.message ? { message: session.message } : {}),
     };
     if (session.screen === 'homes' || session.screen === 'home-delete-confirm') {
-      const homes = this.homes.list(player.name);
+      const homes = this.homes.list(player.id);
       return {
         ...base,
         homeNameText: session.homeNameText,
@@ -2469,7 +3274,7 @@ export class WorldInstance {
         playerId: request.fromPlayerId,
         name: this.players.get(request.fromPlayerId)?.name
           ?? this.storedPlayers[request.fromPlayerId]?.name
-          ?? this.economy.displayName(request.fromPlayerId),
+          ?? this.money.displayName(request.fromPlayerId),
         online: this.players.get(request.fromPlayerId)?.connected === true,
         canTeleport: false,
         requestId: request.requestId,
@@ -2492,7 +3297,7 @@ export class WorldInstance {
       };
     }
     if (session.screen === 'claims' || session.screen === 'claim-settings' || session.screen === 'claim-delete-confirm') {
-      const owner = player.name.toLowerCase();
+      const owner = canonicalPlayerId(player.id);
       const mine = this.loadClaimStore().claims.filter((claim) => claim.owner === owner);
       const selected = session.claimId ? mine.find((claim) => claim.id === session.claimId) : undefined;
       return {
@@ -2504,7 +3309,7 @@ export class WorldInstance {
           claimId: selected.id,
           claimNameText: session.claimNameText,
           claimPvp: selected.flags.pvp === true,
-          claimMembers: selected.members.map((name) => ({ name })),
+          claimMembers: selected.members.map((member) => this.menuClaimMember(member)),
           claimMemberText: session.claimMemberText,
         } : {}),
         ...(session.pendingClaimName ? { pendingClaimName: session.pendingClaimName } : {}),
@@ -2519,21 +3324,21 @@ export class WorldInstance {
           playerId: request.fromPlayerId,
           name: this.players.get(request.fromPlayerId)?.name
             ?? this.storedPlayers[request.fromPlayerId]?.name
-            ?? this.economy.displayName(request.fromPlayerId),
+            ?? this.money.displayName(request.fromPlayerId),
           requestId: request.requestId,
         })),
         tradeOutgoing: this.trade.outgoingRequests(player.id).map((request) => ({
           playerId: request.toPlayerId,
           name: this.players.get(request.toPlayerId)?.name
             ?? this.storedPlayers[request.toPlayerId]?.name
-            ?? this.economy.displayName(request.toPlayerId),
+            ?? this.money.displayName(request.toPlayerId),
         })),
       };
     }
     if (session.screen === 'rating') {
       return {
         ...base,
-        ...buildRankingSnapshot(this.clan, this.economy, player.id, session.ratingKind, session.ratingPage),
+        ...buildRankingSnapshot(this.clan, this.money, player.id, session.ratingKind, session.ratingPage),
       };
     }
     if (session.screen === 'donate' || session.screen.startsWith('donate-')) {
@@ -2843,7 +3648,9 @@ export class WorldInstance {
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
-      this.flushPlayerInventory(player);
+      for (const viewer of this.connectedPlayers()) {
+        if (viewer.inventoryDirty || viewer.id === player.id) this.flushPlayerInventory(viewer);
+      }
     }
     return result;
   }
@@ -3108,6 +3915,18 @@ export class WorldInstance {
   }
 
   applyInventoryAction(player: ServerPlayer, action: ClientInventoryActionMessage): void {
+    if (isMutatingInventoryAction(action) && action.requestId) {
+      const decision = player.inventoryRequests.take(action.requestId, inventoryIntentHash(action));
+      if (decision === 'conflict') this.noteInventoryConflict(player);
+      if (decision !== 'new' || !this.inventoryRevisionMatches(player, action)) {
+        this.flushPlayerInventory(player);
+        return;
+      }
+    }
+    if (this.abandonDestroyedContainer(player)) {
+      this.flushPlayerInventory(player);
+      return;
+    }
     if (action.action === 'open' && (action.kind === 'invsee' || action.kind === 'invsee-op')) {
       this.flushPlayerInventory(player, true);
       return;
@@ -3116,11 +3935,85 @@ export class WorldInstance {
       this.applyInvseeAction(player, action);
       return;
     }
+    const portalBefore = this.slotSignature(player.portalChest.slots);
+    const chest = this.openChest(player);
+    const furnace = this.openFurnace(player);
+    const chestBefore = chest ? this.slotSignature(chest.slots) : '';
+    const furnaceBefore = furnace ? this.slotSignature(furnace.slots) : '';
     this.gameplay.applyInventory(player, action);
+    if (this.slotSignature(player.portalChest.slots) !== portalBefore) player.portalChestRevision += 1;
+    const window = player.window;
+    if (chest && window.x !== undefined && window.y !== undefined && window.z !== undefined
+      && this.slotSignature(chest.slots) !== chestBefore) {
+      this.world.bumpContainerRevision('chest', window.x, window.y, window.z);
+    }
+    if (furnace && window.x !== undefined && window.y !== undefined && window.z !== undefined
+      && this.slotSignature(furnace.slots) !== furnaceBefore) {
+      this.world.bumpContainerRevision('furnace', window.x, window.y, window.z);
+    }
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     this.flushSharedContainerViewers(player);
+  }
+
+  private inventoryRevisionMatches(player: ServerPlayer, action: ClientInventoryActionMessage): boolean {
+    if (action.expectedInventoryRevision !== player.inventoryRevision) return false;
+    const containerRevision = this.containerRevisionFor(player);
+    if (containerRevision === undefined) return action.expectedContainerRevision === undefined;
+    return action.expectedContainerRevision === containerRevision;
+  }
+
+  private noteInventoryConflict(player: ServerPlayer): void {
+    const now = Date.now();
+    if (now - player.lastInventoryConflictAt < 5_000) return;
+    player.lastInventoryConflictAt = now;
+    serverLog(`inventory request id conflict player=${player.id}`, 'warn');
+  }
+
+  private carrySignature(player: ServerPlayer): string {
+    return `${this.slotSignature([player.cursor])}|${this.slotSignature(player.craftSlots)}`;
+  }
+
+  private slotSignature(slots: readonly (ItemStack | null | undefined)[]): string {
+    return slots.map((stack) => (
+      stack ? `${stack.itemId}:${stack.count}:${stack.durability ?? ''}:${JSON.stringify(stack.metadata ?? null)}` : ''
+    )).join('|');
+  }
+
+  /**
+   * A chest or furnace window whose block is gone must not recreate container
+   * state. The player returns to the inventory window and stays connected.
+   */
+  private abandonDestroyedContainer(player: ServerPlayer): boolean {
+    const window = player.window;
+    if (window.kind !== 'chest' && window.kind !== 'furnace') return false;
+    if (window.x === undefined || window.y === undefined || window.z === undefined) return false;
+    const block = this.world.getBlock(window.x, window.y, window.z);
+    const alive = window.kind === 'chest'
+      ? isSharedWorldChestBlock(block)
+      : block === BlockId.Furnace;
+    if (alive) return false;
+    player.window = { kind: 'inventory' };
+    return true;
+  }
+
+  private openChest(player: ServerPlayer): { slots: Array<ItemStack | null> } | undefined {
+    const window = player.window;
+    if (window.kind !== 'chest' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (!isSharedWorldChestBlock(this.world.getBlock(window.x, window.y, window.z))) return undefined;
+    return this.world.getChest(window.x, window.y, window.z);
+  }
+
+  private openFurnace(player: ServerPlayer): { slots: readonly (ItemStack | null)[] } | undefined {
+    const window = player.window;
+    if (window.kind !== 'furnace' || window.x === undefined || window.y === undefined || window.z === undefined) {
+      return undefined;
+    }
+    if (this.world.getBlock(window.x, window.y, window.z) !== BlockId.Furnace) return undefined;
+    return this.world.getFurnace(window.x, window.y, window.z);
   }
 
   private auctionLimitFor(player: ServerPlayer): number {
@@ -3151,7 +4044,7 @@ export class WorldInstance {
   private openPortalChest(playerId: string): { ok: boolean; error?: string } {
     const player = this.players.get(playerId);
     if (!player?.connected) return { ok: false, error: 'Player not found.' };
-    if (!this.isOperator(player) && !this.permissions.has(player.id, 'enderchest.use') && !this.permissions.has(player.name, 'enderchest.use')) {
+    if (!this.isOperator(player) && !this.permissions.has(player.id, 'enderchest.use')) {
       return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
     }
     player.window = { kind: 'portal-chest' };
@@ -3167,7 +4060,7 @@ export class WorldInstance {
   ): { ok: boolean; error?: string } {
     const viewer = this.players.get(viewerId);
     if (!viewer?.connected) return { ok: false, error: 'Player not found.' };
-    if (mode === 'readonly' && !this.isOperator(viewer) && !this.permissions.has(viewer.id, 'invsee.use') && !this.permissions.has(viewer.name, 'invsee.use')) {
+    if (mode === 'readonly' && !this.isOperator(viewer) && !this.permissions.has(viewer.id, 'invsee.use')) {
       return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
     }
     if (mode === 'edit' && !this.isOperator(viewer)) return { ok: false, error: 'Недостаточно прав для выполнения этой команды.' };
@@ -3642,6 +4535,7 @@ export class WorldInstance {
   ): { ok: true } | { ok: false; reason: string } {
     const { action } = pending;
     if (pose.dead) return { ok: false, reason: 'dead' };
+    if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
     const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
     if (!slot.ok) return { ok: false, reason: slot.reason === 'stale' ? 'stale' : 'slot' };
     const mob = this.gameplay.mobs.get(pending.target.mobId);
@@ -3985,8 +4879,7 @@ export class WorldInstance {
 
   private canEditHolograms(player: ServerPlayer): boolean {
     return this.isOperator(player)
-      || this.permissions.has(player.id, 'holograms.create')
-      || this.permissions.has(player.name, 'holograms.create');
+      || this.permissions.has(player.id, 'holograms.create');
   }
 
   private sendHologramPermissionDenied(player: ServerPlayer): void {
@@ -4010,6 +4903,12 @@ export class WorldInstance {
     if (!command) return { ok: true, lines: [] };
     try {
       const dispatched = this.commands.dispatch(command, createConsoleCommandSender());
+      if (isPromise(dispatched.result)) {
+        this.money.track?.(dispatched.result.then((result) => {
+          for (const line of result.lines) serverLog(`console: ${line}`);
+        }, () => undefined));
+        return { ok: true, lines: [] };
+      }
       return dispatched.result ?? { ok: false, lines: ['Empty command.'] };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -4026,22 +4925,38 @@ export class WorldInstance {
       ...player.commandSender(),
       operator: this.isOperator(player),
     });
-    const lines = dispatched.result?.lines ?? ['Команда не выполнена.'];
-    const okResult = dispatched.result?.ok ?? false;
-    this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
-    const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
-    this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
-    this.sendTo(player, {
-      type: 'chat',
-      from: 'server',
-      playerId: 'server',
-      text: lines.join('\n'),
-      kind: okResult ? 'command' : 'error',
-    });
-    return { ok: okResult, lines };
+    const publish = (result: { ok: boolean; lines: readonly string[] } | undefined): { ok: boolean; lines: readonly string[] } => {
+      const lines = result?.lines ?? ['Команда не выполнена.'];
+      const okResult = result?.ok ?? false;
+      this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
+      const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+      this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
+      this.sendTo(player, {
+        type: 'chat',
+        from: 'server',
+        playerId: 'server',
+        text: lines.join('\n'),
+        kind: okResult ? 'command' : 'error',
+      });
+      return { ok: okResult, lines };
+    };
+    if (isPromise(dispatched.result)) {
+      const work = dispatched.result.then(
+        (result) => publish(result),
+        (error: unknown) => publish({ ok: false, lines: [error instanceof Error ? error.message : 'Command failed.'] }),
+      );
+      this.money.track?.(work);
+      return { ok: true, lines: [] };
+    }
+    return publish(dispatched.result);
   }
 
-  handleChat(player: ServerPlayer, text: string, channel: ChatChannel = 'global'): void {
+  handleChat(
+    player: ServerPlayer,
+    text: string,
+    channel: ChatChannel = 'global',
+    clientRequestId?: string,
+  ): void {
     if (text.startsWith('/')) {
       const commandEvent = this.events.createPlayerCommand(player.id, text);
       this.events.emit('playerCommand', commandEvent);
@@ -4052,38 +4967,50 @@ export class WorldInstance {
       const dispatched = this.commands.dispatch(text, {
         ...player.commandSender(),
         operator: this.isOperator(player),
+        ...(clientRequestId ? { clientRequestId } : {}),
       });
-      this.events.emit('playerCommandExecuted', {
-        playerId: player.id,
-        command: text,
-        ok: dispatched.result?.ok ?? false,
-      });
-      const kind = dispatched.result?.ok ? 'command' : 'error';
-      const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
-      this.sendTo(player, {
-        type: 'command_result',
-        ok: dispatched.result?.ok ?? false,
-        name,
-        lines: dispatched.result?.lines ?? [],
-      });
-      this.sendTo(player, {
-        type: 'chat',
-        from: 'server',
-        playerId: 'server',
-        text,
-        kind,
-      });
-      for (const line of dispatched.result?.lines ?? []) {
+      const publish = (result: { ok: boolean; lines: readonly string[] } | undefined): void => {
+        this.events.emit('playerCommandExecuted', {
+          playerId: player.id,
+          command: text,
+          ok: result?.ok ?? false,
+        });
+        const kind = result?.ok ? 'command' : 'error';
+        const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
+        this.sendTo(player, {
+          type: 'command_result',
+          ok: result?.ok ?? false,
+          name,
+          lines: result?.lines ?? [],
+        });
         this.sendTo(player, {
           type: 'chat',
           from: 'server',
           playerId: 'server',
-          text: line,
-          kind: dispatched.result?.ok ? 'system' : 'error',
+          text,
+          kind,
         });
+        for (const line of result?.lines ?? []) {
+          this.sendTo(player, {
+            type: 'chat',
+            from: 'server',
+            playerId: 'server',
+            text: line,
+            kind,
+          });
+        }
+        this.flushPlayerInventory(player);
+        this.flushBlockChanges();
+      };
+      if (isPromise(dispatched.result)) {
+        const work = dispatched.result.then(publish, (error: unknown) => {
+          const message = error instanceof Error ? error.message : 'Command failed.';
+          publish({ ok: false, lines: [message] });
+        });
+        this.money.track?.(work);
+        return;
       }
-      this.flushPlayerInventory(player);
-      this.flushBlockChanges();
+      publish(dispatched.result);
       return;
     }
     const trimmed = text.replace(/\s+$/g, '');
@@ -4231,6 +5158,8 @@ export class WorldInstance {
   }
 
   tick(): void {
+    // PostgreSQL is not queried from the 20 TPS loop. Audit and idempotency
+    // run only when a future service calls them.
     this.lastPhysicsTicksThisLoop = 1;
     this.clearAppliedSteps();
     this.simulateGameplayTick();
@@ -4589,6 +5518,7 @@ export class WorldInstance {
     player.pendingEntityUses.length = 0;
     player.bowReleaseCommandStates.clear();
     player.bowReleaseBoundaryThisTick = undefined;
+    player.inventoryRequests.clear();
     clearMiningLock(player);
     player.bowUseTicks = 0;
     player.foodUseTicks = 0;
@@ -4711,7 +5641,12 @@ export class WorldInstance {
         player.survival.damage(amount, cause === 'fall' ? 'fall' : 'generic', { armor: player.inventory });
         this.events.emit('playerDamaged', { playerId: player.id, amount, cause });
         if (player.survival.dead) {
-          this.events.emit('entityDeath', { entityId: player.id, cause, playerId: player.id });
+          this.events.emit('entityDeath', {
+            entityId: player.id,
+            cause,
+            playerId: player.id,
+            deathEventId: player.survival.deathEventId,
+          });
         }
         this.flushHealthIfDeadThenRespawn(player);
       });
@@ -4997,6 +5932,10 @@ export class WorldInstance {
           cookTime: furnace.cookTime,
         } : {}),
       },
+      inventoryRevision: player.inventoryRevision,
+      ...(this.containerRevisionFor(player) !== undefined
+        ? { containerRevision: this.containerRevisionFor(player) }
+        : {}),
     });
     if (notifyViewers) this.refreshInvseeViewers(player);
   }
@@ -5041,6 +5980,7 @@ export class WorldInstance {
         burnTime,
         burnTotal,
         cookTime,
+        containerRevision: this.world.containerRevision('furnace', window.x, window.y, window.z),
       });
     }
   }
@@ -5679,7 +6619,7 @@ export class WorldInstance {
   }
 
   private isOperator(player: ServerPlayer): boolean {
-    return this.permissions.isOperator(player.name) || this.permissions.isOperator(player.id);
+    return this.permissions.isOperator(player.id);
   }
 
   private createPluginPlayer(player: ServerPlayer): PlayerView {
@@ -5710,15 +6650,10 @@ export class WorldInstance {
       },
       give: (itemId: string, count: number, options?: { readonly durability?: number }) => {
         if (!isKnownItemId(itemId) || !Number.isInteger(count) || count < 1) return { given: 0, leftover: count };
-        const durability = options?.durability;
-        const addOptions = durability !== undefined ? { durability } : {};
-        const leftover = player.inventory.addItem(itemId, count, addOptions);
-        const given = count - leftover;
-        player.inventoryDirty = true;
-        if (leftover > 0) instance.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, addOptions));
+        const result = instance.grantItems(player, itemId, count, options);
         instance.flushPlayerInventory(player);
         instance.flushBlockChanges();
-        return { given, leftover };
+        return result;
       },
       contents: () => {
         const stacks = [
@@ -5754,8 +6689,7 @@ export class WorldInstance {
         for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
         if (player.inventory.offhand) count += player.inventory.offhand.count;
         player.inventory.clear();
-        player.cursor = null;
-        player.craftSlots = player.craftSlots.map(() => null);
+        clearCarryState(player);
         player.inventoryDirty = true;
         instance.flushPlayerInventory(player);
         return count;
@@ -5805,7 +6739,12 @@ export class WorldInstance {
     };
   }
 
-  private materializeStoredPlayer(stored: SerializedPersistedPlayer, sink: ConnectedSink, name?: string): ServerPlayer {
+  private materializeStoredPlayer(
+    stored: SerializedPersistedPlayer,
+    sink: ConnectedSink,
+    name?: string,
+    commitOnline = true,
+  ): ServerPlayer {
     const controller = new PlayerController({
       position: this.relocatePose(stored.x, stored.y, stored.z),
       yaw: stored.yaw,
@@ -5834,21 +6773,30 @@ export class WorldInstance {
     this.bindNameStyle(player);
     if (stored.cursor) {
       try {
-        player.cursor = stored.cursor as ItemStack;
+        loadCarryState(player, stored.cursor as ItemStack);
       } catch {
-        player.cursor = null;
+        loadCarryState(player, null);
       }
     }
     player.portalChest.slots = normalizePortalChestSlots(stored.portalChest);
+    for (const receipt of stored.settlementReceipts ?? []) {
+      if (typeof receipt === 'string' && receipt.length > 0 && receipt.length <= 200) {
+        player.settlementReceipts.add(receipt);
+      }
+    }
+    this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
+    this.assignMissingItemIdentities(player);
     player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
-    this.players.set(player.id, player);
-    this.tokens.set(token, player.id);
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
     player.viewCz = floorDiv(Math.floor(player.controller.position.z), 16);
     player.viewRadius = this.config.chunkViewRadius;
-    this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    if (commitOnline) {
+      this.players.set(player.id, player);
+      this.tokens.set(token, player.id);
+      this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
+    }
     return player;
   }
 
@@ -5882,15 +6830,582 @@ export class WorldInstance {
       portalChest: player.portalChest.slots,
       appearance: toNetworkAppearance(player.appearance),
       ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
+      ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
+      ...(player.heldReturns.length > 0
+        ? { heldReturns: player.heldReturns.map((stack) => cloneStack(stack)!) }
+        : {}),
+    };
+  }
+
+  private durablePlayerRecord(player: ServerPlayer): SerializedPersistedPlayer {
+    this.absorbHeldReturns(player, player.heldReturns);
+    const stored = this.toStored(player);
+    const pending = [
+      ...player.heldReturns.map((stack) => cloneStack(stack)!),
+      ...this.unsavedWindowStacks(player),
+    ];
+    if (pending.length === 0) return stored;
+    const copy = Inventory.deserialize(stored.inventory);
+    for (const stack of pending) {
+      if (copy.add(cloneStack(stack)!) !== null) {
+        return { ...stored, heldReturns: pending };
+      }
+    }
+    player.heldReturns = [];
+    const { heldReturns: _returned, ...withoutPending } = stored;
+    return { ...withoutPending, inventory: copy.serialize() };
+  }
+
+  /** Offer and buyer-window stacks that are not yet covered by a durable receipt. */
+  private unsavedWindowStacks(player: ServerPlayer): ItemStack[] {
+    const stacks: ItemStack[] = [];
+    const buyerSlot = this.buyer.unsavedTradeSlot(player.id);
+    if (buyerSlot) stacks.push(cloneStack(buyerSlot)!);
+    for (const stack of this.trade.unsavedOfferStacks(player.id, player.settlementReceipts)) {
+      stacks.push(cloneStack(stack)!);
+    }
+    return stacks;
+  }
+
+  /**
+   * Moves every carried stack into the live inventory, or leaves both sides
+   * unchanged when any stack does not fit. Never keeps a partial merge.
+   */
+  private storedPlayerByToken(token: string): SerializedPersistedPlayer | undefined {
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (stored.sessionToken === token) return stored;
+    }
+    return undefined;
+  }
+
+  /**
+   * Current physical holders of tracked items in this world only.
+   * A live player replaces that player's stored row. Settlement payloads
+   * and historical auction rows are not holders.
+   */
+  inspectUniqueItems(): {
+    readonly worldId: string;
+    readonly locations: IdentityReport['locations'];
+    readonly findings: IdentityReport['findings'];
+    readonly incidents: ReturnType<IdentityIncidentLog['list']>;
+    readonly skippedMalformed: number;
+    readonly unresolvedSources: number;
+  } {
+    const report = this.observeIdentity('recheck');
+    return {
+      worldId: this.worldId,
+      locations: report.locations,
+      findings: report.findings,
+      incidents: this.identityIncidents.list(),
+      skippedMalformed: report.skippedMalformed,
+      unresolvedSources: this.unresolvedIdentitySources,
+    };
+  }
+
+  private observeIdentity(checkpoint: 'startup' | 'save' | 'recheck'): IdentityReport {
+    this.ensureIdentityLog();
+    try {
+      const report = scanIdentity(this.identitySources());
+      if (this.identityIncidents.observe(report, checkpoint, Date.now()) || this.identityPersistPending) {
+        this.persistIdentityIncidents();
+      }
+      return report;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity scan failed: ${detail}`, 'warn');
+      return { worldId: this.worldId, locations: [], findings: [], skippedMalformed: 0 };
+    }
+  }
+
+  private persistIdentityIncidents(): void {
+    try {
+      this.pluginStore.save('identity-incidents', this.identityIncidents.serialize());
+      this.identityPersistPending = false;
+    } catch (error) {
+      this.identityPersistPending = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity incident save failed: ${detail}`, 'warn');
+    }
+  }
+
+  private noteMonitoredStacks(
+    stacks: readonly (ItemStack | null | undefined)[],
+    sourceId: string,
+    sink: boolean,
+  ): void {
+    const totals = new Map<string, number>();
+    for (const stack of stacks) {
+      if (!stack || stack.count <= 0 || !isMonitoredResource(stack.itemId)) continue;
+      totals.set(stack.itemId, (totals.get(stack.itemId) ?? 0) + stack.count);
+    }
+    for (const [itemId, quantity] of totals) {
+      if (sink) this.resources.noteSink(itemId, quantity, 'event-chest', sourceId);
+      else this.resources.noteReward(itemId, quantity, sourceId);
+    }
+  }
+
+  inspectValuableResources() {
+    this.observeResources('recheck');
+    const snap = this.resourceSnapshot();
+    return this.resources.inspect(this.worldId, snap.counts, snap.unresolved);
+  }
+
+  private observeResources(checkpoint: 'startup' | 'save' | 'recheck'): void {
+    this.ensureResourceLog();
+    try {
+      const snap = this.resourceSnapshot();
+      const changed = this.resources.observe(this.worldId, snap.counts, snap.unresolved, Date.now());
+      if (changed || this.resources.isDirty() || this.resourcePersistPending) this.persistResources();
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting failed: ${detail}`, 'warn');
+    }
+    void checkpoint;
+  }
+
+  private resourceSnapshot() {
+    const counts = countMonitoredResources(this.identitySources());
+    return { counts, unresolved: this.unresolvedIdentitySources };
+  }
+
+  private ensureResourceLog(): void {
+    if (this.resourceLogLoaded) return;
+    this.resourceLogLoaded = true;
+    try {
+      this.resources.load(this.pluginStore.load('resource-accounting', { version: 1 }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting load failed: ${detail}`, 'warn');
+    }
+  }
+
+  private persistResources(): void {
+    try {
+      this.pluginStore.save('resource-accounting', this.resources.serialize());
+      this.resourcePersistPending = false;
+      this.resources.markPersisted();
+    } catch (error) {
+      this.resourcePersistPending = true;
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`resource accounting save failed: ${detail}`, 'warn');
+    }
+  }
+
+  private ensureIdentityLog(): void {
+    if (this.identityLogLoaded) return;
+    this.identityLogLoaded = true;
+    try {
+      this.identityIncidents.load(this.pluginStore.load('identity-incidents', { version: 1, incidents: [] }));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`identity incident load failed: ${detail}`, 'warn');
+    }
+  }
+
+  private trackedTransferBlocked(instanceId: string | undefined): boolean {
+    if (!instanceId) return false;
+    const finding = this.observeIdentity('recheck').findings.find((row) => row.itemInstanceId === instanceId);
+    return finding?.status === 'confirmed-duplicate' || finding?.status === 'identity-type-conflict';
+  }
+
+  private tradeAcceptBlocked(playerId: string): boolean {
+    const session = this.trade.sessionFor(playerId);
+    if (!session) return false;
+    const ids: string[] = [];
+    for (const offer of Object.values(session.offers)) {
+      for (const stack of offer.slots) {
+        const id = readItemInstanceId(stack);
+        if (id) ids.push(id);
+      }
+    }
+    if (ids.length === 0) return false;
+    const findings = this.observeIdentity('recheck').findings;
+    return ids.some((id) => findings.some((row) =>
+      row.itemInstanceId === id && (row.status === 'confirmed-duplicate' || row.status === 'identity-type-conflict')));
+  }
+
+  private buyerSaleBlocked(playerId: string): boolean {
+    return this.trackedTransferBlocked(readItemInstanceId(this.buyer.unsavedTradeSlot(playerId)));
+  }
+
+  private identitySources() {
+    const players: IdentityPlayerStacks[] = [];
+    const live = new Set<string>();
+    for (const player of this.players.values()) {
+      live.add(player.id);
+      players.push({
+        playerId: player.id,
+        inventory: player.inventory.slots,
+        armor: player.inventory.armor,
+        offhand: player.inventory.offhand,
+        cursor: player.cursor,
+        craft: player.craftSlots,
+        portal: player.portalChest.slots,
+        heldReturns: player.heldReturns,
+      });
+    }
+    for (const stored of Object.values(this.storedPlayers)) {
+      if (live.has(stored.id)) continue;
+      const cached = this.offlineInventories.get(stored.id);
+      let inventory: Inventory;
+      if (cached) inventory = cached;
+      else {
+        try {
+          inventory = Inventory.deserialize(stored.inventory);
+        } catch {
+          inventory = new Inventory();
+        }
+      }
+      const cursor = stored.cursor && typeof stored.cursor === 'object' ? stored.cursor as ItemStack : null;
+      players.push({
+        playerId: stored.id,
+        inventory: inventory.slots,
+        armor: inventory.armor,
+        offhand: inventory.offhand,
+        cursor,
+        craft: [],
+        portal: normalizePortalChestSlots(stored.portalChest),
+        heldReturns: parseHeldReturns(stored.heldReturns),
+      });
+    }
+    const chests = [];
+    let unresolvedSources = 0;
+    const knownBlock = (x: number, y: number, z: number) => {
+      const block = this.world.knownBlockId(x, y, z);
+      if (block === 'unknown') unresolvedSources += 1;
+      return block;
+    };
+    for (const [key, chest] of this.world.chests) {
+      const cell = identityCell(key);
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || !isSharedWorldChestBlock(block)) continue;
+      chests.push({ ...cell, slots: chest.slots });
+    }
+    const furnaces = [];
+    for (const [key, furnace] of this.world.furnaces) {
+      const cell = identityCell(key);
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || block !== BlockId.Furnace) continue;
+      furnaces.push({ ...cell, slots: furnace.slots });
+    }
+    const paintings = [];
+    for (const [key, state] of this.world.blockStates) {
+      const cell = identityCell(key);
+      if (!cell) continue;
+      const block = knownBlock(cell.x, cell.y, cell.z);
+      if (block === 'unknown' || block !== BlockId.CollectiblePainting) continue;
+      if (!state.paintingItemId || !state.paintingInstanceId) continue;
+      paintings.push({ ...cell, itemId: state.paintingItemId, instanceId: state.paintingInstanceId });
+    }
+    this.unresolvedIdentitySources = unresolvedSources;
+    const buyer = this.buyer.physicalHolders();
+    return {
+      worldId: this.worldId,
+      players,
+      chests,
+      furnaces,
+      drops: this.gameplay.drops.entities.map((entity) => ({ entityId: entity.id, stack: entity.stack })),
+      paintings,
+      auctions: this.auction.holdingListings().map((listing) => ({
+        listingId: listing.listingId,
+        status: listing.status,
+        sellerPlayerId: listing.sellerPlayerId,
+        item: listing.item,
+      })),
+      trades: this.trade.physicalOffers(),
+      buyerWindows: buyer.filter((row) => row.kind === 'window'),
+      buyerReturns: buyer.filter((row) => row.kind === 'return'),
     };
   }
 
   /**
-   * Registered production skin ids are still accepted here.
-   * A direct appearance packet can equip a rare, epic, or legendary skin.
-   * `evaluateServerSkinEquip` is the future fail-closed check and is not wired
-   * in, so existing saves are left untouched. UI locks are not this check.
+   * Ordinary resources stay on the bulk add path. Tracked items are minted
+   * one instance at a time so each copy has its own id, including overflow drops.
    */
+  private grantItems(
+    player: ServerPlayer,
+    itemId: string,
+    count: number,
+    options?: { readonly durability?: number },
+  ): { given: number; leftover: number } {
+    const minted = createTrackedItemInstances(itemId, count, () => crypto.randomUUID());
+    const stackOptions = options?.durability !== undefined ? { durability: options.durability } : {};
+    player.inventoryDirty = true;
+    let given = 0;
+    let leftover = 0;
+    if (!minted) {
+      leftover = player.inventory.addItem(itemId, count, stackOptions);
+      given = count - leftover;
+      if (leftover > 0) this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, stackOptions));
+    } else {
+      for (const stack of minted) {
+        const next = options?.durability !== undefined ? { ...stack, durability: options.durability } : stack;
+        const rest = player.inventory.add(next);
+        if (!rest) continue;
+        leftover += rest.count;
+        this.gameplay.dropFromPlayer(player, rest);
+      }
+      given = count - leftover;
+    }
+    if (given > 0 || leftover > 0) this.dirty = true;
+    if (isMonitoredResource(itemId)) this.resources.noteGrant(itemId, count);
+    return { given, leftover };
+  }
+
+  /** One-time identity for tracked stacks loaded from older saves. */
+  private assignMissingItemIdentities(player: ServerPlayer): void {
+    const mint = () => crypto.randomUUID();
+    let changed = ensureInventoryInstanceIds(player.inventory, mint);
+    if (player.cursor) {
+      const next = ensureItemInstanceId(player.cursor, mint);
+      if (next !== player.cursor) {
+        loadCarryState(player, next);
+        changed = true;
+      }
+    }
+    for (let index = 0; index < player.craftSlots.length; index += 1) {
+      const stack = player.craftSlots[index];
+      if (!stack) continue;
+      const next = ensureItemInstanceId(stack, mint);
+      if (next === stack) continue;
+      player.craftSlots[index] = next;
+      changed = true;
+    }
+    for (let index = 0; index < player.portalChest.slots.length; index += 1) {
+      const stack = player.portalChest.slots[index];
+      if (!stack) continue;
+      const next = ensureItemInstanceId(stack, mint);
+      if (next === stack) continue;
+      player.portalChest.slots[index] = next;
+      changed = true;
+    }
+    let heldChanged = false;
+    const nextHeld = player.heldReturns.map((stack) => {
+      const next = ensureItemInstanceId(stack, mint);
+      if (next !== stack) heldChanged = true;
+      return next;
+    });
+    if (heldChanged) player.heldReturns = nextHeld;
+    if (changed || heldChanged) this.dirty = true;
+  }
+
+  private retainHeldReturn(playerId: string, stack: ItemStack): boolean {
+    const copy = cloneStack(stack);
+    if (!copy) return false;
+    const player = this.players.get(playerId);
+    if (player) {
+      player.heldReturns.push(copy);
+      this.dirty = true;
+      return true;
+    }
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return false;
+    const held = parseHeldReturns(stored.heldReturns);
+    held.push(copy);
+    this.storedPlayers[playerId] = { ...stored, heldReturns: held };
+    this.dirty = true;
+    return true;
+  }
+
+  private absorbHeldReturns(player: ServerPlayer, stacks: readonly ItemStack[]): void {
+    if (stacks.length === 0) {
+      player.heldReturns = [];
+      return;
+    }
+    const copy = player.inventory.clone();
+    for (const stack of stacks) {
+      if (copy.add(cloneStack(stack)!) !== null) {
+        player.heldReturns = stacks.map((stack) => cloneStack(stack)!);
+        return;
+      }
+    }
+    player.inventory.restore(copy.serialize());
+    player.heldReturns = [];
+  }
+
+  private async persistCandidate(player: ServerPlayer): Promise<void> {
+    const run = this.saveQueue.then(async () => {
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      for (const online of this.players.values()) players[online.id] = this.durablePlayerRecord(online);
+      players[player.id] = this.durablePlayerRecord(player);
+      await this.worldStore.savePlayers(this.worldId, players);
+      this.storedPlayers = players;
+      this.tokens.set(player.sessionToken, player.id);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  private async rollbackCandidate(player: ServerPlayer): Promise<void> {
+    if (this.players.has(player.id)) return;
+    const run = this.saveQueue.then(async () => {
+      if (this.players.has(player.id)) return;
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      delete players[player.id];
+      await this.worldStore.savePlayers(this.worldId, players);
+      this.storedPlayers = players;
+      this.tokens.delete(player.sessionToken);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  private async savePlayersCritical(): Promise<void> {
+    if (!this.canonicalWorldLoaded) return;
+    const run = this.saveQueue.then(async () => {
+      const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
+      for (const player of this.players.values()) players[player.id] = this.durablePlayerRecord(player);
+      this.storedPlayers = players;
+      await this.worldStore.savePlayers(this.worldId, players);
+    });
+    this.saveQueue = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  scheduleRewardedBreak(reward: { playerId: string; blockId: number; placed: boolean; rewardEventId?: string }): void {
+    this.rewardBarrier?.submit(reward);
+  }
+
+  private itemDurability(): ItemDurability {
+    const self = this;
+    return {
+      hasReceipt(playerId, receipt) {
+        return self.receiptsFor(playerId)?.has(receipt) ?? false;
+      },
+      async escrow(playerId, receipt) {
+        const receipts = self.receiptsFor(playerId);
+        if (!receipts || receipts.has(receipt)) return;
+        receipts.add(receipt);
+        self.writeDurability(playerId);
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          receipts.delete(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
+      },
+      deliver(playerId, receipt, stack) {
+        return this.deliverAll(playerId, receipt, [stack]);
+      },
+      async deliverAll(playerId, receipt, stacks) {
+        if (self.receiptsFor(playerId)?.has(receipt)) return 'already';
+        const inventory = self.inventoryFor(playerId);
+        if (!inventory) return 'missing';
+        const before = inventory.serialize();
+        const copy = inventory.clone();
+        for (const stack of stacks) {
+          if (copy.add(cloneStack(stack)!) !== null) return 'full';
+        }
+        inventory.restore(copy.serialize());
+        self.receiptsFor(playerId)?.add(receipt);
+        self.writeDurability(playerId);
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          inventory.restore(before);
+          self.receiptsFor(playerId)?.delete(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
+        return 'delivered';
+      },
+      restore(playerId, receipt, stack) {
+        return this.restoreAll(playerId, receipt, [stack]);
+      },
+      async restoreAll(playerId, receipt, stacks) {
+        if (!self.receiptsFor(playerId)?.has(receipt)) return 'already';
+        const inventory = self.inventoryFor(playerId);
+        if (!inventory) return 'missing';
+        const before = inventory.serialize();
+        const copy = inventory.clone();
+        for (const stack of stacks) {
+          if (copy.add(cloneStack(stack)!) !== null) return 'full';
+        }
+        inventory.restore(copy.serialize());
+        self.receiptsFor(playerId)?.delete(receipt);
+        self.writeDurability(playerId);
+        try {
+          await self.savePlayersCritical();
+        } catch (error) {
+          inventory.restore(before);
+          self.receiptsFor(playerId)?.add(receipt);
+          self.writeDurability(playerId);
+          throw error;
+        }
+        return 'restored';
+      },
+      async dropReceipt(playerId, receipt) {
+        self.receiptsFor(playerId)?.delete(receipt);
+        self.writeDurability(playerId);
+        await self.savePlayersCritical();
+      },
+    };
+  }
+
+  private readonly offlineInventories = new Map<string, Inventory>();
+  private readonly offlineReceipts = new Map<string, Set<string>>();
+
+  private receiptsFor(playerId: string): Set<string> | undefined {
+    const online = this.players.get(playerId);
+    if (online) return online.settlementReceipts;
+    const cached = this.offlineReceipts.get(playerId);
+    if (cached) return cached;
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return undefined;
+    const receipts = new Set((stored.settlementReceipts ?? []).filter((receipt) => typeof receipt === 'string'));
+    this.offlineReceipts.set(playerId, receipts);
+    return receipts;
+  }
+
+  private inventoryFor(playerId: string): Inventory | undefined {
+    const online = this.players.get(playerId);
+    if (online) return online.inventory;
+    const cached = this.offlineInventories.get(playerId);
+    if (cached) return cached;
+    const stored = this.storedPlayers[playerId];
+    if (!stored) return undefined;
+    const inventory = this.restoreInventory(stored.inventory);
+    this.offlineInventories.set(playerId, inventory);
+    return inventory;
+  }
+
+  private writeDurability(playerId: string): void {
+    const online = this.players.get(playerId);
+    if (online) return;
+    const stored = this.storedPlayers[playerId];
+    const inventory = this.inventoryFor(playerId);
+    const receipts = this.receiptsFor(playerId);
+    if (!stored || !inventory || !receipts) return;
+    this.storedPlayers[playerId] = {
+      ...stored,
+      inventory: inventory.serialize(),
+      settlementReceipts: [...receipts],
+    };
+  }
+
+  private async recoverSettlements(): Promise<void> {
+    if (!this.settlements) return;
+    const durability = this.itemDurability();
+    this.auction.setStage2C({ durability, settlements: this.settlements });
+    this.auction.recoverPendingListings();
+    this.auction.recoverClaims();
+    const finder = this.money as { findSourceDebit?: (type: string, id: string) => Promise<string | null> };
+    if (finder.findSourceDebit) {
+      await this.auction.recoverPurchases((id) => finder.findSourceDebit!('AUCTION_PURCHASE', id));
+    }
+    const sources = this.money as { hasEconomicSource?: (type: string, id: string) => Promise<boolean> };
+    if (sources.hasEconomicSource) {
+      await this.buyer.recoverSales((id) => sources.hasEconomicSource!('BUYER_SALE', id));
+      await this.buyer.recoverSellerPurchases((id) => sources.hasEconomicSource!('TRADER_PURCHASE', id));
+      await this.trade.recoverTrades((id) => sources.hasEconomicSource!('TRADE', id));
+      await this.clan.recoverCreates((id) => sources.hasEconomicSource!('CLAN_CREATE', id));
+    }
+    await this.savePlayersCritical();
+  }
+
   setAppearance(
     player: ServerPlayer,
     raw: unknown,
@@ -5950,7 +7465,7 @@ export class WorldInstance {
 
   private cosmeticPetAllowed(player: ServerPlayer, selection: CosmeticPetSelection): boolean {
     const node = selection === 'bee' ? 'pet.bee' : 'pet.creeper';
-    return this.permissions.has(player.id, node) || this.permissions.has(player.name, node);
+    return this.permissions.has(player.id, node);
   }
 
   /** Drop a live pet in the same tick the rank or operator right disappears. The saved choice stays. */
@@ -6108,12 +7623,7 @@ export class WorldInstance {
         if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 2304) {
           return fail('Count must be an integer from 1 to 2304.');
         }
-        const leftover = player.inventory.addItem(itemId, rawCount);
-        const given = rawCount - leftover;
-        player.inventoryDirty = true;
-        if (leftover > 0) {
-          this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover));
-        }
+        const { given, leftover } = this.grantItems(player, itemId, rawCount);
         this.flushPlayerInventory(player);
         if (given <= 0) return fail('Could not give item: inventory is full.');
         if (leftover > 0) return ok(`Gave ${given} ${itemId} (${leftover} dropped, inventory full)`);
@@ -6163,7 +7673,7 @@ export class WorldInstance {
         const point = { x: Number(args[0]), y: Number(args[1]), z: Number(args[2]) };
         let failure = 'Teleport failed.';
         const result = attemptCoordinateTeleport({
-          hasPermission: (playerId) => this.permissions.has(playerId, 'tp.coords') || this.permissions.has(player.name, 'tp.coords'),
+          hasPermission: (playerId) => this.permissions.has(playerId, 'tp.coords'),
           isOperator: () => this.isOperator(player),
           teleport: (playerId, dest) => {
             const moved = this.teleports.now(playerId, dest, 'command', { silent: true });
@@ -6194,8 +7704,7 @@ export class WorldInstance {
         for (const stack of Object.values(player.inventory.armor)) if (stack) count += stack.count;
         if (player.inventory.offhand) count += player.inventory.offhand.count;
         player.inventory.clear();
-        player.cursor = null;
-        player.craftSlots = player.craftSlots.map(() => null);
+        clearCarryState(player);
         player.inventoryDirty = true;
         this.flushPlayerInventory(player);
         return ok(count > 0 ? `Cleared ${count} item(s) from inventory` : 'Inventory is already empty');
@@ -6245,6 +7754,34 @@ export class WorldInstance {
       },
     });
   }
+}
+
+function identityCell(key: string): { x: number; y: number; z: number } | undefined {
+  const parts = key.split(',');
+  if (parts.length !== 3) return undefined;
+  const x = Number(parts[0]);
+  const y = Number(parts[1]);
+  const z = Number(parts[2]);
+  if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return undefined;
+  return { x, y, z };
+}
+
+function parseHeldReturns(value: unknown): ItemStack[] {
+  if (!Array.isArray(value)) return [];
+  const stacks: ItemStack[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as Partial<ItemStack>;
+    if (typeof row.itemId !== 'string' || !Number.isInteger(row.count) || row.count === undefined || row.count < 1) continue;
+    const stack = cloneStack({
+      itemId: row.itemId,
+      count: row.count,
+      ...(typeof row.durability === 'number' ? { durability: row.durability } : {}),
+      ...(row.metadata !== undefined ? { metadata: row.metadata } : {}),
+    });
+    if (stack) stacks.push(stack);
+  }
+  return stacks;
 }
 
 /** New online players start with an empty inventory. The one-time grant is `/kit start`. */

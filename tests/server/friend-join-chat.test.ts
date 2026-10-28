@@ -9,6 +9,7 @@ import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerChatMessage } from '../../shared/protocol';
 import { friendJoinChatText, friendLeaveChatText } from '../../shared/friends';
 import { ChatLog } from '../../src/chat/ChatLog';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 function testConfig(dataDir: string) {
   return {
@@ -79,6 +80,7 @@ describe('friend join system chat', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

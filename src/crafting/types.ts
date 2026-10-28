@@ -55,6 +55,15 @@ export interface CraftingMatch {
   readonly consumption: readonly number[];
 }
 
+/** One accepted crafting action. Counts are the crafts that changed the grid or inventory. */
+export interface CommittedCraft {
+  readonly recipeId: string;
+  readonly completed: number;
+  readonly consumed: readonly { readonly itemId: string; readonly count: number }[];
+  readonly producedItemId: string;
+  readonly producedCount: number;
+}
+
 export interface SmeltingRecipe {
   readonly id: string;
   readonly input: Ingredient;

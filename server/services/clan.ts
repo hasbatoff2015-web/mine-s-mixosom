@@ -69,7 +69,10 @@ import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import { BlockId } from '../../src/blocks';
-import type { EconomyService } from './economy';
+import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
+import { clientMoneyRequest, isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
+import type { SettlementService } from '../settlements/service';
+import { SETTLEMENT_RECOVERING } from '../settlements/messages';
 import type { JsonFileStore } from './jsonStore';
 import { overlappingClaims } from './claimAnchors';
 import type { Claim, ClaimStore } from './claims';
@@ -165,6 +168,7 @@ export interface ClanRecord {
   memberIds: string[];
   roles: Record<string, ClanRole>;
   createdAt: number;
+  creationSettlementId?: string;
   announcementCooldownUntil?: number;
   base?: ClanBase;
   baseCooldownUntil?: number;
@@ -348,6 +352,63 @@ export class ClanService {
   private invitations = new Map<string, ClanInvitation>();
   private requests = new Map<string, ClanJoinRequest>();
   private nextClanId = 1;
+  private settlements?: SettlementService;
+  haltAfter?: string;
+
+  setStage2C(settlements: SettlementService): void {
+    this.settlements = settlements;
+  }
+
+  async recoverCreates(paid: (settlementId: string) => Promise<boolean>): Promise<number> {
+    if (!this.settlements) return 0;
+    let changed = 0;
+    for (const row of await this.settlements.listOpen()) {
+      if (row.kind !== 'CLAN_CREATE') continue;
+      const reservedNumber = Number(String(row.payload.clanId ?? '').replace('clan-', ''));
+      if (Number.isInteger(reservedNumber) && reservedNumber >= this.nextClanId) this.nextClanId = reservedNumber + 1;
+      const money = await paid(row.settlementId);
+      const owned = [...this.clans.values()].find((clan) => clan.creationSettlementId === row.settlementId);
+      if (!money) {
+        if (row.phase === 'PREPARED') await this.settlements.transition(row.settlementId, 'PREPARED', 'CANCELLED');
+        changed += 1;
+        continue;
+      }
+      let phase = row.phase;
+      if (phase === 'PREPARED' || phase === 'ESCROW_DURABLE') {
+        phase = (await this.settlements.advance(row.settlementId, phase, 'MONEY_COMMITTED')).phase;
+      }
+      if (owned) {
+        if (phase === 'MONEY_COMMITTED' || phase === 'DOMAIN_DURABLE') {
+          await this.settlements.advance(row.settlementId, phase, 'COMPLETE');
+        }
+        changed += 1;
+        continue;
+      }
+      const nameKey = String(row.payload.nameKey ?? '');
+      const conflict = [...this.clans.values()].some((clan) => clan.nameKey === nameKey || clan.clanId === row.payload.clanId);
+      if (conflict) {
+        if (phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, phase, 'RECOVERY_REQUIRED');
+        changed += 1;
+        continue;
+      }
+      const created = this.finishCreate(
+        String(row.payload.playerId ?? ''),
+        String(row.payload.name ?? ''),
+        nameKey,
+        row.payload.icon as ClanIconId,
+        String(row.payload.clanId ?? ''),
+        row.settlementId,
+      );
+      if (!created.ok) {
+        if (phase !== 'RECOVERY_REQUIRED') await this.settlements.transition(row.settlementId, phase, 'RECOVERY_REQUIRED');
+        changed += 1;
+        continue;
+      }
+      await this.settlements.advance(row.settlementId, 'MONEY_COMMITTED', 'COMPLETE');
+      changed += 1;
+    }
+    return changed;
+  }
   private nextInvitationId = 1;
   private nextRequestId = 1;
   private readonly sessions = new Map<string, ClanSession>();
@@ -361,7 +422,7 @@ export class ClanService {
 
   constructor(
     private readonly store: JsonFileStore,
-    private readonly economy: EconomyService,
+    private readonly economy: CurrencyPort,
     private readonly now: () => number = Date.now,
     private readonly createPolicy: ClanCreatePolicy = defaultClanCreatePolicy,
   ) {
@@ -705,7 +766,12 @@ export class ClanService {
     return { ok: true, clan };
   }
 
-  createClan(playerId: string, rawName: string | undefined, icon: string | undefined): ClanResult {
+  createClan(
+    playerId: string,
+    rawName: string | undefined,
+    icon: string | undefined,
+    request?: EconomyCommandRequest,
+  ): ClanResult {
     const parsed = validateClanName(rawName);
     const key = parsed.ok ? clanNameKey(parsed.name) : '';
     return this.withLocks([`player:${playerId}`, key ? `name:${key}` : ''], () => {
@@ -717,18 +783,113 @@ export class ClanService {
       for (const clan of this.clans.values()) {
         if (clan.nameKey === key) return { ok: false, error: CLAN_NAME_TAKEN_ERROR };
       }
+      if (this.economy.backend === 'postgres' && !isClientMoneyRequestId(request?.requestId)) {
+        return { ok: false, error: MONEY_REQUEST_REQUIRED };
+      }
+      if (this.settlements && request && this.economy.backend === 'postgres') {
+        return this.createDurable(playerId, parsed.name, key, icon, request);
+      }
       const cost = this.createCostFor(playerId);
-      const paid = this.economy.withdraw(playerId, cost, 'CLAN_CREATE');
-      if (!paid.ok) return { ok: false, error: paid.error ?? 'Недостаточно Мегакоинов.' };
+      const paid = this.economy.withdraw(playerId, cost, 'CLAN_CREATE', undefined, request);
+      return thenResult(paid, (result) => {
+        if (!result.ok) return { ok: false as const, error: result.error ?? 'Недостаточно Мегакоинов.' };
+        return this.finishCreate(playerId, parsed.name, key, icon);
+      });
+    }) as ClanResult;
+  }
+
+  private createDurable(
+    playerId: string,
+    name: string,
+    key: string,
+    icon: ClanIconId,
+    request: EconomyCommandRequest,
+  ): ClanResult {
+    const settlements = this.settlements;
+    if (!settlements) return { ok: false, error: SETTLEMENT_RECOVERING };
+    const reservedNow = `clan-${this.nextClanId}`;
+    this.nextClanId += 1;
+    this.persist();
+    const payload = {
+      playerId,
+      name,
+      nameKey: key,
+      icon,
+      clanId: reservedNow,
+    };
+    const run = (async () => {
+      if (this.haltAfter === 'clan-prepared') {
+        await settlements.begin({
+          settlementId: request.requestId,
+          kind: 'CLAN_CREATE',
+          payload,
+          requestId: request.requestId,
+        });
+        return { ok: false as const, error: 'halt:clan-prepared' };
+      }
+      const existing = await settlements.get(request.requestId);
+      if (existing?.phase === 'RECOVERY_REQUIRED') return { ok: false as const, error: 'conflict' };
+      const row = existing ?? await settlements.begin({
+        settlementId: request.requestId,
+        kind: 'CLAN_CREATE',
+        payload,
+        requestId: request.requestId,
+      });
+      if (!existing || existing.phase === 'PREPARED') {
+        const paid = await Promise.resolve(this.economy.withdraw(playerId, this.createCostFor(playerId), 'CLAN_CREATE', undefined, request));
+        if (!paid.ok) {
+          if (row.phase === 'PREPARED') await settlements.transition(request.requestId, 'PREPARED', 'CANCELLED');
+          return { ok: false as const, error: paid.error ?? 'Недостаточно Мегакоинов.' };
+        }
+        if (row.phase === 'PREPARED') await settlements.advance(request.requestId, 'PREPARED', 'MONEY_COMMITTED');
+        if (this.haltAfter === 'clan-paid') return { ok: false as const, error: SETTLEMENT_RECOVERING };
+      }
+      const reserved = String((existing ?? await settlements.get(request.requestId))?.payload.clanId ?? reservedNow);
+      if ([...this.clans.values()].some((clan) => clan.creationSettlementId === request.requestId)) {
+        await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
+        return { ok: true as const, clan: [...this.clans.values()].find((clan) => clan.creationSettlementId === request.requestId) };
+      }
+      const created = this.finishCreate(playerId, name, key, icon, reserved, request.requestId);
+      if (!created.ok) {
+        const phase = (await settlements.get(request.requestId))?.phase;
+        if (phase && phase !== 'RECOVERY_REQUIRED' && phase !== 'COMPLETE' && phase !== 'CANCELLED') {
+          await settlements.transition(request.requestId, phase, 'RECOVERY_REQUIRED');
+        }
+        return created;
+      }
+      await settlements.advance(request.requestId, 'MONEY_COMMITTED', 'COMPLETE');
+      return created;
+    })();
+    return run as unknown as ClanResult;
+  }
+
+  private finishCreate(
+    playerId: string,
+    name: string,
+    key: string,
+    icon: ClanIconId,
+    reservedId?: string,
+    creationSettlementId?: string,
+  ): ClanResult {
+      const clanId = reservedId ?? `clan-${this.nextClanId++}`;
+      if (reservedId) {
+        const number = Number(reservedId.replace('clan-', ''));
+        if (Number.isInteger(number) && number >= this.nextClanId) this.nextClanId = number + 1;
+      }
+      const previous = this.clans.get(clanId);
+      if (previous && previous.creationSettlementId !== creationSettlementId) {
+        return { ok: false, error: 'conflict' };
+      }
       const clan: ClanRecord = {
-        clanId: `clan-${this.nextClanId++}`,
-        name: parsed.name,
+        clanId,
+        name,
         nameKey: key,
         icon,
         ownerId: playerId,
         memberIds: [playerId],
         roles: { [playerId]: 'leader' },
         createdAt: this.now(),
+        ...(creationSettlementId ? { creationSettlementId } : {}),
       };
       this.clans.set(clan.clanId, clan);
       this.clearPlayerPending(playerId);
@@ -738,7 +899,6 @@ export class ClanService {
       session.selectedClanId = clan.clanId;
       session.message = `Клан ${clan.name} создан.`;
       return { ok: true, clan };
-    });
   }
 
   deleteClan(playerId: string, clanId?: string): ClanResult {
@@ -1269,7 +1429,7 @@ export class ClanService {
     });
   }
 
-  handleAction(playerId: string, message: ClientClanActionMessage): void {
+  handleAction(playerId: string, message: ClientClanActionMessage): void | Promise<void> {
     const purgedInvites = this.purgeExpired();
     const session = this.session(playerId);
     const previousMessage = session.message;
@@ -1351,11 +1511,21 @@ export class ClanService {
       return;
     }
     if (action === 'confirm_create') {
-      const result = this.createClan(playerId, session.nameText, session.selectedIcon);
-      if (!result.ok) {
-        session.screen = 'create';
-        session.message = result.error;
-      }
+      const request = clientMoneyRequest(
+        message.clientRequestId,
+        'economy.clan_create',
+        playerId,
+        { name: session.nameText ?? '', icon: session.selectedIcon ?? '' },
+      );
+      const result = this.createClan(playerId, session.nameText, session.selectedIcon, request);
+      const apply = (created: ClanResult): void => {
+        if (!created.ok) {
+          session.screen = 'create';
+          session.message = created.error;
+        }
+      };
+      if (isPromise(result)) return result.then(apply);
+      apply(result);
       return;
     }
     if (action === 'confirm_delete') {
@@ -2391,16 +2561,25 @@ export class ClanService {
     return Math.max(1, Math.min(totalPages, Math.trunc(page)));
   }
 
-  private withLocks(keys: readonly string[], fn: () => ClanResult): ClanResult {
+  private withLocks<T extends ClanResult | Promise<ClanResult>>(keys: readonly string[], fn: () => T): T {
     const unique = [...new Set(keys.filter(Boolean))].sort();
     for (const key of unique) {
-      if (this.locks.has(key)) return { ok: false, error: CLAN_BUSY_ERROR };
+      if (this.locks.has(key)) return { ok: false, error: CLAN_BUSY_ERROR } as T;
     }
     for (const key of unique) this.locks.add(key);
-    try {
-      return fn();
-    } finally {
+    let asyncResult = false;
+    const release = (): void => {
       for (const key of unique) this.locks.delete(key);
+    };
+    try {
+      const result = fn();
+      if (isPromise(result)) {
+        asyncResult = true;
+        return result.finally(release) as T;
+      }
+      return result;
+    } finally {
+      if (!asyncResult) release();
     }
   }
 }

@@ -48,6 +48,7 @@ switch_current() {
   assert_not_world "$target"
   [[ -f "$target/dist/server/index.mjs" ]] || die "release $id has no dist/server/index.mjs"
   [[ -f "$target/node_modules/ws/package.json" ]] || die "release $id has no node_modules/ws"
+  [[ -f "$target/node_modules/pg/package.json" ]] || die "release $id has no node_modules/pg"
   if [[ -L "$root/current.new" ]]; then
     rm -f -- "$root/current.new"
   elif [[ -e "$root/current.new" ]]; then

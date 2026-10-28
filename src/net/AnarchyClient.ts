@@ -19,8 +19,19 @@ import {
   type ServerWelcomeMessage,
 } from '../../shared/protocol';
 import { sanitizePlayerName } from '../../shared/playerName';
+import {
+  confirmGuestWelcome,
+  legacySessionStorageKey,
+  planGuestJoin,
+  withGuestScopeLock,
+  type FreshGuestConsent,
+  type GuestScopeLock,
+  type GuestIdentityScope,
+  type GuestJoinPlan,
+  type GuestStorage,
+} from './guestIdentityStorage';
 
-const SESSION_KEY = 'fc.anarchy.sessionToken';
+
 const STATUS_TIMEOUT_MS = 1500;
 
 export type ServerReachFailure = 'timeout' | 'network' | 'http' | 'invalid_response' | 'not_ready';
@@ -197,7 +208,152 @@ export function statusUrlForServer(server: LocalServerName, search?: string): st
 }
 
 export function clientSessionStorageKey(url: string): string {
-  return url === defaultWsUrl() ? SESSION_KEY : `fc.session.${url}`;
+  return legacySessionStorageKey(url, defaultWsUrl());
+}
+
+function stripGuestOverrides(search?: string): string {
+  const params = new URLSearchParams(search ?? '');
+  params.delete('anarchyUrl');
+  params.delete('anarchyHost');
+  params.delete('anarchyPort');
+  const text = params.toString();
+  return text ? `?${text}` : '';
+}
+
+function normalizeEndpoint(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+/** A saved guest token is sent only when the socket is the canonical endpoint for that menu card. */
+export function guestEndpointTrusted(connectUrl: string, target: LocalServerName, search?: string): boolean {
+  const canonical = clientUrlForServer(target, stripGuestOverrides(search));
+  if (!canonical) return false;
+  return normalizeEndpoint(connectUrl) === normalizeEndpoint(canonical);
+}
+
+function browserStore(kind: 'local' | 'session'): GuestStorage | null {
+  try {
+    if (typeof globalThis === 'undefined') return null;
+    const store = kind === 'local' ? globalThis.localStorage : globalThis.sessionStorage;
+    if (!store) return null;
+    return {
+      getItem: (key) => store.getItem(key),
+      setItem: (key, value) => store.setItem(key, value),
+      removeItem: (key) => store.removeItem(key),
+      keys: () => {
+        const names: string[] = [];
+        for (let index = 0; index < store.length; index += 1) {
+          const key = store.key(index);
+          if (key) names.push(key);
+        }
+        return names;
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchIdentityStatus(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }> {
+  try {
+    const response = await fetch(url, { signal });
+    if (!response.ok) return { ok: false };
+    const json = await response.json() as { ready?: unknown; mode?: unknown; world?: unknown };
+    if (json.ready !== true || typeof json.mode !== 'string' || typeof json.world !== 'string' || json.world.trim() === '') {
+      return { ok: false };
+    }
+    return { ok: true, ready: true, mode: json.mode, world: json.world };
+  } catch {
+    return { ok: false };
+  }
+}
+
+export interface GuestConnectOptions {
+  readonly freshGuest?: boolean;
+  readonly freshConsent?: FreshGuestConsent;
+  readonly allowEphemeral?: boolean;
+  readonly search?: string;
+  readonly hostname?: string;
+  readonly targetServer?: LocalServerName;
+  readonly fetchStatus?: (url: string, signal: AbortSignal) => Promise<{ ok: boolean; ready?: boolean; mode?: string; world?: string }>;
+  readonly durable?: GuestStorage | null;
+  readonly legacy?: GuestStorage | null;
+  readonly scopeLock?: <T>(scope: GuestIdentityScope, signal: AbortSignal, body: () => Promise<T>) => Promise<T>;
+}
+
+/** One status request. A hung response must not keep connect() pending. */
+export const STATUS_PREFLIGHT_MS = 3000;
+
+interface ConnectAttempt {
+  generation: number;
+  settled: boolean;
+  /** Welcome was accepted. Later gameplay packets still belong to this socket. */
+  accepted: boolean;
+  resolve: (welcome: ServerWelcomeMessage) => void;
+  reject: (error: unknown) => void;
+  socket: WebSocket | null;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  gate: { resolve: () => void; reject: (error: unknown) => void } | null;
+}
+
+function boundedStatus<T>(
+  start: (signal: AbortSignal) => Promise<T>,
+  parent: AbortSignal,
+  ms = STATUS_PREFLIGHT_MS,
+): Promise<T> {
+  const child = new AbortController();
+  const onParentAbort = (): void => child.abort();
+  if (parent.aborted) child.abort();
+  else parent.addEventListener('abort', onParentAbort, { once: true });
+  const work = parent.aborted ? Promise.reject(cancelledJoin()) : start(child.signal);
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (ok: boolean, value: unknown): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      parent.removeEventListener('abort', onParentAbort);
+      if (ok) resolve(value as T);
+      else reject(value);
+    };
+    const timer = setTimeout(() => {
+      child.abort();
+      finish(false, Object.assign(new Error('Проверка сервера не ответила вовремя. Персонаж не создавался.'), { code: 'status_timeout' }));
+    }, ms);
+    if (parent.aborted) {
+      child.abort();
+      finish(false, cancelledJoin());
+      return;
+    }
+    parent.addEventListener('abort', () => {
+      child.abort();
+      finish(false, cancelledJoin());
+    }, { once: true });
+    work.then(
+      (value) => finish(!parent.aborted, parent.aborted ? cancelledJoin() : value),
+      (error) => finish(false, parent.aborted ? cancelledJoin() : error),
+    );
+  });
+}
+
+function cancelledJoin(): Error {
+  return Object.assign(new Error('Подключение отменено'), { code: 'cancelled' });
+}
+
+function browserLocks(): GuestScopeLock | undefined {
+  const locks = (globalThis as {
+    navigator?: { locks?: GuestScopeLock };
+  }).navigator?.locks;
+  if (!locks?.request) return undefined;
+  return locks;
 }
 
 export type AnarchyMessageHandler = (message: ServerMessage) => void;
@@ -209,9 +365,15 @@ export class AnarchyClient {
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private intentionalClose = false;
   private generation = 0;
+  private identityAbort: AbortController | null = null;
+  private pending: ConnectAttempt | null = null;
   state: ConnectionState = 'idle';
   lastWelcome: ServerWelcomeMessage | undefined;
   lastError: string | undefined;
+  lastErrorCode: string | undefined;
+  identityWarning: 'storage' | 'other-world' | undefined;
+  identityPersisted = false;
+  freshGuestOffer: FreshGuestConsent | undefined = undefined;
 
   onMessage(handler: AnarchyMessageHandler): void {
     this.handler = handler;
@@ -221,8 +383,14 @@ export class AnarchyClient {
     this.disconnectHandler = handler;
   }
 
-  connect(url = anarchyClientUrl(), name?: string, appearance?: PlayerAppearance): Promise<ServerWelcomeMessage> {
+  connect(
+    url = anarchyClientUrl(),
+    name?: string,
+    appearance?: PlayerAppearance,
+    options?: GuestConnectOptions,
+  ): Promise<ServerWelcomeMessage> {
     this.disconnect();
+    this.freshGuestOffer = undefined;
     if (!url) {
       this.state = 'error';
       this.lastError = 'not_configured';
@@ -230,82 +398,350 @@ export class AnarchyClient {
     }
     this.state = 'connecting';
     this.lastError = undefined;
+    this.lastErrorCode = undefined;
+    this.identityWarning = undefined;
+    this.identityPersisted = false;
     this.intentionalClose = false;
-    this.generation += 1;
     const generation = this.generation;
+    const abort = new AbortController();
+    this.identityAbort = abort;
+    const search = options?.search ?? (typeof location === 'undefined' ? '' : location.search);
+    const hostname = options?.hostname ?? (typeof location === 'undefined' ? 'localhost' : location.hostname);
+    const target = options?.targetServer ?? selectedLocalServer(search);
+    const durable = options?.durable === undefined ? browserStore('local') : options.durable;
+    const legacy = options?.legacy === undefined ? browserStore('session') : options.legacy;
     return new Promise((resolve, reject) => {
-      const socket = new WebSocket(url);
-      this.socket = socket;
-      const timeout = window.setTimeout(() => {
-        if (this.generation !== generation || this.socket !== socket) return;
-        this.lastError = 'timeout';
-        this.state = 'error';
-        socket.close();
-        reject(new Error('Сервер недоступен'));
-      }, 5000);
-      const fail = (message: string): void => {
-        if (this.generation !== generation || this.socket !== socket) return;
-        window.clearTimeout(timeout);
-        this.lastError = message;
-        this.state = 'error';
-        reject(new Error(message));
+      const attempt: ConnectAttempt = {
+        generation,
+        settled: false,
+        accepted: false,
+        resolve,
+        reject,
+        socket: null,
+        timer: undefined,
+        gate: null,
       };
-      const sessionKey = clientSessionStorageKey(url);
-      socket.addEventListener('open', () => {
-        if (this.generation !== generation || this.socket !== socket) return;
-        const sessionToken = sessionStorage.getItem(sessionKey) ?? undefined;
-        this.send(buildAnarchyJoinMessage(name, sessionToken, appearance));
+      this.pending = attempt;
+      void this.runConnect(attempt, url, name, appearance, options, search, hostname, target, durable, legacy, abort.signal)
+        .catch((error: unknown) => this.failAttempt(attempt, error));
+    });
+  }
+
+  private settle(attempt: ConnectAttempt, error?: unknown, welcome?: ServerWelcomeMessage): void {
+    if (attempt.settled) return;
+    attempt.settled = true;
+    if (attempt.timer !== undefined) {
+      clearTimeout(attempt.timer);
+      attempt.timer = undefined;
+    }
+    const gate = attempt.gate;
+    attempt.gate = null;
+    if (welcome) {
+      attempt.resolve(welcome);
+      gate?.resolve();
+      return;
+    }
+    const reason = error ?? cancelledJoin();
+    attempt.reject(reason);
+    gate?.reject(reason);
+  }
+
+  private failAttempt(attempt: ConnectAttempt, error: unknown): void {
+    if (attempt.settled) return;
+    if (this.generation !== attempt.generation) {
+      this.settle(attempt, cancelledJoin());
+      return;
+    }
+    const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code ?? '') : '';
+    if (code !== 'cancelled') {
+      this.lastError = error instanceof Error ? error.message : 'Подключение остановлено';
+      this.lastErrorCode = code || undefined;
+      this.state = 'error';
+    } else if (this.state === 'connecting') {
+      this.state = 'disconnected';
+    }
+    this.settle(attempt, error);
+  }
+
+  private async runConnect(
+    attempt: ConnectAttempt,
+    url: string,
+    name: string | undefined,
+    appearance: PlayerAppearance | undefined,
+    options: GuestConnectOptions | undefined,
+    search: string,
+    hostname: string,
+    target: LocalServerName,
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const plan = await this.planJoin(
+      url, search, hostname, target,
+      Boolean(options?.freshGuest), options?.freshConsent, Boolean(options?.allowEphemeral),
+      attempt.generation, signal, options?.fetchStatus, durable, legacy,
+    );
+    if (attempt.settled) return;
+    if (this.generation !== attempt.generation || signal.aborted || plan.outcome === 'cancelled') {
+      this.failAttempt(attempt, cancelledJoin());
+      return;
+    }
+    if (plan.outcome !== 'ready_existing' && plan.outcome !== 'ready_new' && plan.outcome !== 'untrusted') {
+      if (plan.outcome === 'world_changed' && plan.scope) {
+        this.freshGuestOffer = { reason: 'world_changed', scope: plan.scope, previousCredential: null };
+      }
+      const message = 'message' in plan ? plan.message : 'Подключение остановлено';
+      this.failAttempt(attempt, Object.assign(new Error(message), { code: plan.outcome }));
+      return;
+    }
+    const open = (chosen: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>): void => {
+      this.openSocket(attempt, url, name, appearance, chosen, durable, legacy);
+    };
+    if (plan.outcome === 'ready_new' && plan.scope && !plan.ephemeral) {
+      const scope = plan.scope;
+      const lock = options?.scopeLock
+        ?? ((locked, lockSignal, body) => withGuestScopeLock(locked, body, browserLocks(), lockSignal));
+      await lock(scope, signal, async () => {
+        if (attempt.settled || this.generation !== attempt.generation || signal.aborted) throw cancelledJoin();
+        const again = planGuestJoin({
+          trusted: true,
+          freshGuest: false,
+          freshConsent: options?.freshConsent,
+          allowEphemeral: Boolean(options?.allowEphemeral),
+          targetMode: target,
+          hostname,
+          status: { ok: true, ready: true, mode: target, world: scope.worldId },
+          durable,
+          legacy,
+          legacyKeys: plan.legacyKeys,
+        });
+        if (again.outcome === 'ready_existing' || again.outcome === 'untrusted') {
+          await this.openAndHold(attempt, () => open(again));
+          return;
+        }
+        if (again.outcome === 'ready_new') {
+          if (again.scope.deployment !== scope.deployment || again.scope.mode !== scope.mode || again.scope.worldId !== scope.worldId) {
+            throw Object.assign(new Error('Подтверждение было для другого мира. Новый персонаж не создавался.'), { code: 'consent_mismatch' });
+          }
+          await this.openAndHold(attempt, () => open(again));
+          return;
+        }
+        const message = 'message' in again ? again.message : 'Подключение остановлено';
+        throw Object.assign(new Error(message), { code: again.outcome });
       });
-      socket.addEventListener('message', (event) => {
-        if (this.generation !== generation || this.socket !== socket) return;
-        const parseStart = performance.now();
-        const rawText = String(event.data);
-        let payload: ServerMessage;
-        try {
-          const parsed = parseServerMessage(decodeJson(rawText));
-          if ('error' in parsed) {
-            console.warn('[anarchy] invalid server message:', parsed.error);
-            return;
-          }
-          payload = parsed;
-        } catch {
-          console.warn('[anarchy] invalid server JSON');
+      return;
+    }
+    open(plan);
+  }
+
+  private openAndHold(attempt: ConnectAttempt, open: () => void): Promise<void> {
+    return new Promise((resolve, reject) => {
+      attempt.gate = { resolve, reject };
+      open();
+      if (attempt.settled && attempt.gate) {
+        const gate = attempt.gate;
+        attempt.gate = null;
+        reject(cancelledJoin());
+        void gate;
+      }
+    });
+  }
+
+  private openSocket(
+    attempt: ConnectAttempt,
+    url: string,
+    name: string | undefined,
+    appearance: PlayerAppearance | undefined,
+    plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>,
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+  ): void {
+    if (attempt.settled || this.generation !== attempt.generation) {
+      this.failAttempt(attempt, cancelledJoin());
+      return;
+    }
+    const generation = attempt.generation;
+    const socket = new WebSocket(url);
+    attempt.socket = socket;
+    this.socket = socket;
+    attempt.timer = setTimeout(() => {
+      if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      this.lastError = 'timeout';
+      this.lastErrorCode = 'timeout';
+      this.state = 'error';
+      this.settle(attempt, new Error('Сервер недоступен'));
+      socket.close();
+    }, 5000);
+    const fail = (message: string, code?: string): void => {
+      if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      this.failAttempt(attempt, Object.assign(new Error(message), code ? { code } : {}));
+    };
+    socket.addEventListener('open', () => {
+      if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      this.send(buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
+    });
+    socket.addEventListener('message', (event) => {
+      if (this.generation !== generation || this.socket !== socket) return;
+      const parseStart = performance.now();
+      const rawText = String(event.data);
+      let payload: ServerMessage;
+      try {
+        const parsed = parseServerMessage(decodeJson(rawText));
+        if ('error' in parsed) {
+          console.warn('[anarchy] invalid server message:', parsed.error);
           return;
         }
-        const parseMs = performance.now() - parseStart;
-        if (payload.type === 'welcome') {
-          window.clearTimeout(timeout);
-          this.lastWelcome = payload;
-          this.state = 'connected';
-          sessionStorage.setItem(sessionKey, payload.sessionToken);
-          this.startPing();
-          if (typeof console !== 'undefined') {
-            console.info(
-              `[reconnectLoad] welcome parse=${parseMs.toFixed(1)}ms bytes=${rawText.length} `
-              + `modChunks=${Object.keys(payload.modifications ?? {}).length}`,
-            );
-          }
-          resolve(payload);
-        } else if (payload.type === 'error' && this.state === 'connecting') {
-          fail(payload.message || 'Сервер недоступен');
-          return;
-        }
+        payload = parsed;
+      } catch {
+        console.warn('[anarchy] invalid server JSON');
+        return;
+      }
+      if (attempt.accepted) {
+        if (payload.type === 'welcome') return;
         this.handler?.(payload);
-      });
-      socket.addEventListener('error', () => {
-        if (this.generation !== generation || this.socket !== socket) return;
-        if (this.state === 'connecting') fail('Сервер недоступен');
-        else this.state = 'error';
-      });
-      socket.addEventListener('close', () => {
+        return;
+      }
+      if (attempt.settled) return;
+      const parseMs = performance.now() - parseStart;
+      if (payload.type === 'welcome') {
+        if (plan.outcome !== 'untrusted' && plan.scope && payload.worldId !== plan.scope.worldId) {
+          fail('Сервер открыл другой мир. Прежний ключ не записан.', 'world_mismatch');
+          socket.close();
+          return;
+        }
+        this.lastWelcome = payload;
+        this.state = 'connected';
+        if (plan.outcome !== 'untrusted' && plan.scope && !plan.ephemeral) {
+          const saved = confirmGuestWelcome(durable, legacy, plan.scope, payload.sessionToken, plan.legacyKeys);
+          this.identityPersisted = saved.persisted;
+          if (!saved.persisted) this.identityWarning = 'storage';
+        }
+        this.startPing();
+        if (typeof console !== 'undefined') {
+          console.info(
+            `[reconnectLoad] welcome parse=${parseMs.toFixed(1)}ms bytes=${rawText.length} `
+            + `modChunks=${Object.keys(payload.modifications ?? {}).length}`,
+          );
+        }
+        attempt.accepted = true;
+        this.settle(attempt, undefined, payload);
+        return;
+      }
+      if (payload.type === 'error' && this.state === 'connecting') {
+        if (payload.code === 'unknown_guest' && plan.outcome === 'ready_existing' && plan.scope && plan.sendToken) {
+          this.freshGuestOffer = {
+            reason: 'unknown_guest',
+            scope: plan.scope,
+            previousCredential: plan.sendToken,
+          };
+        }
+        fail(payload.message || 'Сервер недоступен', payload.code);
+        return;
+      }
+      this.handler?.(payload);
+    });
+    socket.addEventListener('error', () => {
+      if (this.generation !== generation || this.socket !== socket) return;
+      if (attempt.accepted || attempt.settled) return;
+      if (this.state === 'connecting') fail('Сервер недоступен');
+      else this.state = 'error';
+    });
+    socket.addEventListener('close', () => {
+      if (attempt.settled) {
         if (this.generation !== generation) return;
         this.stopPing();
-        if (this.state === 'connecting') fail('Сервер недоступен');
-        else if (this.state === 'connected') {
+        attempt.accepted = false;
+        if (this.state === 'connected') {
           this.state = 'disconnected';
           if (!this.intentionalClose) this.disconnectHandler?.();
         }
+        return;
+      }
+      if (this.generation !== generation || this.socket !== socket) {
+        this.settle(attempt, cancelledJoin());
+        return;
+      }
+      fail('Сервер недоступен');
+    });
+  }
+
+  private async planJoin(
+    url: string,
+    search: string,
+    hostname: string,
+    target: LocalServerName,
+    freshGuest: boolean,
+    freshConsent: FreshGuestConsent | undefined,
+    allowEphemeral: boolean,
+    generation: number,
+    signal: AbortSignal,
+    fetchStatus: GuestConnectOptions['fetchStatus'],
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+  ): Promise<GuestJoinPlan | { outcome: 'cancelled' }> {
+    if (this.generation !== generation) return { outcome: 'cancelled' };
+    const trusted = guestEndpointTrusted(url, target, search);
+    if (!trusted) {
+      return planGuestJoin({
+        trusted: false,
+        freshGuest,
+        freshConsent,
+        allowEphemeral,
+        targetMode: target,
+        hostname,
+        status: { ok: false },
+        durable: null,
+        legacy: null,
+        legacyKeys: [],
       });
+    }
+    const statusUrl = statusUrlForServer(target, search);
+    if (!statusUrl) {
+      return {
+        outcome: 'status_unavailable',
+        legacyKeys: [],
+        message: 'Не удалось проверить мир сервера. Персонаж не создавался.',
+      };
+    }
+    let status: { ok: boolean; ready?: boolean; mode?: string; world?: string };
+    try {
+      status = await boundedStatus(
+        (child) => fetchStatus ? fetchStatus(statusUrl, child) : fetchIdentityStatus(statusUrl, child),
+        signal,
+      );
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code ?? '') : '';
+      if (this.generation !== generation || signal.aborted || code === 'cancelled') return { outcome: 'cancelled' };
+      if (code === 'status_timeout') {
+        return {
+          outcome: 'status_timeout',
+          legacyKeys: [],
+          message: 'Проверка сервера не ответила вовремя. Персонаж не создавался.',
+        };
+      }
+      return {
+        outcome: 'status_unavailable',
+        legacyKeys: [],
+        message: 'Не удалось проверить мир сервера. Персонаж не создавался.',
+      };
+    }
+    if (this.generation !== generation || signal.aborted) return { outcome: 'cancelled' };
+    const canonical = clientUrlForServer(target, stripGuestOverrides(search));
+    const legacyKeys = [...new Set([
+      legacySessionStorageKey(url, defaultWsUrl()),
+      ...(canonical ? [legacySessionStorageKey(canonical, defaultWsUrl())] : []),
+    ])];
+    return planGuestJoin({
+      trusted: true,
+      freshGuest,
+      freshConsent,
+      allowEphemeral,
+      targetMode: target,
+      hostname,
+      status,
+      durable,
+      legacy,
+      legacyKeys,
     });
   }
 
@@ -316,14 +752,23 @@ export class AnarchyClient {
 
   disconnect(): void {
     this.intentionalClose = true;
+    this.identityAbort?.abort();
+    this.identityAbort = null;
     this.stopPing();
     this.generation += 1;
     this.handler = null;
     this.disconnectHandler = null;
+    const attempt = this.pending;
     const socket = this.socket;
     this.socket = null;
+    if (attempt) attempt.socket = null;
+    if (attempt && !attempt.settled) {
+      if (this.state === 'connecting') this.state = 'disconnected';
+      this.settle(attempt, cancelledJoin());
+    } else if (this.state === 'connected') {
+      this.state = 'disconnected';
+    }
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
-    if (this.state === 'connected') this.state = 'disconnected';
   }
 
   private startPing(): void {
@@ -343,13 +788,15 @@ export function buildAnarchyJoinMessage(
   name?: string,
   sessionToken?: string,
   appearance?: PlayerAppearance,
+  freshGuest?: boolean,
 ): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
   return {
     type: 'join',
     protocol: PROTOCOL_VERSION,
     ...(sanitized ? { name: sanitized } : {}),
-    ...(sessionToken ? { sessionToken } : {}),
+    ...(freshGuest ? { freshGuest: true } : {}),
+    ...(!freshGuest && sessionToken ? { sessionToken } : {}),
     ...(appearance ? {
       appearance: {
         skinId: appearance.skinId,
