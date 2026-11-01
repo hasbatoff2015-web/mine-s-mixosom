@@ -792,14 +792,24 @@ export class BuyerService {
   restoreOverflow(playerId: string, inventory?: Inventory): void {
     const held = this.returns.get(playerId);
     if (!held || !inventory) return;
+    // `add` writes slots before the file is replaced. A failed rename must not
+    // leave those slots filled while the previous `returns` entry is still on disk.
+    const previousReturns = held.map((stack) => cloneStack(stack)).filter((stack): stack is ItemStack => stack !== null);
+    const previousInventory = inventory.serialize();
     const remaining: ItemStack[] = [];
-    for (const stack of held) {
-      const leftover = inventory.add(stack);
-      if (leftover) remaining.push(leftover);
+    try {
+      for (const stack of held) {
+        const leftover = inventory.add(stack);
+        if (leftover) remaining.push(leftover);
+      }
+      if (remaining.length > 0) this.returns.set(playerId, remaining);
+      else this.returns.delete(playerId);
+      this.persist();
+    } catch (error) {
+      inventory.restore(previousInventory);
+      this.returns.set(playerId, previousReturns);
+      throw error;
     }
-    if (remaining.length > 0) this.returns.set(playerId, remaining);
-    else this.returns.delete(playerId);
-    this.persist();
   }
 
   private removeBuyer(buyer: BuyerRecord): void {

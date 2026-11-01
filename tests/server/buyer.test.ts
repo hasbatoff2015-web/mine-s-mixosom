@@ -1478,5 +1478,106 @@ describe('BuyerService', () => {
     expect(debits).toBe(1);
     expect(owed.count('pumpkin')).toBe(1);
   });
+
+  it('gives a saved return once and keeps the exact leftover when the inventory is partly full', async () => {
+    const { store, economy, holograms } = await setup();
+    store.save(BUYER_STORE_KEY, {
+      buyers: [],
+      returns: { p1: [{ itemId: 'pumpkin', count: 10 }] },
+    });
+    const buyer = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    buyer.load();
+    const inventory = new Inventory();
+    inventory.setSlot(0, createItemStack('pumpkin', 60));
+    for (let slot = 1; slot < Inventory.SLOT_COUNT; slot += 1) {
+      inventory.setSlot(slot, createItemStack('cobblestone', 64));
+    }
+    buyer.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(64);
+    expect(inventory.count('cobblestone')).toBe(64 * (Inventory.SLOT_COUNT - 1));
+    const saved = store.load<{
+      buyers: unknown[];
+      returns?: Record<string, { itemId: string; count: number } | Array<{ itemId: string; count: number }>>;
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    const owed = saved.returns?.p1;
+    const leftover = Array.isArray(owed) ? owed : owed ? [owed] : [];
+    expect(leftover).toEqual([expect.objectContaining({ itemId: 'pumpkin', count: 6 })]);
+    buyer.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(64);
+  });
+
+  it('rolls back every stack when clearing returns fails, then grants them once', async () => {
+    const { store, economy, holograms } = await setup();
+    store.save(BUYER_STORE_KEY, {
+      buyers: [],
+      returns: {
+        p1: [
+          { itemId: 'pumpkin', count: 2 },
+          { itemId: 'melon', count: 3 },
+        ],
+      },
+    });
+    const buyer = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    buyer.load();
+    const inventory = new Inventory();
+    inventory.setSlot(0, createItemStack('cobblestone', 4));
+    buyer.haltBuyerPersist = () => true;
+    expect(() => buyer.restoreOverflow('p1', inventory)).toThrow('halt:buyer-persist');
+    expect(inventory.count('pumpkin')).toBe(0);
+    expect(inventory.count('melon')).toBe(0);
+    expect(inventory.count('cobblestone')).toBe(4);
+    const stillOwed = store.load<{
+      buyers: unknown[];
+      returns?: Record<string, Array<{ itemId: string; count: number }>>;
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    expect(stillOwed.returns?.p1).toEqual([
+      expect.objectContaining({ itemId: 'pumpkin', count: 2 }),
+      expect.objectContaining({ itemId: 'melon', count: 3 }),
+    ]);
+    buyer.haltBuyerPersist = undefined;
+    buyer.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(2);
+    expect(inventory.count('melon')).toBe(3);
+    expect(inventory.count('cobblestone')).toBe(4);
+    const cleared = store.load<{ buyers: unknown[]; returns?: Record<string, unknown> }>(BUYER_STORE_KEY, { buyers: [] });
+    expect(cleared.returns?.p1).toBeUndefined();
+    buyer.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(2);
+    expect(inventory.count('melon')).toBe(3);
+  });
+
+  it('does not keep a granted pumpkin when the returns-clear write fails during a purchase', async () => {
+    const { store, economy, holograms, buyer } = await setup();
+    buyer.create({ name: 'Лавка', role: 'seller', worldId: 'anarchy', x: 0, y: 64, z: 0, yaw: 0, pitch: 0 });
+    buyer.configure('aabbccdd', { itemId: 'pumpkin', pricePerItem: 10, role: 'seller', stock: 4 });
+    const inventory = new Inventory();
+    buyer.openTrade('p1', 'aabbccdd', inventory);
+    buyer.session('p1')!.orderQuantity = 1;
+    let persistCalls = 0;
+    buyer.haltBuyerPersist = () => {
+      persistCalls += 1;
+      return persistCalls === 3;
+    };
+    expect(() => buyer.handleAction('p1', inventory, {
+      type: 'buyer_action', action: 'buy', clientRequestId: '45454545-4545-4454-8454-454545454545',
+    }, { edit: false, delete: false, use: true })).toThrow('halt:buyer-persist');
+    expect(inventory.count('pumpkin')).toBe(0);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+    const owed = store.load<{
+      buyers: unknown[];
+      returns?: Record<string, { itemId: string; count: number } | Array<{ itemId: string; count: number }>>;
+    }>(BUYER_STORE_KEY, { buyers: [] });
+    const stacks = owed.returns?.p1;
+    const count = Array.isArray(stacks) ? stacks.reduce((sum, stack) => sum + stack.count, 0) : stacks?.count ?? 0;
+    expect(count).toBe(1);
+    buyer.haltBuyerPersist = undefined;
+    buyer.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(1);
+    const restarted = new BuyerService(store, economy, holograms, () => 'anarchy', () => 1_000, () => 'aabbccdd');
+    restarted.load();
+    restarted.restoreOverflow('p1', inventory);
+    expect(inventory.count('pumpkin')).toBe(1);
+    expect(economy.getBalance('p1')).toBe(ECONOMY_INITIAL_BALANCE - 10);
+  });
 });
 
