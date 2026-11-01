@@ -128,6 +128,8 @@ export interface SerializedSurvivalState {
   readonly fireTicks: number;
   readonly arrowFireTicks?: number;
   readonly dead: boolean;
+  /** Stable for one death. Cleared on respawn. Not a coordinate or nickname. */
+  readonly deathEventId?: string;
   readonly spawnPoint: [number, number, number];
   readonly effects?: ReadonlyArray<{ readonly id: StatusEffectId; readonly amplifier: number; readonly ticks: number }>;
 }
@@ -203,6 +205,7 @@ export class SurvivalSystem {
   arrowFireTicks = 0;
   contactFire = false;
   dead = false;
+  deathEventId?: string;
   difficulty: Difficulty;
   spawnPoint: [number, number, number] = [0.5, 64, 0.5];
   lastDamage?: DamageResult;
@@ -333,7 +336,10 @@ export class SurvivalSystem {
     }
     this.enforceLifeInvariant();
     const killed = this.health <= 0;
-    if (killed) this.dead = true;
+    if (killed) {
+      this.dead = true;
+      if (!this.deathEventId) this.deathEventId = globalThis.crypto.randomUUID();
+    }
     const result: DamageResult = {
       source,
       requested,
@@ -487,6 +493,7 @@ export class SurvivalSystem {
     this.contactFire = false;
     this.networkOnFire = false;
     this.dead = false;
+    this.deathEventId = undefined;
     this.hurtResistance.reset();
     this.drownTimer = 0;
     this.lavaTimer = 0;
@@ -511,6 +518,7 @@ export class SurvivalSystem {
       fireTicks: this.fireTicks,
       arrowFireTicks: this.arrowFireTicks,
       dead: this.dead,
+      ...(this.deathEventId ? { deathEventId: this.deathEventId } : {}),
       spawnPoint: [...this.spawnPoint],
       effects: this.activeEffects(),
     };
@@ -544,6 +552,10 @@ export class SurvivalSystem {
       }
     }
     this.dead = state.dead ?? this.health <= 0;
+    this.deathEventId = typeof state.deathEventId === 'string' && state.deathEventId.length > 0
+      ? state.deathEventId
+      : undefined;
+    if (this.dead && !this.deathEventId) this.deathEventId = globalThis.crypto.randomUUID();
     this.enforceLifeInvariant();
   }
 

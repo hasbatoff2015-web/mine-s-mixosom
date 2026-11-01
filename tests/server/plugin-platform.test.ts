@@ -12,6 +12,7 @@ import { PRE_CANCELLABLE_EVENTS, POST_OBSERVATION_EVENTS } from '../../server/ev
 import { PLUGIN_API_VERSION, type Plugin } from '../../server/PluginManager';
 import { WorldInstance } from '../../server/WorldInstance';
 import { createItemStack } from '../../src/inventory';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 const REPO_ROOT = pathJoin(dirname(fileURLToPath(import.meta.url)), '../..');
 const FIXTURE_PLUGINS = pathJoin(dirname(fileURLToPath(import.meta.url)), 'fixtures/plugins');
@@ -87,6 +88,7 @@ describe('Phase 8 plugin platform', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

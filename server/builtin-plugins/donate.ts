@@ -47,16 +47,15 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
     version: '1.0.0',
     apiVersion: 1,
     onEnable(api) {
-      const admin = (playerId: string, name: string): boolean => (
-        api.isOperator(name)
-        || api.isOperator(playerId)
+      const admin = (playerId: string, _name: string): boolean => (
+        api.isOperator(playerId)
         || api.hasPermission(playerId, 'donate.admin')
         || api.hasPermission(playerId, 'server.admin')
       );
 
-      const describe = (playerId: string, name: string): string[] => {
-        const operator = api.isOperator(name) || api.isOperator(playerId);
-        const homes = ctx.homes.list(name).length;
+      const describe = (playerId: string, _name: string): string[] => {
+        const operator = api.isOperator(playerId);
+        const homes = ctx.homes.list(playerId).length;
         const status = ctx.donation.status(playerId, { operator, homes });
         const until = status.expiresAt
           ? ` до ${new Date(status.expiresAt).toISOString()} (ещё ${formatDurationMs(status.remainingMs)})`
@@ -97,30 +96,37 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           if (sub === 'info' && !args[1]) return ok(describe(sender.playerId, sender.name));
           if (!admin(sender.playerId, sender.name)) return fail('Недостаточно прав для выполнения этой команды.');
           if (sub === 'info') {
-            const target = args[1]!;
-            return ok(describe(target, target));
+            const target = ctx.resolvePermissionSubject(args[1]!);
+            if (!target.ok) return fail(target.error);
+            return ok(describe(target.playerId, target.name));
           }
           if (sub === 'grant') {
             const rank = parseDonationRank(args[2]);
             if (!args[1] || !rank) return usageError('/donate grant <player> <vip|premium|boss|titan> [days]');
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
             const duration = daysToMs(args[3]);
             if (!duration.ok) return fail(duration.error);
-            const result = ctx.donation.grant(args[1], rank, { durationMs: duration.ms, source: sender.name });
+            const result = ctx.donation.grant(target.playerId, rank, { durationMs: duration.ms, source: sender.playerId });
             if (!result.ok) return fail(result.error ?? 'Не удалось выдать ранг.');
-            return ok(`Ранг ${rank} выдан игроку ${args[1]} до ${new Date(result.expiresAt ?? 0).toISOString()}.`);
+            return ok(`Ранг ${rank} выдан игроку ${target.name} до ${new Date(result.expiresAt ?? 0).toISOString()}.`);
           }
           if (sub === 'extend') {
             if (!args[1]) return usageError('/donate extend <player> [days]');
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
             const duration = daysToMs(args[2]);
             if (!duration.ok) return fail(duration.error);
-            const result = ctx.donation.extend(args[1], { durationMs: duration.ms, source: sender.name });
+            const result = ctx.donation.extend(target.playerId, { durationMs: duration.ms, source: sender.playerId });
             if (!result.ok) return fail(result.error ?? 'Не удалось продлить ранг.');
             return ok(`Ранг ${result.rank} продлён до ${new Date(result.expiresAt ?? 0).toISOString()}. Оставшийся срок сохраняется, пока ранг действует.`);
           }
           if (sub === 'revoke') {
             if (!args[1]) return usageError('/donate revoke <player>');
-            const result = ctx.donation.revoke(args[1], { source: sender.name });
-            return result.ok ? ok(`Ранг игрока ${args[1]} снят.`) : fail(result.error ?? 'Не удалось снять ранг.');
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
+            const result = ctx.donation.revoke(target.playerId, { source: sender.playerId });
+            return result.ok ? ok(`Ранг игрока ${target.name} снят.`) : fail(result.error ?? 'Не удалось снять ранг.');
           }
           return usageError('/donate help');
         },
@@ -133,26 +139,32 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'operator',
         execute: (args, sender) => {
           if (!ctx.rankTestEnabled) return fail('Команда /ranktest доступна только на DEV.');
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const operator = api.isOperator(sender.playerId);
           if (!operator) return fail('Недостаточно прав для выполнения этой команды.');
           const action = args[0]?.toLowerCase();
           if (action === 'status') {
             if (!args[1]) return usageError('/ranktest status <player>');
-            return ok(describe(args[1], args[1]));
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
+            return ok(describe(target.playerId, target.name));
           }
           if (action === 'clear') {
             if (!args[1]) return usageError('/ranktest clear <player>');
-            const result = ctx.donation.revoke(args[1], { source: 'ranktest' });
-            return result.ok ? ok(`Тестовый ранг игрока ${args[1]} снят.`) : fail(result.error ?? 'Не удалось снять ранг.');
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
+            const result = ctx.donation.revoke(target.playerId, { source: 'ranktest' });
+            return result.ok ? ok(`Тестовый ранг игрока ${target.name} снят.`) : fail(result.error ?? 'Не удалось снять ранг.');
           }
           if (action === 'set') {
             const rank = parseDonationRank(args[2]);
             const duration = parseRankTestDuration(args[3]);
             if (!args[1] || !rank || !args[3]) return usageError('/ranktest set <player> <vip|premium|boss|titan> <duration>');
+            const target = ctx.resolvePermissionSubject(args[1]);
+            if (!target.ok) return fail(target.error);
             if (!duration.ok) return fail(duration.error);
-            const result = ctx.donation.grant(args[1], rank, { durationMs: duration.ms, source: 'ranktest' });
+            const result = ctx.donation.grant(target.playerId, rank, { durationMs: duration.ms, source: 'ranktest' });
             if (!result.ok) return fail(result.error ?? 'Не удалось выдать ранг.');
-            return ok(`Тестовый ранг ${rank} выдан игроку ${args[1]} на ${formatDurationMs(duration.ms)}.`);
+            return ok(`Тестовый ранг ${rank} выдан игроку ${target.name} на ${formatDurationMs(duration.ms)}.`);
           }
           return usageError('/ranktest <set|clear|status> ...');
         },
@@ -181,7 +193,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const text = sanitizeAnnouncementText(args.join(' '));
           if (!text) return fail(`Введите текст объявления до ${ANNOUNCE_TEXT_MAX} символов.`);
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const operator = api.isOperator(sender.playerId);
           const style = ctx.donation.nameStyle(sender.playerId, operator);
           const displayName = style?.prefix ? `${style.prefix} ${sender.name}` : sender.name;
           const line = announcementLine(displayName, text);
@@ -210,7 +222,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const target = args[0];
           if (!target) return usageError('/invsee <player>');
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const operator = api.isOperator(sender.playerId);
           const open = (): { ok: boolean; error?: string } => ctx.openPlayerInventory(sender.playerId, target, 'readonly');
           if (operator) {
             const opened = open();
@@ -240,7 +252,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const target = args[0];
           if (!target) return usageError('/invseeop <player>');
-          if (!api.isOperator(sender.name) && !api.isOperator(sender.playerId)) return fail('Недостаточно прав для выполнения этой команды.');
+          if (!api.isOperator(sender.playerId)) return fail('Недостаточно прав для выполнения этой команды.');
           const opened = ctx.openPlayerInventory(sender.playerId, target, 'edit');
           return opened.ok ? ok(`Инвентарь ${target} открыт для изменения.`) : fail(opened.error ?? 'Не удалось открыть инвентарь.');
         },
@@ -254,7 +266,7 @@ export function createDonatePlugin(ctx: BuiltinPluginContext): Plugin {
         permission: 'player',
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
-          const operator = api.isOperator(sender.name) || api.isOperator(sender.playerId);
+          const operator = api.isOperator(sender.playerId);
           if (!operator && !api.hasPermission(sender.playerId, 'nick.color')) {
             return fail('Цвет ника доступен с привилегии PREMIUM.');
           }

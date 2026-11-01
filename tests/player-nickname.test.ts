@@ -120,6 +120,6 @@ describe('player display nickname', () => {
     expect(gameUiSource).not.toContain('data-action="account"');
     expect(gameSource).toContain('saveNickname:');
     expect(gameSource).toContain('loadPlayerNickname()');
-    expect(gameSource).toContain('client.connect(endpoint, loadPlayerNickname(), this.playerAppearance)');
+    expect(gameSource).toContain('client.connect(url, loadPlayerNickname(), this.playerAppearance, { targetServer: id })');
   });
 });

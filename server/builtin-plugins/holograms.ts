@@ -60,7 +60,7 @@ export function createHologramsPlugin(ctx: BuiltinPluginContext): Plugin {
       });
 
       const canEdit = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'holograms.create') || api.isOperator(name)
+        api.hasPermission(playerId, 'holograms.create') || api.isOperator(playerId)
       );
 
       api.registerCommand({

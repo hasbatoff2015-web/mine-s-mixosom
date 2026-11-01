@@ -26,6 +26,7 @@ import { CHAT_TOO_LONG_ERROR } from '../../shared/chat';
 import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { EconomyService } from '../../server/services/economy';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 import {
   CLAN_ALREADY_OTHER_CLAN_ERROR,
   CLAN_FULL_ERROR,
@@ -371,6 +372,7 @@ describe('clan invitation and announcement live protocol', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

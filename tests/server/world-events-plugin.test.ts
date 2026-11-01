@@ -10,6 +10,7 @@ import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../serv
 import { DEFAULT_WORLD_EVENTS_CONFIG } from '../../server/services/worldEvents';
 import { VoxelWorld } from '../../src/world/World';
 import { CHUNK_SIZE, floorDiv } from '../../src/core/constants';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-world-events-'));
@@ -79,6 +80,7 @@ describe('world events plugin commands', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

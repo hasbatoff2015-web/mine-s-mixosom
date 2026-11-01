@@ -34,6 +34,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function sameStack(left: ItemStack | null, right: ItemStack | null): boolean {
+  if (left === right) return true;
+  if (!left || !right) return false;
+  return left.itemId === right.itemId
+    && left.count === right.count
+    && left.durability === right.durability
+    && JSON.stringify(left.metadata ?? null) === JSON.stringify(right.metadata ?? null);
+}
+
 export function parseSerializedItemStack(value: unknown): ItemStack | null {
   value = migrateLegacyStack(value);
   if (value === null) return null;
@@ -63,6 +72,8 @@ export class Inventory {
   readonly #slots: Array<ItemStack | null>;
   readonly #armor: Record<ArmorSlot, ItemStack | null>;
   #offhand: ItemStack | null;
+  /** Runtime only. Not written into the player save. Clients must not assume +1. */
+  #revision = 0;
 
   constructor() {
     this.#slots = Array.from({ length: Inventory.SLOT_COUNT }, () => null);
@@ -87,6 +98,11 @@ export class Inventory {
     return cloneStack(this.#offhand);
   }
 
+  /** Monotonic count of authoritative slot changes since this object was created. */
+  get revision(): number {
+    return this.#revision;
+  }
+
   getSlot(ref: InventorySlotRef): ItemStack | null {
     if (typeof ref === 'number') {
       assertSlotIndex(ref);
@@ -102,14 +118,7 @@ export class Inventory {
       validateItemStack(stack);
       if (!this.accepts(ref, stack)) throw new TypeError(`${stack.itemId} cannot be placed in this slot`);
     }
-    if (typeof ref === 'number') {
-      assertSlotIndex(ref);
-      this.#slots[ref] = cloneStack(stack);
-    } else if (ref.section === 'armor') {
-      this.#armor[ref.slot] = cloneStack(stack);
-    } else {
-      this.#offhand = cloneStack(stack);
-    }
+    this.assign(ref, stack);
   }
 
   accepts(ref: InventorySlotRef, stack: ItemStack): boolean {
@@ -119,9 +128,11 @@ export class Inventory {
   }
 
   clear(): void {
+    const occupied = this.allStacks().some((stack) => stack !== null);
     this.#slots.fill(null);
     for (const slot of ARMOR_SLOTS) this.#armor[slot] = null;
     this.#offhand = null;
+    if (occupied) this.#revision += 1;
   }
 
   count(itemId: string): number {
@@ -177,13 +188,13 @@ export class Inventory {
       if (stack?.itemId !== itemId) continue;
       const removed = Math.min(stack.count, remaining);
       const nextCount = stack.count - removed;
-      this.#slots[index] = nextCount === 0 ? null : { ...stack, count: nextCount };
+      this.assign(index, nextCount === 0 ? null : { ...stack, count: nextCount });
       remaining -= removed;
     }
     if (this.#offhand?.itemId === itemId && remaining > 0) {
       const removed = Math.min(this.#offhand.count, remaining);
       const nextCount = this.#offhand.count - removed;
-      this.#offhand = nextCount === 0 ? null : { ...this.#offhand, count: nextCount };
+      this.assign({ section: 'offhand' }, nextCount === 0 ? null : { ...this.#offhand, count: nextCount });
       remaining -= removed;
     }
     for (const slot of ARMOR_SLOTS) {
@@ -191,7 +202,7 @@ export class Inventory {
       if (stack?.itemId !== itemId || remaining === 0) continue;
       const removed = Math.min(stack.count, remaining);
       const nextCount = stack.count - removed;
-      this.#armor[slot] = nextCount === 0 ? null : { ...stack, count: nextCount };
+      this.assign({ section: 'armor', slot }, nextCount === 0 ? null : { ...stack, count: nextCount });
       remaining -= removed;
     }
     return count - remaining;
@@ -318,6 +329,7 @@ export class Inventory {
       inventory.setSlot({ section: 'armor', slot }, parseSerializedItemStack(value.armor[slot]));
     }
     inventory.setSlot({ section: 'offhand' }, parseSerializedItemStack(value.offhand));
+    inventory.#revision = 0;
     return inventory;
   }
 
@@ -327,11 +339,9 @@ export class Inventory {
 
   restore(state: SerializedInventory): void {
     const other = Inventory.deserialize(state);
-    for (let index = 0; index < Inventory.SLOT_COUNT; index += 1) {
-      this.#slots[index] = other.getSlot(index);
-    }
-    for (const slot of ARMOR_SLOTS) this.#armor[slot] = other.getSlot({ section: 'armor', slot });
-    this.#offhand = other.getSlot({ section: 'offhand' });
+    for (let index = 0; index < Inventory.SLOT_COUNT; index += 1) this.assign(index, other.getSlot(index));
+    for (const slot of ARMOR_SLOTS) this.assign({ section: 'armor', slot }, other.getSlot({ section: 'armor', slot }));
+    this.assign({ section: 'offhand' }, other.getSlot({ section: 'offhand' }));
   }
 
   /** All player-owned slots that can hold durability items, including equipment. */
@@ -378,6 +388,23 @@ export class Inventory {
     return changed;
   }
 
+  private assign(ref: InventorySlotRef, stack: ItemStack | null): void {
+    const next = cloneStack(stack);
+    if (typeof ref === 'number') {
+      assertSlotIndex(ref);
+      if (sameStack(this.#slots[ref] ?? null, next)) return;
+      this.#slots[ref] = next;
+    } else if (ref.section === 'armor') {
+      if (sameStack(this.#armor[ref.slot], next)) return;
+      this.#armor[ref.slot] = next;
+    } else if (sameStack(this.#offhand, next)) {
+      return;
+    } else {
+      this.#offhand = next;
+    }
+    this.#revision += 1;
+  }
+
   private allStacks(): readonly (ItemStack | null)[] {
     return [...this.#slots, ...ARMOR_SLOTS.map((slot) => this.#armor[slot]), this.#offhand];
   }
@@ -393,7 +420,7 @@ export class Inventory {
       if (current === undefined || current === null || !canStacksMerge(current, remainder)
         || current.count >= maximum) continue;
       const moved = Math.min(maximum - current.count, remainder.count);
-      this.#slots[index] = { ...current, count: current.count + moved };
+      this.assign(index, { ...current, count: current.count + moved });
       remainder = { ...remainder, count: remainder.count - moved };
     }
 
@@ -402,7 +429,7 @@ export class Inventory {
       assertSlotIndex(index);
       if (this.#slots[index] !== null) continue;
       const moved = Math.min(maximum, remainder.count);
-      this.#slots[index] = { ...remainder, count: moved };
+      this.assign(index, { ...remainder, count: moved });
       remainder = { ...remainder, count: remainder.count - moved };
     }
 

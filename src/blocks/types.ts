@@ -92,6 +92,11 @@ export interface BlockRenderState {
    * Missing on every non-painting state and on older saves.
    */
   readonly paintingItemId?: string;
+  /**
+   * Physical instance of a placed collectible painting.
+   * Missing on older saves. Texture still comes from paintingItemId.
+   */
+  readonly paintingInstanceId?: string;
 }
 
 export interface BlockTextures {

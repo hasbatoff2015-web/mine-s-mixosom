@@ -1,5 +1,5 @@
 import type { Plugin, ServerAPI } from '../PluginManager';
-import { fail, ok } from '../commands';
+import { fail, isConsoleSender, ok } from '../commands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
 import {
@@ -82,7 +82,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args, sender) => {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           if (args[0]?.toLowerCase() === 'config') {
-            if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sender.name)) {
+if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sender.playerId)) {
               return fail('Недостаточно прав для выполнения этой команды.');
             }
             if (args[1]?.toLowerCase() === 'set') {
@@ -92,8 +92,20 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
             }
             return ok(Object.entries(api.loadConfig(config)).map(([key, value]) => `${key}=${String(value)}`));
           }
+          if (args[0]?.toLowerCase() === 'migrate') {
+            if (!isConsoleSender(sender)) return fail('Only the server console can migrate homes.');
+            const legacyName = args[1];
+            const playerArg = args[2];
+            if (!legacyName || !playerArg) return usageError('/home migrate <legacyName> <playerId>');
+            const confirmed = ctx.resolvePermissionSubject(playerArg);
+            if (!confirmed.ok || confirmed.playerId !== playerArg.trim().toLowerCase()) {
+              return fail('Player id is required.');
+            }
+            const result = ctx.homes.migrateLegacy(legacyName, confirmed.playerId);
+            return result.ok ? ok(`Migrated homes '${legacyName}' to ${confirmed.playerId}.`) : fail(result.error ?? 'Failed.');
+          }
           const name = args[0] ?? 'home';
-          const dest = ctx.homes.get(sender.name, name);
+          const dest = ctx.homes.get(sender.playerId, name);
           if (!dest) return fail(`Home '${name}' not found.`);
           if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
             return fail(WORLD_BORDER_HOME_TELEPORT_ERROR);
@@ -128,7 +140,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           if (!isPlayerCenterInsidePlayableWorld(pos.x, pos.z)) {
             return fail(WORLD_BORDER_HOME_SET_ERROR);
           }
-          const result = ctx.homes.set(sender.name, parsed.name, {
+          const result = ctx.homes.set(sender.playerId, parsed.name, {
             worldId: api.getWorld().worldId,
             x: pos.x,
             y: pos.y,
@@ -152,7 +164,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
         description: 'List your homes',
         permission: 'home.use',
         execute: (_args, sender) => {
-          const homes = ctx.homes.list(sender.name);
+          const homes = ctx.homes.list(sender.playerId);
           if (homes.length === 0) return ok('You have no homes. Use /sethome.');
           return ok(`Homes: ${homes.map((home) => home.name).join(', ')}`);
         },
@@ -166,7 +178,7 @@ export function createHomePlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args)) return ok(formatPluginHelp(HELP));
           const name = args[0];
           if (!name) return usageError('/delhome <name>');
-          const result = ctx.homes.remove(sender.name, name);
+          const result = ctx.homes.remove(sender.playerId, name);
           if (!result.ok) return fail(result.error === HOME_MISSING_ERROR ? `Home '${name}' not found.` : (result.error ?? HOME_MISSING_ERROR));
           return ok(`Deleted home '${name}'.`);
         },

@@ -3,7 +3,7 @@ import type { AutoMineManager } from '../services/autoMine';
 import type { AuctionService, AuctionView } from '../services/auction';
 import type { BuyerService } from '../services/buyer';
 import type { ClanService, ClanView, ClanResult } from '../services/clan';
-import type { EconomyService } from '../services/economy';
+import type { CurrencyPort } from '../economy/currencyPort';
 import type { FriendsService } from '../services/friends';
 import type { HomeService } from '../services/home';
 import type { DonationRankService } from '../services/donationRanks';
@@ -45,7 +45,7 @@ export interface BuiltinPluginContext {
   readonly selection: PlayerSelectionService;
   readonly autoMine: AutoMineManager;
   readonly worldEvents: WorldEventsManager;
-  readonly economy: EconomyService;
+  readonly economy: CurrencyPort;
   readonly auction: AuctionService;
   readonly clan: ClanService;
   readonly buyer: BuyerService;
@@ -60,11 +60,18 @@ export interface BuiltinPluginContext {
   readonly openBuyerAdmin: (playerId: string, buyerId: string) => void;
   readonly broadcastBuyers: () => void;
   readonly lookupPlayer: (idOrName: string) => PlayerIdentity | undefined;
+  readonly resolvePermissionSubject: (target: string) => { ok: true; playerId: string; name: string } | { ok: false; error: string };
   readonly config: PluginConfigService;
   readonly plugins: PluginManager;
   readonly world: VoxelWorld;
   readonly worldId: () => string;
   readonly markDirty: () => void;
+  readonly scheduleRewardedBreak?: (reward: {
+    playerId: string;
+    blockId: number;
+    placed: boolean;
+    rewardEventId?: string;
+  }) => void;
   readonly holograms: HologramNetwork;
   readonly claimBoundaries: ClaimBoundaryNetwork;
 }

@@ -59,7 +59,7 @@ describe('recipe selection is not craft validation', () => {
     const ghost = ghostFromRecipe(sticks!, 2, new Map());
     expect(ghost.cells.some(Boolean)).toBe(true);
     expect(uiSource).toContain('this.ghostCraft = ghostFromRecipe(recipe, gridSize, counts)');
-    expect(uiSource).toContain("submitAction({ type: 'inventory_action', action: 'recipe'");
+    expect(uiSource).toContain("stampInventorySubmission({ type: 'inventory_action', action: 'recipe'");
   });
 
   it('still places a craftable recipe into the grid', () => {

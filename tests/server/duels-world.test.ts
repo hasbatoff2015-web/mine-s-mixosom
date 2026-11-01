@@ -10,6 +10,7 @@ import { MAX_AIR_TICKS, MAX_HEALTH, MAX_HUNGER } from '../../src/survival/Surviv
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink, type ServerPlayer } from '../../server/WorldInstance';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 import {
   DUEL_ARENA_BUSY,
   DUEL_COUNTDOWN_HOLOGRAM,
@@ -147,6 +148,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
     result.player.gamemode = 'survival';
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 
@@ -296,7 +298,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     const bob = join(world, 'Bob');
     const cara = join(world, 'Cara');
     arena(world);
-    expect(world.homes.set(ada.player.name, 'base', {
+    expect(world.homes.set(ada.player.id, 'base', {
       worldId: world.worldId, x: 4.5, y: 80, z: 4.5,
     }, 3).ok).toBe(true);
     expect(world.teleports.now(ada.player.id, { x: 6.5, y: 80, z: 6.5 }, 'command').ok).toBe(true);

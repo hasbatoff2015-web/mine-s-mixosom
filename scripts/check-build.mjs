@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { readFile, readdir, stat } from 'node:fs/promises';
 import { extname, join, relative, sep } from 'node:path';
 
 const root = new URL('../dist/', import.meta.url);
@@ -51,6 +51,19 @@ if (megabytes > 100) {
   process.exitCode = 1;
 } else if (megabytes > 90) {
   console.warn('WARNING: build находится в предупреждающей зоне >90 MiB.');
+}
+
+const clientForbidden = ['admin_audit_log', 'idempotency_requests', 'pg_advisory_lock'];
+for (const file of files) {
+  const ext = extname(file.path).toLowerCase();
+  if (!['.js', '.mjs', '.css', '.html'].includes(ext)) continue;
+  const text = await readFile(join(rootPath, file.path), 'utf8');
+  for (const marker of clientForbidden) {
+    if (text.includes(marker)) {
+      console.error(`ERROR: client bundle ${file.path} contains server database marker ${marker}`);
+      process.exitCode = 1;
+    }
+  }
 }
 
 if (process.argv.includes('--archive')) {

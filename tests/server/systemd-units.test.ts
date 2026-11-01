@@ -90,6 +90,12 @@ describe('systemd production units', () => {
       expect(config.host).toBe('0.0.0.0');
       expect(directory).toBe(server.worldDir);
       expect(directory.startsWith('/opt/frontier-cubes')).toBe(false);
+      expect(config.database.enabled).toBe(false);
+      expect(readDeploy(server.envFile)).not.toMatch(/^FC_DATABASE_URL=\S/m);
+      expect(readDeploy(server.envFile)).not.toMatch(/^FC_ADMIN_IDS=\S/m);
+      expect(readDeploy(server.envFile)).not.toMatch(/^FC_ADMIN_PORT=\S/m);
+      expect(readDeploy(server.envFile)).not.toMatch(/^FC_ADMIN_AUTH_HASHES=\S/m);
+      expect(config.adminHttp.enabled).toBe(false);
       expect(readDeploy(server.envFile)).not.toContain('vite-node');
       expect(readDeploy(server.envFile)).not.toContain('dev:server');
     }

@@ -1,0 +1,1 @@
+export const SETTLEMENT_RECOVERING = 'Операция завершается, состояние будет восстановлено.';

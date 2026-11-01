@@ -1,3 +1,4 @@
+import { parseAdminAuthHashes, type AdminCredential } from './admin/credentials';
 import { ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import {
   DEFAULT_CHUNK_VIEW_RADIUS,
@@ -31,16 +32,189 @@ export interface ServerConfig {
   readonly serverName: string;
   readonly persistIntervalMs: number;
   readonly pluginDir: string;
+  /** Server player ids from FC_OPERATORS. Nicknames are ignored at load. */
   readonly operators: readonly string[];
   /** When true, register `server/plugin-examples/hello.ts` without copying it into pluginDir. */
   readonly loadExamplePlugin: boolean;
   /** Core plugins (permissions, TPA, home, …). Default on for every server mode. */
   readonly loadBuiltinPlugins: boolean;
   /**
+   * Optional PostgreSQL for audit and idempotency.
+   * Voxel world snapshots stay on the filesystem either way.
+   */
+  readonly database: DatabaseConfig;
+  readonly yandexAuth: YandexAuthConfig;
+  /**
+   * `legacy_json` keeps the synchronous JSON wallet.
+   * `postgres` makes PostgreSQL the only currency authority.
+   * It is not a fallback when a query fails.
+   */
+  readonly economy: EconomyBackendConfig;
+  /** Exactly two equal admin ids, or disabled when FC_ADMIN_IDS is blank. */
+  readonly adminIdentity: AdminIdentityConfig;
+  /**
+   * Private loopback admin HTTP. Disabled when FC_ADMIN_PORT is blank.
+   * The public gameplay listener never serves these routes.
+   */
+  readonly adminHttp: AdminHttpConfig;
+  /**
    * OP-only `/ranktest` for local DEV. Off unless `FC_RANK_TEST=1`.
    * Production `npm run start:server` does not set this.
    */
   readonly rankTestEnabled: boolean;
+}
+
+export type EconomyBackendConfig =
+  | { readonly backend: 'legacy_json' }
+  | { readonly backend: 'postgres' };
+
+/**
+ * Missing or blank stays on the JSON wallet so existing processes keep working.
+ * `postgres` requires FC_DATABASE_URL. A failed database does not fall back.
+ */
+export function loadEconomyBackendConfig(env: NodeJS.ProcessEnv, database: DatabaseConfig): EconomyBackendConfig {
+  const raw = env.FC_ECONOMY_BACKEND;
+  if (raw === undefined || raw.trim() === '' || raw.trim() === 'legacy_json') return { backend: 'legacy_json' };
+  if (raw.trim() !== 'postgres') {
+    throw new Error('FC_ECONOMY_BACKEND must be legacy_json or postgres.');
+  }
+  if (!database.enabled) {
+    throw new Error('FC_ECONOMY_BACKEND=postgres requires FC_DATABASE_URL and FC_DEPLOYMENT_ID.');
+  }
+  return { backend: 'postgres' };
+}
+
+/** One process default. Three game servers can run on one machine. */
+export const DB_POOL_DEFAULT = 4;
+export const DB_POOL_MIN = 1;
+export const DB_POOL_MAX_LIMIT = 8;
+
+const DEPLOYMENT_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+const ADMIN_ID = DEPLOYMENT_ID;
+
+export type AdminIdentityConfig =
+  | { readonly enabled: false }
+  | { readonly enabled: true; readonly ids: readonly [string, string] };
+
+export type AdminHttpConfig =
+  | { readonly enabled: false }
+  | {
+    readonly enabled: true;
+    readonly port: number;
+    readonly credentials: readonly [AdminCredential, AdminCredential];
+  };
+
+/**
+ * No port means no admin listener. A port requires both admin ids and two
+ * unique SHA-256 credential digests. The listener still binds 127.0.0.1 only.
+ */
+export function loadAdminHttpConfig(env: NodeJS.ProcessEnv, identity: AdminIdentityConfig): AdminHttpConfig {
+  const rawPort = env.FC_ADMIN_PORT;
+  if (rawPort === undefined || rawPort.trim() === '') return { enabled: false };
+  if (!identity.enabled) {
+    throw new Error('FC_ADMIN_PORT requires FC_ADMIN_IDS with exactly two different ids.');
+  }
+  const portText = rawPort.trim();
+  if (!/^[0-9]+$/.test(portText)) throw new Error('FC_ADMIN_PORT must be an integer from 1 to 65535.');
+  const port = Number(portText);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('FC_ADMIN_PORT must be an integer from 1 to 65535.');
+  }
+  const rawHashes = env.FC_ADMIN_AUTH_HASHES;
+  if (rawHashes === undefined || rawHashes.trim() === '') {
+    throw new Error('FC_ADMIN_PORT requires FC_ADMIN_AUTH_HASHES for both admin ids.');
+  }
+  return {
+    enabled: true,
+    port,
+    credentials: parseAdminAuthHashes(rawHashes.trim(), identity.ids),
+  };
+}
+
+/**
+ * Blank disables admin writes. A present value must be exactly two distinct ids.
+ * These ids are not passwords and they are not game-operator names.
+ */
+export function loadAdminIdentityConfig(env: NodeJS.ProcessEnv): AdminIdentityConfig {
+  const raw = env.FC_ADMIN_IDS;
+  if (raw === undefined || raw.trim() === '') return { enabled: false };
+  const parts = raw.split(',').map((part) => part.trim());
+  if (parts.length !== 2 || parts.some((part) => !ADMIN_ID.test(part))) {
+    throw new Error('FC_ADMIN_IDS must be exactly two ids: letters, digits, ".", "_" or "-", 1-64 characters, comma-separated.');
+  }
+  if (parts[0] === parts[1]) throw new Error('FC_ADMIN_IDS must be two different ids.');
+  return { enabled: true, ids: [parts[0]!, parts[1]!] };
+}
+
+export interface YandexAuthConfig {
+  /** Always false until the signed player-profile schema is documented and a secret is set. */
+  readonly enabled: false;
+  readonly reason: 'disabled' | 'missing_secret' | 'profile_schema_unverified';
+}
+
+/**
+ * Provider login stays off. A flag without a secret does not accept unsigned ids.
+ * The secret is never returned to logs; only whether it was present.
+ */
+export function loadYandexAuthConfig(env: NodeJS.ProcessEnv): YandexAuthConfig {
+  const requested = env.FC_YANDEX_AUTH_ENABLED === '1' || env.FC_YANDEX_AUTH_ENABLED === 'true';
+  if (!requested) return { enabled: false, reason: 'disabled' };
+  const secret = env.FC_YANDEX_AUTH_SECRET ?? '';
+  if (secret.trim() === '') return { enabled: false, reason: 'missing_secret' };
+  return { enabled: false, reason: 'profile_schema_unverified' };
+}
+
+export function yandexAuthLogLabel(auth: YandexAuthConfig): string {
+  if (auth.reason === 'missing_secret') return 'yandex auth: disabled (FC_YANDEX_AUTH_SECRET is missing)';
+  if (auth.reason === 'profile_schema_unverified') {
+    return 'yandex auth: disabled (signed player profile schema is not documented)';
+  }
+  return 'yandex auth: disabled';
+}
+
+export type DatabaseConfig =
+  | { readonly enabled: false }
+  | {
+    readonly enabled: true;
+    readonly url: string;
+    readonly deploymentId: string;
+    readonly poolMax: number;
+  };
+
+/**
+ * Missing URL disables PostgreSQL with no connection attempt.
+ * A present URL without a deployment id is rejected. Dev and prod are never inferred.
+ */
+export function loadDatabaseConfig(env: NodeJS.ProcessEnv): DatabaseConfig {
+  const rawUrl = env.FC_DATABASE_URL;
+  if (rawUrl === undefined || rawUrl.trim() === '') return { enabled: false };
+  const url = rawUrl.trim();
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new Error('FC_DATABASE_URL is not a valid URL.');
+  }
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+    throw new Error('FC_DATABASE_URL must use the postgres: or postgresql: scheme.');
+  }
+  const deploymentId = (env.FC_DEPLOYMENT_ID ?? '').trim();
+  if (!deploymentId) throw new Error('FC_DEPLOYMENT_ID is required when FC_DATABASE_URL is set.');
+  if (!DEPLOYMENT_ID.test(deploymentId)) {
+    throw new Error('FC_DEPLOYMENT_ID must be 1-64 characters: letters, digits, ".", "_" or "-".');
+  }
+  return {
+    enabled: true,
+    url,
+    deploymentId,
+    poolMax: integerEnv(env, 'FC_DB_POOL_MAX', DB_POOL_DEFAULT, DB_POOL_MIN, DB_POOL_MAX_LIMIT),
+  };
+}
+
+/** Log-safe description. Never includes the URL, username, or password. */
+export function databaseLogLabel(database: DatabaseConfig): string {
+  if (!database.enabled) return 'database: disabled';
+  return `database: enabled deployment=${database.deploymentId} poolMax=${database.poolMax}`;
 }
 
 /**
@@ -80,6 +254,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
   const explicitWorld = env.WORLD || env.FC_WORLD;
   const worldId = (explicitWorld?.trim() || serverMode || DEFAULT_WORLD_ID).trim() || DEFAULT_WORLD_ID;
   const dataDir = env.WORLD_PATH || env.FC_WORLD_PATH || `${cwd}/server/data/worlds`;
+  const adminIdentity = loadAdminIdentityConfig(env);
   return {
     host,
     port: integerEnv(env, 'PORT', integerEnv(env, 'FC_PORT', DEFAULT_SERVER_PORT, 0, 65535), 0, 65535),
@@ -99,6 +274,11 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
+    database: loadDatabaseConfig(env),
+    yandexAuth: loadYandexAuthConfig(env),
+    economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
+    adminIdentity,
+    adminHttp: loadAdminHttpConfig(env, adminIdentity),
     rankTestEnabled: env.FC_RANK_TEST === '1' || env.FC_RANK_TEST === 'true',
   };
 }

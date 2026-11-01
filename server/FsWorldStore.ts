@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { PersistenceError } from '../src/save/PersistenceError';
 import { fsRecordsToSnapshot, snapshotToFsRecords } from '../src/save/fsRecords';
 import { parseWorldSnapshot, worldIdOf } from '../src/save/snapshot';
-import type { WorldSnapshot } from '../src/save/types';
+import type { SerializedPersistedPlayer, WorldSnapshot } from '../src/save/types';
 import type { WorldStore } from '../src/save/WorldStore';
 import { WorldPersistence } from './persistence';
 
@@ -31,6 +31,13 @@ export class FsWorldStore implements WorldStore {
   async save(world: WorldSnapshot): Promise<void> {
     const snapshot = parseWorldSnapshot(world);
     const run = this.chain.then(() => this.write(snapshot));
+    this.chain = run.then(() => undefined, () => undefined);
+    await run;
+  }
+
+  /** Same chain as a full snapshot, so an older world save cannot land after this. */
+  async savePlayers(worldId: string, players: Record<string, SerializedPersistedPlayer>): Promise<void> {
+    const run = this.chain.then(() => this.persistence(worldId).savePlayers({ players }));
     this.chain = run.then(() => undefined, () => undefined);
     await run;
   }

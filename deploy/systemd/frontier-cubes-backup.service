@@ -1,0 +1,14 @@
+[Unit]
+Description=Frontier Cubes backup
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/fc-backup
+TimeoutStartSec=2h
+Nice=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

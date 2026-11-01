@@ -184,13 +184,14 @@ describe('menu forms stay live while a field is focused', () => {
     ui.applyGameMenu({
       ...base,
       claimNameText: 'Б',
-      claimMembers: [{ name: 'Гриша' }],
+      claimMembers: [{ playerId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Гриша' }],
       claimPvp: true,
       message: 'Игрок не найден',
     });
     expect(root.querySelector('[data-menu-claim-name]')).toBe(name);
     expect(name.value).toBe('База');
-    expect(root.querySelector('[data-menu-claim-kick="Гриша"]')).toBeTruthy();
+    expect(root.textContent).toContain('Гриша');
+    expect(root.querySelector('[data-menu-claim-kick="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"]')).toBeTruthy();
     expect(root.querySelector('[data-menu-claim-pvp]')?.getAttribute('aria-checked')).toBe('true');
     expect(root.querySelector('[data-menu-message]')?.textContent).toBe('Игрок не найден');
     ui.applyGameMenu({ ...base, claimId: 'claim-b', claimNameText: 'Склад', claimMembers: [] });

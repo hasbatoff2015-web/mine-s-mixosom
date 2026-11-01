@@ -20,9 +20,7 @@ export function createTpaPlugin(_ctx: BuiltinPluginContext): Plugin {
     version: '2.0.0',
     apiVersion: 1,
     onEnable(api) {
-      const operator = (sender: { playerId: string; name: string }) => (
-        api.isOperator(sender.name) || api.isOperator(sender.playerId)
-      );
+      const operator = (sender: { playerId: string }) => api.isOperator(sender.playerId);
 
       api.registerCommand({
         name: 'tpa',

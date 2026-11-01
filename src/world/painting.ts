@@ -1,5 +1,6 @@
 import type { BlockRenderState, HorizontalFacing } from '../blocks';
 import { horizontalFacingNormal } from '../blocks/placement';
+import { isItemInstanceId } from '../inventory/itemInstance';
 import { isCollectiblePaintingItemId } from '../items/collectiblePaintings';
 
 /**
@@ -102,8 +103,14 @@ export function paintingSelectionLocalBox(facing: HorizontalFacing = 'south'): P
 
 /** Drop unknown painting ids. Other state fields stay so old saves keep loading. */
 export function sanitizeBlockRenderState(state: BlockRenderState): BlockRenderState {
-  if (state.paintingItemId === undefined) return state;
-  if (isCollectiblePaintingItemId(state.paintingItemId)) return state;
-  const { paintingItemId: _ignored, ...rest } = state;
-  return rest;
+  let next: BlockRenderState = state;
+  if (state.paintingItemId !== undefined && !isCollectiblePaintingItemId(state.paintingItemId)) {
+    const { paintingItemId: _ignored, paintingInstanceId: _instance, ...rest } = state;
+    next = rest;
+  }
+  if (next.paintingInstanceId !== undefined && !isItemInstanceId(next.paintingInstanceId)) {
+    const { paintingInstanceId: _bad, ...rest } = next;
+    return rest;
+  }
+  return next;
 }

@@ -10,13 +10,10 @@ export function createMegaZombiePlugin(ctx: BuiltinPluginContext): Plugin {
     onEnable(api) {
       const boss = ctx.megaZombie;
       boss.enable();
-      const allowed = (playerId: string, name: string, operator: boolean): boolean => (
+      const allowed = (playerId: string, _name: string, operator: boolean): boolean => (
         operator
         || api.hasPermission(playerId, 'mega_zombie.admin')
-        || api.hasPermission(name, 'mega_zombie.admin')
         || api.hasPermission(playerId, 'server.admin')
-        || api.hasPermission(name, 'server.admin')
-        || api.isOperator(name)
         || api.isOperator(playerId)
       );
       api.registerCommand({

@@ -1,3 +1,4 @@
+import { isItemInstanceId } from '../src/inventory/itemInstance';
 import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
@@ -40,6 +41,11 @@ export type ConnectionState = 'idle' | 'connecting' | 'connected' | 'disconnecte
 export type Vec3 = readonly [number, number, number];
 
 export type ContainerKind = 'inventory' | 'crafting-table' | 'chest' | 'furnace' | 'portal-chest' | 'invsee' | 'invsee-op';
+
+/** Mutable shared or personal container state. A crafting table grid is carry state, not one of these. */
+export function isRevisionedContainerKind(kind: string | undefined): kind is 'chest' | 'furnace' | 'portal-chest' {
+  return kind === 'chest' || kind === 'furnace' || kind === 'portal-chest';
+}
 
 export type InventoryActionKind =
   | 'click'
@@ -302,6 +308,8 @@ export interface NetworkBlockState {
   readonly bedPart?: 'foot' | 'head';
   readonly signRotation?: number;
   readonly paintingItemId?: string;
+  /** Server-minted physical instance. Clients cannot choose this value. */
+  readonly paintingInstanceId?: string;
 }
 
 export interface BlockChange {
@@ -317,6 +325,8 @@ export interface ClientJoinMessage {
   readonly protocol: typeof PROTOCOL_VERSION;
   readonly name?: string;
   readonly sessionToken?: string;
+  /** Explicit new-guest request. Does not reuse or erase a stored credential by itself. */
+  readonly freshGuest?: boolean;
   readonly appearance?: PlayerAppearance;
 }
 
@@ -391,6 +401,8 @@ export interface ClientChatMessage {
   readonly text: string;
   /** Client intent only. Server ignores forged sender/recipients/coords/clan. */
   readonly channel?: ChatChannel;
+  /** One send. Replays of the same id must not move money twice. */
+  readonly clientRequestId?: string;
 }
 
 export interface ClientViewMessage {
@@ -430,11 +442,12 @@ export interface ClientInventoryActionMessage {
   readonly y?: number;
   readonly z?: number;
   readonly recipeId?: string;
-}
-
-export interface ClientCraftMessage {
-  readonly type: 'craft';
-  readonly shift?: boolean;
+  /** One client intent. The server owns the resulting items. */
+  readonly requestId?: string;
+  /** Inventory revision the client last accepted. Not an instruction to set it. */
+  readonly expectedInventoryRevision?: number;
+  /** Shared container revision the client last accepted, when a container is involved. */
+  readonly expectedContainerRevision?: number;
 }
 
 export interface ClientInteractMessage extends ClientBlockIntentFields {
@@ -568,6 +581,7 @@ export interface ClientAuctionActionMessage {
   readonly slot?: number;
   readonly amount?: number;
   readonly price?: string | number;
+  readonly clientRequestId?: string;
 }
 
 export type ClanActionKind =
@@ -641,6 +655,7 @@ export interface ClientClanActionMessage {
   readonly name?: string;
   readonly text?: string;
   readonly sort?: 'money' | 'kills';
+  readonly clientRequestId?: string;
 }
 
 export type BuyerActionKind =
@@ -677,6 +692,7 @@ export interface ClientBuyerActionMessage {
   readonly hologramText?: string;
   readonly role?: 'buyer' | 'seller';
   readonly stock?: string | number;
+  readonly clientRequestId?: string;
 }
 
 export type MenuActionKind =
@@ -800,6 +816,7 @@ export interface ClientTradeActionMessage {
   readonly slot?: number;
   readonly tradeSlot?: number;
   readonly money?: string | number;
+  readonly clientRequestId?: string;
 }
 
 export type DirectMessageActionKind = 'send' | 'history';
@@ -830,7 +847,6 @@ export type ClientMessage =
   | ClientViewMessage
   | ClientPingMessage
   | ClientInventoryActionMessage
-  | ClientCraftMessage
   | ClientInteractMessage
   | ClientAttackMessage
   | ClientBowReleaseMessage
@@ -1081,6 +1097,9 @@ export interface ServerInventoryMessage {
     readonly burnTotal?: number;
     readonly cookTime?: number;
   };
+  /** Server-owned inventory generation. Clients replace their copy; they do not add one. */
+  readonly inventoryRevision?: number;
+  readonly containerRevision?: number;
 }
 
 /** Live furnace slots and progress for players who already have that GUI open. */
@@ -1093,6 +1112,7 @@ export interface ServerFurnaceSyncMessage {
   readonly burnTime: number;
   readonly burnTotal: number;
   readonly cookTime: number;
+  readonly containerRevision?: number;
 }
 
 export interface ServerHealthMessage {
@@ -1527,6 +1547,7 @@ export interface NetworkMenuClaim {
 }
 
 export interface NetworkMenuClaimMember {
+  readonly playerId?: string;
   readonly name: string;
 }
 
@@ -1784,7 +1805,6 @@ export const CLIENT_MESSAGE_TYPES = [
   'view',
   'ping',
   'inventory_action',
-  'craft',
   'interact',
   'attack',
   'bow_release',
@@ -1855,6 +1875,37 @@ const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
   'hotbar_swap', 'offhand_swap', 'collect_matching', 'drag_distribute', 'quick_move_matching',
   'select', 'open', 'close', 'recipe', 'craft_recipe',
 ];
+
+const MUTATING_INVENTORY_ACTIONS = new Set<InventoryActionKind>([
+  'click', 'drop_selected', 'drop_cursor', 'drop_slot', 'move_stack', 'split_stack',
+  'hotbar_swap', 'offhand_swap', 'collect_matching', 'drag_distribute', 'quick_move_matching',
+  'recipe', 'craft_recipe',
+]);
+
+const INVENTORY_REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseInventoryRequestId(value: unknown): string | { readonly error: string } | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !INVENTORY_REQUEST_ID.test(value)) {
+    return { error: 'inventory_action.requestId invalid' };
+  }
+  return value.toLowerCase();
+}
+
+function parseRevision(value: unknown, field: string): number | { readonly error: string } | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1_000_000_000) {
+    return { error: `${field} invalid` };
+  }
+  return value;
+}
+
+function inventoryActionNeedsContainerRevision(action: InventoryActionKind, raw: Record<string, unknown>): boolean {
+  if (raw.kind === 'chest' || raw.kind === 'furnace' || raw.kind === 'portal-chest') return true;
+  const keys = [raw.key, raw.sourceKey, raw.targetKey];
+  if (Array.isArray(raw.keys)) keys.push(...raw.keys);
+  return keys.some((key) => typeof key === 'string' && (key.startsWith('container-') || key.startsWith('furnace-')));
+}
 
 /** Enough for player storage, equipment, a chest, a furnace, and a craft grid. */
 const MAX_INVENTORY_KEYS = 80;
@@ -2047,6 +2098,15 @@ function parseClientRequestId(value: unknown, error: string): string | undefined
   return value;
 }
 
+const ECONOMY_REQUEST_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function parseEconomyRequestId(value: unknown, error: string): string | undefined | { error: string } {
+  const parsed = parseClientRequestId(value, error);
+  if (!parsed || typeof parsed === 'object') return parsed;
+  if (!ECONOMY_REQUEST_UUID.test(parsed)) return { error };
+  return parsed;
+}
+
 export function parseNetworkHologram(raw: unknown): NetworkHologram | undefined {
   if (!isRecord(raw) || typeof raw.name !== 'string' || raw.name.length === 0) return undefined;
   if (!finite(raw.x) || !finite(raw.y) || !finite(raw.z) || !finite(raw.range)) return undefined;
@@ -2108,6 +2168,7 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
     bedPart?: 'foot' | 'head';
     signRotation?: number;
     paintingItemId?: string;
+    paintingInstanceId?: string;
   } = {};
   if (typeof raw.powered === 'boolean') state.powered = raw.powered;
   if (Number.isInteger(raw.power) && finite(raw.power)) {
@@ -2141,6 +2202,7 @@ export function parseNetworkBlockState(raw: unknown): NetworkBlockState | undefi
   }
   const paintingItemId = typeof raw.paintingItemId === 'string' ? raw.paintingItemId : undefined;
   if (isCollectiblePaintingItemId(paintingItemId)) state.paintingItemId = paintingItemId;
+  if (isItemInstanceId(raw.paintingInstanceId)) state.paintingInstanceId = raw.paintingInstanceId.toLowerCase();
   return Object.keys(state).length > 0 ? state : undefined;
 }
 
@@ -2216,6 +2278,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       }
       const name = sanitizeName(raw.name);
       const sessionToken = typeof raw.sessionToken === 'string' ? raw.sessionToken.slice(0, 80) : undefined;
+      const freshGuest = raw.freshGuest === true;
       const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
       if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
       return {
@@ -2223,6 +2286,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         protocol: PROTOCOL_VERSION,
         ...(name ? { name } : {}),
         ...(sessionToken ? { sessionToken } : {}),
+        ...(freshGuest ? { freshGuest } : {}),
         ...(appearance ? { appearance } : {}),
       };
     }
@@ -2321,7 +2385,9 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (text.length > MAX_CHAT_LENGTH) return { error: 'chat.text too long' };
       const channel = raw.channel === undefined ? 'global' : raw.channel;
       if (!isChatChannel(channel)) return { error: 'chat.channel invalid' };
-      return { type: 'chat', text, channel };
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'chat.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
+      return { type: 'chat', text, channel, ...(clientRequestId ? { clientRequestId } : {}) };
     }
     case 'view': {
       if (!Number.isInteger(raw.cx) || !Number.isInteger(raw.cz) || !Number.isInteger(raw.radius)) {
@@ -2348,7 +2414,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (raw.action === 'craft_recipe') {
         const recipeId = optionalString(raw.recipeId, 64);
         if (!recipeId) return { error: 'inventory_action.recipeId invalid' };
-        return { type: 'inventory_action', action: 'craft_recipe', recipeId };
+        const requestId = parseInventoryRequestId(raw.requestId);
+        if (requestId && typeof requestId === 'object') return requestId;
+        const expectedInventoryRevision = parseRevision(raw.expectedInventoryRevision, 'inventory_action.expectedInventoryRevision');
+        if (expectedInventoryRevision && typeof expectedInventoryRevision === 'object') return expectedInventoryRevision;
+        if (typeof requestId !== 'string') return { error: 'inventory_action.requestId invalid' };
+        if (typeof expectedInventoryRevision !== 'number') return { error: 'inventory_action.expectedInventoryRevision invalid' };
+        return {
+          type: 'inventory_action',
+          action: 'craft_recipe',
+          recipeId,
+          requestId,
+          expectedInventoryRevision,
+        };
       }
       if (raw.button !== undefined && raw.button !== 'left' && raw.button !== 'right') {
         return { error: 'inventory_action.button invalid' };
@@ -2396,6 +2474,19 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         return { error: 'inventory_action.hotbar_swap invalid' };
       }
       if (action === 'drag_distribute' && !keys) return { error: 'inventory_action.keys invalid' };
+      const requestId = parseInventoryRequestId(raw.requestId);
+      if (requestId && typeof requestId === 'object') return requestId;
+      const expectedInventoryRevision = parseRevision(raw.expectedInventoryRevision, 'inventory_action.expectedInventoryRevision');
+      if (expectedInventoryRevision && typeof expectedInventoryRevision === 'object') return expectedInventoryRevision;
+      const expectedContainerRevision = parseRevision(raw.expectedContainerRevision, 'inventory_action.expectedContainerRevision');
+      if (expectedContainerRevision && typeof expectedContainerRevision === 'object') return expectedContainerRevision;
+      if (MUTATING_INVENTORY_ACTIONS.has(action)) {
+        if (typeof requestId !== 'string') return { error: 'inventory_action.requestId invalid' };
+        if (typeof expectedInventoryRevision !== 'number') return { error: 'inventory_action.expectedInventoryRevision invalid' };
+        if (inventoryActionNeedsContainerRevision(action, raw) && typeof expectedContainerRevision !== 'number') {
+          return { error: 'inventory_action.expectedContainerRevision invalid' };
+        }
+      }
       return {
         type: 'inventory_action',
         action,
@@ -2414,11 +2505,10 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(y !== undefined ? { y } : {}),
         ...(z !== undefined ? { z } : {}),
         ...(recipeId ? { recipeId } : {}),
+        ...(typeof requestId === 'string' ? { requestId } : {}),
+        ...(typeof expectedInventoryRevision === 'number' ? { expectedInventoryRevision } : {}),
+        ...(typeof expectedContainerRevision === 'number' ? { expectedContainerRevision } : {}),
       };
-    }
-    case 'craft': {
-      if (raw.shift !== undefined && !bool(raw.shift)) return { error: 'craft.shift invalid' };
-      return { type: 'craft', ...(raw.shift === true ? { shift: true } : {}) };
     }
     case 'interact': {
       const intent = parseIntentFields(raw);
@@ -2612,6 +2702,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const amount = raw.amount === undefined ? undefined : finite(raw.amount) ? Math.floor(raw.amount) : undefined;
       if (raw.amount !== undefined && amount === undefined) return { error: 'auction_action.amount invalid' };
       const price = typeof raw.price === 'string' || typeof raw.price === 'number' ? raw.price : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'auction_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'auction_action',
         action: raw.action as AuctionActionKind,
@@ -2621,6 +2713,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(slot !== undefined ? { slot } : {}),
         ...(amount !== undefined ? { amount } : {}),
         ...(price !== undefined ? { price } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'clan_action': {
@@ -2642,6 +2735,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         if (raw.text.length > MAX_CHAT_LENGTH) return { error: 'clan_action.text too long' };
       }
       const text = typeof raw.text === 'string' ? raw.text : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'clan_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'clan_action',
         action: raw.action as ClanActionKind,
@@ -2655,6 +2750,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(name !== undefined ? { name } : {}),
         ...(text !== undefined ? { text } : {}),
         ...(sort ? { sort } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'buyer_interact': {
@@ -2676,6 +2772,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const hologramText = typeof raw.hologramText === 'string' ? raw.hologramText.slice(0, 80) : undefined;
       const role = raw.role === 'buyer' || raw.role === 'seller' ? raw.role : undefined;
       const stock = typeof raw.stock === 'string' || typeof raw.stock === 'number' ? raw.stock : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'buyer_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'buyer_action',
         action: raw.action as BuyerActionKind,
@@ -2687,6 +2785,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(hologramText !== undefined ? { hologramText } : {}),
         ...(role ? { role } : {}),
         ...(stock !== undefined ? { stock } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'direct_message_action': {
@@ -2772,12 +2871,15 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const tradeSlot = raw.tradeSlot === undefined ? undefined : finite(raw.tradeSlot) ? Math.floor(raw.tradeSlot) : undefined;
       if (raw.tradeSlot !== undefined && tradeSlot === undefined) return { error: 'trade_action.tradeSlot invalid' };
       const money = typeof raw.money === 'string' || typeof raw.money === 'number' ? raw.money : undefined;
+      const clientRequestId = parseEconomyRequestId(raw.clientRequestId, 'trade_action.clientRequestId invalid');
+      if (clientRequestId && typeof clientRequestId === 'object') return clientRequestId;
       return {
         type: 'trade_action',
         action: raw.action as TradeActionKind,
         ...(slot !== undefined ? { slot } : {}),
         ...(tradeSlot !== undefined ? { tradeSlot } : {}),
         ...(money !== undefined ? { money } : {}),
+        ...(clientRequestId ? { clientRequestId } : {}),
       };
     }
     case 'emote': {
@@ -2950,6 +3052,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'furnace_sync invalid' };
       }
       if (!Array.isArray(raw.slots) || raw.slots.length > 3) return { error: 'furnace_sync invalid' };
+      const containerRevision = parseRevision(raw.containerRevision, 'furnace_sync.containerRevision');
+      if (containerRevision && typeof containerRevision === 'object') return containerRevision;
       const ticks = (value: number): number => Math.max(0, Math.min(1_000_000, value));
       return {
         type: 'furnace_sync',
@@ -2960,6 +3064,7 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         burnTime: ticks(burnTime),
         burnTotal: ticks(burnTotal),
         cookTime: ticks(cookTime),
+        ...(typeof containerRevision === 'number' ? { containerRevision } : {}),
       };
     }
     case 'command_result': {

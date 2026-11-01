@@ -184,7 +184,7 @@ describe('Anarchy server gameplay authority', () => {
     if ('error' in joined) throw new Error(joined.error);
     const player = joined.player;
     player.inventory.clear();
-    world.permissions.op(player.name);
+    world.permissions.op(player.id);
     world.handleChat(player, '/give diamond 2');
     expect(player.inventory.has('diamond', 2)).toBe(true);
     const before = world.world.timeOfDay;
@@ -541,6 +541,8 @@ describe('Anarchy server gameplay authority', () => {
     const b = collect(server.wsUrl(), 'Bob');
     await a.join();
     await b.join();
+    const ada = [...server.world.players.values()].find((player) => player.name === 'Ada');
+    if (ada) server.world.permissions.op(ada.id);
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(a.messages.some((message) => message.type === 'entity_snapshot')).toBe(true);
     expect(b.messages.some((message) => message.type === 'entity_snapshot')).toBe(true);

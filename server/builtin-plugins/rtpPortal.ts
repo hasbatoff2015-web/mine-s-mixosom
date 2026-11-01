@@ -105,7 +105,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();
           if (sub === 'pos1' || sub === 'pos2') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.name)) {
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
               return fail('Недостаточно прав для выполнения этой команды.');
             }
             const pos = posOf(sender.playerId);
@@ -114,7 +114,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Portal ${sub} set to ${pos.x}, ${pos.y}, ${pos.z}.`);
           }
           if (sub === 'create') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.name)) {
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
               return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();
@@ -134,7 +134,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Created RTP portal '${name}'.`);
           }
           if (sub === 'remove') {
-            if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.name)) {
+if (!api.hasPermission(sender.playerId, 'rtpportal.create') && !api.isOperator(sender.playerId)) {
               return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();

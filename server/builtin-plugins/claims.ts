@@ -1,6 +1,6 @@
 import { BlockId } from '../../src/blocks';
 import type { Plugin } from '../PluginManager';
-import { fail, ok } from '../commands';
+import { fail, isConsoleSender, ok } from '../commands';
 import {
   BLOCK_CLAIM_OVERLAP_MESSAGE,
   CLAIM_ANCHOR_RADIUS,
@@ -24,6 +24,8 @@ import {
   effectiveFlags,
   flagSetter,
   isTrusted,
+  migrateClaimMember,
+  migrateClaimOwner,
   migrateClaimStore,
   ownFlagLines,
   protectionSources,
@@ -31,6 +33,7 @@ import {
   type Claim,
   type ClaimStore,
 } from '../services/claims';
+import { canonicalPlayerId } from '../services/permissionSubject';
 import { findClaimByName, parseClaimFlagArgs, parseClaimMemberArgs } from '../services/claimCommands';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
 import type { BuiltinPluginContext } from './context';
@@ -69,7 +72,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
     onEnable(api) {
       const load = (): ClaimStore => migrateClaimStore(api.loadData<unknown>('claims', { claims: [] }));
       const save = (store: ClaimStore) => api.saveData('claims', store);
-      const keyOf = (sender: { playerId: string; name: string }) => sender.name.toLowerCase();
+      const ownerId = (playerId: string) => canonicalPlayerId(playerId);
       const worldId = () => api.getWorld().worldId;
       const overlapping = (x: number, y: number, z: number) => claimsAt(load().claims, worldId(), x, y, z);
       const standingAll = (playerId: string) => {
@@ -80,10 +83,10 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       };
       const topAt = (playerId: string) => sortClaimsByPriority(standingAll(playerId))[0];
       const bypass = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'claim.admin') || api.isOperator(name)
+        api.hasPermission(playerId, 'claim.admin') || api.isOperator(playerId)
       );
       const canEdit = (claim: Claim, sender: { playerId: string; name: string }) => (
-        claim.owner === keyOf(sender) || bypass(sender.playerId, sender.name)
+        claim.owner === ownerId(sender.playerId) || bypass(sender.playerId, sender.name)
       );
       const editableAtFeet = (sender: { playerId: string; name: string }) => (
         sortClaimsByPriority(standingAll(sender.playerId)).find((claim) => canEdit(claim, sender))
@@ -97,7 +100,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         if (effectiveFlag(claims, flag)) return true;
         if (bypass(playerId, playerName)) return true;
         const trusted = (claim: Claim) => (
-          isTrusted(claim, playerName)
+          isTrusted(claim, playerId)
           || (!!claim.clanId && ctx.clan.isClanMember(claim.clanId, playerId))
         );
         const setter = flagSetter(claims, flag);
@@ -108,13 +111,13 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       const describeProtection = (
         claims: readonly Claim[],
         flag: 'block-break' | 'block-place',
-        playerName: string,
+        playerId: string,
       ) => {
         const setter = flagSetter(claims, flag);
         return {
           overlap: claims.length,
           flag: effectiveFlag(claims, flag),
-          trusted: setter ? isTrusted(setter, playerName) : claims.some((claim) => isTrusted(claim, playerName)),
+          trusted: setter ? isTrusted(setter, playerId) : claims.some((claim) => isTrusted(claim, playerId)),
           names: claims.map((claim) => claim.name).join(','),
         };
       };
@@ -127,12 +130,12 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       ): boolean => {
         if (allowFlag(claims, flag, player.id, player.name)) return false;
         event.cancel();
-        const info = describeProtection(claims, flag, player.name);
+        const info = describeProtection(claims, flag, player.id);
         api.log(`${flag} deny ${player.name} overlap=${info.overlap} [${info.names}] effective=${info.flag} trusted=${info.trusted}`);
-        player.sendMessage(flag === 'block-break'
+player.sendMessage(flag === 'block-break'
           ? 'Здесь нельзя ломать блоки: территория занята.'
           : 'Здесь нельзя ставить блоки: территория занята.');
-        ctx.claimBoundaries.showAll(player.id, protectionSources(claims, flag, player.name));
+        ctx.claimBoundaries.showAll(player.id, protectionSources(claims, flag, player.id));
         return true;
       };
 
@@ -201,7 +204,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
           ctx.claimBoundaries.showAll(player.id, overlappingAnchors);
           return;
         }
-        const ownerKey = keyOf({ playerId: player.id, name: player.name });
+const ownerKey = ownerId(player.id);
         const owned = store.claims.filter((claim) => claim.owner === ownerKey).length;
         const limit = bypass(player.id, player.name) ? Number.POSITIVE_INFINITY : ctx.donation.limit(player.id, 'claims');
         if (owned >= limit) {
@@ -231,6 +234,13 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         const store = load();
         const claim = findClaimByAnchor(store.claims, worldId(), event.x, event.y, event.z);
         if (!claim) return;
+        if (event.playerId) {
+          const allowed = isTrusted(claim, event.playerId)
+            || (!!claim.clanId && ctx.clan.isClanMember(claim.clanId, event.playerId))
+            || api.isOperator(event.playerId)
+            || api.hasPermission(event.playerId, 'claim.admin');
+          if (!allowed) return;
+        }
         store.claims = store.claims.filter((entry) => entry.id !== claim.id);
         save(store);
         if (claim.clanId) ctx.clan.onClanClaimRemoved(claim.id);
@@ -294,7 +304,35 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
         execute: (args, sender) => {
           if (isHelpRequest(args) || args.length === 0) return ok(formatPluginHelp(HELP));
           const sub = args[0]!.toLowerCase();
-          const ownerKey = keyOf(sender);
+          if (sub === 'migrate-owner' || sub === 'migrate-member') {
+            if (!isConsoleSender(sender)) return fail('Only the server console can migrate claims.');
+            const claimId = args[1];
+            if (!claimId) {
+              return usageError(sub === 'migrate-owner'
+                ? '/claim migrate-owner <claimId> <playerId>'
+                : '/claim migrate-member <claimId> <legacyName> <playerId>');
+            }
+            const playerArg = sub === 'migrate-owner' ? args[2] : args[3];
+            if (!playerArg || (sub === 'migrate-member' && !args[2])) {
+              return usageError(sub === 'migrate-owner'
+                ? '/claim migrate-owner <claimId> <playerId>'
+                : '/claim migrate-member <claimId> <legacyName> <playerId>');
+            }
+            const confirmed = ctx.resolvePermissionSubject(playerArg);
+            if (!confirmed.ok || confirmed.playerId !== playerArg.trim().toLowerCase()) {
+              return fail('Player id is required.');
+            }
+            const store = load();
+            const result = sub === 'migrate-owner'
+              ? migrateClaimOwner(store, claimId, confirmed.playerId)
+              : migrateClaimMember(store, claimId, args[2]!, confirmed.playerId);
+            if (!result.ok) return fail(result.error);
+            save(store);
+            return ok(sub === 'migrate-owner'
+              ? `Migrated claim ${claimId} to ${confirmed.playerId}.`
+              : `Migrated member on claim ${claimId} to ${confirmed.playerId}.`);
+          }
+          const ownerKey = ownerId(sender.playerId);
           if (sub === 'pos1' || sub === 'pos2') {
             const player = api.getPlayer(sender.playerId);
             if (!player) return fail('Player not found.');
@@ -305,7 +343,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             return ok(`Claim ${sub} set.`);
           }
           if (sub === 'create') {
-            if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.name)) {
+if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sender.playerId)) {
               return fail('Недостаточно прав для выполнения этой команды.');
             }
             const name = args[1]?.toLowerCase();
@@ -346,7 +384,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (!name) return usageError('/claim delete <name>');
             const store = load();
             const index = store.claims.findIndex((claim) => claim.name === name && (
-              claim.owner === ownerKey || bypass(sender.playerId, sender.name)
+              claim.owner === ownerId(sender.playerId) || bypass(sender.playerId, sender.name)
             ));
             if (index < 0) return fail(`Claim '${name}' not found.`);
             const removed = store.claims[index]!;
@@ -362,7 +400,7 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
             if (nextName.length > 24) return fail('Название привата не длиннее 24 символов.');
             const store = load();
             const live = store.claims.find((claim) => claim.name === current && (
-              claim.owner === ownerKey || bypass(sender.playerId, sender.name)
+              claim.owner === ownerId(sender.playerId) || bypass(sender.playerId, sender.name)
             ));
             if (!live) return fail(`Claim '${current}' not found.`);
             if (!canEdit(live, sender)) return fail('Недостаточно прав для выполнения этой команды.');
@@ -460,13 +498,17 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
               const resolved = resolveEditable(parsed.claimName);
               if (!resolved.ok) return resolved.error;
               if (sub === 'addmember') {
-                if (!resolved.live.members.includes(parsed.player)) resolved.live.members.push(parsed.player);
+                const subject = ctx.resolvePermissionSubject(parsed.player);
+                if (!subject.ok) return fail(subject.error);
+                if (!resolved.live.members.includes(subject.playerId)) resolved.live.members.push(subject.playerId);
                 save(resolved.store);
-                return ok(`Added ${parsed.player} to claim '${resolved.live.name}'.`);
+                return ok(`Added ${subject.name} to claim '${resolved.live.name}'.`);
               }
-              resolved.live.members = resolved.live.members.filter((member) => member !== parsed.player);
+              const subject = ctx.resolvePermissionSubject(parsed.player);
+              if (!subject.ok) return fail(subject.error);
+              resolved.live.members = resolved.live.members.filter((member) => member !== subject.playerId);
               save(resolved.store);
-              return ok(`Removed ${parsed.player} from claim '${resolved.live.name}'.`);
+              return ok(`Removed ${subject.name} from claim '${resolved.live.name}'.`);
             }
             const parsed = parseClaimFlagArgs(args.slice(1));
             if (!parsed.ok) {

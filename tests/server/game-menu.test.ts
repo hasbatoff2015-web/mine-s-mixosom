@@ -11,6 +11,7 @@ import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { CLAN_ALREADY_MEMBER_ERROR } from '../../server/services/clan';
 import { GAME_MENU_BUTTONS } from '../../shared/gameMenu';
 import { createItemStack } from '../../src/inventory';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-menu-'));
@@ -78,6 +79,7 @@ describe('game menu plugin', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

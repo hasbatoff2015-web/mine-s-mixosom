@@ -22,6 +22,8 @@ describe('Home names', () => {
 
 describe('HomeService', () => {
   const dirs: string[] = [];
+  const ADA = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1';
+  const BOB = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb2';
   afterEach(async () => {
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -36,30 +38,54 @@ describe('HomeService', () => {
     const homes = await setup();
     const pos = { worldId: 'anarchy', x: 1, y: 64, z: 2 };
     expect(HOME_MAX_DEFAULT).toBe(3);
-    expect(homes.set('ada', 'Дом', pos, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.set('ada', 'дом', { ...pos, x: 8 }, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.get('ada', 'Дом')?.x).toBe(8);
-    expect(homes.set('ada', 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.set('ada', 'Ферма', pos, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.set('ada', 'База', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
-    expect(homes.set('ada', 'Лишняя', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
-    expect(homes.set('ada', 'Шахта', pos, HOME_MAX_DEFAULT).error).toBeUndefined();
-    expect(homes.set('bob', 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.remove('ada', 'Ферма').ok).toBe(true);
-    expect(homes.list('ada')).toHaveLength(2);
-    expect(homes.set('ada', 'Шахта', { ...pos, x: 99 }, HOME_MAX_DEFAULT).ok).toBe(true);
-    expect(homes.get('ada', 'шахта')?.x).toBe(99);
+    expect(homes.set(ADA, 'Дом', pos, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.set(ADA, 'дом', { ...pos, x: 8 }, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.get(ADA, 'Дом')?.x).toBe(8);
+    expect(homes.set(ADA, 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.set(ADA, 'Ферма', pos, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.set(ADA, 'База', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
+    expect(homes.set(ADA, 'Лишняя', pos, HOME_MAX_DEFAULT).error).toBe(HOME_LIMIT_ERROR(HOME_MAX_DEFAULT));
+    expect(homes.set(ADA, 'Шахта', pos, HOME_MAX_DEFAULT).error).toBeUndefined();
+    expect(homes.set(BOB, 'Шахта', pos, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.remove(ADA, 'Ферма').ok).toBe(true);
+    expect(homes.list(ADA)).toHaveLength(2);
+    expect(homes.set(ADA, 'Шахта', { ...pos, x: 99 }, HOME_MAX_DEFAULT).ok).toBe(true);
+    expect(homes.get(ADA, 'шахта')?.x).toBe(99);
+    expect(homes.list('ada')).toEqual([]);
   });
 
   it('overwrites the same name key via set (command path) and exposes uniqueError for the menu', async () => {
     const homes = await setup();
     const pos = { worldId: 'anarchy', x: 0, y: 1, z: 0 };
-    expect(homes.set('ada', 'Home', pos, 4).ok).toBe(true);
-    const again = homes.set('ada', 'HOME', { ...pos, x: 3 }, 4);
+    expect(homes.set(ADA, 'Home', pos, 4).ok).toBe(true);
+    const again = homes.set(ADA, 'HOME', { ...pos, x: 3 }, 4);
     expect(again.ok).toBe(true);
-    expect(homes.list('ada')).toHaveLength(1);
-    expect(homes.get('ada', 'HOME')?.x).toBe(3);
-    expect(homes.renameTaken('ada', 'Home')).toBe(true);
+    expect(homes.list(ADA)).toHaveLength(1);
+    expect(homes.get(ADA, 'HOME')?.x).toBe(3);
+    expect(homes.renameTaken(ADA, 'Home')).toBe(true);
     expect(homes.uniqueError().error).toBe(HOME_NAME_TAKEN_ERROR);
+  });
+
+  it('keeps a nickname home list inert and refuses to overwrite on migrate', async () => {
+    const homes = await setup();
+    const dir = dirs[dirs.length - 1]!;
+    const store = new JsonFileStore(dir);
+    store.save('home/homes', {
+      players: { alex: [{ name: 'base', worldId: 'anarchy', x: 4, y: 5, z: 6 }] },
+    });
+    homes.load();
+    expect(homes.list(ADA)).toEqual([]);
+    expect(homes.list('alex')).toEqual([]);
+    expect(homes.legacyList('Alex').map((home) => home.x)).toEqual([4]);
+    expect(homes.set(ADA, 'base', { worldId: 'anarchy', x: 1, y: 2, z: 3 }, 4).ok).toBe(true);
+    expect(homes.migrateLegacy('alex', ADA).ok).toBe(false);
+    expect(homes.get(ADA, 'base')?.x).toBe(1);
+    expect(homes.legacyList('alex')).toHaveLength(1);
+    expect(homes.remove(ADA, 'base').ok).toBe(true);
+    expect(homes.migrateLegacy('alex', ADA).ok).toBe(true);
+    expect(homes.get(ADA, 'base')?.x).toBe(4);
+    expect(homes.legacyList('alex')).toEqual([]);
+    expect(homes.migrateLegacy('alex', ADA).ok).toBe(false);
+    expect(homes.list(ADA)).toHaveLength(1);
   });
 });

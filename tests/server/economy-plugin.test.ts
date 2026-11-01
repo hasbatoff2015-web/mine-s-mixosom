@@ -14,6 +14,7 @@ import {
   formatMegacoins,
 } from '../../server/services/economy';
 import { volumeFromCorners } from '../../server/services/selection';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-eco-plugin-'));
@@ -83,6 +84,7 @@ describe('Economy plugin', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

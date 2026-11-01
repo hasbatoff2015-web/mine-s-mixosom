@@ -11,6 +11,8 @@ import { getItemDefinition } from '../items';
 import {
   consumeCraftingGrid,
   matchCraftingRecipe,
+  type CommittedCraft,
+  type CraftingMatch,
   type Ingredient,
   type Recipe,
   type SmeltingRecipe,
@@ -168,11 +170,12 @@ export function takeCraftOutput(
   gridSize: 2 | 3,
   shift: boolean,
   inventory: Inventory,
-): { grid: Array<ItemStack | null>; cursor: ItemStack | null } {
+): { grid: Array<ItemStack | null>; cursor: ItemStack | null; commits: CommittedCraft[] } {
   let nextGrid = grid;
   let nextCursor = cursor;
+  const commits = new Map<string, CraftBucket>();
   const match = matchCraftingRecipe(nextGrid, gridSize, gridSize);
-  if (!match) return { grid: nextGrid, cursor: nextCursor };
+  if (!match) return { grid: nextGrid, cursor: nextCursor, commits: [] };
   if (shift) {
     while (true) {
       const current = matchCraftingRecipe(nextGrid, gridSize, gridSize);
@@ -185,22 +188,71 @@ export function takeCraftOutput(
           break;
         }
         nextCursor = remainder;
+        rememberCraft(commits, nextGrid, current);
         nextGrid = [...consumeCraftingGrid(nextGrid, current)];
         break;
       }
+      rememberCraft(commits, nextGrid, current);
       nextGrid = [...consumeCraftingGrid(nextGrid, current)];
     }
-    return { grid: nextGrid, cursor: nextCursor };
+    return { grid: nextGrid, cursor: nextCursor, commits: craftCommits(commits) };
   }
   if (nextCursor === null) nextCursor = cloneStack(match.output);
   else {
-    if (!canStacksMerge(nextCursor, match.output)) return { grid: nextGrid, cursor: nextCursor };
+    if (!canStacksMerge(nextCursor, match.output)) return { grid: nextGrid, cursor: nextCursor, commits: [] };
     const merged = mergeItemStacks(nextCursor, match.output);
-    if (merged.remainder) return { grid: nextGrid, cursor: nextCursor };
+    if (merged.remainder) return { grid: nextGrid, cursor: nextCursor, commits: [] };
     nextCursor = merged.target;
   }
+  rememberCraft(commits, nextGrid, match);
   nextGrid = [...consumeCraftingGrid(nextGrid, match)];
-  return { grid: nextGrid, cursor: nextCursor };
+  return { grid: nextGrid, cursor: nextCursor, commits: craftCommits(commits) };
+}
+
+interface CraftBucket {
+  recipeId: string;
+  completed: number;
+  consumed: Map<string, number>;
+  producedItemId: string;
+  producedCount: number;
+}
+
+function rememberCraft(
+  commits: Map<string, CraftBucket>,
+  grid: readonly (ItemStack | null)[],
+  match: CraftingMatch,
+): void {
+  const recipeId = match.recipe.id;
+  let bucket = commits.get(recipeId);
+  if (!bucket) {
+    bucket = {
+      recipeId,
+      completed: 0,
+      consumed: new Map(),
+      producedItemId: match.output.itemId,
+      producedCount: 0,
+    };
+    commits.set(recipeId, bucket);
+  }
+  bucket.completed += 1;
+  bucket.producedCount += match.output.count;
+  for (let index = 0; index < match.consumption.length; index += 1) {
+    const used = match.consumption[index] ?? 0;
+    if (used <= 0) continue;
+    const cell = grid[index];
+    if (!cell) continue;
+    bucket.consumed.set(cell.itemId, (bucket.consumed.get(cell.itemId) ?? 0) + used);
+  }
+}
+
+function craftCommits(commits: Map<string, CraftBucket>): CommittedCraft[] {
+  return [...commits.values()].map((bucket) => ({
+    recipeId: bucket.recipeId,
+    completed: bucket.completed,
+    consumed: [...bucket.consumed].map(([itemId, count]) => ({ itemId, count })),
+    producedItemId: bucket.producedItemId,
+    producedCount: bucket.producedCount,
+  }));
 }
 
 export function furnaceAccepts(slot: 0 | 1 | 2, stack: ItemStack | null): boolean {

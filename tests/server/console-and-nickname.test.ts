@@ -126,10 +126,12 @@ describe('display nickname join and server console', () => {
     expect(normalizeConsoleCommand('op Misha')).toBe('/op Misha');
     expect(normalizeConsoleCommand('/op Misha')).toBe('/op Misha');
 
+    const misha = join(world, 'Misha');
     const op = world.dispatchConsole('op Misha');
     expect(op.ok).toBe(true);
     expect(op.lines.some((line) => line.includes('Made Misha a server operator.'))).toBe(true);
-    expect(world.permissions.isOperator('Misha')).toBe(true);
+    expect(world.permissions.isOperator(misha.player.id)).toBe(true);
+    expect(world.permissions.isOperator('Misha')).toBe(false);
 
     const plugins = world.dispatchConsole('plugins list');
     expect(plugins.ok).toBe(true);
@@ -154,7 +156,7 @@ describe('display nickname join and server console', () => {
     detach();
     const text = chunks.join('');
     expect(text).toContain('> op Misha');
-    expect(text).toContain('Made Misha a server operator.');
+    expect(text).toContain('Unknown player.');
     expect(text).toContain('> unknowncommand');
     expect(text).toContain("Unknown command 'unknowncommand'");
     expect(formatConsoleResult('plugins', { ok: true, lines: ['Plugins:'] })).toContain('> plugins');

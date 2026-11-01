@@ -6,9 +6,5 @@ export function resolvePetLimit(
   playerId: string,
   playerName?: string,
 ): number {
-  const nodes = new Set<string>(permissions.playerInfo(playerId).permissions);
-  if (playerName) {
-    for (const node of permissions.playerInfo(playerName).permissions) nodes.add(node);
-  }
-  return resolvePetLimitFromPermissions([...nodes]);
+  return resolvePetLimitFromPermissions([...permissions.playerInfo(playerId).permissions]);
 }

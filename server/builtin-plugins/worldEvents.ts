@@ -65,7 +65,7 @@ export function createWorldEventsPlugin(ctx: BuiltinPluginContext): Plugin {
       manager.enabled = true;
 
       const canManage = (playerId: string, name: string) => (
-        api.hasPermission(playerId, 'events.manage') || api.isOperator(name)
+        api.hasPermission(playerId, 'events.manage') || api.isOperator(playerId)
       );
 
       const lastDenyAt = new Map<string, number>();

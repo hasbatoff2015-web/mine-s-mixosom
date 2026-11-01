@@ -47,6 +47,7 @@ import {
   type MinecartEntity,
 } from '../entities';
 import { damageItem, type Inventory, type ItemStack } from '../inventory';
+import { readItemInstanceId } from '../inventory/itemInstance';
 import { ItemId, isCollectiblePaintingItemId, tryGetItemDefinition } from '../items';
 import { MAX_CROP_AGE, cropAge, isCropBlock, plantingDefinition } from '../farming';
 import { systemRandomFn, type RandomFn } from './random';
@@ -173,6 +174,8 @@ export interface UseSimulationContext {
   allowPlace?(x: number, y: number, z: number, block: number): boolean;
   enterVehicle?(cartId: string): boolean;
   readonly effects?: UseHostEffects;
+  /** Server-only. Client prediction must not mint a persistent instance id. */
+  mintInstanceId?(): string;
 }
 
 const UP_FACE = { x: 0, y: 1, z: 0 } as const;
@@ -557,6 +560,7 @@ export function placeBlockAt(
     const held = ctx.inventory.getSlot(ctx.selectedSlot);
     const paintingItemId = held && isCollectiblePaintingItemId(held.itemId) ? held.itemId : undefined;
     if (!paintingItemId) return { ok: false, reason: 'inventory' };
+    const carriedInstanceId = ctx.gamemode === 'survival' ? readItemInstanceId(held) : undefined;
     const nx = attachmentNormal.x;
     const ny = attachmentNormal.y;
     const nz = attachmentNormal.z;
@@ -568,10 +572,14 @@ export function placeBlockAt(
     }
     if (ctx.allowPlace && !ctx.allowPlace(x, y, z, blockId)) return { ok: false, reason: 'cancelled' };
     if (!commitBlock(ctx, x, y, z, blockId, existing)) return { ok: false, reason: 'rejected' };
+    const paintingInstanceId = ctx.gamemode === 'creative'
+      ? ctx.mintInstanceId?.()
+      : (carriedInstanceId ?? ctx.mintInstanceId?.());
     ctx.world.setBlockState(x, y, z, {
       attachment: 'wall',
       facing: horizontalFacingFromXZ(nx, nz),
       paintingItemId,
+      ...(paintingInstanceId ? { paintingInstanceId: paintingInstanceId.toLowerCase() } : {}),
     });
     return { ok: true };
   }

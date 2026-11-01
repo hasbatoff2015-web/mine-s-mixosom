@@ -1,5 +1,6 @@
 import { volumeContains, type SelectionVolume } from './selection';
 import { claimAnchorVolume } from './claimAnchors';
+import { canonicalPlayerId, isPlayerId } from './permissionSubject';
 
 export const CLAIM_FLAGS = [
   'pvp',
@@ -47,7 +48,7 @@ export interface ClaimAnchor {
 export interface Claim {
   readonly id: string;
   name: string;
-  readonly owner: string;
+  owner: string;
   readonly worldId: string;
   readonly volume: SelectionVolume;
   members: string[];
@@ -115,9 +116,34 @@ export function ownFlagLines(claim: Claim): string[] {
   return lines;
 }
 
-export function isTrusted(claim: Claim, playerKey: string): boolean {
-  const key = playerKey.toLowerCase();
-  return claim.owner === key || claim.members.includes(key);
+export const WORLD_EVENT_CLAIM_OWNER = '__world_events__';
+
+export function isReservedClaimOwner(owner: string): boolean {
+  return owner === WORLD_EVENT_CLAIM_OWNER || owner.startsWith('clan:');
+}
+
+/** Authoritative player access. A display nickname never matches. */
+export function isTrusted(claim: Claim, playerId: string): boolean {
+  if (!isPlayerId(playerId)) return false;
+  const id = canonicalPlayerId(playerId);
+  if (claim.owner === id) return true;
+  return claim.members.some((member) => member === id);
+}
+
+export function canonicalClaimOwner(owner: string): string {
+  const trimmed = owner.trim();
+  if (trimmed === WORLD_EVENT_CLAIM_OWNER) return trimmed;
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('clan:')) return lower;
+  if (isPlayerId(trimmed)) return canonicalPlayerId(trimmed);
+  return lower;
+}
+
+export function canonicalClaimMember(member: string): string {
+  const trimmed = member.trim();
+  if (!trimmed) return '';
+  if (isPlayerId(trimmed)) return canonicalPlayerId(trimmed);
+  return trimmed.toLowerCase();
 }
 
 /**
@@ -127,9 +153,9 @@ export function isTrusted(claim: Claim, playerKey: string): boolean {
 export function protectionSource(
   claims: readonly Claim[],
   flag: ClaimFlag,
-  playerName: string,
+  playerId: string,
 ): Claim | undefined {
-  return protectionSources(claims, flag, playerName)[0];
+  return protectionSources(claims, flag, playerId)[0];
 }
 
 /**
@@ -140,17 +166,17 @@ export function protectionSource(
 export function protectionSources(
   claims: readonly Claim[],
   flag: ClaimFlag,
-  playerName: string,
+  playerId: string,
 ): Claim[] {
   if (effectiveFlag(claims, flag)) return [];
   const setter = flagSetter(claims, flag);
   if (setter) {
-    if (isTrusted(setter, playerName)) return [];
+    if (isTrusted(setter, playerId)) return [];
     return sortClaimsByPriority(claims).filter(
-      (claim) => claim.flags[flag] === false && !isTrusted(claim, playerName),
+      (claim) => claim.flags[flag] === false && !isTrusted(claim, playerId),
     );
   }
-  return sortClaimsByPriority(claims).filter((claim) => !isTrusted(claim, playerName));
+  return sortClaimsByPriority(claims).filter((claim) => !isTrusted(claim, playerId));
 }
 
 /**
@@ -166,14 +192,17 @@ export function migrateClaim(raw: unknown): Claim | undefined {
   }
   if (typeof record.worldId !== 'string' || !isVolume(record.volume)) return undefined;
   const members = Array.isArray(record.members)
-    ? record.members.filter((member): member is string => typeof member === 'string').map((member) => member.toLowerCase())
+    ? record.members
+      .filter((member): member is string => typeof member === 'string')
+      .map(canonicalClaimMember)
+      .filter((member) => member.length > 0)
     : [];
   const anchor = migrateAnchor(record.anchor);
   const clanId = typeof record.clanId === 'string' && record.clanId.trim() ? record.clanId : undefined;
   return {
     id: record.id,
     name: record.name,
-    owner: record.owner.toLowerCase(),
+    owner: canonicalClaimOwner(record.owner),
     worldId: record.worldId,
     volume: anchor
       ? claimAnchorVolume(anchor.x, anchor.y, anchor.z, anchor.block)
@@ -235,4 +264,41 @@ function migrateBlockClaimSeq(raw: unknown): Record<string, number> | undefined 
     seq[owner.toLowerCase()] = Math.trunc(value);
   }
   return Object.keys(seq).length > 0 ? seq : undefined;
+}
+
+export function migrateClaimOwner(
+  store: ClaimStore,
+  claimId: string,
+  playerId: string,
+): { ok: true } | { ok: false; error: string } {
+  if (!isPlayerId(playerId)) return { ok: false, error: 'Player id is required.' };
+  const claim = store.claims.find((entry) => entry.id === claimId);
+  if (!claim) return { ok: false, error: 'Claim not found.' };
+  if (isReservedClaimOwner(claim.owner)) return { ok: false, error: 'This claim is not a player claim.' };
+  const id = canonicalPlayerId(playerId);
+  if (claim.owner === id) return { ok: true };
+  if (isPlayerId(claim.owner)) return { ok: false, error: 'This claim already has an id owner.' };
+  claim.owner = id;
+  return { ok: true };
+}
+
+export function migrateClaimMember(
+  store: ClaimStore,
+  claimId: string,
+  legacyName: string,
+  playerId: string,
+): { ok: true } | { ok: false; error: string } {
+  if (!isPlayerId(playerId)) return { ok: false, error: 'Player id is required.' };
+  const name = legacyName.trim().toLowerCase();
+  if (!name || isPlayerId(name)) return { ok: false, error: 'Legacy member was not found.' };
+  const claim = store.claims.find((entry) => entry.id === claimId);
+  if (!claim) return { ok: false, error: 'Claim not found.' };
+  const id = canonicalPlayerId(playerId);
+  const legacyIndex = claim.members.indexOf(name);
+  const hasId = claim.members.includes(id);
+  if (legacyIndex < 0 && hasId) return { ok: true };
+  if (legacyIndex < 0) return { ok: false, error: 'Legacy member was not found.' };
+  claim.members.splice(legacyIndex, 1);
+  if (!claim.members.includes(id)) claim.members.push(id);
+  return { ok: true };
 }

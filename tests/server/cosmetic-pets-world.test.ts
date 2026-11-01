@@ -70,7 +70,7 @@ describe('cosmetic pets on the anarchy world', () => {
     const player = joined.player;
     pad(world, 20, 20);
     player.controller.teleport([20.5, 80, 20.5]);
-    world.permissions.op(player.name);
+    world.permissions.op(player.id);
     world.permissions.op(player.id);
     world.handleChat(player, '/spawnpet bee');
     world.handleChat(player, '/spawnpet bee');

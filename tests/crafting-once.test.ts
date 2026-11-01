@@ -27,6 +27,7 @@ describe('atomic craft-once', () => {
       ok: true,
       recipeId: 'oak_planks_from_log',
       output: { item: 'oak_planks', count: 4 },
+      consumed: [{ itemId: 'oak_log', count: 1 }],
     });
     expect(inventory.count('oak_log')).toBe(2);
     expect(inventory.count('oak_planks')).toBe(4);

@@ -9,6 +9,7 @@ import { blockTargetFromHit } from '../../src/net/actionIntent';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-anarchy-plugins-'));
@@ -78,6 +79,7 @@ describe('Anarchy builtin plugins', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 
@@ -229,10 +231,10 @@ describe('Anarchy builtin plugins', () => {
     const op = join(world, 'Op');
     expect(chat(world, ada, '/op Bob').some((line) => line.includes('прав'))).toBe(true);
     expect(chat(world, op, '/op Ada').some((line) => line.includes('operator'))).toBe(true);
-    expect(world.permissions.isOperator('Ada')).toBe(true);
+    expect(world.permissions.isOperator(ada.player.id)).toBe(true);
     expect(chat(world, ada, '/plugins list').some((line) => line.includes('permissions'))).toBe(true);
     expect(chat(world, op, '/deop Ada').some((line) => line.includes('Removed operator'))).toBe(true);
-    expect(world.permissions.isOperator('Ada')).toBe(false);
+    expect(world.permissions.isOperator(ada.player.id)).toBe(false);
     expect(chat(world, ada, '/plugins help').some((line) => line.includes('Plugins'))).toBe(true);
   });
 
@@ -677,9 +679,9 @@ describe('Anarchy builtin plugins', () => {
     ada.player.controller.teleport([x + 40.5, y, z + 40.5]);
     expect(chat(world, ada, '/claim flag spawn pvp true').some((line) => line.includes("Set pvp=true on claim 'spawn'"))).toBe(true);
     expect(chat(world, bob, '/claim flag spawn block-break true').some((line) => line.includes('прав'))).toBe(true);
-    expect(chat(world, ada, '/claim addmember spawn bob').some((line) => line.includes("Added bob to claim 'spawn'"))).toBe(true);
-    expect(chat(world, ada, '/claim members spawn').some((line) => line.includes('bob'))).toBe(true);
-    expect(chat(world, ada, '/claim removemember spawn bob').some((line) => line.includes("Removed bob from claim 'spawn'"))).toBe(true);
+    expect(chat(world, ada, '/claim addmember spawn bob').some((line) => line.includes(`Added Bob to claim 'spawn'`))).toBe(true);
+    expect(chat(world, ada, '/claim members spawn').some((line) => line.includes(bob.player.id))).toBe(true);
+    expect(chat(world, ada, '/claim removemember spawn bob').some((line) => line.includes(`Removed Bob from claim 'spawn'`))).toBe(true);
     expect(chat(world, ada, '/claim info spawn').some((line) => line.includes('pvp: true'))).toBe(true);
     expect(chat(world, ada, '/claim info spawn').some((line) => line.includes('mob-spawn: false'))).toBe(true);
     expect(chat(world, ada, '/claim delete spawn').some((line) => line.includes("Deleted claim 'spawn'"))).toBe(true);

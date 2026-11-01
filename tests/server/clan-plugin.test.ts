@@ -7,6 +7,7 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import type { ServerClanMessage } from '../../shared/protocol';
 import { CLAN_CREATE_COST } from '../../shared/clans';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-clan-plugin-'));
@@ -84,6 +85,7 @@ describe('Clan plugin', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

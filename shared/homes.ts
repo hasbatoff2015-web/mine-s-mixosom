@@ -62,5 +62,7 @@ export interface HomeLocation {
 }
 
 export interface HomeStore {
+  version?: 2;
   players: Record<string, HomeLocation[]>;
+  legacy?: Record<string, HomeLocation[]>;
 }

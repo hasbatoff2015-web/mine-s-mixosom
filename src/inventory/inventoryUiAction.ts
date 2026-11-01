@@ -1,4 +1,4 @@
-import { craftOnceByRecipeId, matchCraftingRecipe } from '../crafting';
+import { craftOnceByRecipeId, type CommittedCraft } from '../crafting';
 import { Inventory } from './inventory';
 import { applySlotClick, createItemStack } from './stack';
 import type { ItemStack } from './types';
@@ -66,6 +66,8 @@ export interface InventoryUiResult {
   readonly ok: boolean;
   readonly dropped: ItemStack[];
   readonly crafted?: { readonly itemId: string; readonly count: number; readonly recipeId?: string };
+  /** Present only when a craft changed the inventory or grid. The client does not send this. */
+  readonly committedCrafts?: readonly CommittedCraft[];
   readonly windowChanged?: boolean;
   /** `no-slot` is the split failure the amount dialog explains. */
   readonly reason?: 'no-slot' | 'rejected';
@@ -180,6 +182,13 @@ function applyCraftRecipe(state: InventoryUiState, action: ClientInventoryAction
       count: crafted.output.count,
       recipeId: crafted.recipeId,
     },
+    committedCrafts: [{
+      recipeId: crafted.recipeId,
+      completed: 1,
+      consumed: crafted.consumed,
+      producedItemId: crafted.output.item,
+      producedCount: crafted.output.count,
+    }],
   };
 }
 
@@ -243,22 +252,21 @@ function applyClick(state: InventoryUiState, action: ClientInventoryActionMessag
 
   if (key === 'result') {
     const size = gridSizeFor(state.window.kind);
-    const before = matchCraftingRecipe(state.craftSlots, size, size);
     const taken = takeCraftOutput(state.craftSlots, state.cursor, size, shift, state.inventory);
     state.craftSlots = taken.grid;
     state.cursor = taken.cursor;
-    if (before) {
-      return {
-        ok: true,
-        dropped: [],
-        crafted: {
-          itemId: before.output.itemId,
-          count: before.output.count,
-          recipeId: before.recipe.id,
-        },
-      };
-    }
-    return emptyResult(true);
+    const commit = taken.commits[0];
+    if (!commit) return emptyResult(true);
+    return {
+      ok: true,
+      dropped: [],
+      crafted: {
+        itemId: commit.producedItemId,
+        count: taken.commits.reduce((sum, row) => sum + (row.producedItemId === commit.producedItemId ? row.producedCount : 0), 0),
+        recipeId: commit.recipeId,
+      },
+      committedCrafts: taken.commits,
+    };
   }
 
   if (key.startsWith('container-')) {

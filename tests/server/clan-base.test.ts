@@ -18,6 +18,7 @@ import {
 } from '../../shared/clans';
 import { CLAN_ACTIONS, parseClientMessage, type ServerClanMessage } from '../../shared/protocol';
 import { CLAN_OWNER_ONLY_ERROR } from '../../server/services/clan';
+import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
   return mkdtemp(join(tmpdir(), 'fc-clan-base-'));
@@ -105,6 +106,7 @@ describe('Clan base point', () => {
     const sink = new MemorySink();
     const result = world.join({ sink, name, sessionToken });
     if ('error' in result) throw new Error(result.error);
+    bindNamedOperatorFixture(world, result.player);
     return { ...result, sink };
   }
 

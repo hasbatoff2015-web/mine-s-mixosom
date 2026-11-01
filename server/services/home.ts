@@ -1,4 +1,5 @@
 import type { JsonFileStore } from './jsonStore';
+import { canonicalPlayerId, isPlayerId } from './permissionSubject';
 import {
   HOME_LIMIT_ERROR,
   HOME_MISSING_ERROR,
@@ -42,49 +43,74 @@ function migrateHome(raw: unknown): HomeLocation | undefined {
 }
 
 export class HomeService {
-  private store: HomeStore = { players: {} };
+  private store: HomeStore = { version: 2, players: {}, legacy: {} };
 
   constructor(private readonly files: JsonFileStore) {}
 
   load(): void {
     const raw = this.files.load<unknown>(`${HOME_PLUGIN_NAME}/homes`, { players: {} });
     const players: Record<string, HomeLocation[]> = {};
-    if (isRecord(raw) && isRecord(raw.players)) {
-      for (const [key, list] of Object.entries(raw.players)) {
+    const legacy: Record<string, HomeLocation[]> = {};
+    const record = isRecord(raw) ? raw : {};
+    const version = record.version === 2 ? 2 : 1;
+    if (isRecord(record.players)) {
+      for (const [key, list] of Object.entries(record.players)) {
         if (!Array.isArray(list)) continue;
-        players[key.toLowerCase()] = list.map(migrateHome).filter((home): home is HomeLocation => Boolean(home));
+        const homes = list.map(migrateHome).filter((home): home is HomeLocation => Boolean(home));
+        if (version === 2 && isPlayerId(key)) players[canonicalPlayerId(key)] = homes;
+        else if (version === 2) legacy[key.trim().toLowerCase()] = homes;
+        else if (isPlayerId(key)) players[canonicalPlayerId(key)] = homes;
+        else legacy[key.trim().toLowerCase()] = homes;
       }
     }
-    this.store = { players };
+    if (isRecord(record.legacy)) {
+      for (const [key, list] of Object.entries(record.legacy)) {
+        if (!Array.isArray(list) || isPlayerId(key)) continue;
+        const name = key.trim().toLowerCase();
+        const homes = list.map(migrateHome).filter((home): home is HomeLocation => Boolean(home));
+        legacy[name] = [...(legacy[name] ?? []), ...homes];
+      }
+    }
+    this.store = { version: 2, players, legacy };
+    this.persist();
   }
 
   persist(): void {
     this.files.save(`${HOME_PLUGIN_NAME}/homes`, this.store);
   }
 
-  ownerKey(name: string): string {
-    return name.trim().toLowerCase();
+  ownerKey(playerId: string): string {
+    return isPlayerId(playerId) ? canonicalPlayerId(playerId) : '';
   }
 
-  list(ownerName: string): HomeLocation[] {
-    return [...(this.store.players[this.ownerKey(ownerName)] ?? [])];
+  list(playerId: string): HomeLocation[] {
+    const key = this.ownerKey(playerId);
+    if (!key) return [];
+    return [...(this.store.players[key] ?? [])];
   }
 
-  get(ownerName: string, name: string): HomeLocation | undefined {
+  legacyList(nickname: string): HomeLocation[] {
+    const name = nickname.trim().toLowerCase();
+    if (!name || isPlayerId(name)) return [];
+    return [...(this.store.legacy?.[name] ?? [])];
+  }
+
+  get(playerId: string, name: string): HomeLocation | undefined {
     const key = homeNameKey(name);
-    return this.list(ownerName).find((home) => homeNameKey(home.name) === key);
+    return this.list(playerId).find((home) => homeNameKey(home.name) === key);
   }
 
   set(
-    ownerName: string,
+    playerId: string,
     rawName: string,
     location: Omit<HomeLocation, 'name'>,
     maxHomes: number,
   ): HomeResult {
     const valid = validateHomeName(rawName);
     if (!valid.ok) return valid;
-    const owner = this.ownerKey(ownerName);
-    const homes = this.list(ownerName);
+    const owner = this.ownerKey(playerId);
+    if (!owner) return { ok: false, error: 'Player id is required.' };
+    const homes = this.list(playerId);
     const existing = homes.findIndex((home) => homeNameKey(home.name) === homeNameKey(valid.name));
     if (existing < 0 && homes.length >= maxHomes) {
       return { ok: false, error: HOME_LIMIT_ERROR(maxHomes) };
@@ -97,15 +123,41 @@ export class HomeService {
     return { ok: true, home: next, homes };
   }
 
-  remove(ownerName: string, rawName: string): HomeResult {
-    const owner = this.ownerKey(ownerName);
-    const homes = this.list(ownerName);
+  remove(playerId: string, rawName: string): HomeResult {
+    const owner = this.ownerKey(playerId);
+    if (!owner) return { ok: false, error: HOME_MISSING_ERROR };
+    const homes = this.list(playerId);
     const key = homeNameKey(rawName);
     const next = homes.filter((home) => homeNameKey(home.name) !== key);
     if (next.length === homes.length) return { ok: false, error: HOME_MISSING_ERROR };
     this.store.players[owner] = next;
     this.persist();
     return { ok: true, homes: next };
+  }
+
+  /**
+   * Move one inert nickname home list onto a player id.
+   * A name clash leaves the legacy list untouched.
+   */
+  migrateLegacy(legacyName: string, playerId: string): { ok: true } | { ok: false; error: string } {
+    const name = legacyName.trim().toLowerCase();
+    const owner = this.ownerKey(playerId);
+    if (!name || isPlayerId(name)) return { ok: false, error: 'Legacy homes were not found.' };
+    if (!owner) return { ok: false, error: 'Player id is required.' };
+    const incoming = this.store.legacy?.[name] ?? [];
+    if (incoming.length === 0) return { ok: false, error: 'Legacy homes were not found.' };
+    const current = this.store.players[owner] ?? [];
+    const taken = new Set(current.map((home) => homeNameKey(home.name)));
+    const clash = incoming.filter((home) => taken.has(homeNameKey(home.name)));
+    if (clash.length > 0) {
+      return { ok: false, error: `Home name already exists: ${clash.map((home) => home.name).join(', ')}` };
+    }
+    this.store.players[owner] = [...current, ...incoming.map((home) => ({ ...home }))];
+    const legacy = { ...(this.store.legacy ?? {}) };
+    delete legacy[name];
+    this.store.legacy = legacy;
+    this.persist();
+    return { ok: true };
   }
 
   renameTaken(ownerName: string, rawName: string, except?: string): boolean {

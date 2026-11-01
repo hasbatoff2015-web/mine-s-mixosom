@@ -10,7 +10,12 @@ import type { Recipe, RecipeOutput } from './types';
 export type CraftOnceFailure = 'unknown' | 'missing' | 'full';
 
 export type CraftOnceResult =
-  | { readonly ok: true; readonly recipeId: string; readonly output: RecipeOutput }
+  | {
+    readonly ok: true;
+    readonly recipeId: string;
+    readonly output: RecipeOutput;
+    readonly consumed: readonly { readonly itemId: string; readonly count: number }[];
+  }
   | { readonly ok: false; readonly reason: CraftOnceFailure };
 
 export const CRAFT_INVENTORY_FULL_MESSAGE = 'Инвентарь заполнен.';
@@ -53,7 +58,12 @@ export function craftOnceByRecipeId(inventory: Inventory, recipeId: string): Cra
     if (trial.add(stack) !== null) return { ok: false, reason: 'full' };
   }
   inventory.restore(trial.serialize());
-  return { ok: true, recipeId: recipe.id, output: recipe.output };
+  return {
+    ok: true,
+    recipeId: recipe.id,
+    output: recipe.output,
+    consumed: [...needs].map(([itemId, count]) => ({ itemId, count })),
+  };
 }
 
 export function canCraftOnce(inventory: Inventory, recipeId: string): CraftOnceFailure | true {

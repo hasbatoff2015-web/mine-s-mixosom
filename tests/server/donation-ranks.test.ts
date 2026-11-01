@@ -19,7 +19,7 @@ import {
 import { resolveHomeLimit } from '../../shared/homes';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
-import { AuctionService } from '../../server/services/auction';
+import { AuctionService, syncAuction } from '../../server/services/auction';
 import { attemptCoordinateTeleport } from '../../server/services/coordinateTeleport';
 import { DonationRankService } from '../../server/services/donationRanks';
 import { EconomyService } from '../../server/services/economy';
@@ -31,6 +31,8 @@ const dirs: string[] = [];
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
+
+const ADA = '11111111-1111-4111-8111-111111111111';
 
 async function ranks(): Promise<{ service: DonationRankService; permissions: PermissionService; dir: string }> {
   const dir = await mkdtemp(pathJoin(tmpdir(), 'fc-donate-'));
@@ -47,9 +49,9 @@ async function ranks(): Promise<{ service: DonationRankService; permissions: Per
 describe('donation rank limits and expiry', () => {
   it('gives default 3 homes, 3 claims and 7 auction lots', async () => {
     const { service } = await ranks();
-    expect(service.limit('ada', 'homes')).toBe(3);
-    expect(service.limit('ada', 'claims')).toBe(3);
-    expect(service.limit('ada', 'auction')).toBe(7);
+    expect(service.limit(ADA, 'homes')).toBe(3);
+    expect(service.limit(ADA, 'claims')).toBe(3);
+    expect(service.limit(ADA, 'auction')).toBe(7);
     expect(RANK_LIMITS.default).toMatchObject({ homes: 3, claims: 3, auction: 7 });
   });
 
@@ -57,10 +59,10 @@ describe('donation rank limits and expiry', () => {
     const { service, permissions } = await ranks();
     const now = Date.now();
     for (const rank of ['vip', 'premium', 'boss', 'titan'] as const) {
-      expect(service.grant('ada', rank, { now, durationMs: DONATION_RANK_DURATION_MS }).ok).toBe(true);
-      expect(service.limit('ada', 'homes', now + 1)).toBe(RANK_LIMITS[rank].homes);
-      expect(service.limit('ada', 'claims', now + 1)).toBe(RANK_LIMITS[rank].claims);
-      expect(service.limit('ada', 'auction', now + 1)).toBe(RANK_LIMITS[rank].auction);
+      expect(service.grant(ADA, rank, { now, durationMs: DONATION_RANK_DURATION_MS }).ok).toBe(true);
+      expect(service.limit(ADA, 'homes', now + 1)).toBe(RANK_LIMITS[rank].homes);
+      expect(service.limit(ADA, 'claims', now + 1)).toBe(RANK_LIMITS[rank].claims);
+      expect(service.limit(ADA, 'auction', now + 1)).toBe(RANK_LIMITS[rank].auction);
     }
     const nodes = permissionNodesForRank('titan');
     expect(nodes).toEqual(expect.arrayContaining([
@@ -77,42 +79,42 @@ describe('donation rank limits and expiry', () => {
     expect(permissionNodesForRank('vip')).not.toContain('announce.use');
     expect(nodes).not.toContain('invsee.edit');
     expect(donationNodesAreNonAdmin(nodes)).toBe(true);
-    expect(permissions.has('ada', 'enderchest.use')).toBe(true);
-    expect(permissions.has('ada', 'server.admin')).toBe(false);
-    expect(permissions.has('ada', 'plugins.manage')).toBe(false);
-    expect(permissions.isOperator('ada')).toBe(false);
+    expect(permissions.has(ADA, 'enderchest.use')).toBe(true);
+    expect(permissions.has(ADA, 'server.admin')).toBe(false);
+    expect(permissions.has(ADA, 'plugins.manage')).toBe(false);
+    expect(permissions.isOperator(ADA)).toBe(false);
   });
 
   it('expires immediately, keeps objects, and reloads after a restart', async () => {
     const { service, permissions, dir } = await ranks();
     const now = 5_000;
-    expect(service.grant('ada', 'boss', { now, durationMs: 1_000, source: 'op' }).ok).toBe(true);
-    expect(service.effectiveRank('ada', now + 999)).toBe('boss');
-    expect(service.effectiveRank('ada', now + 1_000)).toBe('default');
-    expect(permissions.has('ada', 'announce.use')).toBe(false);
-    expect(service.limit('ada', 'homes', now + 1_000)).toBe(3);
+    expect(service.grant(ADA, 'boss', { now, durationMs: 1_000, source: 'op' }).ok).toBe(true);
+    expect(service.effectiveRank(ADA, now + 999)).toBe('boss');
+    expect(service.effectiveRank(ADA, now + 1_000)).toBe('default');
+    expect(permissions.has(ADA, 'announce.use')).toBe(false);
+    expect(service.limit(ADA, 'homes', now + 1_000)).toBe(3);
 
     const again = new DonationRankService(new JsonFileStore(dir), (value) => value.trim().toLowerCase());
     again.load();
-    expect(again.effectiveRank('ada', now + 100)).toBe('boss');
-    expect(again.activeGrant('ada', now + 100)?.source).toBe('op');
-    expect(again.effectiveRank('ada', now + 1_000)).toBe('default');
+    expect(again.effectiveRank(ADA, now + 100)).toBe('boss');
+    expect(again.activeGrant(ADA, now + 100)?.source).toBe('op');
+    expect(again.effectiveRank(ADA, now + 1_000)).toBe('default');
   });
 
   it('adds an extension to the current end and starts from now after expiry', async () => {
     const { service } = await ranks();
     const now = 10_000;
-    service.grant('ada', 'vip', { now, durationMs: 5_000 });
-    const extended = service.extend('ada', { now: now + 1_000, durationMs: 30 * DONATION_DAY_MS });
+    service.grant(ADA, 'vip', { now, durationMs: 5_000 });
+    const extended = service.extend(ADA, { now: now + 1_000, durationMs: 30 * DONATION_DAY_MS });
     expect(extended.ok).toBe(true);
     expect(extended.expiresAt).toBe(now + 5_000 + 30 * DONATION_DAY_MS);
-    expect(service.effectiveRank('ada', extended.expiresAt! - 1)).toBe('vip');
+    expect(service.effectiveRank(ADA, extended.expiresAt! - 1)).toBe('vip');
 
     const expiredAt = extended.expiresAt! + 10;
-    const renewed = service.extend('ada', { now: expiredAt, durationMs: 2_000 });
+    const renewed = service.extend(ADA, { now: expiredAt, durationMs: 2_000 });
     expect(renewed.ok).toBe(true);
     expect(renewed.expiresAt).toBe(expiredAt + 2_000);
-    expect(service.effectiveRank('ada', expiredAt)).toBe('vip');
+    expect(service.effectiveRank(ADA, expiredAt)).toBe('vip');
   });
 
   it('does not raise the home cap by deleting homes when the rank drops', () => {
@@ -138,17 +140,17 @@ describe('donation rank limits and expiry', () => {
 
   it('does not spend a cooldown when the action fails, and blocks a nested call', async () => {
     const { service } = await ranks();
-    const failed = service.consumeIf('ada', 'announce', 1, () => false);
+    const failed = service.consumeIf(ADA, 'announce', 1, () => false);
     expect(failed.ok).toBe(false);
-    expect(service.peekCooldown('ada', 'announce', 1).used).toBe(0);
+    expect(service.peekCooldown(ADA, 'announce', 1).used).toBe(0);
     let nested: { ok: boolean } | undefined;
-    const first = service.consumeIf('ada', 'announce', 1, () => {
-      nested = service.consumeIf('ada', 'announce', 1, () => true);
+    const first = service.consumeIf(ADA, 'announce', 1, () => {
+      nested = service.consumeIf(ADA, 'announce', 1, () => true);
       return true;
     });
     expect(first.ok).toBe(true);
     expect(nested?.ok).toBe(false);
-    expect(service.peekCooldown('ada', 'announce', 1).used).toBe(1);
+    expect(service.peekCooldown(ADA, 'announce', 1).used).toBe(1);
   });
 
   it('keeps a cooldown reservation when the action fails and the rollback cannot be saved', async () => {
@@ -169,35 +171,35 @@ describe('donation rank limits and expiry', () => {
     service.load();
     store.failNext = 1;
     let ran = 0;
-    const blocked = service.consumeIf('ada', 'coords', 1, () => {
+    const blocked = service.consumeIf(ADA, 'coords', 1, () => {
       ran += 1;
       return true;
     }, 1_000);
     expect(blocked.ok).toBe(false);
     expect(ran).toBe(0);
-    expect(service.peekCooldown('ada', 'coords', 1, 1_000).allowed).toBe(true);
+    expect(service.peekCooldown(ADA, 'coords', 1, 1_000).allowed).toBe(true);
 
-    const rolled = service.consumeIf('ada', 'coords', 1, () => {
+    const rolled = service.consumeIf(ADA, 'coords', 1, () => {
       store.failNext = 1;
       return false;
     }, 2_000);
     expect(rolled.ok).toBe(false);
-    expect(service.peekCooldown('ada', 'coords', 1, 2_000).allowed).toBe(false);
+    expect(service.peekCooldown(ADA, 'coords', 1, 2_000).allowed).toBe(false);
     const again = new DonationRankService(new JsonFileStore(dir));
     again.load();
-    expect(again.peekCooldown('ada', 'coords', 1, 2_000).allowed).toBe(false);
+    expect(again.peekCooldown(ADA, 'coords', 1, 2_000).allowed).toBe(false);
   });
 
   it('keeps kit cooldowns across a reload without touching the start ledger', async () => {
     const { service, dir } = await ranks();
     const now = 50_000;
-    expect(service.consumeIf('ada', 'kit:vip', 1, () => true, now).ok).toBe(true);
-    expect(service.peekCooldown('ada', 'kit:vip', 1, now + DONATION_WEEK_MS - 1).allowed).toBe(false);
+    expect(service.consumeIf(ADA, 'kit:vip', 1, () => true, now).ok).toBe(true);
+    expect(service.peekCooldown(ADA, 'kit:vip', 1, now + DONATION_WEEK_MS - 1).allowed).toBe(false);
     const again = new DonationRankService(new JsonFileStore(dir));
     again.load();
-    expect(again.peekCooldown('ada', 'kit:vip', 1, now + 10).allowed).toBe(false);
-    expect(again.peekCooldown('ada', 'kit:food_vip', 1, now + 10).allowed).toBe(true);
-    expect(again.peekCooldown('ada', 'kit:vip', 1, now + DONATION_WEEK_MS).allowed).toBe(true);
+    expect(again.peekCooldown(ADA, 'kit:vip', 1, now + 10).allowed).toBe(false);
+    expect(again.peekCooldown(ADA, 'kit:food_vip', 1, now + 10).allowed).toBe(true);
+    expect(again.peekCooldown(ADA, 'kit:vip', 1, now + DONATION_WEEK_MS).allowed).toBe(true);
   });
 
   it('does not spend a coordinate teleport that fails validation', () => {
@@ -208,7 +210,7 @@ describe('donation rank limits and expiry', () => {
       teleport: () => { teleports += 1; return { ok: true }; },
       peekCooldown: () => ({ allowed: true, remainingMs: 0 }),
       consume: (_id, _now, commit) => (commit() ? { ok: true } : { ok: false, error: 'no' }),
-    }, 'ada', { x: 1, y: 70, z: 1 });
+    }, ADA, { x: 1, y: 70, z: 1 });
     expect(denied.ok).toBe(false);
     expect(teleports).toBe(0);
 
@@ -219,7 +221,7 @@ describe('donation rank limits and expiry', () => {
       teleport: () => { teleports += 1; return { ok: true }; },
       peekCooldown: () => ({ allowed: true, remainingMs: 0 }),
       consume: (_id, _now, commit) => { consumed += 1; return commit() ? { ok: true } : { ok: false, error: 'no' }; },
-    }, 'ada', { x: 1, y: 99_999, z: 1 });
+    }, ADA, { x: 1, y: 99_999, z: 1 });
     expect(badY.ok).toBe(false);
     expect(teleports).toBe(0);
     expect(consumed).toBe(0);
@@ -240,10 +242,10 @@ describe('donation rank limits and expiry', () => {
     inventory.setSlot = (slot, stack) => {
       original(slot, stack);
       if (slot !== 0) return;
-      const nested = auction.createListing('seller', 'Ada', inventory, 1, 1, 10, undefined, 1);
+      const nested = syncAuction(auction.createListing('seller', 'Ada', inventory, 1, 1, 10, undefined, 1));
       expect(nested.ok).toBe(false);
     };
-    const created = auction.createListing('seller', 'Ada', inventory, 0, 1, 10, undefined, 1);
+    const created = syncAuction(auction.createListing('seller', 'Ada', inventory, 0, 1, 10, undefined, 1));
     expect(created.ok).toBe(true);
     expect(auction.activeCount('seller')).toBe(1);
   });
@@ -308,10 +310,11 @@ describe('donation commands on the anarchy world', () => {
     return world;
   }
 
-  function join(world: WorldInstance, name: string) {
+  function join(world: WorldInstance, name: string, sessionToken?: string) {
     const sink = new MemorySink();
-    const result = world.join({ sink, name });
+    const result = world.join({ sink, name, ...(sessionToken ? { sessionToken } : {}) });
     if ('error' in result) throw new Error(result.error);
+    if (name === 'Op' && !sessionToken) world.permissions.op(result.player.id);
     return { ...result, sink };
   }
 
@@ -347,10 +350,11 @@ describe('donation commands on the anarchy world', () => {
     expect(grant?.rank).toBe('vip');
     expect(grant!.expiresAt - grant!.grantedAt).toBe(DONATION_RANK_DURATION_MS);
     expect(grant!.expiresAt).toBeGreaterThanOrEqual(before + DONATION_RANK_DURATION_MS - 5_000);
-    const extended = world.donation.extend('Ada', { durationMs: DONATION_DAY_MS });
+    const extended = world.donation.extend(ada.player.id, { durationMs: DONATION_DAY_MS });
     expect(extended.expiresAt).toBe(grant!.expiresAt + DONATION_DAY_MS);
 
     await world.save();
+    const playerId = ada.player.id;
     const dir = world.config.dataDir;
     await world.stop();
     worlds.splice(worlds.indexOf(world), 1);
@@ -359,8 +363,8 @@ describe('donation commands on the anarchy world', () => {
     await again.initialize();
     await again.loadPlugins();
     await again.plugins.enableAll();
-    expect(again.donation.effectiveRank('Ada')).toBe('vip');
-    expect(again.donation.activeGrant('Ada')?.expiresAt).toBe(extended.expiresAt);
+    expect(again.donation.effectiveRank(playerId)).toBe('vip');
+    expect(again.donation.activeGrant(playerId)?.expiresAt).toBe(extended.expiresAt);
   });
 
   it('enforces home, claim and auction caps without deleting old objects', async () => {
@@ -374,7 +378,7 @@ describe('donation commands on the anarchy world', () => {
     chat(world, op, '/donate grant Ada vip');
     expect(chat(world, ada, '/sethome d').some((line) => line.includes('set'))).toBe(true);
     chat(world, op, '/donate revoke Ada');
-    expect(world.homes.list('Ada')).toHaveLength(4);
+    expect(world.homes.list(ada.player.id)).toHaveLength(4);
     expect(chat(world, ada, '/sethome e').some((line) => line.includes('3 home'))).toBe(true);
 
     const origin = ada.player.controller.position;
@@ -665,6 +669,7 @@ describe('donation commands on the anarchy world', () => {
     expect(said.nameStyle?.prefix).toBe('[ADMIN]');
     expect(said.nameStyle?.prefixColor).toBe('yellow');
     expect(said.nameStyle?.nameColor).toBe('dark_green');
+    const token = op.player.sessionToken;
     await world.save();
     const dir = world.config.dataDir;
     await world.stop();
@@ -674,7 +679,7 @@ describe('donation commands on the anarchy world', () => {
     await again.initialize();
     await again.loadPlugins();
     await again.plugins.enableAll();
-    const op2 = join(again, 'Op');
+    const op2 = join(again, 'Op', token);
     expect(again.donation.nameStyle(op2.player.id, true)?.nameColor).toBe('dark_green');
     expect(again.donation.nameStyle(op2.player.id, true)?.prefixColor).toBe('yellow');
   });

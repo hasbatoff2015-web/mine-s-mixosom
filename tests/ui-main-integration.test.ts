@@ -45,7 +45,7 @@ describe('UI visual pass on the authoritative main contracts', () => {
     expect(gameUiSource).not.toContain('brand-mark');
     expect(gameSource).toContain("this.ui.showLoading('Загрузка мира', this.lastLoadPercent)");
     expect(gameSource).not.toContain('Подготовка мира…');
-    expect(gameSource).toContain("this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(endpoint))");
+    expect(gameSource).toContain("this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url))");
   });
 
   it('keeps live online status and the existing server connect callbacks', () => {
@@ -84,8 +84,8 @@ describe('UI visual pass on the authoritative main contracts', () => {
   it('keeps authoritative cursor and inventory action routing alongside Creative UI', () => {
     expect(gameUiSource).toContain('submitAction?: (message: ClientInventoryActionMessage) => void');
     expect(gameUiSource).toContain('applyAuthoritativeCursor(cursor: ItemStack | null');
-    expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'recipe'");
-    expect(gameUiSource).toContain("submitAction({ type: 'inventory_action', action: 'craft_recipe'");
+    expect(gameUiSource).toContain("stampInventorySubmission({ type: 'inventory_action', action: 'recipe'");
+    expect(gameUiSource).toContain("stampInventorySubmission({ type: 'inventory_action', action: 'craft_recipe'");
     expect(gameUiSource).toContain("submitInventoryAction({ type: 'inventory_action', action: 'click'");
     expect(gameUiSource).toContain('role="tablist" aria-label="Разделы творческого инвентаря"');
   });
