@@ -3,7 +3,7 @@
 ## 2026-10-28: Integrate PR #129 with current main
 
 - [x] Integration branch from `origin/main` `6c402836`, merge of PR #129 `c90d78d`, no rewrite of either history.
-- [x] Seller role and stock label stay. Postgres seller buys are idempotent on `clientRequestId` / `TRADER_PURCHASE`.
+- [x] A settled seller purchase is stored in `buyers.json` and does not depend on the 100-line economy history. The same UUID does not debit again after that history is trimmed. A repeated UUID with a different player, item, quantity, or total is rejected.
 - [x] Concurrent buyer gets `SELLER_BUSY_ERROR`. A failed debit grants nothing. Crash recovery grants a charged reservation once.
 - [x] Protocol keeps `role`, `stock`, and `clientRequestId`. Claim kick stays on `playerId` and keeps `data-menu-context`.
 - [ ] Not merged to `main`. No production deploy and no production or DEV migration.
