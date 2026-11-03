@@ -1,6 +1,7 @@
 import type { ServerConfig } from '../config';
 import type { Database } from '../db/types';
 import { canonicalPlayerId, isPlayerId } from '../services/permissionSubject';
+import { isSignedYandexPlayer, type SignedYandexPlayer } from './yandexVerifier';
 import {
   insertProviderLink,
   selectLinkConflicts,
@@ -11,18 +12,8 @@ import {
 
 export type { IdentityScope };
 
-/**
- * Brand kept only in this process. JSON, spread copies, and `{ verified: true }`
- * from a client do not carry it, so they cannot select or bind a player.
- */
-const yandexVerified = Symbol('fc.yandex.verified');
-
-/** A provider subject minted by this process. A raw client field is not this type. */
-export interface VerifiedProviderIdentity {
-  readonly verified: true;
-  readonly provider: 'yandex';
-  readonly providerUserId: string;
-}
+/** A provider subject minted by the Yandex verifier. A raw client field is not this type. */
+export type VerifiedProviderIdentity = SignedYandexPlayer;
 
 export type ProviderLinkStatus =
   | 'linked'
@@ -46,8 +37,6 @@ export type ProviderLookup =
   | { readonly status: 'unverified' }
   | { readonly status: 'identity_scope_mismatch' };
 
-const PROVIDER_USER_MAX = 128;
-
 export function identityScopeFromServer(config: ServerConfig): IdentityScope | undefined {
   if (!config.database.enabled) return undefined;
   return {
@@ -57,24 +46,8 @@ export function identityScopeFromServer(config: ServerConfig): IdentityScope | u
   };
 }
 
-/**
- * Mints a subject after a real server-side check. The Yandex verifier does not
- * call this: the signed player profile schema is not documented, so no proof
- * can reach here. Do not call it with a client id, `getUniqueID()`, or `verified: true`.
- */
-export function issueVerifiedYandexIdentity(providerUserId: string): VerifiedProviderIdentity | undefined {
-  if (!isProviderUserId(providerUserId)) return undefined;
-  const identity: VerifiedProviderIdentity = { verified: true, provider: 'yandex', providerUserId };
-  Object.defineProperty(identity, yandexVerified, { value: true });
-  return identity;
-}
-
 export function asVerifiedProviderIdentity(value: unknown): VerifiedProviderIdentity | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const row = value as Record<PropertyKey, unknown>;
-  if (row[yandexVerified] !== true || row.verified !== true || row.provider !== 'yandex') return undefined;
-  if (!isProviderUserId(row.providerUserId)) return undefined;
-  return value as VerifiedProviderIdentity;
+  return isSignedYandexPlayer(value) ? value : undefined;
 }
 
 export async function lookupVerifiedProviderIdentity(
@@ -107,8 +80,8 @@ export async function lookupPlayerLinks(
 
 /**
  * Binds one already-verified provider subject to an existing player in this scope.
- * There is no network entry point. `verified: true` on a client object is not enough:
- * the value must be the branded object from `issueVerifiedYandexIdentity`.
+ * There is no function that accepts a raw client id. The value must be a subject
+ * returned by the Yandex verifier.
  */
 export async function bindVerifiedProviderIdentity(
   db: Database,
@@ -161,14 +134,6 @@ export function scopeMatchesProcess(processScope: IdentityScope, requested: Iden
   return processScope.deploymentId === requested.deploymentId
     && processScope.serverMode === requested.serverMode
     && processScope.worldId === requested.worldId;
-}
-
-function isProviderUserId(value: unknown): value is string {
-  return typeof value === 'string'
-    && value.length > 0
-    && value.length <= PROVIDER_USER_MAX
-    && value === value.trim()
-    && !/[\u0000-\u001F\u007F]/.test(value);
 }
 
 function validScope(scope: IdentityScope): boolean {

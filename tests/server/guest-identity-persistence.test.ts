@@ -348,6 +348,33 @@ describe('guest identity persistence', () => {
       }
       expect(server.world.players.size).toBe(1);
       expect([...server.world.players.values()].some((player) => player.connected)).toBe(false);
+      const disk = JSON.parse(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')) as {
+        players: Record<string, { sessionToken?: string; inventory?: unknown }>;
+      };
+      const savedId = Object.keys(disk.players)[0];
+      const savedToken = savedId ? disk.players[savedId]?.sessionToken : undefined;
+      expect(savedId && savedToken).toBeTruthy();
+      const before = JSON.stringify(disk.players[savedId!]?.inventory);
+      const resumed = await new Promise<Extract<ServerMessage, { type: 'welcome' }>>((resolve, reject) => {
+        const socket = new WebSocket(server.wsUrl());
+        socket.on('error', reject);
+        socket.on('open', () => {
+          socket.send(JSON.stringify({
+            type: 'join',
+            protocol: PROTOCOL_VERSION,
+            name: 'Gone',
+            sessionToken: savedToken,
+          }));
+        });
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data)) as ServerMessage;
+          if (message.type === 'welcome') resolve(message);
+          if (message.type === 'error') reject(new Error(message.message));
+        });
+      });
+      expect(resumed.playerId).toBe(savedId);
+      expect(JSON.stringify(resumed.inventory)).toBe(before);
+      expect(server.world.players.size).toBe(1);
     } finally {
       releaseSave();
       await server.stop();

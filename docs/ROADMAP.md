@@ -2,11 +2,12 @@
 
 ## 2026-11-03: Yandex ID link and resume
 
-- [x] Rechecked the official player, purchase, events, and authorization pages. The signed player JSON fields, an authorized-account bit, and profile freshness are still absent.
-- [x] `FC_YANDEX_AUTH_ENABLED` stays off with or without `FC_YANDEX_AUTH_SECRET`. No menu button promises a link.
-- [x] A client object with `verified: true` is not a provider identity. Migration `0008` is unchanged.
-- [x] One connection cannot publish two guests from overlapping `join` messages. A closed socket does not keep that attempt online.
-- [ ] LINK, RESUME, account-switch UI, and referral identity stay blocked until a real signed profile schema is confirmed outside git. Not merged.
+- [x] Signed player proof is checked with HMAC-SHA256. `data.uniqueID` must match `data.id`. A client `verified: true` still cannot bind a player.
+- [x] LINK uses the connected session. RESUME loads the linked UUID and does not create a guest. The same proof can resume once per deployment.
+- [x] `issuedAt` older than 10 minutes or more than 2 minutes ahead is rejected. Auth stays off without the flag, secret, and PostgreSQL.
+- [x] A later join lease wins. Stale cleanup uses the connection id captured at publish.
+- [x] Server list has «Войти через Яндекс». Pause in an online game has «Привязать Яндекс ID».
+- [ ] Live check inside the Yandex draft is still for the owner. Referral rewards are not included. Not merged.
 
 ## 2026-10-28: Integrate PR #129 with current main
 

@@ -1930,9 +1930,13 @@ Natural terrain is reconstructed from `summary.seed` whenever a chunk is materia
 - platform pause/resume events переводятся в lifecycle callbacks;
 - local development не блокируется `/sdk.js`.
 
-Ads, authorization, cloud saves, leaderboards и payments находятся вне текущего adapter scope. На 2026-11-03 повторная проверка SDK не дала схемы подписанного профиля, поэтому адаптер не вызывает `getPlayer({ signed: true })` и не открывает окно входа. Гостевой `join` остаётся единственным входом.
+`YandexGamesService.requestSignedProof` calls `getPlayer({ signed: true })` only after a button press and does not store the signature. `clientAuthorized` is display-only.
 
-`AnarchyServer.handleJoin` держит один незавершённый вход на сокет. Второй `join` до завершения первого не вызывает `WorldInstance.join`. Если сокет закрылся раньше, поздний результат отключает только `connectionId` этой попытки. `supersedeOtherSockets` по-прежнему закрывает другие сокеты того же UUID.
+`verifyYandexPlayerProof` checks HMAC-SHA256 over the decoded profile bytes, then requires `algorithm`, integer `issuedAt`, and `data.uniqueID === data.id`. A purchase payload is rejected. The signed subject is branded in this process. `bindVerifiedProviderIdentity` accepts only that object.
+
+LINK reads the player from the live socket. RESUME looks up `player_identity_links` and publishes that UUID through the existing join. Migration `0009` stores a SHA-256 of a resume proof once per deployment. Guest join remains the default.
+
+`prepareJoin` takes a player lease before publish. A later attempt replaces the lease, so an older publish does not change `connectionId` or `sink`. Cleanup disconnects only the connection id captured at publish. One socket still ignores a second `join` while the first is in flight.
 
 ## Performance boundaries
 

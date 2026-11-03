@@ -2,7 +2,9 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresDatabase } from '../../server/db/database';
-import { bindVerifiedProviderIdentity, issueVerifiedYandexIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
+import { bindVerifiedProviderIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
+import { verifyYandexPlayerProof } from '../../server/identity/yandexVerifier';
+import { SYNTHETIC_ISSUED_AT, SYNTHETIC_NOW_MS, SYNTHETIC_YANDEX_SECRET, signedPlayerProfile } from './yandexProfileFixture';
 
 const databaseUrl = process.env.FC_TEST_DATABASE_URL?.trim() ?? '';
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -60,8 +62,15 @@ describe.skipIf(databaseUrl === '')('provider identity links on PostgreSQL', () 
     const db = open(name);
     await db.start();
     expect(db.appliedMigrations).toContain('0008');
-    const verified = issueVerifiedYandexIdentity('Y1');
-    if (!verified) throw new Error('test identity was not issued');
+    const proof = signedPlayerProfile('Y1', SYNTHETIC_YANDEX_SECRET, SYNTHETIC_ISSUED_AT);
+    const checked = verifyYandexPlayerProof(proof, {
+      secret: SYNTHETIC_YANDEX_SECRET,
+      nowMs: SYNTHETIC_NOW_MS,
+      maxAgeSeconds: 600,
+      clockSkewSeconds: 120,
+    });
+    if (!checked.ok) throw new Error(checked.reason);
+    const verified = checked.identity;
     const [left, right] = await Promise.all([
       bindVerifiedProviderIdentity(db, scope, verified, A, () => true),
       bindVerifiedProviderIdentity(db, scope, verified, B, () => true),

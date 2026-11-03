@@ -328,6 +328,16 @@ export interface ClientJoinMessage {
   /** Explicit new-guest request. Does not reuse or erase a stored credential by itself. */
   readonly freshGuest?: boolean;
   readonly appearance?: PlayerAppearance;
+  /** Present only when the player chose Yandex resume. Guest join omits it. */
+  readonly authMode?: 'resume_yandex';
+  readonly yandexProof?: string;
+  /** Explicit switch away from the local guest after the server reported a conflict. */
+  readonly confirmYandexResume?: boolean;
+}
+
+export interface ClientAuthLinkMessage {
+  readonly type: 'auth_link';
+  readonly proof: string;
 }
 
 export interface ClientAppearanceMessage {
@@ -865,7 +875,8 @@ export type ClientMessage =
   | ClientMenuActionMessage
   | ClientTradeActionMessage
   | ClientDirectMessageActionMessage
-  | ClientEmoteMessage;
+  | ClientEmoteMessage
+  | ClientAuthLinkMessage;
 
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
@@ -1682,6 +1693,29 @@ export interface ServerDuelEffectMessage {
   readonly z: number;
 }
 
+export const AUTH_LINK_STATUSES = [
+  'linked',
+  'already_linked',
+  'provider_conflict',
+  'player_conflict',
+  'proof_invalid',
+  'proof_expired',
+  'proof_reused',
+  'auth_disabled',
+  'db_unavailable',
+  'stale_session',
+  'busy',
+  'rate_limited',
+] as const;
+
+export type AuthLinkStatus = typeof AUTH_LINK_STATUSES[number];
+
+export interface ServerAuthResultMessage {
+  readonly type: 'auth_result';
+  readonly action: 'link';
+  readonly status: AuthLinkStatus;
+}
+
 /** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
 export interface ServerPlayerLookMessage {
   readonly type: 'player_look';
@@ -1793,7 +1827,8 @@ export type ServerMessage =
   | ServerTradeMessage
   | ServerDirectMessage
   | ServerDuelEffectMessage
-  | ServerPlayerLookMessage;
+  | ServerPlayerLookMessage
+  | ServerAuthResultMessage;
 
 export const CLIENT_MESSAGE_TYPES = [
   'join',
@@ -1824,6 +1859,7 @@ export const CLIENT_MESSAGE_TYPES = [
   'trade_action',
   'direct_message_action',
   'emote',
+  'auth_link',
 ] as const satisfies readonly ClientMessage['type'][];
 
 export const SERVER_MESSAGE_TYPES = [
@@ -1868,6 +1904,7 @@ export const SERVER_MESSAGE_TYPES = [
   'direct_message',
   'duel_effect',
   'player_look',
+  'auth_result',
 ] as const satisfies readonly ServerMessage['type'][];
 
 const INVENTORY_ACTIONS: readonly InventoryActionKind[] = [
@@ -2281,6 +2318,11 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const freshGuest = raw.freshGuest === true;
       const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
       if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
+      const authMode = raw.authMode === 'resume_yandex' ? 'resume_yandex' as const : undefined;
+      const yandexProof = typeof raw.yandexProof === 'string' ? raw.yandexProof : undefined;
+      if (yandexProof && yandexProof.length > 8192) return { error: 'join.proof too large' };
+      if (authMode === 'resume_yandex' && !yandexProof) return { error: 'join.proof required' };
+      const confirmYandexResume = raw.confirmYandexResume === true;
       return {
         type: 'join',
         protocol: PROTOCOL_VERSION,
@@ -2288,7 +2330,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(sessionToken ? { sessionToken } : {}),
         ...(freshGuest ? { freshGuest } : {}),
         ...(appearance ? { appearance } : {}),
+        ...(authMode ? { authMode, yandexProof, ...(confirmYandexResume ? { confirmYandexResume } : {}) } : {}),
       };
+    }
+    case 'auth_link': {
+      if (typeof raw.proof !== 'string' || raw.proof.length === 0 || raw.proof.length > 8192) {
+        return { error: 'auth_link.proof invalid' };
+      }
+      return { type: 'auth_link', proof: raw.proof };
     }
     case 'appearance': {
       const appearance = parseNetworkAppearance(raw);
@@ -3200,6 +3249,12 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (!reason) return { error: 'player_look.reason invalid' };
       if (!finite(raw.yaw) || !finite(raw.pitch)) return { error: 'player_look invalid' };
       return { type: 'player_look', reason, yaw: raw.yaw, pitch: raw.pitch };
+    }
+    case 'auth_result': {
+      if (raw.action !== 'link' || typeof raw.status !== 'string' || !AUTH_LINK_STATUSES.includes(raw.status as AuthLinkStatus)) {
+        return { error: 'auth_result invalid' };
+      }
+      return { type: 'auth_result', action: 'link', status: raw.status as AuthLinkStatus };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

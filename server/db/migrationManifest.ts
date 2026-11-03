@@ -36,6 +36,19 @@ export const INSERT_MIGRATION_SQL = 'INSERT INTO schema_migrations (version, nam
  * block a future migration from dropping that trigger, changing columns, and
  * installing it again.
  */
+const YANDEX_PROOF_RECEIPTS_SQL = `CREATE TABLE yandex_proof_receipts (
+  deployment_id TEXT NOT NULL,
+  proof_hash TEXT NOT NULL,
+  player_id UUID NOT NULL,
+  purpose TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CONSTRAINT yandex_proof_receipts_pk PRIMARY KEY (deployment_id, proof_hash),
+  CONSTRAINT yandex_proof_receipts_purpose CHECK (purpose = 'resume'),
+  CONSTRAINT yandex_proof_receipts_hash_hex CHECK (proof_hash ~ '^[0-9a-f]{64}$'),
+  CONSTRAINT yandex_proof_receipts_deployment_nonempty CHECK (length(btrim(deployment_id)) > 0),
+  CONSTRAINT yandex_proof_receipts_deployment_len CHECK (char_length(deployment_id) <= 64)
+)`;
+
 const PROVIDER_IDENTITY_LINKS_SQL = `CREATE TABLE player_identity_links (
   deployment_id TEXT NOT NULL,
   server_mode TEXT NOT NULL,
@@ -540,6 +553,13 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'provider_identity_links',
     statements: [
       PROVIDER_IDENTITY_LINKS_SQL,
+    ],
+  },
+  {
+    version: '0009',
+    name: 'yandex_proof_receipts',
+    statements: [
+      YANDEX_PROOF_RECEIPTS_SQL,
     ],
   },
 ];

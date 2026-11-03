@@ -146,30 +146,53 @@ export function loadAdminIdentityConfig(env: NodeJS.ProcessEnv): AdminIdentityCo
   return { enabled: true, ids: [parts[0]!, parts[1]!] };
 }
 
-export interface YandexAuthConfig {
-  /** Always false until the signed player-profile schema is documented and a secret is set. */
-  readonly enabled: false;
-  readonly reason: 'disabled' | 'missing_secret' | 'profile_schema_unverified';
-}
+export type YandexAuthConfig =
+  | {
+    readonly enabled: false;
+    readonly reason: 'disabled' | 'missing_secret' | 'database_disabled' | 'invalid_config';
+  }
+  | {
+    readonly enabled: true;
+    readonly secret: string;
+    readonly maxAgeSeconds: number;
+    readonly clockSkewSeconds: number;
+  };
 
 /**
- * Provider login stays off. A flag without a secret does not accept unsigned ids.
- * A secret does not turn the flag on either: the signed player profile schema is
- * still undocumented (rechecked 2026-11-03). The secret is never returned to logs.
+ * Off unless the flag, a non-empty secret, and PostgreSQL are all set.
+ * The secret stays on this object and must not be logged or sent to clients.
+ * maxAgeSeconds defaults to 10 minutes: a signed profile is fetched when the
+ * player presses the button, while an observed signature stayed HMAC-valid
+ * for about 45 minutes and did not refresh until a full reload.
  */
-export function loadYandexAuthConfig(env: NodeJS.ProcessEnv): YandexAuthConfig {
+export function loadYandexAuthConfig(env: NodeJS.ProcessEnv, databaseEnabled: boolean): YandexAuthConfig {
   const requested = env.FC_YANDEX_AUTH_ENABLED === '1' || env.FC_YANDEX_AUTH_ENABLED === 'true';
   if (!requested) return { enabled: false, reason: 'disabled' };
   const secret = env.FC_YANDEX_AUTH_SECRET ?? '';
-  if (secret.trim() === '') return { enabled: false, reason: 'missing_secret' };
-  return { enabled: false, reason: 'profile_schema_unverified' };
+  if (secret === '') return { enabled: false, reason: 'missing_secret' };
+  if (secret !== secret.trim()) return { enabled: false, reason: 'invalid_config' };
+  if (!databaseEnabled) return { enabled: false, reason: 'database_disabled' };
+  const maxAgeSeconds = optionalBoundedInt(env.FC_YANDEX_AUTH_MAX_AGE_SECONDS, 600, 60, 3600);
+  const clockSkewSeconds = optionalBoundedInt(env.FC_YANDEX_AUTH_CLOCK_SKEW_SECONDS, 120, 0, 600);
+  if (maxAgeSeconds === undefined || clockSkewSeconds === undefined) {
+    return { enabled: false, reason: 'invalid_config' };
+  }
+  return { enabled: true, secret, maxAgeSeconds, clockSkewSeconds };
+}
+
+function optionalBoundedInt(raw: string | undefined, fallback: number, min: number, max: number): number | undefined {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  if (!/^\d+$/.test(raw.trim())) return undefined;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < min || value > max) return undefined;
+  return value;
 }
 
 export function yandexAuthLogLabel(auth: YandexAuthConfig): string {
+  if (auth.enabled) return 'yandex auth: enabled';
   if (auth.reason === 'missing_secret') return 'yandex auth: disabled (FC_YANDEX_AUTH_SECRET is missing)';
-  if (auth.reason === 'profile_schema_unverified') {
-    return 'yandex auth: disabled (signed player profile schema is not documented)';
-  }
+  if (auth.reason === 'database_disabled') return 'yandex auth: disabled (PostgreSQL is not configured)';
+  if (auth.reason === 'invalid_config') return 'yandex auth: disabled (invalid FC_YANDEX_AUTH settings)';
   return 'yandex auth: disabled';
 }
 
@@ -256,6 +279,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
   const worldId = (explicitWorld?.trim() || serverMode || DEFAULT_WORLD_ID).trim() || DEFAULT_WORLD_ID;
   const dataDir = env.WORLD_PATH || env.FC_WORLD_PATH || `${cwd}/server/data/worlds`;
   const adminIdentity = loadAdminIdentityConfig(env);
+  const database = loadDatabaseConfig(env);
   return {
     host,
     port: integerEnv(env, 'PORT', integerEnv(env, 'FC_PORT', DEFAULT_SERVER_PORT, 0, 65535), 0, 65535),
@@ -275,8 +299,8 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
       .filter(Boolean),
     loadExamplePlugin: env.FC_EXAMPLE_PLUGIN === '1' || env.FC_EXAMPLE_PLUGIN === 'true',
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
-    database: loadDatabaseConfig(env),
-    yandexAuth: loadYandexAuthConfig(env),
+    database,
+    yandexAuth: loadYandexAuthConfig(env, database.enabled),
     economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
     adminIdentity,
     adminHttp: loadAdminHttpConfig(env, adminIdentity),

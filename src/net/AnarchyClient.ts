@@ -287,6 +287,7 @@ export interface GuestConnectOptions {
   readonly durable?: GuestStorage | null;
   readonly legacy?: GuestStorage | null;
   readonly scopeLock?: <T>(scope: GuestIdentityScope, signal: AbortSignal, body: () => Promise<T>) => Promise<T>;
+  readonly yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean };
 }
 
 /** One status request. A hung response must not keep connect() pending. */
@@ -495,7 +496,7 @@ export class AnarchyClient {
       return;
     }
     const open = (chosen: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>): void => {
-      this.openSocket(attempt, url, name, appearance, chosen, durable, legacy);
+      this.openSocket(attempt, url, name, appearance, chosen, durable, legacy, options?.yandexResume);
     };
     if (plan.outcome === 'ready_new' && plan.scope && !plan.ephemeral) {
       const scope = plan.scope;
@@ -555,6 +556,7 @@ export class AnarchyClient {
     plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>,
     durable: GuestStorage | null,
     legacy: GuestStorage | null,
+    yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean },
   ): void {
     if (attempt.settled || this.generation !== attempt.generation) {
       this.failAttempt(attempt, cancelledJoin());
@@ -578,7 +580,16 @@ export class AnarchyClient {
     };
     socket.addEventListener('open', () => {
       if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
-      this.send(buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
+      const resume = yandexResume;
+      this.send(resume
+        ? buildAnarchyJoinMessage(
+          name,
+          resume.confirmOtherCharacter || plan.outcome === 'untrusted' ? undefined : plan.sendToken,
+          appearance,
+          false,
+          resume,
+        )
+        : buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
     });
     socket.addEventListener('message', (event) => {
       if (this.generation !== generation || this.socket !== socket) return;
@@ -789,6 +800,7 @@ export function buildAnarchyJoinMessage(
   sessionToken?: string,
   appearance?: PlayerAppearance,
   freshGuest?: boolean,
+  yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean },
 ): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
   return {
@@ -803,6 +815,11 @@ export function buildAnarchyJoinMessage(
         model: appearance.model,
         layers: appearance.layers,
       },
+    } : {}),
+    ...(yandexResume ? {
+      authMode: 'resume_yandex' as const,
+      yandexProof: yandexResume.proof,
+      ...(yandexResume.confirmOtherCharacter ? { confirmYandexResume: true } : {}),
     } : {}),
   };
 }
