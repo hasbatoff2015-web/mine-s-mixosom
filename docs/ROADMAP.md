@@ -1,5 +1,22 @@
 # Roadmap
 
+## 2026-11-03: Yandex resume fail-closed
+
+- [x] Welcome and the guest session token are sent only after the matching proof reservation is consumed.
+- [x] A legacy `0009` text hash blocks that proof. New receipts use the canonical fingerprint. Cleanup stays inside one deployment, mode, and world.
+- [x] Loopback is not a shared player limit. The verified subject limit uses `uniqueID`. `auth_link.requestId` is correlation only.
+- [x] An already online player can replace that session on a full server without taking a second slot.
+- [ ] Live PostgreSQL and the Yandex draft are still for the owner. Not merged. Not deployed.
+
+## 2026-11-03: Yandex ID link and resume
+
+- [x] Signed player proof is checked with HMAC-SHA256. `data.uniqueID` must match `data.id`. A client `verified: true` still cannot bind a player.
+- [x] LINK uses the connected session. RESUME loads the linked UUID and does not create a guest. The same proof can resume once per deployment.
+- [x] `issuedAt` older than 10 minutes or more than 2 minutes ahead is rejected. Auth stays off without the flag, secret, and PostgreSQL.
+- [x] A later join lease wins. Stale cleanup uses the connection id captured at publish.
+- [x] Server list has «Войти через Яндекс». Pause in an online game has «Привязать Яндекс ID».
+- [ ] Live check inside the Yandex draft is still for the owner. Referral rewards are not included. Not merged.
+
 ## 2026-10-28: Integrate PR #129 with current main
 
 - [x] Integration branch from `origin/main` `6c402836`, merge of PR #129 `c90d78d`, no rewrite of either history.
@@ -35,7 +52,7 @@
 - [x] Stage 6: VPS готовит архив трёх миров и дампа PostgreSQL, хранит 3 последние копии, владелец скачивает их сам. Таймер в репозитории, на VPS не включён. Черновик, не влит. Draft PR **#129**.
 - [x] Stage A: гостевой `playerId` переживает новую вкладку и обычный перезапуск. Неизвестный ключ замену не создаёт. Отмена входа и зависший статус нового UUID не создают. Слоты браузера разделены по миру. Привязка Яндекса не делалась. Draft PR **#129**.
 - [x] Stage B: в PostgreSQL есть реестр `player_identity_links` для уже проверенного внешнего id и существующего UUID. Вход через Яндекс и смена устройства не сделаны. Это Stage C. Draft PR **#129**.
-- [ ] Stage C: сверка HMAC конверта есть, но схема подписанного профиля игрока не документирована. Вход через Яндекс выключен. Draft PR **#129**.
+- [ ] Stage C: сверка HMAC конверта есть, но схема подписанного профиля игрока не документирована и на 2026-11-03. Вход через Яндекс выключен. PR #129 уже в main через #141. Отдельная ветка привязки остаётся черновиком и вход не включает.
 
 ## 2026-10-13: Stage 4 private admin access
 

@@ -1,4 +1,14 @@
 import { join } from 'node:path';
+import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedProviderIdentity } from './identity/providerLinks';
+import {
+  consumeReservedProof,
+  purgeExpiredReceipts,
+  receiptRetentionSeconds,
+  releaseReservedProof,
+  reserveResumeProof,
+} from './identity/yandexProofReceipts';
+import { legacyProofFingerprint, verifyYandexPlayerProof } from './identity/yandexVerifier';
+import type { AuthLinkStatus } from '../shared/protocol';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
@@ -714,6 +724,15 @@ export class WorldInstance {
   private readonly menuReturn = new Map<string, GameMenuScreenKind>();
   readonly players = new Map<string, ServerPlayer>();
   readonly tokens = new Map<string, string>();
+  private readonly playerJoinLease = new Map<string, number>();
+  private nextPlayerJoinLease = 1;
+  /** Joins that still need a free online slot and have not published yet. */
+  private pendingJoinSlots = 0;
+  /**
+   * Optional pause immediately before a join is published.
+   * Production leaves this unset. Tests use it to overlap two resumes.
+   */
+  beforeJoinPublish?: () => Promise<void>;
   readonly gameplay: ServerGameplay;
   readonly database: Database;
   readonly adminIdentity: AdminIdentityPolicy;
@@ -1996,6 +2015,249 @@ export class WorldInstance {
     for (const player of this.players.values()) player.inputPacketsThisLoop = 0;
   }
 
+  private claimPlayerJoin(playerId: string): number {
+    const lease = ++this.nextPlayerJoinLease;
+    this.playerJoinLease.set(playerId, lease);
+    return lease;
+  }
+
+  /** A connected player replacing their own session does not need another slot. */
+  private replacingConnectedPlayer(sessionToken?: string): boolean {
+    if (!sessionToken) return false;
+    const id = this.tokens.get(sessionToken);
+    if (!id) return false;
+    return this.players.get(id)?.connected === true;
+  }
+
+  private hasJoinRoom(sessionToken?: string): boolean {
+    if (this.replacingConnectedPlayer(sessionToken)) return true;
+    return this.onlineCount() + this.pendingJoinSlots < this.config.maxPlayers;
+  }
+
+  private holdJoinSlot(sessionToken?: string): { ok: true; release: () => void } | { ok: false } {
+    if (this.replacingConnectedPlayer(sessionToken)) return { ok: true, release: () => {} };
+    if (!this.hasJoinRoom(sessionToken)) return { ok: false };
+    this.pendingJoinSlots += 1;
+    let held = true;
+    return {
+      ok: true,
+      release: () => {
+        if (!held) return;
+        held = false;
+        this.pendingJoinSlots -= 1;
+      },
+    };
+  }
+
+  private playerJoinOwns(playerId: string, lease: number): boolean {
+    return this.playerJoinLease.get(playerId) === lease;
+  }
+
+  private supersededJoin(): { error: string; code: 'join_superseded' } {
+    return { error: 'Подключение заменено более новым входом.', code: 'join_superseded' };
+  }
+
+  private sessionTokenForPlayer(playerId: string): string | undefined {
+    return this.players.get(playerId)?.sessionToken ?? this.storedPlayers[playerId]?.sessionToken;
+  }
+
+  private yandexProofFailure(reason: string): { error: string; code: string } {
+    if (reason === 'expired' || reason === 'not_yet_valid') {
+      return { error: 'Подтверждение Яндекса устарело. Обновите игру и повторите вход.', code: 'proof_expired' };
+    }
+    return { error: 'Не удалось подтвердить Яндекс ID.', code: 'proof_invalid' };
+  }
+
+  async linkYandex(
+    playerId: string,
+    connectionId: string,
+    proof: string,
+    subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean,
+  ): Promise<AuthLinkStatus> {
+    const player = this.players.get(playerId);
+    if (!player?.connected || player.connectionId !== connectionId) return 'stale_session';
+    const auth = this.config.yandexAuth;
+    if (!auth.enabled) return 'auth_disabled';
+    const scope = identityScopeFromServer(this.config);
+    if (!scope || !this.database.enabled) return 'db_unavailable';
+    const verified = verifyYandexPlayerProof(proof, {
+      secret: auth.secret,
+      nowMs: Date.now(),
+      maxAgeSeconds: auth.maxAgeSeconds,
+      clockSkewSeconds: auth.clockSkewSeconds,
+    });
+    if (!verified.ok) return verified.reason === 'expired' || verified.reason === 'not_yet_valid' ? 'proof_expired' : 'proof_invalid';
+    if (subjectRate && !subjectRate(verified.identity)) return 'rate_limited';
+    if (player.connectionId !== connectionId) return 'stale_session';
+    try {
+      const bound = await bindVerifiedProviderIdentity(
+        this.database,
+        scope,
+        verified.identity,
+        player.id,
+        (id) => this.players.has(id) || Boolean(this.storedPlayers[id]),
+      );
+      if (bound.status === 'unavailable') return 'db_unavailable';
+      if (bound.status === 'unverified' || bound.status === 'invalid_player' || bound.status === 'identity_scope_mismatch') {
+        return 'proof_invalid';
+      }
+      if (bound.status === 'unknown_player') return 'proof_invalid';
+      return bound.status;
+    } catch (error) {
+      serverLog(`yandex link failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return 'db_unavailable';
+    }
+  }
+
+  async resumeYandexJoin(options: {
+    sink: ConnectedSink;
+    name?: string;
+    appearance?: PlayerAppearance;
+    proof: string;
+    guestToken?: string;
+    confirmOtherCharacter: boolean;
+    subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
+  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
+    const auth = this.config.yandexAuth;
+    if (!auth.enabled) return { error: 'Вход через Яндекс на этом сервере выключен.', code: 'auth_disabled' };
+    const scope = identityScopeFromServer(this.config);
+    if (!scope || !this.database.enabled) return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    const verified = verifyYandexPlayerProof(options.proof, {
+      secret: auth.secret,
+      nowMs: Date.now(),
+      maxAgeSeconds: auth.maxAgeSeconds,
+      clockSkewSeconds: auth.clockSkewSeconds,
+    });
+    if (!verified.ok) return this.yandexProofFailure(verified.reason);
+    let lookup;
+    try {
+      lookup = await lookupVerifiedProviderIdentity(this.database, scope, verified.identity);
+    } catch (error) {
+      serverLog(`yandex lookup failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    }
+    if (lookup.status === 'unavailable') return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    if (lookup.status === 'absent') {
+      return {
+        error: 'К этому Яндекс ID ещё не привязан персонаж в этом мире. Войдите гостем и привяжите его.',
+        code: 'yandex_not_linked',
+      };
+    }
+    if (lookup.status !== 'found') return { error: 'Восстановление отклонено.', code: 'auth_disabled' };
+    if (options.guestToken && !options.confirmOtherCharacter) {
+      const guestId = this.tokens.get(options.guestToken) ?? this.storedPlayerByToken(options.guestToken)?.id;
+      if (guestId && guestId !== lookup.playerId) {
+        return { error: 'К этому Яндекс ID привязан другой персонаж.', code: 'yandex_character_conflict' };
+      }
+    }
+    const token = this.sessionTokenForPlayer(lookup.playerId);
+    if (!token) return { error: 'Персонаж не найден.', code: 'player_not_found' };
+    if (this.readyState !== 'READY') return { error: 'world not ready', code: 'world_not_ready' };
+    if (!this.hasJoinRoom(token)) return { error: 'server full', code: 'server_full' };
+    if (this.isPlayerBanned(lookup.playerId)) return { error: 'banned', code: 'banned' };
+    if (options.subjectRate && !options.subjectRate(verified.identity)) {
+      return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
+    }
+    const attemptId = crypto.randomUUID();
+    const proofHash = verified.identity.proofHash;
+    const legacyHash = legacyProofFingerprint(options.proof);
+    let reserved;
+    try {
+      reserved = await reserveResumeProof(
+        this.database,
+        scope,
+        proofHash,
+        lookup.playerId,
+        attemptId,
+        legacyHash,
+      );
+    } catch (error) {
+      serverLog(`yandex receipt failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    }
+    if (reserved === 'unavailable') return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    if (reserved === 'reused') {
+      return { error: 'Это подтверждение уже использовано. Обновите игру и повторите вход.', code: 'proof_reused' };
+    }
+    let joined;
+    try {
+      joined = await this.join({
+        sink: options.sink,
+        name: options.name,
+        appearance: options.appearance,
+        sessionToken: token,
+        durableFresh: true,
+        publishGate: async (owns) => {
+          if (!owns()) {
+            await this.releaseYandexReservation(scope, proofHash, attemptId);
+            return this.supersededJoin();
+          }
+          let consumed = false;
+          try {
+            consumed = await consumeReservedProof(this.database, scope, proofHash, attemptId);
+          } catch (error) {
+            serverLog(`yandex receipt consume failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+            return {
+              error: 'Восстановление временно недоступно. Обновите игру и запросите новое подтверждение.',
+              code: 'proof_unconfirmed',
+            };
+          }
+          if (!consumed) {
+            await this.releaseYandexReservation(scope, proofHash, attemptId);
+            return {
+              error: 'Не удалось завершить подтверждение Яндекса. Повторите вход.',
+              code: 'proof_not_consumed',
+            };
+          }
+          if (!owns()) return { error: 'Подключение заменено более новым входом.', code: 'proof_spent' };
+          return undefined;
+        },
+      });
+    } catch (error) {
+      serverLog(`yandex resume publish failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return {
+        error: 'Восстановление временно недоступно. Обновите игру и запросите новое подтверждение.',
+        code: 'proof_unconfirmed',
+      };
+    }
+    if ('error' in joined && !this.keepYandexReservation(joined.code)) {
+      await this.releaseYandexReservation(scope, proofHash, attemptId);
+    }
+    return joined;
+  }
+
+  async purgeOldYandexReceipts(): Promise<void> {
+    const auth = this.config.yandexAuth;
+    if (!auth.enabled || !this.database.enabled) return;
+    const scope = identityScopeFromServer(this.config);
+    if (!scope) return;
+    const olderThan = receiptRetentionSeconds(auth.maxAgeSeconds, auth.clockSkewSeconds);
+    try {
+      await purgeExpiredReceipts(this.database, scope, olderThan);
+    } catch (error) {
+      serverLog(`yandex receipt purge failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
+  }
+
+  private keepYandexReservation(code: string | undefined): boolean {
+    return code === 'join_superseded'
+      || code === 'proof_unconfirmed'
+      || code === 'proof_spent'
+      || code === 'proof_not_consumed';
+  }
+
+  private async releaseYandexReservation(
+    scope: NonNullable<ReturnType<typeof identityScopeFromServer>>,
+    proofHash: string,
+    attemptId: string,
+  ): Promise<void> {
+    try {
+      await releaseReservedProof(this.database, scope, proofHash, attemptId);
+    } catch (error) {
+      serverLog(`yandex receipt release failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
+  }
+
   join(options: {
     sink: ConnectedSink;
     name?: string;
@@ -2003,7 +2265,7 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh?: false;
-  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string };
   join(options: {
     sink: ConnectedSink;
     name?: string;
@@ -2011,7 +2273,8 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh: true;
-  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }>;
+    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
+  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }>;
   join(options: {
     sink: ConnectedSink;
     name?: string;
@@ -2019,67 +2282,94 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh?: boolean;
-  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }
-    | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string }> {
-    if (this.readyState !== 'READY') return options.durableFresh
-      ? Promise.resolve({ error: 'world not ready' })
-      : { error: 'world not ready' };
-    if (this.onlineCount() >= this.config.maxPlayers) return options.durableFresh
-      ? Promise.resolve({ error: 'server full' })
-      : { error: 'server full' };
-
-    const prepared = this.prepareJoin(options);
-    if ('error' in prepared) return options.durableFresh ? Promise.resolve(prepared) : prepared;
-    const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string } => {
-      if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-      if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-      return prepared.publish();
-    };
-    if (prepared.fresh && options.durableFresh) {
-      return this.persistCandidate(prepared.player).then(
-        async () => {
-          if (this.money.backend === 'postgres') {
-            const prepare = this.money.preparePlayer;
-            if (!prepare) {
-              await this.rollbackCandidate(prepared.player);
-              return { error: 'Сервер временно недоступен.' };
-            }
-            try {
-              await prepare.call(this.money, prepared.player.id, options.name?.trim() || prepared.player.name);
-            } catch {
-              serverLog('player join economy prepare failed', 'error');
-              await this.rollbackCandidate(prepared.player);
-              return { error: 'Сервер временно недоступен.' };
-            }
-          }
-          const published = publishIfAllowed();
-          if ('error' in published) await this.rollbackCandidate(prepared.player);
-          return published;
-        },
-        () => {
-          serverLog('guest identity save failed', 'error');
-          return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
-        },
-      );
-    }
-    if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-    if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-    if (this.money.backend !== 'postgres') return prepared.publish();
-    const prepare = this.money.preparePlayer;
-    if (!prepare) return { error: 'Сервер временно недоступен.' };
-    const displayName = options.name?.trim() || prepared.player.name;
-    const work = prepare.call(this.money, prepared.player.id, displayName).then(
-      () => {
-        if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-        if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-        return prepared.publish();
-      },
-      () => {
-        serverLog('player join economy prepare failed', 'error');
-        return { error: 'Сервер временно недоступен.' };
-      },
+    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
+  }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }
+    | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
+    const fail = (error: { error: string; code?: string }) => (
+      options.durableFresh ? Promise.resolve(error) : error
     );
-    return work as unknown as { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string };
+    if (this.readyState !== 'READY') return fail({ error: 'world not ready' });
+    const slot = this.holdJoinSlot(options.sessionToken);
+    if (!slot.ok) return fail({ error: 'server full' });
+    let prepared: ReturnType<WorldInstance['prepareJoin']>;
+    try {
+      prepared = this.prepareJoin(options);
+    } catch (error) {
+      slot.release();
+      throw error;
+    }
+    if ('error' in prepared) {
+      slot.release();
+      return fail(prepared);
+    }
+    const player = prepared;
+    const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string } => {
+      if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
+      if (this.isPlayerBanned(player.player.id)) return { error: 'banned' };
+      return player.publish();
+    };
+    const asyncNeeded = Boolean(
+      (player.fresh && options.durableFresh)
+      || this.money.backend === 'postgres'
+      || options.publishGate
+      || this.beforeJoinPublish,
+    );
+    if (!asyncNeeded) {
+      try {
+        return publishIfAllowed();
+      } finally {
+        slot.release();
+      }
+    }
+    return (async () => {
+      try {
+        if (player.fresh && options.durableFresh) {
+          try {
+            await this.persistCandidate(player.player);
+          } catch {
+            serverLog('guest identity save failed', 'error');
+            return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
+          }
+        }
+        if (this.money.backend === 'postgres') {
+          const prepare = this.money.preparePlayer;
+          if (!prepare) {
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return { error: 'Сервер временно недоступен.' };
+          }
+          try {
+            await prepare.call(this.money, player.player.id, options.name?.trim() || player.player.name);
+          } catch {
+            serverLog('player join economy prepare failed', 'error');
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return { error: 'Сервер временно недоступен.' };
+          }
+        }
+        if (this.database.enabled && !this.adminBansReady) {
+          if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+          return { error: 'moderation unavailable' };
+        }
+        if (this.isPlayerBanned(player.player.id)) {
+          if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+          return { error: 'banned' };
+        }
+        if (options.publishGate) {
+          const blocked = await options.publishGate(() => player.owns());
+          if (blocked) {
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return blocked;
+          }
+        }
+        if (this.beforeJoinPublish) await this.beforeJoinPublish();
+        const published = publishIfAllowed();
+        if ('error' in published && player.fresh && options.durableFresh) {
+          await this.rollbackCandidate(player.player);
+        }
+        return published;
+      } finally {
+        slot.release();
+      }
+    })();
   }
 
   /**
@@ -2096,7 +2386,8 @@ export class WorldInstance {
   }): { error: string; code?: string } | {
     player: ServerPlayer;
     fresh: boolean;
-    publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string };
+    owns: () => boolean;
+    publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string };
   } {
     if (options.sessionToken) {
       const existingId = this.tokens.get(options.sessionToken);
@@ -2104,17 +2395,21 @@ export class WorldInstance {
       if (existing) {
         const wasConnected = existing.connected;
         const previousConnectionId = existing.connectionId;
+        const lease = this.claimPlayerJoin(existing.id);
         return {
           player: existing,
           fresh: false,
+          owns: () => this.playerJoinOwns(existing.id, lease),
           publish: () => {
+            if (!this.playerJoinOwns(existing.id, lease)) return this.supersededJoin();
+            const connectionId = crypto.randomUUID();
             existing.connected = true;
             existing.disconnectedAt = 0;
             existing.sink = options.sink;
-            existing.connectionId = crypto.randomUUID();
+            existing.connectionId = connectionId;
             existing.joinCount += 1;
             existing.resumeCount += 1;
-            existing.lastInputConnectionId = existing.connectionId;
+            existing.lastInputConnectionId = connectionId;
             if (options.name) existing.name = options.name;
             const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
             if (joinedAppearance) existing.appearance = joinedAppearance;
@@ -2130,13 +2425,15 @@ export class WorldInstance {
             this.buyer.restoreOverflow(existing.id, existing.inventory);
             if (!wasConnected) this.notifyFriendsOfPresence(existing, 'joined');
             this.ensureCosmeticPet(existing);
-            return { player: existing, resumed: true, previousConnectionId };
+            return { player: existing, resumed: true, previousConnectionId, connectionId };
           },
         };
       }
       const stored = (existingId ? this.storedPlayers[existingId] : undefined)
         ?? this.storedPlayerByToken(options.sessionToken);
       if (stored) {
+        const lease = this.claimPlayerJoin(stored.id);
+        const owns = () => this.playerJoinOwns(stored.id, lease);
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name, false);
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) restored.appearance = joinedAppearance;
@@ -2145,7 +2442,12 @@ export class WorldInstance {
         return {
           player: restored,
           fresh: false,
+          owns,
           publish: () => {
+            if (!owns()) return this.supersededJoin();
+            const live = this.players.get(stored.id);
+            if (live && live !== restored) return this.supersededJoin();
+            const connectionId = restored.connectionId;
             this.players.set(restored.id, restored);
             this.tokens.set(restored.sessionToken, restored.id);
             this.syncChunksFor(restored, { maxNewGenerates: Number.POSITIVE_INFINITY });
@@ -2157,7 +2459,7 @@ export class WorldInstance {
             this.buyer.restoreOverflow(restored.id, restored.inventory);
             this.notifyFriendsOfPresence(restored, 'joined');
             this.ensureCosmeticPet(restored);
-            return { player: restored, resumed: true };
+            return { player: restored, resumed: true, connectionId };
           },
         };
       }
@@ -2194,10 +2496,14 @@ export class WorldInstance {
     player.viewCx = spawnChunkX;
     player.viewCz = spawnChunkZ;
     player.viewRadius = this.config.chunkViewRadius;
+    const lease = this.claimPlayerJoin(id);
+    const connectionId = player.connectionId;
     return {
       player,
       fresh: true,
+      owns: () => this.playerJoinOwns(id, lease),
       publish: () => {
+        if (!this.playerJoinOwns(id, lease)) return this.supersededJoin();
         this.players.set(id, player);
         this.tokens.set(sessionToken, id);
         this.syncChunksFor(player, { maxNewGenerates: Number.POSITIVE_INFINITY });
@@ -2210,7 +2516,7 @@ export class WorldInstance {
         this.dirty = true;
         this.notifyFriendsOfPresence(player, 'joined');
         this.ensureCosmeticPet(player);
-        return { player, resumed: false };
+        return { player, resumed: false, connectionId };
       },
     };
   }

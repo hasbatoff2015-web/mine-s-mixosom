@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { AdminHttpServer } from './admin/http';
 import { adminAssetIndex, resolveAdminAssetsRoot } from './admin/assets';
 import { AdminPanelHost } from './admin/panelHost';
+import { AuthRateLimiter, socketPeerKey } from './identity/authRateLimit';
 import { yandexAuthLogLabel, type ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
@@ -28,6 +29,11 @@ interface SocketBinding {
   playerId: string;
   connectionId: string;
   superseded: boolean;
+}
+
+/** One in-flight join for a socket. A second message must not start another. */
+interface JoinFlight {
+  readonly id: number;
 }
 
 function readyLabel(mode: ServerConfig['serverMode']): string {
@@ -53,6 +59,12 @@ export class AnarchyServer {
   private readonly startedAt = Date.now();
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
+  private readonly pendingJoins = new WeakMap<WebSocket, JoinFlight>();
+  private nextJoinFlight = 1;
+  private readonly linkInFlight = new Set<string>();
+  private readonly authLimiter = new AuthRateLimiter();
+  private readonly socketRequests = new WeakMap<WebSocket, IncomingMessage>();
+  private receiptPurge?: ReturnType<typeof setInterval>;
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
     this.world = new WorldInstance(config, options);
@@ -119,7 +131,10 @@ export class AnarchyServer {
             maxPayload: MAX_CLIENT_MESSAGE_BYTES,
           });
           this.wss = wss;
-          wss.on('connection', (socket) => this.handleConnection(socket));
+          wss.on('connection', (socket, request) => {
+            this.socketRequests.set(socket, request);
+            this.handleConnection(socket);
+          });
           resolve();
         });
       });
@@ -132,6 +147,10 @@ export class AnarchyServer {
       throw error;
     }
     this.world.startLoops();
+    this.receiptPurge = setInterval(() => {
+      void this.world.purgeOldYandexReceipts();
+    }, 10 * 60 * 1000);
+    this.receiptPurge.unref?.();
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
     serverLog(`mode: ${this.config.serverMode}`);
@@ -141,6 +160,8 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
+    if (this.receiptPurge) clearInterval(this.receiptPurge);
+    this.receiptPurge = undefined;
     await this.closeAdminHttp();
     this.world.prepareForServerShutdown();
     const seen = new Set<string>();
@@ -256,6 +277,7 @@ export class AnarchyServer {
       }
     });
     socket.on('close', () => {
+      this.pendingJoins.delete(socket);
       const binding = this.sockets.get(socket);
       this.sockets.delete(socket);
       if (binding && !binding.superseded) {
@@ -329,28 +351,65 @@ export class AnarchyServer {
     message: Extract<ClientMessage, { type: 'join' }>,
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
-    const sink = new WsSink(socket);
-    const pending = this.world.join({
-      sink,
-      name: message.name,
-      sessionToken: message.sessionToken,
-      appearance: message.appearance,
-      freshGuest: message.freshGuest,
-      durableFresh: true,
-    });
-    if (isPromise(pending)) {
-      pending.then(
-        (result) => this.finishJoin(socket, result, onJoin),
-        () => this.finishJoin(socket, { error: 'Сервер временно недоступен.' }, onJoin),
-      );
+    if (this.pendingJoins.has(socket)) {
+      serverLog('duplicate join ignored while another join is pending on this connection');
       return;
     }
-    this.finishJoin(socket, pending, onJoin);
+    if (message.authMode === 'resume_yandex' && !this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
+      this.pendingJoins.delete(socket);
+      this.send(socket, { type: 'error', code: 'rate_limited', message: 'Слишком много попыток входа. Подождите и повторите.' });
+      socket.close();
+      return;
+    }
+    const flight: JoinFlight = { id: this.nextJoinFlight++ };
+    this.pendingJoins.set(socket, flight);
+    const sink = new WsSink(socket);
+    const pending = message.authMode === 'resume_yandex'
+      ? this.world.resumeYandexJoin({
+        sink,
+        name: message.name,
+        appearance: message.appearance,
+        proof: message.yandexProof ?? '',
+        guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
+        confirmOtherCharacter: message.confirmYandexResume === true,
+        subjectRate: (identity) => {
+          const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
+          const proofOk = this.authLimiter.allowProof(identity.proofHash);
+          return subjectOk && proofOk;
+        },
+      })
+      : this.world.join({
+        sink,
+        name: message.name,
+        sessionToken: message.sessionToken,
+        appearance: message.appearance,
+        freshGuest: message.freshGuest,
+        durableFresh: true,
+      });
+    const settle = (
+      result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string },
+    ): void => {
+      if (this.pendingJoins.get(socket) !== flight) {
+        if (!('error' in result)) {
+          this.world.disconnect(result.player.id, true, result.connectionId);
+        }
+        return;
+      }
+      this.finishJoin(socket, result, onJoin);
+      if (this.pendingJoins.get(socket) === flight && !('error' in result)) {
+        this.pendingJoins.delete(socket);
+      }
+    };
+    if (isPromise(pending)) {
+      pending.then(settle, () => settle({ error: 'Сервер временно недоступен.' }));
+      return;
+    }
+    settle(pending);
   }
 
   private finishJoin(
     socket: WebSocket,
-    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string },
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string },
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     if ('error' in result) {
@@ -362,12 +421,21 @@ export class AnarchyServer {
       socket.close();
       return;
     }
-    if (socket.readyState !== WebSocket.OPEN) {
-      this.world.disconnect(result.player.id, true, result.player.connectionId);
+    const { player, resumed, previousConnectionId, connectionId } = result;
+    if (player.connectionId !== connectionId) {
+      this.send(socket, {
+        type: 'error',
+        code: 'session_taken',
+        message: 'Сессия открыта в другом подключении',
+      });
+      socket.close();
       return;
     }
-    const { player, resumed, previousConnectionId } = result;
-    onJoin(player.id, player.connectionId);
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.world.disconnect(player.id, true, connectionId);
+      return;
+    }
+    onJoin(player.id, connectionId);
     this.supersedeOtherSockets(player.id, socket);
     this.refreshActiveSocketCount(player.id);
     const others = this.world.connectedPlayers()
@@ -429,6 +497,9 @@ export class AnarchyServer {
   ): void {
     switch (message.type) {
       case 'join':
+        return;
+      case 'auth_link':
+        void this.handleAuthLink(player, connectionId, message.proof, message.requestId);
         return;
       case 'input':
         this.world.applyInput(player, message, { connectionId });
@@ -756,6 +827,61 @@ export class AnarchyServer {
         'warn',
       );
     }
+  }
+
+  private async handleAuthLink(
+    player: ServerPlayer,
+    connectionId: string,
+    proof: string,
+    requestId?: string,
+  ): Promise<void> {
+    const reply = (status: 'busy' | 'rate_limited' | Awaited<ReturnType<WorldInstance['linkYandex']>>): void => {
+      const live = this.socketFor(player.id, connectionId);
+      if (!live) return;
+      this.send(live, {
+        type: 'auth_result',
+        action: 'link',
+        status,
+        ...(requestId ? { requestId } : {}),
+      });
+    };
+    const socket = this.socketFor(player.id, connectionId);
+    if (!socket) return;
+    if (this.linkInFlight.has(player.id)) {
+      reply('busy');
+      return;
+    }
+    if (!this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
+      reply('rate_limited');
+      return;
+    }
+    this.linkInFlight.add(player.id);
+    try {
+      const status = await this.world.linkYandex(
+        player.id,
+        connectionId,
+        proof,
+        (identity) => {
+          const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
+          const proofOk = this.authLimiter.allowProof(identity.proofHash);
+          return subjectOk && proofOk;
+        },
+      );
+      reply(status);
+    } finally {
+      this.linkInFlight.delete(player.id);
+    }
+  }
+
+  private peerKey(socket: WebSocket): string | undefined {
+    return socketPeerKey(socket, this.socketRequests.get(socket), this.config.trustedProxies);
+  }
+
+  private socketFor(playerId: string, connectionId: string): WebSocket | undefined {
+    for (const [socket, binding] of this.sockets) {
+      if (binding.playerId === playerId && binding.connectionId === connectionId && !binding.superseded) return socket;
+    }
+    return undefined;
   }
 
   private supersedeOtherSockets(playerId: string, keep: WebSocket): void {

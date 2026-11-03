@@ -331,6 +331,7 @@ export interface OnlineServersActions {
   connect(id: string): void;
   retry(): void;
   saveNickname(raw: string): { ok: true; name: string } | { ok: false; error: string };
+  yandexLogin?(id: string): void;
 }
 
 export interface OnlineConnectErrorActions {
@@ -342,6 +343,7 @@ export interface PauseActions {
   resume(): void;
   settings(): void;
   saveAndQuit(): void;
+  linkYandex?(): void;
 }
 
 export interface HudState {
@@ -555,6 +557,7 @@ export class GameUI {
   private onScreenEscape?: () => void;
   private onlineActions?: OnlineServersActions;
   private onlineSelected: LocalServerName = 'anarchy';
+  private yandexBusy = false;
   private onlineStatuses?: ServerStatusMap;
   /** True when disabling «Обновить» moved focus off that button. */
   private onlineRefreshFocused = false;
@@ -1100,6 +1103,11 @@ export class GameUI {
           </div>
           <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
         </div>
+        <div class="yandex-auth-panel">
+          <p>Сохраните персонажа и входите с другого устройства. Подписанный Яндекс ID позже понадобится для реферальной программы.</p>
+          <button type="button" class="game-button" data-action="yandex-login">Войти через Яндекс</button>
+          <p data-yandex-status role="status"></p>
+        </div>
         <footer class="menu-footer server-menu-footer">
           <p class="server-reach-note" data-server-note role="status" hidden></p>
           <div class="server-menu-actions">
@@ -1117,6 +1125,10 @@ export class GameUI {
     this.bindAction('connect', () => {
       if (!this.canConnectOnlineSelection()) return;
       actions.connect(this.onlineSelected);
+    });
+    this.bindAction('yandex-login', () => {
+      if (this.yandexBusy) return;
+      actions.yandexLogin?.(this.onlineSelected);
     });
     this.bindOnlineServerRows();
     this.paintOnlineServerChrome();
@@ -1290,14 +1302,29 @@ export class GameUI {
         <div class="menu-card pause-window">
           <div class="menu-stack pause-actions">
             <button class="game-button primary" data-action="resume">Продолжить</button>
+            ${actions.linkYandex ? '<button class="game-button" data-action="link-yandex">Привязать Яндекс ID</button>' : ''}
             <button class="game-button" data-action="settings">Настройки</button>
             <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
           </div>
         </div>
       </section>`);
     this.bindAction('resume', actions.resume);
+    if (actions.linkYandex) this.bindAction('link-yandex', actions.linkYandex);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
+  }
+
+  setYandexStatus(text: string): void {
+    const node = this.screen?.querySelector('[data-yandex-status]');
+    if (node) node.textContent = text;
+    if (text) this.toast(text);
+  }
+
+  setYandexBusy(busy: boolean): void {
+    this.yandexBusy = busy;
+    this.screen?.querySelectorAll<HTMLButtonElement>('[data-action="yandex-login"], [data-action="link-yandex"]').forEach((button) => {
+      button.disabled = busy;
+    });
   }
 
   /** UI copy of the canonical client settings. Game owns load, clamp, and persist. */

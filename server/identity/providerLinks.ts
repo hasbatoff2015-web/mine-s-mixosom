@@ -1,6 +1,7 @@
 import type { ServerConfig } from '../config';
 import type { Database } from '../db/types';
 import { canonicalPlayerId, isPlayerId } from '../services/permissionSubject';
+import { isSignedYandexPlayer, type SignedYandexPlayer } from './yandexVerifier';
 import {
   insertProviderLink,
   selectLinkConflicts,
@@ -11,12 +12,8 @@ import {
 
 export type { IdentityScope };
 
-/** A provider subject that this process has already verified. A raw client field is not this type. */
-export interface VerifiedProviderIdentity {
-  readonly verified: true;
-  readonly provider: 'yandex';
-  readonly providerUserId: string;
-}
+/** A provider subject minted by the Yandex verifier. A raw client field is not this type. */
+export type VerifiedProviderIdentity = SignedYandexPlayer;
 
 export type ProviderLinkStatus =
   | 'linked'
@@ -40,8 +37,6 @@ export type ProviderLookup =
   | { readonly status: 'unverified' }
   | { readonly status: 'identity_scope_mismatch' };
 
-const PROVIDER_USER_MAX = 128;
-
 export function identityScopeFromServer(config: ServerConfig): IdentityScope | undefined {
   if (!config.database.enabled) return undefined;
   return {
@@ -52,11 +47,7 @@ export function identityScopeFromServer(config: ServerConfig): IdentityScope | u
 }
 
 export function asVerifiedProviderIdentity(value: unknown): VerifiedProviderIdentity | undefined {
-  if (!value || typeof value !== 'object') return undefined;
-  const row = value as Record<string, unknown>;
-  if (row.verified !== true || row.provider !== 'yandex') return undefined;
-  if (!isProviderUserId(row.providerUserId)) return undefined;
-  return { verified: true, provider: 'yandex', providerUserId: row.providerUserId };
+  return isSignedYandexPlayer(value) ? value : undefined;
 }
 
 export async function lookupVerifiedProviderIdentity(
@@ -89,8 +80,8 @@ export async function lookupPlayerLinks(
 
 /**
  * Binds one already-verified provider subject to an existing player in this scope.
- * There is no network entry point. A caller must pass `verified: true` only after
- * its own server-side check, which Stage C has not added.
+ * There is no function that accepts a raw client id. The value must be a subject
+ * returned by the Yandex verifier.
  */
 export async function bindVerifiedProviderIdentity(
   db: Database,
@@ -143,14 +134,6 @@ export function scopeMatchesProcess(processScope: IdentityScope, requested: Iden
   return processScope.deploymentId === requested.deploymentId
     && processScope.serverMode === requested.serverMode
     && processScope.worldId === requested.worldId;
-}
-
-function isProviderUserId(value: unknown): value is string {
-  return typeof value === 'string'
-    && value.length > 0
-    && value.length <= PROVIDER_USER_MAX
-    && value === value.trim()
-    && !/[\u0000-\u001F\u007F]/.test(value);
 }
 
 function validScope(scope: IdentityScope): boolean {

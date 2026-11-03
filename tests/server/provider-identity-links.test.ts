@@ -10,6 +10,8 @@ import {
   type IdentityScope,
   type VerifiedProviderIdentity,
 } from '../../server/identity/providerLinks';
+import { verifyYandexPlayerProof } from '../../server/identity/yandexVerifier';
+import { SYNTHETIC_ISSUED_AT, SYNTHETIC_NOW_MS, SYNTHETIC_YANDEX_SECRET, signedPlayerProfile } from './yandexProfileFixture';
 import {
   INSERT_PROVIDER_LINK_SQL,
   SELECT_LINK_CONFLICT_SQL,
@@ -20,11 +22,17 @@ import {
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const DEV_ANARCHY: IdentityScope = { deploymentId: 'dev', serverMode: 'anarchy', worldId: 'world-a' };
-const yandex = (providerUserId: string): VerifiedProviderIdentity => ({
-  verified: true,
-  provider: 'yandex',
-  providerUserId,
-});
+function yandex(providerUserId: string): VerifiedProviderIdentity {
+  const proof = signedPlayerProfile(providerUserId, SYNTHETIC_YANDEX_SECRET, SYNTHETIC_ISSUED_AT);
+  const verified = verifyYandexPlayerProof(proof, {
+    secret: SYNTHETIC_YANDEX_SECRET,
+    nowMs: SYNTHETIC_NOW_MS,
+    maxAgeSeconds: 600,
+    clockSkewSeconds: 120,
+  });
+  if (!verified.ok) throw new Error(verified.reason);
+  return verified.identity;
+}
 
 interface Row {
   deploymentId: string;
@@ -266,8 +274,27 @@ describe('provider identity links', () => {
     const server = readFileSync(resolve('server/AnarchyServer.ts'), 'utf8');
     const protocol = readFileSync(resolve('shared/protocol.ts'), 'utf8');
     expect(server).not.toContain('bindVerifiedProviderIdentity');
+    expect(server).not.toContain('issueVerifiedYandexIdentity');
+    expect(readFileSync(resolve('server/identity/providerLinks.ts'), 'utf8')).not.toContain('issueVerifiedYandexIdentity');
     expect(server).not.toContain('player_identity_links');
     expect(protocol).not.toContain('providerUserId');
+  });
+
+  it('LINK-12b rejects a forged verified flag, a JSON copy, and a spread copy', async () => {
+    const db = new MemoryLinks();
+    const forged = { verified: true as const, provider: 'yandex' as const, providerUserId: 'Y1' };
+    const parsed = JSON.parse(JSON.stringify(forged)) as unknown;
+    const copied = { ...yandex('Y1') };
+    expect(await bindVerifiedProviderIdentity(db, DEV_ANARCHY, forged, A, everyone)).toEqual({ status: 'unverified' });
+    expect(await lookupVerifiedProviderIdentity(db, DEV_ANARCHY, parsed)).toEqual({ status: 'unverified' });
+    expect(await bindVerifiedProviderIdentity(db, DEV_ANARCHY, copied, A, everyone)).toEqual({ status: 'unverified' });
+    expect(verifyYandexPlayerProof('Y1', {
+      secret: SYNTHETIC_YANDEX_SECRET,
+      nowMs: SYNTHETIC_NOW_MS,
+      maxAgeSeconds: 600,
+      clockSkewSeconds: 120,
+    }).ok).toBe(false);
+    expect(db.rows).toHaveLength(0);
   });
 
   it('LINK-13 does not rewrite the player record it points at', async () => {

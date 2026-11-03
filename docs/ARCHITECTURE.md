@@ -1930,7 +1930,13 @@ Natural terrain is reconstructed from `summary.seed` whenever a chunk is materia
 - platform pause/resume events переводятся в lifecycle callbacks;
 - local development не блокируется `/sdk.js`.
 
-Ads, authorization, cloud saves, leaderboards и payments находятся вне текущего adapter scope.
+`YandexGamesService.requestSignedProof` calls `getPlayer({ signed: true })` only after a button press and does not store the signature. `clientAuthorized` is display-only.
+
+`verifyYandexPlayerProof` checks HMAC-SHA256 over the decoded profile bytes, then requires `algorithm`, integer `issuedAt`, and `data.uniqueID === data.id`. A purchase payload is rejected. The signed subject is branded in this process. `bindVerifiedProviderIdentity` accepts only that object.
+
+LINK reads the player from the live socket. RESUME looks up `player_identity_links`, reserves the proof, prepares the existing player, and publishes only after that reservation is consumed. A consume result of false, or a database error, does not send welcome or the guest session token. If the database outcome is unknown, the reservation is left in place. Migration `0009` stored SHA-256 of the proof text. New rows use the canonical byte fingerprint. A legacy row blocks only that old hash. Guest join remains the default.
+
+`prepareJoin` takes a player lease before publish. A later attempt replaces the lease, so an older publish does not change `connectionId` or `sink`. Cleanup disconnects only the connection id captured at publish. One socket still ignores a second `join` while the first is in flight. A player who is already online does not take a second `maxPlayers` slot. An offline player still does.
 
 ## Performance boundaries
 

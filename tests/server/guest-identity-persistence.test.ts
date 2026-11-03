@@ -249,7 +249,155 @@ describe('guest identity persistence', () => {
     expect(recovered.player.inventory.has('diamond', 4)).toBe(true);
     await restarted.stop();
   });
+
+  it('publishes one guest when one connection sends two joins before the first save finishes', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const server = new AnarchyServer(testConfig(dataDir));
+    await server.start();
+    let releaseSave = (): void => {};
+    try {
+      const gate = new Promise<void>((resolve) => { releaseSave = resolve; });
+      let blocked = 0;
+      const store = (server.world as unknown as {
+        worldStore: { savePlayers: (worldId: string, players: Record<string, unknown>) => Promise<void> };
+      }).worldStore;
+      const original = store.savePlayers.bind(store);
+      store.savePlayers = async (worldId, players) => {
+        blocked += 1;
+        await gate;
+        return original(worldId, players);
+      };
+      const messages: ServerMessage[] = [];
+      const socket = new WebSocket(server.wsUrl());
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', () => resolve());
+        socket.once('error', reject);
+      });
+      socket.on('message', (data) => {
+        messages.push(JSON.parse(String(data)) as ServerMessage);
+      });
+      const joinPayload = JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Twice' });
+      socket.send(joinPayload);
+      const started = Date.now();
+      while (blocked < 1 && Date.now() - started < 3000) await delay(10);
+      expect(blocked).toBe(1);
+      socket.send(joinPayload);
+      const afterDuplicate = Date.now();
+      while (Date.now() - afterDuplicate < 200) {
+        if (blocked > 1) break;
+        await delay(10);
+      }
+      expect(blocked).toBe(1);
+      releaseSave();
+      const welcome = await waitForMessage(messages, 'welcome');
+      expect(messages.filter((message) => message.type === 'welcome')).toHaveLength(1);
+      expect(messages.filter((message) => message.type === 'error')).toHaveLength(0);
+      expect(server.world.players.size).toBe(1);
+      const player = [...server.world.players.values()][0];
+      expect(player?.id).toBe(welcome.playerId);
+      expect(player?.connected).toBe(true);
+      const disk = JSON.parse(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')) as {
+        players: Record<string, { sessionToken?: string }>;
+      };
+      expect(Object.keys(disk.players)).toEqual([welcome.playerId]);
+      expect(disk.players[welcome.playerId]?.sessionToken).toBe(welcome.sessionToken);
+      socket.close();
+    } finally {
+      releaseSave();
+      await server.stop();
+    }
+  });
+
+  it('does not leave the new guest connected when the socket closes before join finishes', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const server = new AnarchyServer(testConfig(dataDir));
+    await server.start();
+    let releaseSave = (): void => {};
+    try {
+      const gate = new Promise<void>((resolve) => { releaseSave = resolve; });
+      let blocked = 0;
+      const store = (server.world as unknown as {
+        worldStore: { savePlayers: (worldId: string, players: Record<string, unknown>) => Promise<void> };
+      }).worldStore;
+      const original = store.savePlayers.bind(store);
+      store.savePlayers = async (worldId, players) => {
+        blocked += 1;
+        await gate;
+        return original(worldId, players);
+      };
+      const socket = new WebSocket(server.wsUrl());
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', () => resolve());
+        socket.once('error', reject);
+      });
+      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Gone' }));
+      const started = Date.now();
+      while (blocked < 1 && Date.now() - started < 3000) await delay(10);
+      expect(blocked).toBe(1);
+      const closed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
+      socket.close();
+      await closed;
+      releaseSave();
+      const deadline = Date.now() + 3000;
+      while (Date.now() < deadline) {
+        const connected = [...server.world.players.values()].some((player) => player.connected);
+        if (server.world.players.size > 0 && !connected) break;
+        await delay(10);
+      }
+      expect(server.world.players.size).toBe(1);
+      expect([...server.world.players.values()].some((player) => player.connected)).toBe(false);
+      const disk = JSON.parse(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')) as {
+        players: Record<string, { sessionToken?: string; inventory?: unknown }>;
+      };
+      const savedId = Object.keys(disk.players)[0];
+      const savedToken = savedId ? disk.players[savedId]?.sessionToken : undefined;
+      expect(savedId && savedToken).toBeTruthy();
+      const before = JSON.stringify(disk.players[savedId!]?.inventory);
+      const resumed = await new Promise<Extract<ServerMessage, { type: 'welcome' }>>((resolve, reject) => {
+        const socket = new WebSocket(server.wsUrl());
+        socket.on('error', reject);
+        socket.on('open', () => {
+          socket.send(JSON.stringify({
+            type: 'join',
+            protocol: PROTOCOL_VERSION,
+            name: 'Gone',
+            sessionToken: savedToken,
+          }));
+        });
+        socket.on('message', (data) => {
+          const message = JSON.parse(String(data)) as ServerMessage;
+          if (message.type === 'welcome') resolve(message);
+          if (message.type === 'error') reject(new Error(message.message));
+        });
+      });
+      expect(resumed.playerId).toBe(savedId);
+      expect(JSON.stringify(resumed.inventory)).toBe(before);
+      expect(server.world.players.size).toBe(1);
+    } finally {
+      releaseSave();
+      await server.stop();
+    }
+  });
 });
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForMessage(
+  messages: ServerMessage[],
+  type: 'welcome',
+): Promise<Extract<ServerMessage, { type: 'welcome' }>> {
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline) {
+    const found = messages.find((message) => message.type === type);
+    if (found && found.type === 'welcome') return found;
+    await delay(10);
+  }
+  throw new Error(`timed out waiting for ${type}`);
+}
 
 function runNode(args: string[]): Promise<{ code: number | null; out: string; err: string }> {
   return new Promise((resolve, reject) => {
