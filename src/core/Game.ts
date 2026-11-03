@@ -283,6 +283,7 @@ import {
   selectedLocalServer,
   yandexCredentialEndpointTrusted,
 } from '../net';
+import { yandexLinkResultApplies } from '../net/yandexLinkCorrelation';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { pickBuyerInteractTarget, type BuyerRayHit } from '../net/buyerInteract';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
@@ -674,6 +675,7 @@ export class Game {
   private yandexBusy = false;
   private yandexOp = 0;
   private linkWaitOp = 0;
+  private linkRequestId = '';
   private readonly onlineStatus = new ServerStatusSession();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
@@ -1113,6 +1115,7 @@ export class Game {
   private endYandex(op: number, message?: string): void {
     if (this.yandexOp !== op) return;
     this.yandexBusy = false;
+    this.linkRequestId = '';
     this.ui.setYandexBusy(false);
     if (message) this.ui.setYandexStatus(message);
   }
@@ -1175,8 +1178,10 @@ export class Game {
       this.endYandex(op, yandexProofMessage(signed.reason));
       return;
     }
-    online.client.send({ type: 'auth_link', proof: signed.proof });
+    const requestId = globalThis.crypto.randomUUID();
+    this.linkRequestId = requestId;
     this.linkWaitOp = op;
+    online.client.send({ type: 'auth_link', proof: signed.proof, requestId });
     const waitOp = op;
     window.setTimeout(() => {
       if (!this.yandexStill(waitOp)) return;
@@ -1439,7 +1444,12 @@ export class Game {
       case 'welcome':
         return;
       case 'auth_result':
-        if (!this.yandexBusy || this.yandexOp !== this.linkWaitOp) return;
+        if (!yandexLinkResultApplies({
+          busy: this.yandexBusy,
+          op: this.yandexOp,
+          waitOp: this.linkWaitOp,
+          requestId: this.linkRequestId,
+        }, message)) return;
         this.endYandex(this.yandexOp, yandexLinkMessage(message.status));
         return;
       case 'player_joined':
@@ -7111,6 +7121,10 @@ export class Game {
   }
 
   private disposeSession(): void {
+    this.linkRequestId = '';
+    this.yandexOp += 1;
+    this.yandexBusy = false;
+    this.ui.setYandexBusy(false);
     this.emotes?.cancel();
     this.input?.setEmotePointer(null);
     this.ui.hideEmoteWheel();

@@ -338,6 +338,8 @@ export interface ClientJoinMessage {
 export interface ClientAuthLinkMessage {
   readonly type: 'auth_link';
   readonly proof: string;
+  /** Correlates this request with auth_result. Not a credential. */
+  readonly requestId?: string;
 }
 
 export interface ClientAppearanceMessage {
@@ -1714,6 +1716,8 @@ export interface ServerAuthResultMessage {
   readonly type: 'auth_result';
   readonly action: 'link';
   readonly status: AuthLinkStatus;
+  /** Echo of auth_link.requestId. Absent on older servers. Not a credential. */
+  readonly requestId?: string;
 }
 
 /** One-shot authoritative look. Ordinary movement snapshots do not own aim. */
@@ -2095,6 +2099,15 @@ function parseNetworkDirectMessage(raw: unknown): NetworkDirectMessage | undefin
   };
 }
 
+/** Correlation id only. Missing is allowed. A present value must be a short token. */
+function parseAuthRequestId(value: unknown): string | undefined | { readonly error: string } {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{8,64}$/.test(value)) {
+    return { error: 'auth.requestId invalid' };
+  }
+  return value;
+}
+
 function optionalString(value: unknown, max: number): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.slice(0, max);
@@ -2337,7 +2350,13 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       if (typeof raw.proof !== 'string' || raw.proof.length === 0 || raw.proof.length > 8192) {
         return { error: 'auth_link.proof invalid' };
       }
-      return { type: 'auth_link', proof: raw.proof };
+      const requestId = parseAuthRequestId(raw.requestId);
+      if (typeof requestId === 'object') return requestId;
+      return {
+        type: 'auth_link',
+        proof: raw.proof,
+        ...(requestId ? { requestId } : {}),
+      };
     }
     case 'appearance': {
       const appearance = parseNetworkAppearance(raw);
@@ -3254,7 +3273,14 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (raw.action !== 'link' || typeof raw.status !== 'string' || !AUTH_LINK_STATUSES.includes(raw.status as AuthLinkStatus)) {
         return { error: 'auth_result invalid' };
       }
-      return { type: 'auth_result', action: 'link', status: raw.status as AuthLinkStatus };
+      const requestId = parseAuthRequestId(raw.requestId);
+      if (typeof requestId === 'object') return requestId;
+      return {
+        type: 'auth_result',
+        action: 'link',
+        status: raw.status as AuthLinkStatus,
+        ...(requestId ? { requestId } : {}),
+      };
     }
     case 'menu': {
       if (typeof raw.screen !== 'string' || typeof raw.title !== 'string') {

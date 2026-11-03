@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-11-03: Yandex resume fail-closed
+
+- [x] Welcome and the guest session token are sent only after the matching proof reservation is consumed.
+- [x] A legacy `0009` text hash blocks that proof. New receipts use the canonical fingerprint. Cleanup stays inside one deployment, mode, and world.
+- [x] Loopback is not a shared player limit. The verified subject limit uses `uniqueID`. `auth_link.requestId` is correlation only.
+- [x] An already online player can replace that session on a full server without taking a second slot.
+- [ ] Live PostgreSQL and the Yandex draft are still for the owner. Not merged. Not deployed.
+
 ## 2026-11-03: Yandex ID link and resume
 
 - [x] Signed player proof is checked with HMAC-SHA256. `data.uniqueID` must match `data.id`. A client `verified: true` still cannot bind a player.

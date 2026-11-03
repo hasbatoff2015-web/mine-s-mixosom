@@ -2,11 +2,12 @@ import { join } from 'node:path';
 import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedProviderIdentity } from './identity/providerLinks';
 import {
   consumeReservedProof,
+  purgeExpiredReceipts,
+  receiptRetentionSeconds,
   releaseReservedProof,
   reserveResumeProof,
-  purgeExpiredReceipts,
 } from './identity/yandexProofReceipts';
-import { verifyYandexPlayerProof } from './identity/yandexVerifier';
+import { legacyProofFingerprint, verifyYandexPlayerProof } from './identity/yandexVerifier';
 import type { AuthLinkStatus } from '../shared/protocol';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
@@ -725,6 +726,8 @@ export class WorldInstance {
   readonly tokens = new Map<string, string>();
   private readonly playerJoinLease = new Map<string, number>();
   private nextPlayerJoinLease = 1;
+  /** Joins that still need a free online slot and have not published yet. */
+  private pendingJoinSlots = 0;
   /**
    * Optional pause immediately before a join is published.
    * Production leaves this unset. Tests use it to overlap two resumes.
@@ -2018,6 +2021,34 @@ export class WorldInstance {
     return lease;
   }
 
+  /** A connected player replacing their own session does not need another slot. */
+  private replacingConnectedPlayer(sessionToken?: string): boolean {
+    if (!sessionToken) return false;
+    const id = this.tokens.get(sessionToken);
+    if (!id) return false;
+    return this.players.get(id)?.connected === true;
+  }
+
+  private hasJoinRoom(sessionToken?: string): boolean {
+    if (this.replacingConnectedPlayer(sessionToken)) return true;
+    return this.onlineCount() + this.pendingJoinSlots < this.config.maxPlayers;
+  }
+
+  private holdJoinSlot(sessionToken?: string): { ok: true; release: () => void } | { ok: false } {
+    if (this.replacingConnectedPlayer(sessionToken)) return { ok: true, release: () => {} };
+    if (!this.hasJoinRoom(sessionToken)) return { ok: false };
+    this.pendingJoinSlots += 1;
+    let held = true;
+    return {
+      ok: true,
+      release: () => {
+        if (!held) return;
+        held = false;
+        this.pendingJoinSlots -= 1;
+      },
+    };
+  }
+
   private playerJoinOwns(playerId: string, lease: number): boolean {
     return this.playerJoinLease.get(playerId) === lease;
   }
@@ -2041,7 +2072,7 @@ export class WorldInstance {
     playerId: string,
     connectionId: string,
     proof: string,
-    subjectRate?: (proofHash: string) => boolean,
+    subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean,
   ): Promise<AuthLinkStatus> {
     const player = this.players.get(playerId);
     if (!player?.connected || player.connectionId !== connectionId) return 'stale_session';
@@ -2056,7 +2087,7 @@ export class WorldInstance {
       clockSkewSeconds: auth.clockSkewSeconds,
     });
     if (!verified.ok) return verified.reason === 'expired' || verified.reason === 'not_yet_valid' ? 'proof_expired' : 'proof_invalid';
-    if (subjectRate && !subjectRate(verified.identity.proofHash)) return 'rate_limited';
+    if (subjectRate && !subjectRate(verified.identity)) return 'rate_limited';
     if (player.connectionId !== connectionId) return 'stale_session';
     try {
       const bound = await bindVerifiedProviderIdentity(
@@ -2085,7 +2116,7 @@ export class WorldInstance {
     proof: string;
     guestToken?: string;
     confirmOtherCharacter: boolean;
-    subjectRate?: (proofHash: string) => boolean;
+    subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
     const auth = this.config.yandexAuth;
     if (!auth.enabled) return { error: 'Вход через Яндекс на этом сервере выключен.', code: 'auth_disabled' };
@@ -2122,18 +2153,24 @@ export class WorldInstance {
     const token = this.sessionTokenForPlayer(lookup.playerId);
     if (!token) return { error: 'Персонаж не найден.', code: 'player_not_found' };
     if (this.readyState !== 'READY') return { error: 'world not ready', code: 'world_not_ready' };
-    const alreadyOnline = this.players.get(lookup.playerId)?.connected === true;
-    if (!alreadyOnline && this.onlineCount() >= this.config.maxPlayers) {
-      return { error: 'server full', code: 'server_full' };
-    }
+    if (!this.hasJoinRoom(token)) return { error: 'server full', code: 'server_full' };
     if (this.isPlayerBanned(lookup.playerId)) return { error: 'banned', code: 'banned' };
-    if (options.subjectRate && !options.subjectRate(verified.identity.proofHash)) {
+    if (options.subjectRate && !options.subjectRate(verified.identity)) {
       return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
     }
     const attemptId = crypto.randomUUID();
+    const proofHash = verified.identity.proofHash;
+    const legacyHash = legacyProofFingerprint(options.proof);
     let reserved;
     try {
-      reserved = await reserveResumeProof(this.database, scope, verified.identity.proofHash, lookup.playerId, attemptId);
+      reserved = await reserveResumeProof(
+        this.database,
+        scope,
+        proofHash,
+        lookup.playerId,
+        attemptId,
+        legacyHash,
+      );
     } catch (error) {
       serverLog(`yandex receipt failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
       return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
@@ -2142,25 +2179,49 @@ export class WorldInstance {
     if (reserved === 'reused') {
       return { error: 'Это подтверждение уже использовано. Обновите игру и повторите вход.', code: 'proof_reused' };
     }
-    const joined = await this.join({
-      sink: options.sink,
-      name: options.name,
-      appearance: options.appearance,
-      sessionToken: token,
-      durableFresh: true,
-    });
-    if ('error' in joined) {
-      try {
-        await releaseReservedProof(this.database, scope, verified.identity.proofHash, attemptId);
-      } catch (error) {
-        serverLog(`yandex receipt release failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
-      }
-      return joined;
-    }
+    let joined;
     try {
-      await consumeReservedProof(this.database, scope, verified.identity.proofHash, attemptId);
+      joined = await this.join({
+        sink: options.sink,
+        name: options.name,
+        appearance: options.appearance,
+        sessionToken: token,
+        durableFresh: true,
+        publishGate: async (owns) => {
+          if (!owns()) {
+            await this.releaseYandexReservation(scope, proofHash, attemptId);
+            return this.supersededJoin();
+          }
+          let consumed = false;
+          try {
+            consumed = await consumeReservedProof(this.database, scope, proofHash, attemptId);
+          } catch (error) {
+            serverLog(`yandex receipt consume failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+            return {
+              error: 'Восстановление временно недоступно. Обновите игру и запросите новое подтверждение.',
+              code: 'proof_unconfirmed',
+            };
+          }
+          if (!consumed) {
+            await this.releaseYandexReservation(scope, proofHash, attemptId);
+            return {
+              error: 'Не удалось завершить подтверждение Яндекса. Повторите вход.',
+              code: 'proof_not_consumed',
+            };
+          }
+          if (!owns()) return { error: 'Подключение заменено более новым входом.', code: 'proof_spent' };
+          return undefined;
+        },
+      });
     } catch (error) {
-      serverLog(`yandex receipt consume failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      serverLog(`yandex resume publish failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return {
+        error: 'Восстановление временно недоступно. Обновите игру и запросите новое подтверждение.',
+        code: 'proof_unconfirmed',
+      };
+    }
+    if ('error' in joined && !this.keepYandexReservation(joined.code)) {
+      await this.releaseYandexReservation(scope, proofHash, attemptId);
     }
     return joined;
   }
@@ -2168,11 +2229,32 @@ export class WorldInstance {
   async purgeOldYandexReceipts(): Promise<void> {
     const auth = this.config.yandexAuth;
     if (!auth.enabled || !this.database.enabled) return;
-    const olderThan = auth.maxAgeSeconds + auth.clockSkewSeconds + 3600;
+    const scope = identityScopeFromServer(this.config);
+    if (!scope) return;
+    const olderThan = receiptRetentionSeconds(auth.maxAgeSeconds, auth.clockSkewSeconds);
     try {
-      await purgeExpiredReceipts(this.database, olderThan);
+      await purgeExpiredReceipts(this.database, scope, olderThan);
     } catch (error) {
       serverLog(`yandex receipt purge failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
+  }
+
+  private keepYandexReservation(code: string | undefined): boolean {
+    return code === 'join_superseded'
+      || code === 'proof_unconfirmed'
+      || code === 'proof_spent'
+      || code === 'proof_not_consumed';
+  }
+
+  private async releaseYandexReservation(
+    scope: NonNullable<ReturnType<typeof identityScopeFromServer>>,
+    proofHash: string,
+    attemptId: string,
+  ): Promise<void> {
+    try {
+      await releaseReservedProof(this.database, scope, proofHash, attemptId);
+    } catch (error) {
+      serverLog(`yandex receipt release failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
     }
   }
 
@@ -2191,6 +2273,7 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh: true;
+    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }>;
   join(options: {
     sink: ConnectedSink;
@@ -2199,71 +2282,94 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh?: boolean;
+    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
   }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }
     | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
-    if (this.readyState !== 'READY') return options.durableFresh
-      ? Promise.resolve({ error: 'world not ready' })
-      : { error: 'world not ready' };
-    if (this.onlineCount() >= this.config.maxPlayers) return options.durableFresh
-      ? Promise.resolve({ error: 'server full' })
-      : { error: 'server full' };
-
-    const prepared = this.prepareJoin(options);
-    if ('error' in prepared) return options.durableFresh ? Promise.resolve(prepared) : prepared;
+    const fail = (error: { error: string; code?: string }) => (
+      options.durableFresh ? Promise.resolve(error) : error
+    );
+    if (this.readyState !== 'READY') return fail({ error: 'world not ready' });
+    const slot = this.holdJoinSlot(options.sessionToken);
+    if (!slot.ok) return fail({ error: 'server full' });
+    let prepared: ReturnType<WorldInstance['prepareJoin']>;
+    try {
+      prepared = this.prepareJoin(options);
+    } catch (error) {
+      slot.release();
+      throw error;
+    }
+    if ('error' in prepared) {
+      slot.release();
+      return fail(prepared);
+    }
+    const player = prepared;
     const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string } => {
       if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-      if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-      return prepared.publish();
+      if (this.isPlayerBanned(player.player.id)) return { error: 'banned' };
+      return player.publish();
     };
-    const publishAfterPause = async () => {
-      if (this.beforeJoinPublish) await this.beforeJoinPublish();
-      return publishIfAllowed();
-    };
-    if (prepared.fresh && options.durableFresh) {
-      return this.persistCandidate(prepared.player).then(
-        async () => {
-          if (this.money.backend === 'postgres') {
-            const prepare = this.money.preparePlayer;
-            if (!prepare) {
-              await this.rollbackCandidate(prepared.player);
-              return { error: 'Сервер временно недоступен.' };
-            }
-            try {
-              await prepare.call(this.money, prepared.player.id, options.name?.trim() || prepared.player.name);
-            } catch {
-              serverLog('player join economy prepare failed', 'error');
-              await this.rollbackCandidate(prepared.player);
-              return { error: 'Сервер временно недоступен.' };
-            }
-          }
-          const published = await publishAfterPause();
-          if ('error' in published) await this.rollbackCandidate(prepared.player);
-          return published;
-        },
-        () => {
-          serverLog('guest identity save failed', 'error');
-          return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
-        },
-      );
-    }
-    if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-    if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-    if (this.money.backend !== 'postgres') return this.beforeJoinPublish ? publishAfterPause() : prepared.publish();
-    const prepare = this.money.preparePlayer;
-    if (!prepare) return { error: 'Сервер временно недоступен.' };
-    const displayName = options.name?.trim() || prepared.player.name;
-    const work = prepare.call(this.money, prepared.player.id, displayName).then(
-      () => {
-        if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
-        if (this.isPlayerBanned(prepared.player.id)) return { error: 'banned' };
-        return publishAfterPause();
-      },
-      () => {
-        serverLog('player join economy prepare failed', 'error');
-        return { error: 'Сервер временно недоступен.' };
-      },
+    const asyncNeeded = Boolean(
+      (player.fresh && options.durableFresh)
+      || this.money.backend === 'postgres'
+      || options.publishGate
+      || this.beforeJoinPublish,
     );
-    return work;
+    if (!asyncNeeded) {
+      try {
+        return publishIfAllowed();
+      } finally {
+        slot.release();
+      }
+    }
+    return (async () => {
+      try {
+        if (player.fresh && options.durableFresh) {
+          try {
+            await this.persistCandidate(player.player);
+          } catch {
+            serverLog('guest identity save failed', 'error');
+            return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
+          }
+        }
+        if (this.money.backend === 'postgres') {
+          const prepare = this.money.preparePlayer;
+          if (!prepare) {
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return { error: 'Сервер временно недоступен.' };
+          }
+          try {
+            await prepare.call(this.money, player.player.id, options.name?.trim() || player.player.name);
+          } catch {
+            serverLog('player join economy prepare failed', 'error');
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return { error: 'Сервер временно недоступен.' };
+          }
+        }
+        if (this.database.enabled && !this.adminBansReady) {
+          if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+          return { error: 'moderation unavailable' };
+        }
+        if (this.isPlayerBanned(player.player.id)) {
+          if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+          return { error: 'banned' };
+        }
+        if (options.publishGate) {
+          const blocked = await options.publishGate(() => player.owns());
+          if (blocked) {
+            if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
+            return blocked;
+          }
+        }
+        if (this.beforeJoinPublish) await this.beforeJoinPublish();
+        const published = publishIfAllowed();
+        if ('error' in published && player.fresh && options.durableFresh) {
+          await this.rollbackCandidate(player.player);
+        }
+        return published;
+      } finally {
+        slot.release();
+      }
+    })();
   }
 
   /**
@@ -2280,6 +2386,7 @@ export class WorldInstance {
   }): { error: string; code?: string } | {
     player: ServerPlayer;
     fresh: boolean;
+    owns: () => boolean;
     publish: () => { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string };
   } {
     if (options.sessionToken) {
@@ -2292,6 +2399,7 @@ export class WorldInstance {
         return {
           player: existing,
           fresh: false,
+          owns: () => this.playerJoinOwns(existing.id, lease),
           publish: () => {
             if (!this.playerJoinOwns(existing.id, lease)) return this.supersededJoin();
             const connectionId = crypto.randomUUID();
@@ -2325,6 +2433,7 @@ export class WorldInstance {
         ?? this.storedPlayerByToken(options.sessionToken);
       if (stored) {
         const lease = this.claimPlayerJoin(stored.id);
+        const owns = () => this.playerJoinOwns(stored.id, lease);
         const restored = this.materializeStoredPlayer(stored, options.sink, options.name, false);
         const joinedAppearance = sanitizeRegisteredAppearance(options.appearance);
         if (joinedAppearance) restored.appearance = joinedAppearance;
@@ -2333,8 +2442,9 @@ export class WorldInstance {
         return {
           player: restored,
           fresh: false,
+          owns,
           publish: () => {
-            if (!this.playerJoinOwns(stored.id, lease)) return this.supersededJoin();
+            if (!owns()) return this.supersededJoin();
             const live = this.players.get(stored.id);
             if (live && live !== restored) return this.supersededJoin();
             const connectionId = restored.connectionId;
@@ -2391,6 +2501,7 @@ export class WorldInstance {
     return {
       player,
       fresh: true,
+      owns: () => this.playerJoinOwns(id, lease),
       publish: () => {
         if (!this.playerJoinOwns(id, lease)) return this.supersededJoin();
         this.players.set(id, player);

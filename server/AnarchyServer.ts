@@ -63,6 +63,7 @@ export class AnarchyServer {
   private nextJoinFlight = 1;
   private readonly linkInFlight = new Set<string>();
   private readonly authLimiter = new AuthRateLimiter();
+  private readonly socketRequests = new WeakMap<WebSocket, IncomingMessage>();
   private receiptPurge?: ReturnType<typeof setInterval>;
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
@@ -130,7 +131,10 @@ export class AnarchyServer {
             maxPayload: MAX_CLIENT_MESSAGE_BYTES,
           });
           this.wss = wss;
-          wss.on('connection', (socket) => this.handleConnection(socket));
+          wss.on('connection', (socket, request) => {
+            this.socketRequests.set(socket, request);
+            this.handleConnection(socket);
+          });
           resolve();
         });
       });
@@ -351,7 +355,7 @@ export class AnarchyServer {
       serverLog('duplicate join ignored while another join is pending on this connection');
       return;
     }
-    if (message.authMode === 'resume_yandex' && !this.authLimiter.allowConnection(socket, socketPeerKey(socket))) {
+    if (message.authMode === 'resume_yandex' && !this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
       this.pendingJoins.delete(socket);
       this.send(socket, { type: 'error', code: 'rate_limited', message: 'Слишком много попыток входа. Подождите и повторите.' });
       socket.close();
@@ -368,7 +372,11 @@ export class AnarchyServer {
         proof: message.yandexProof ?? '',
         guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
         confirmOtherCharacter: message.confirmYandexResume === true,
-        subjectRate: (proofHash) => this.authLimiter.allowSubject(proofHash),
+        subjectRate: (identity) => {
+          const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
+          const proofOk = this.authLimiter.allowProof(identity.proofHash);
+          return subjectOk && proofOk;
+        },
       })
       : this.world.join({
         sink,
@@ -491,7 +499,7 @@ export class AnarchyServer {
       case 'join':
         return;
       case 'auth_link':
-        void this.handleAuthLink(player, connectionId, message.proof);
+        void this.handleAuthLink(player, connectionId, message.proof, message.requestId);
         return;
       case 'input':
         this.world.applyInput(player, message, { connectionId });
@@ -821,15 +829,30 @@ export class AnarchyServer {
     }
   }
 
-  private async handleAuthLink(player: ServerPlayer, connectionId: string, proof: string): Promise<void> {
+  private async handleAuthLink(
+    player: ServerPlayer,
+    connectionId: string,
+    proof: string,
+    requestId?: string,
+  ): Promise<void> {
+    const reply = (status: 'busy' | 'rate_limited' | Awaited<ReturnType<WorldInstance['linkYandex']>>): void => {
+      const live = this.socketFor(player.id, connectionId);
+      if (!live) return;
+      this.send(live, {
+        type: 'auth_result',
+        action: 'link',
+        status,
+        ...(requestId ? { requestId } : {}),
+      });
+    };
     const socket = this.socketFor(player.id, connectionId);
     if (!socket) return;
     if (this.linkInFlight.has(player.id)) {
-      this.send(socket, { type: 'auth_result', action: 'link', status: 'busy' });
+      reply('busy');
       return;
     }
-    if (!this.authLimiter.allowConnection(socket, socketPeerKey(socket))) {
-      this.send(socket, { type: 'auth_result', action: 'link', status: 'rate_limited' });
+    if (!this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
+      reply('rate_limited');
       return;
     }
     this.linkInFlight.add(player.id);
@@ -838,14 +861,20 @@ export class AnarchyServer {
         player.id,
         connectionId,
         proof,
-        (proofHash) => this.authLimiter.allowSubject(proofHash),
+        (identity) => {
+          const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
+          const proofOk = this.authLimiter.allowProof(identity.proofHash);
+          return subjectOk && proofOk;
+        },
       );
-      const live = this.socketFor(player.id, connectionId);
-      if (!live) return;
-      this.send(live, { type: 'auth_result', action: 'link', status });
+      reply(status);
     } finally {
       this.linkInFlight.delete(player.id);
     }
+  }
+
+  private peerKey(socket: WebSocket): string | undefined {
+    return socketPeerKey(socket, this.socketRequests.get(socket), this.config.trustedProxies);
   }
 
   private socketFor(playerId: string, connectionId: string): WebSocket | undefined {

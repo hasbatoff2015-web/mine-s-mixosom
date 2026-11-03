@@ -1,10 +1,16 @@
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresDatabase } from '../../server/db/database';
 import { bindVerifiedProviderIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
-import { releaseReservedProof, reserveResumeProof } from '../../server/identity/yandexProofReceipts';
-import { verifyYandexPlayerProof } from '../../server/identity/yandexVerifier';
+import {
+  consumeReservedProof,
+  purgeExpiredReceipts,
+  receiptRetentionSeconds,
+  releaseReservedProof,
+  reserveResumeProof,
+} from '../../server/identity/yandexProofReceipts';
+import { legacyProofFingerprint, verifyYandexPlayerProof } from '../../server/identity/yandexVerifier';
 import { SYNTHETIC_ISSUED_AT, SYNTHETIC_NOW_MS, SYNTHETIC_YANDEX_SECRET, signedPlayerProfile } from './yandexProfileFixture';
 
 const databaseUrl = process.env.FC_TEST_DATABASE_URL?.trim() ?? '';
@@ -112,5 +118,90 @@ describe.skipIf(databaseUrl === '')('provider identity links on PostgreSQL', () 
       reserveResumeProof(db, { ...scope, worldId: 'world-b' }, hash, B, other),
     ]);
     expect([left, right].sort()).toEqual(['reserved', 'reused']);
+    expect(await consumeReservedProof(db, scope, hash, other)).toBe(false);
+    expect(await consumeReservedProof(db, scope, hash, attempt)).toBe(true);
+    expect(await consumeReservedProof(db, scope, hash, attempt)).toBe(false);
+    await releaseReservedProof(db, scope, hash, attempt);
+    const consumed = await db.query<{ state: string }>(
+      `SELECT state FROM yandex_proof_receipts WHERE proof_hash = $1 AND server_mode = 'anarchy' AND world_id = 'world-a'`,
+      [hash],
+    );
+    expect(consumed.rows[0]?.state).toBe('consumed');
+  }, 30_000);
+
+  it('keeps a 0009 string hash blocking only that proof and isolates cleanup', async () => {
+    const name = await schema();
+    const db = open(name);
+    await db.start();
+    expect(db.appliedMigrations).toContain('0009');
+    expect(db.appliedMigrations).toContain('0010');
+    const attempt = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const other = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const proof = signedPlayerProfile('legacy-user', SYNTHETIC_YANDEX_SECRET, SYNTHETIC_ISSUED_AT);
+    const verified = verifyYandexPlayerProof(proof, {
+      secret: SYNTHETIC_YANDEX_SECRET,
+      nowMs: SYNTHETIC_NOW_MS,
+      maxAgeSeconds: 600,
+      clockSkewSeconds: 120,
+    });
+    if (!verified.ok) throw new Error(verified.reason);
+    const legacy = legacyProofFingerprint(proof);
+    expect(legacy).toBe(createHash('sha256').update(proof, 'utf8').digest('hex'));
+    expect(legacy).not.toBe(verified.identity.proofHash);
+    await db.query(
+      `INSERT INTO yandex_proof_receipts
+        (deployment_id, proof_hash, player_id, purpose, server_mode, world_id, state)
+       VALUES ('dev', $1, $2::uuid, 'resume', 'legacy', 'legacy', 'consumed')`,
+      [legacy, A],
+    );
+    expect(await reserveResumeProof(db, scope, verified.identity.proofHash, A, attempt, legacy)).toBe('reused');
+    const fresh = signedPlayerProfile('legacy-user', SYNTHETIC_YANDEX_SECRET, SYNTHETIC_ISSUED_AT + 1);
+    const freshVerified = verifyYandexPlayerProof(fresh, {
+      secret: SYNTHETIC_YANDEX_SECRET,
+      nowMs: SYNTHETIC_NOW_MS,
+      maxAgeSeconds: 600,
+      clockSkewSeconds: 120,
+    });
+    if (!freshVerified.ok) throw new Error(freshVerified.reason);
+    expect(await reserveResumeProof(
+      db,
+      scope,
+      freshVerified.identity.proofHash,
+      A,
+      other,
+      legacyProofFingerprint(fresh),
+    )).toBe('reserved');
+    await expect(consumeReservedProof(db, scope, freshVerified.identity.proofHash, 'not-a-uuid')).rejects.toThrow();
+    const still = await db.query<{ state: string }>(
+      `SELECT state FROM yandex_proof_receipts WHERE proof_hash = $1`,
+      [freshVerified.identity.proofHash],
+    );
+    expect(still.rows[0]?.state).toBe('reserved');
+    expect(await consumeReservedProof(db, scope, freshVerified.identity.proofHash, other)).toBe(true);
+    await db.query(
+      `INSERT INTO yandex_proof_receipts
+        (deployment_id, proof_hash, player_id, purpose, server_mode, world_id, state, created_at)
+       VALUES
+        ('prod', $1, $2::uuid, 'resume', 'anarchy', 'world-a', 'consumed', NOW() - interval '30 days'),
+        ('dev', $3, $2::uuid, 'resume', 'survival', 'survival', 'consumed', NOW() - interval '30 days')`,
+      ['11'.repeat(32), A, '22'.repeat(32)],
+    );
+    await db.query(
+      `UPDATE yandex_proof_receipts SET created_at = NOW() - interval '30 days'
+       WHERE proof_hash = $1`,
+      [freshVerified.identity.proofHash],
+    );
+    await Promise.all([
+      purgeExpiredReceipts(db, scope, receiptRetentionSeconds(600, 120)),
+      purgeExpiredReceipts(db, scope, receiptRetentionSeconds(600, 120)),
+    ]);
+    const leftRows = await db.query<{ deployment_id: string; server_mode: string; proof_hash: string }>(
+      `SELECT deployment_id, server_mode, proof_hash FROM yandex_proof_receipts ORDER BY proof_hash`,
+    );
+    const hashes = leftRows.rows.map((row) => `${row.deployment_id}:${row.server_mode}:${row.proof_hash}`);
+    expect(hashes).toContain(`prod:anarchy:${'11'.repeat(32)}`);
+    expect(hashes).toContain(`dev:survival:${'22'.repeat(32)}`);
+    expect(hashes.some((row) => row.endsWith(freshVerified.identity.proofHash))).toBe(false);
+    expect(hashes.some((row) => row.includes(legacy))).toBe(true);
   }, 30_000);
 });

@@ -1,4 +1,5 @@
 import { parseAdminAuthHashes, type AdminCredential } from './admin/credentials';
+import { parseTrustedProxies } from './identity/authRateLimit';
 import { ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import {
   DEFAULT_CHUNK_VIEW_RADIUS,
@@ -44,6 +45,11 @@ export interface ServerConfig {
    */
   readonly database: DatabaseConfig;
   readonly yandexAuth: YandexAuthConfig;
+  /**
+   * Immediate reverse proxies allowed to supply X-Forwarded-For.
+   * Empty means forwarded headers are ignored. Loopback is not a player address.
+   */
+  readonly trustedProxies: readonly string[];
   /**
    * `legacy_json` keeps the synchronous JSON wallet.
    * `postgres` makes PostgreSQL the only currency authority.
@@ -301,6 +307,7 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     loadBuiltinPlugins: env.FC_NO_BUILTIN_PLUGINS !== '1' && env.FC_NO_BUILTIN_PLUGINS !== 'true',
     database,
     yandexAuth: loadYandexAuthConfig(env, database.enabled),
+    trustedProxies: parseTrustedProxies(env.FC_TRUSTED_PROXIES),
     economy: loadEconomyBackendConfig(env, loadDatabaseConfig(env)),
     adminIdentity,
     adminHttp: loadAdminHttpConfig(env, adminIdentity),

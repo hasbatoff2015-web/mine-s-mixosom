@@ -143,6 +143,15 @@ function strictBase64(value: string): Buffer | undefined {
   return decoded;
 }
 
+/**
+ * SHA-256 of the canonical proof text. Migration 0009 stored this form.
+ * Call it only with a string that already passed HMAC and canonical Base64.
+ * A client-supplied hash is never accepted in its place.
+ */
+export function legacyProofFingerprint(canonicalProof: string): string {
+  return createHash('sha256').update(canonicalProof, 'utf8').digest('hex');
+}
+
 /** Length-prefixed bytes, so one decoded signature and payload have one hash. */
 function canonicalProofFingerprint(signature: Buffer, payload: Buffer): string {
   const hash = createHash('sha256');
