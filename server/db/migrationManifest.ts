@@ -49,6 +49,29 @@ const YANDEX_PROOF_RECEIPTS_SQL = `CREATE TABLE yandex_proof_receipts (
   CONSTRAINT yandex_proof_receipts_deployment_len CHECK (char_length(deployment_id) <= 64)
 )`;
 
+const YANDEX_PROOF_RECEIPTS_ADD_SCOPE_SQL = `ALTER TABLE yandex_proof_receipts
+  ADD COLUMN server_mode TEXT NOT NULL DEFAULT 'legacy',
+  ADD COLUMN world_id TEXT NOT NULL DEFAULT 'legacy',
+  ADD COLUMN state TEXT NOT NULL DEFAULT 'consumed',
+  ADD COLUMN attempt_id UUID`;
+
+const YANDEX_PROOF_RECEIPTS_DROP_PK_SQL = `ALTER TABLE yandex_proof_receipts
+  DROP CONSTRAINT yandex_proof_receipts_pk`;
+
+const YANDEX_PROOF_RECEIPTS_ADD_SCOPE_PK_SQL = `ALTER TABLE yandex_proof_receipts
+  ADD CONSTRAINT yandex_proof_receipts_scope_pk
+  PRIMARY KEY (deployment_id, server_mode, world_id, proof_hash)`;
+
+const YANDEX_PROOF_RECEIPTS_STATE_CHECK_SQL = `ALTER TABLE yandex_proof_receipts
+  ADD CONSTRAINT yandex_proof_receipts_state CHECK (state IN ('reserved', 'consumed')),
+  ADD CONSTRAINT yandex_proof_receipts_mode_len CHECK (char_length(server_mode) <= 32),
+  ADD CONSTRAINT yandex_proof_receipts_world_len CHECK (char_length(world_id) <= 128)`;
+
+const YANDEX_PROOF_RECEIPTS_DROP_SCOPE_DEFAULTS_SQL = `ALTER TABLE yandex_proof_receipts
+  ALTER COLUMN server_mode DROP DEFAULT,
+  ALTER COLUMN world_id DROP DEFAULT,
+  ALTER COLUMN state DROP DEFAULT`;
+
 const PROVIDER_IDENTITY_LINKS_SQL = `CREATE TABLE player_identity_links (
   deployment_id TEXT NOT NULL,
   server_mode TEXT NOT NULL,
@@ -560,6 +583,17 @@ export const MIGRATIONS: readonly Migration[] = [
     name: 'yandex_proof_receipts',
     statements: [
       YANDEX_PROOF_RECEIPTS_SQL,
+    ],
+  },
+  {
+    version: '0010',
+    name: 'yandex_proof_receipt_scope',
+    statements: [
+      YANDEX_PROOF_RECEIPTS_ADD_SCOPE_SQL,
+      YANDEX_PROOF_RECEIPTS_DROP_PK_SQL,
+      YANDEX_PROOF_RECEIPTS_ADD_SCOPE_PK_SQL,
+      YANDEX_PROOF_RECEIPTS_STATE_CHECK_SQL,
+      YANDEX_PROOF_RECEIPTS_DROP_SCOPE_DEFAULTS_SQL,
     ],
   },
 ];

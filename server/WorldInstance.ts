@@ -1,6 +1,11 @@
 import { join } from 'node:path';
 import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedProviderIdentity } from './identity/providerLinks';
-import { consumeResumeProof } from './identity/yandexProofReceipts';
+import {
+  consumeReservedProof,
+  releaseReservedProof,
+  reserveResumeProof,
+  purgeExpiredReceipts,
+} from './identity/yandexProofReceipts';
 import { verifyYandexPlayerProof } from './identity/yandexVerifier';
 import type { AuthLinkStatus } from '../shared/protocol';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
@@ -2032,7 +2037,12 @@ export class WorldInstance {
     return { error: 'Не удалось подтвердить Яндекс ID.', code: 'proof_invalid' };
   }
 
-  async linkYandex(playerId: string, connectionId: string, proof: string): Promise<AuthLinkStatus> {
+  async linkYandex(
+    playerId: string,
+    connectionId: string,
+    proof: string,
+    subjectRate?: (proofHash: string) => boolean,
+  ): Promise<AuthLinkStatus> {
     const player = this.players.get(playerId);
     if (!player?.connected || player.connectionId !== connectionId) return 'stale_session';
     const auth = this.config.yandexAuth;
@@ -2046,6 +2056,7 @@ export class WorldInstance {
       clockSkewSeconds: auth.clockSkewSeconds,
     });
     if (!verified.ok) return verified.reason === 'expired' || verified.reason === 'not_yet_valid' ? 'proof_expired' : 'proof_invalid';
+    if (subjectRate && !subjectRate(verified.identity.proofHash)) return 'rate_limited';
     if (player.connectionId !== connectionId) return 'stale_session';
     try {
       const bound = await bindVerifiedProviderIdentity(
@@ -2074,6 +2085,7 @@ export class WorldInstance {
     proof: string;
     guestToken?: string;
     confirmOtherCharacter: boolean;
+    subjectRate?: (proofHash: string) => boolean;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
     const auth = this.config.yandexAuth;
     if (!auth.enabled) return { error: 'Вход через Яндекс на этом сервере выключен.', code: 'auth_disabled' };
@@ -2109,25 +2121,59 @@ export class WorldInstance {
     }
     const token = this.sessionTokenForPlayer(lookup.playerId);
     if (!token) return { error: 'Персонаж не найден.', code: 'player_not_found' };
+    if (this.readyState !== 'READY') return { error: 'world not ready', code: 'world_not_ready' };
+    const alreadyOnline = this.players.get(lookup.playerId)?.connected === true;
+    if (!alreadyOnline && this.onlineCount() >= this.config.maxPlayers) {
+      return { error: 'server full', code: 'server_full' };
+    }
     if (this.isPlayerBanned(lookup.playerId)) return { error: 'banned', code: 'banned' };
-    let consumed;
+    if (options.subjectRate && !options.subjectRate(verified.identity.proofHash)) {
+      return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
+    }
+    const attemptId = crypto.randomUUID();
+    let reserved;
     try {
-      consumed = await consumeResumeProof(this.database, scope.deploymentId, verified.identity.proofHash, lookup.playerId);
+      reserved = await reserveResumeProof(this.database, scope, verified.identity.proofHash, lookup.playerId, attemptId);
     } catch (error) {
       serverLog(`yandex receipt failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
       return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
     }
-    if (consumed === 'unavailable') return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
-    if (consumed === 'reused') {
+    if (reserved === 'unavailable') return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    if (reserved === 'reused') {
       return { error: 'Это подтверждение уже использовано. Обновите игру и повторите вход.', code: 'proof_reused' };
     }
-    return this.join({
+    const joined = await this.join({
       sink: options.sink,
       name: options.name,
       appearance: options.appearance,
       sessionToken: token,
       durableFresh: true,
     });
+    if ('error' in joined) {
+      try {
+        await releaseReservedProof(this.database, scope, verified.identity.proofHash, attemptId);
+      } catch (error) {
+        serverLog(`yandex receipt release failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      }
+      return joined;
+    }
+    try {
+      await consumeReservedProof(this.database, scope, verified.identity.proofHash, attemptId);
+    } catch (error) {
+      serverLog(`yandex receipt consume failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
+    return joined;
+  }
+
+  async purgeOldYandexReceipts(): Promise<void> {
+    const auth = this.config.yandexAuth;
+    if (!auth.enabled || !this.database.enabled) return;
+    const olderThan = auth.maxAgeSeconds + auth.clockSkewSeconds + 3600;
+    try {
+      await purgeExpiredReceipts(this.database, olderThan);
+    } catch (error) {
+      serverLog(`yandex receipt purge failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
   }
 
   join(options: {

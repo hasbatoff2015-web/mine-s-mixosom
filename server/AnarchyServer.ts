@@ -18,6 +18,7 @@ import { existsSync } from 'node:fs';
 import { AdminHttpServer } from './admin/http';
 import { adminAssetIndex, resolveAdminAssetsRoot } from './admin/assets';
 import { AdminPanelHost } from './admin/panelHost';
+import { AuthRateLimiter, socketPeerKey } from './identity/authRateLimit';
 import { yandexAuthLogLabel, type ServerConfig } from './config';
 import type { CommandResult } from './commands';
 import { serverLog } from './log';
@@ -61,7 +62,8 @@ export class AnarchyServer {
   private readonly pendingJoins = new WeakMap<WebSocket, JoinFlight>();
   private nextJoinFlight = 1;
   private readonly linkInFlight = new Set<string>();
-  private readonly authAttempts = new WeakMap<WebSocket, number[]>();
+  private readonly authLimiter = new AuthRateLimiter();
+  private receiptPurge?: ReturnType<typeof setInterval>;
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
     this.world = new WorldInstance(config, options);
@@ -141,6 +143,10 @@ export class AnarchyServer {
       throw error;
     }
     this.world.startLoops();
+    this.receiptPurge = setInterval(() => {
+      void this.world.purgeOldYandexReceipts();
+    }, 10 * 60 * 1000);
+    this.receiptPurge.unref?.();
     serverLog('started');
     console.log(`Frontier Cubes Server listening on ${this.wsUrl()}`);
     serverLog(`mode: ${this.config.serverMode}`);
@@ -150,6 +156,8 @@ export class AnarchyServer {
   }
 
   async stop(): Promise<void> {
+    if (this.receiptPurge) clearInterval(this.receiptPurge);
+    this.receiptPurge = undefined;
     await this.closeAdminHttp();
     this.world.prepareForServerShutdown();
     const seen = new Set<string>();
@@ -343,7 +351,7 @@ export class AnarchyServer {
       serverLog('duplicate join ignored while another join is pending on this connection');
       return;
     }
-    if (message.authMode === 'resume_yandex' && !this.allowAuthAttempt(socket)) {
+    if (message.authMode === 'resume_yandex' && !this.authLimiter.allowConnection(socket, socketPeerKey(socket))) {
       this.pendingJoins.delete(socket);
       this.send(socket, { type: 'error', code: 'rate_limited', message: 'Слишком много попыток входа. Подождите и повторите.' });
       socket.close();
@@ -360,6 +368,7 @@ export class AnarchyServer {
         proof: message.yandexProof ?? '',
         guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
         confirmOtherCharacter: message.confirmYandexResume === true,
+        subjectRate: (proofHash) => this.authLimiter.allowSubject(proofHash),
       })
       : this.world.join({
         sink,
@@ -812,18 +821,6 @@ export class AnarchyServer {
     }
   }
 
-  private allowAuthAttempt(socket: WebSocket): boolean {
-    const now = Date.now();
-    const recent = (this.authAttempts.get(socket) ?? []).filter((at) => now - at < 5 * 60 * 1000);
-    if (recent.length >= 8) {
-      this.authAttempts.set(socket, recent);
-      return false;
-    }
-    recent.push(now);
-    this.authAttempts.set(socket, recent);
-    return true;
-  }
-
   private async handleAuthLink(player: ServerPlayer, connectionId: string, proof: string): Promise<void> {
     const socket = this.socketFor(player.id, connectionId);
     if (!socket) return;
@@ -831,13 +828,18 @@ export class AnarchyServer {
       this.send(socket, { type: 'auth_result', action: 'link', status: 'busy' });
       return;
     }
-    if (!this.allowAuthAttempt(socket)) {
+    if (!this.authLimiter.allowConnection(socket, socketPeerKey(socket))) {
       this.send(socket, { type: 'auth_result', action: 'link', status: 'rate_limited' });
       return;
     }
     this.linkInFlight.add(player.id);
     try {
-      const status = await this.world.linkYandex(player.id, connectionId, proof);
+      const status = await this.world.linkYandex(
+        player.id,
+        connectionId,
+        proof,
+        (proofHash) => this.authLimiter.allowSubject(proofHash),
+      );
       const live = this.socketFor(player.id, connectionId);
       if (!live) return;
       this.send(live, { type: 'auth_result', action: 'link', status });

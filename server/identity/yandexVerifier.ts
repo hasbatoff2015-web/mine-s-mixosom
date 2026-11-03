@@ -106,7 +106,7 @@ export function verifyYandexPlayerProof(proof: string, options: YandexVerifyOpti
     provider: 'yandex',
     providerUserId: profile.uniqueID,
     issuedAt: root.issuedAt,
-    proofHash: createHash('sha256').update(proof, 'utf8').digest('hex'),
+    proofHash: canonicalProofFingerprint(signature, payload),
   };
   Object.defineProperty(identity, brand, { value: true });
   return { ok: true, identity };
@@ -127,12 +127,30 @@ function isSubject(value: unknown): value is string {
     && !/[\u0000-\u001F\u007F]/.test(value);
 }
 
+/**
+ * Node's base64 decoder ignores spare bits in the last character, so two
+ * different strings can become the same bytes. Only the canonical encoding
+ * of those bytes is accepted.
+ */
 function strictBase64(value: string): Buffer | undefined {
   if (value.length === 0 || value.length % 4 !== 0 || !STANDARD_BASE64.test(value)) return undefined;
+  if (value.includes(' ') || value.includes('\n') || value.includes('\r') || value.includes('\t')) return undefined;
   const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
   if (padding === 1 && value.length < 4) return undefined;
   if (value.slice(0, value.length - padding).includes('=')) return undefined;
   const decoded = Buffer.from(value, 'base64');
-  if (decoded.length === 0) return undefined;
+  if (decoded.length === 0 || decoded.toString('base64') !== value) return undefined;
   return decoded;
+}
+
+/** Length-prefixed bytes, so one decoded signature and payload have one hash. */
+function canonicalProofFingerprint(signature: Buffer, payload: Buffer): string {
+  const hash = createHash('sha256');
+  const lengths = Buffer.alloc(8);
+  lengths.writeUInt32BE(signature.length, 0);
+  lengths.writeUInt32BE(payload.length, 4);
+  hash.update(lengths);
+  hash.update(signature);
+  hash.update(payload);
+  return hash.digest('hex');
 }

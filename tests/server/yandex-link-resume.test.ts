@@ -33,10 +33,15 @@ class MemoryIdentityDb implements Database {
       return { rows: [], rowCount: 0 };
     }
     if (sql.includes('INSERT INTO yandex_proof_receipts')) {
-      const key = `${String(params[0])}:${String(params[1])}`;
+      const key = `${String(params[0])}|${String(params[1])}|${String(params[2])}|${String(params[3])}`;
       if (this.receipts.has(key)) return { rows: [], rowCount: 0 };
       this.receipts.add(key);
       return { rows: [], rowCount: 1 };
+    }
+    if (sql.includes("SET state = 'consumed'")) return { rows: [], rowCount: 1 };
+    if (sql.includes('DELETE FROM yandex_proof_receipts')) {
+      const key = `${String(params[0])}|${String(params[1])}|${String(params[2])}|${String(params[3])}`;
+      return { rows: [], rowCount: this.receipts.delete(key) ? 1 : 0 };
     }
     if (sql.includes('INSERT INTO player_identity_links')) {
       const scope = `${String(params[0])}|${String(params[1])}|${String(params[2])}`;
@@ -266,8 +271,18 @@ describe('yandex link and resume', () => {
         if (!pong) await new Promise((resolve) => setTimeout(resolve, 10));
       }
       expect(pong).toBe(true);
+      const liveId = player?.connectionId;
+      right.socket.send(JSON.stringify({ type: 'chat', text: 'race-ok', channel: 'global' }));
+      const chatAt = Date.now() + 3000;
+      let chat = false;
+      while (Date.now() < chatAt && !chat) {
+        chat = right.messages.some((message) => message.type === 'chat' && message.text.includes('race-ok'));
+        if (!chat) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      expect(chat).toBe(true);
       expect(player?.connected).toBe(true);
-      expect(player?.connectionId).not.toBe('');
+      expect(player?.connectionId).toBe(liveId);
+      expect(server.world.players.size).toBe(1);
       left.socket.close();
       right.socket.close();
     } finally {

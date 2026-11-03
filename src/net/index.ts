@@ -14,6 +14,7 @@ export {
   runOnlineConnectAttempt,
   selectedLocalServer,
   statusUrlForServer,
+  yandexCredentialEndpointTrusted,
 } from './AnarchyClient';
 export {
   applyAuthoritativeContainerSlots,

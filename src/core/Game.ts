@@ -281,6 +281,7 @@ import {
   isLocalServerName,
   runOnlineConnectAttempt,
   selectedLocalServer,
+  yandexCredentialEndpointTrusted,
 } from '../net';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { pickBuyerInteractTarget, type BuyerRayHit } from '../net/buyerInteract';
@@ -671,6 +672,8 @@ export class Game {
   private readonly worldStore = new IdbWorldStore();
   private readonly yandex = new YandexGamesService();
   private yandexBusy = false;
+  private yandexOp = 0;
+  private linkWaitOp = 0;
   private readonly onlineStatus = new ServerStatusSession();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
@@ -1095,25 +1098,51 @@ export class Game {
     this.ui.applyOnlineServerStatuses(statuses);
   }
 
-  private async loginWithYandex(id: string, confirmOtherCharacter = false): Promise<void> {
-    if (!isLocalServerName(id) || this.yandexBusy) return;
+  private beginYandex(): number | undefined {
+    if (this.yandexBusy) return undefined;
     this.yandexBusy = true;
+    this.yandexOp += 1;
     this.ui.setYandexBusy(true);
-    this.ui.setYandexStatus('Запрос подтверждения Яндекса…');
-    const signed = await this.yandex.requestSignedProof(true);
+    return this.yandexOp;
+  }
+
+  private yandexStill(op: number): boolean {
+    return this.yandexBusy && this.yandexOp === op;
+  }
+
+  private endYandex(op: number, message?: string): void {
+    if (this.yandexOp !== op) return;
     this.yandexBusy = false;
     this.ui.setYandexBusy(false);
+    if (message) this.ui.setYandexStatus(message);
+  }
+
+  private async loginWithYandex(id: string, confirmOtherCharacter = false): Promise<void> {
+    if (!isLocalServerName(id)) return;
+    const op = this.beginYandex();
+    if (op === undefined) return;
+    const url = clientUrlForServer(id);
+    if (!url || !yandexCredentialEndpointTrusted(url, id)) {
+      this.endYandex(op, 'Вход через Яндекс доступен только на официальном сервере.');
+      return;
+    }
+    this.ui.setYandexStatus('Запрос подтверждения Яндекса…');
+    const signed = await this.yandex.requestSignedProof(true);
+    if (!this.yandexStill(op)) return;
     if (!signed.ok) {
-      this.ui.setYandexStatus(yandexProofMessage(signed.reason));
+      this.endYandex(op, yandexProofMessage(signed.reason));
       return;
     }
     try {
       await this.connectOnlineServer(id, { proof: signed.proof, confirmOtherCharacter });
+      this.endYandex(op);
     } catch (error) {
+      if (!this.yandexStill(op)) return;
       const code = error && typeof error === 'object' && 'code' in error
         ? String((error as { code?: string }).code ?? '')
         : '';
       if (code === 'yandex_character_conflict' && !confirmOtherCharacter) {
+        this.endYandex(op);
         const accept = typeof window !== 'undefined' && typeof window.confirm === 'function'
           && window.confirm('К этому Яндекс ID привязан другой персонаж. Войти им? Текущий гостевой ключ останется в браузере.');
         if (accept) {
@@ -1125,26 +1154,34 @@ export class Game {
         return;
       }
       await this.showOnlineServerList(id);
-      this.ui.setYandexStatus(error instanceof Error ? error.message : 'Вход через Яндекс не выполнен.');
+      this.endYandex(op, error instanceof Error ? error.message : 'Вход через Яндекс не выполнен.');
     }
   }
 
   private async linkYandexAccount(): Promise<void> {
     const online = this.session?.online;
-    if (!online || this.yandexBusy) return;
-    this.yandexBusy = true;
-    this.ui.setYandexBusy(true);
+    if (!online) return;
+    const op = this.beginYandex();
+    if (op === undefined) return;
+    const live = online.client.liveEndpoint();
+    if (!live || !yandexCredentialEndpointTrusted(live.url, live.target)) {
+      this.endYandex(op, 'Привязка Яндекс ID доступна только на официальном сервере.');
+      return;
+    }
     this.ui.toast('Запрос подтверждения Яндекса…');
     const signed = await this.yandex.requestSignedProof(true);
+    if (!this.yandexStill(op)) return;
     if (!signed.ok) {
-      this.ui.toast(yandexProofMessage(signed.reason));
-      this.yandexBusy = false;
-      this.ui.setYandexBusy(false);
+      this.endYandex(op, yandexProofMessage(signed.reason));
       return;
     }
     online.client.send({ type: 'auth_link', proof: signed.proof });
-    this.yandexBusy = false;
-    this.ui.setYandexBusy(false);
+    this.linkWaitOp = op;
+    const waitOp = op;
+    window.setTimeout(() => {
+      if (!this.yandexStill(waitOp)) return;
+      this.endYandex(waitOp, 'Ответ сервера не получен. Повторите привязку. Если она уже сохранилась, сервер сообщит об этом.');
+    }, 12_000);
   }
 
   private async connectOnlineServer(id: string, yandexResume?: { proof: string; confirmOtherCharacter?: boolean }): Promise<void> {
@@ -1402,9 +1439,8 @@ export class Game {
       case 'welcome':
         return;
       case 'auth_result':
-        this.yandexBusy = false;
-        this.ui.setYandexBusy(false);
-        this.ui.toast(yandexLinkMessage(message.status));
+        if (!this.yandexBusy || this.yandexOp !== this.linkWaitOp) return;
+        this.endYandex(this.yandexOp, yandexLinkMessage(message.status));
         return;
       case 'player_joined':
         this.spawnRemotePlayer(session, message.player);

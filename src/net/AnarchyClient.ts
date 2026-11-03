@@ -21,6 +21,8 @@ import {
 import { sanitizePlayerName } from '../../shared/playerName';
 import {
   confirmGuestWelcome,
+  guestDeploymentId,
+  readGuestCredential,
   legacySessionStorageKey,
   planGuestJoin,
   withGuestScopeLock,
@@ -236,6 +238,25 @@ export function guestEndpointTrusted(connectUrl: string, target: LocalServerName
   return normalizeEndpoint(connectUrl) === normalizeEndpoint(canonical);
 }
 
+/**
+ * Yandex proofs use the same canonical-endpoint rule as guest tokens.
+ * A remote ws:// address is refused. Loopback ws:// stays available for local tests.
+ * Query overrides such as ?anarchyUrl= never become trusted.
+ */
+export function yandexCredentialEndpointTrusted(connectUrl: string, target: LocalServerName, search?: string): boolean {
+  if (!guestEndpointTrusted(connectUrl, target, search)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(connectUrl);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol === 'wss:' || parsed.protocol === 'https:') return true;
+  if (parsed.protocol !== 'ws:' && parsed.protocol !== 'http:') return false;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '');
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1';
+}
+
 function browserStore(kind: 'local' | 'session'): GuestStorage | null {
   try {
     if (typeof globalThis === 'undefined') return null;
@@ -366,6 +387,7 @@ export class AnarchyClient {
   private pingTimer: ReturnType<typeof setInterval> | undefined;
   private intentionalClose = false;
   private generation = 0;
+  private endpoint: { url: string; target: LocalServerName } | undefined;
   private identityAbort: AbortController | null = null;
   private pending: ConnectAttempt | null = null;
   state: ConnectionState = 'idle';
@@ -382,6 +404,11 @@ export class AnarchyClient {
 
   onDisconnect(handler: () => void): void {
     this.disconnectHandler = handler;
+  }
+
+  /** Endpoint of the socket this client opened. Absent before connect. */
+  liveEndpoint(): { url: string; target: LocalServerName } | undefined {
+    return this.endpoint;
   }
 
   connect(
@@ -409,6 +436,7 @@ export class AnarchyClient {
     const search = options?.search ?? (typeof location === 'undefined' ? '' : location.search);
     const hostname = options?.hostname ?? (typeof location === 'undefined' ? 'localhost' : location.hostname);
     const target = options?.targetServer ?? selectedLocalServer(search);
+    this.endpoint = { url, target };
     const durable = options?.durable === undefined ? browserStore('local') : options.durable;
     const legacy = options?.legacy === undefined ? browserStore('session') : options.legacy;
     return new Promise((resolve, reject) => {
@@ -477,6 +505,10 @@ export class AnarchyClient {
     legacy: GuestStorage | null,
     signal: AbortSignal,
   ): Promise<void> {
+    if (options?.yandexResume) {
+      await this.runYandexResume(attempt, url, name, appearance, options, search, hostname, target, durable, legacy, signal);
+      return;
+    }
     const plan = await this.planJoin(
       url, search, hostname, target,
       Boolean(options?.freshGuest), options?.freshConsent, Boolean(options?.allowEphemeral),
@@ -580,16 +612,22 @@ export class AnarchyClient {
     };
     socket.addEventListener('open', () => {
       if (attempt.settled || this.generation !== generation || this.socket !== socket) return;
+      if (yandexResume && plan.outcome === 'untrusted') {
+        fail('Вход через Яндекс доступен только на официальном сервере.', 'untrusted_endpoint');
+        socket.close();
+        return;
+      }
       const resume = yandexResume;
+      const guestToken = 'sendToken' in plan ? plan.sendToken : undefined;
       this.send(resume
         ? buildAnarchyJoinMessage(
           name,
-          resume.confirmOtherCharacter || plan.outcome === 'untrusted' ? undefined : plan.sendToken,
+          resume.confirmOtherCharacter ? undefined : guestToken,
           appearance,
           false,
           resume,
         )
-        : buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : plan.sendToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
+        : buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : guestToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
     });
     socket.addEventListener('message', (event) => {
       if (this.generation !== generation || this.socket !== socket) return;
@@ -674,6 +712,85 @@ export class AnarchyClient {
       }
       fail('Сервер недоступен');
     });
+  }
+
+  private async runYandexResume(
+    attempt: ConnectAttempt,
+    url: string,
+    name: string | undefined,
+    appearance: PlayerAppearance | undefined,
+    options: GuestConnectOptions,
+    search: string,
+    hostname: string,
+    target: LocalServerName,
+    durable: GuestStorage | null,
+    legacy: GuestStorage | null,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const resume = options.yandexResume;
+    if (!resume) return;
+    if (!yandexCredentialEndpointTrusted(url, target, search)) {
+      this.failAttempt(attempt, Object.assign(
+        new Error('Вход через Яндекс доступен только на официальном сервере.'),
+        { code: 'untrusted_endpoint' },
+      ));
+      return;
+    }
+    const statusUrl = statusUrlForServer(target, search);
+    if (!statusUrl) {
+      this.failAttempt(attempt, Object.assign(
+        new Error('Не удалось проверить мир сервера. Персонаж не создавался.'),
+        { code: 'status_unavailable' },
+      ));
+      return;
+    }
+    let status: { ok: boolean; ready?: boolean; mode?: string; world?: string };
+    try {
+      status = await boundedStatus(
+        (child) => options.fetchStatus ? options.fetchStatus(statusUrl, child) : fetchIdentityStatus(statusUrl, child),
+        signal,
+      );
+    } catch (error) {
+      const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: string }).code ?? '') : '';
+      if (this.generation !== attempt.generation || signal.aborted || code === 'cancelled') {
+        this.failAttempt(attempt, cancelledJoin());
+        return;
+      }
+      this.failAttempt(attempt, Object.assign(
+        new Error(code === 'status_timeout'
+          ? 'Проверка сервера не ответила вовремя. Персонаж не создавался.'
+          : 'Не удалось проверить мир сервера. Персонаж не создавался.'),
+        { code: code === 'status_timeout' ? 'status_timeout' : 'status_unavailable' },
+      ));
+      return;
+    }
+    if (!status.ok || status.ready !== true || !status.world || status.mode !== target) {
+      this.failAttempt(attempt, Object.assign(
+        new Error('Сервер не подтвердил этот мир. Персонаж не создавался.'),
+        { code: status.mode && status.mode !== target ? 'mode_mismatch' : 'status_unavailable' },
+      ));
+      return;
+    }
+    const scope: GuestIdentityScope = {
+      deployment: guestDeploymentId(hostname),
+      mode: target,
+      worldId: status.world,
+    };
+    let sendToken: string | undefined;
+    if (!resume.confirmOtherCharacter && durable) {
+      try {
+        sendToken = readGuestCredential(durable, scope)?.sessionToken;
+      } catch {
+        sendToken = undefined;
+      }
+    }
+    const plan: GuestJoinPlan = {
+      outcome: 'ready_existing',
+      scope,
+      legacyKeys: [],
+      ...(sendToken ? { sendToken } : {}),
+    };
+    this.openSocket(attempt, url, name, appearance, plan, durable, legacy, resume);
   }
 
   private async planJoin(

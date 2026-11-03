@@ -25,6 +25,24 @@ function rejected(proof: string, secret: string, nowMs = Date.now()): string {
 const PUBLISHED_PURCHASE_SECRET = 't0p$ecret';
 const PUBLISHED_PURCHASE_SIGNATURE = 'hQ8adIRJWD29Nep+0P36Z6edI5uzj6F3tddz6Dqgclk=.eyJhbGdvcml0aG0iOiJITUFDLVNIQTI1NiIsImlzc3VlZEF0IjoxNTcxMjMzMzcxLCJyZXF1ZXN0UGF5bG9hZCI6InF3ZSIsImRhdGEiOnsidG9rZW4iOiJkODVhZTBiMS05MTY2LTRmYmItYmIzOC02ZDJhNGNhNDQxNmQiLCJzdGF0dXMiOiJ3YWl0aW5nIiwiZXJyb3JDb2RlIjoiIiwiZXJyb3JEZXNjcmlwdGlvbiI6IiIsInVybCI6Imh0dHBzOi8veWFuZGV4LnJ1L2dhbWVzL3Nkay9wYXltZW50cy90cnVzdC1mYWtlLmh0bWwiLCJwcm9kdWN0Ijp7ImlkIjoibm9hZHMiLCJ0aXRsZSI6ItCR0LXQtyDRgNC10LrQu9Cw0LzRiyIsImRlc2NyaXB0aW9uIjoi0J7RgtC60LvRjtGH0LjRgtGMINGA0LXQutC70LDQvNGDINCyINC40LPRgNC1IiwicHJpY2UiOnsiY29kZSI6IlJVUiIsInZhbHVlIjoiNDkifSwiaW1hZ2VQcmVmaXgiOiJodHRwczovL2F2YXRhcnMubWRzLnlhbmRleC5uZXQvZ2V0LWdhbWVzLzE4OTI5OTUvMmEwMDAwMDE2ZDFjMTcxN2JkN2EwMTQ5Y2NhZGM4NjA3OGExLyJ9fX0=';
 
+function nonCanonicalBase64(canonical: string): string {
+  const decoded = Buffer.from(canonical, 'base64');
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+  const chars = canonical.split('');
+  for (let index = chars.length - 1; index >= 0; index -= 1) {
+    if (chars[index] === '=') continue;
+    const original = chars[index]!;
+    for (const candidate of alphabet) {
+      if (candidate === original) continue;
+      chars[index] = candidate;
+      const trial = chars.join('');
+      if (Buffer.from(trial, 'base64').equals(decoded) && trial !== canonical) return trial;
+    }
+    chars[index] = original;
+  }
+  throw new Error('expected a non-canonical base64 variant');
+}
+
 function sign(payload: string, secret: string): string {
   const body = Buffer.from(payload, 'utf8').toString('base64');
   const mac = createHmac('sha256', secret).update(Buffer.from(body, 'base64')).digest('base64');
@@ -117,6 +135,14 @@ describe('yandex player proof', () => {
     if (!ok.ok) return;
     expect(ok.identity.providerUserId).toBe('user-1');
     expect(ok.identity.proofHash).toMatch(/^[0-9a-f]{64}$/);
+    const [signature, payload] = proof.split('.');
+    const loose = nonCanonicalBase64(signature!);
+    expect(Buffer.from(loose, 'base64').equals(Buffer.from(signature!, 'base64'))).toBe(true);
+    expect(loose).not.toBe(signature);
+    expect(rejected(`${loose}.${payload}`, secret, nowMs)).toBe('malformed');
+    const again = verify(proof, secret, nowMs);
+    if (!again.ok) throw new Error('canonical proof was rejected');
+    expect(again.identity.proofHash).toBe(ok.identity.proofHash);
     expect(verify(proof, secret, nowMs + 601_000)).toEqual({ ok: false, reason: 'expired' });
     expect(verify(proof, secret, nowMs - 121_000)).toEqual({ ok: false, reason: 'not_yet_valid' });
     const mismatched = sign(JSON.stringify({

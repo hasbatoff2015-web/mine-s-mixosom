@@ -3,6 +3,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresDatabase } from '../../server/db/database';
 import { bindVerifiedProviderIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
+import { releaseReservedProof, reserveResumeProof } from '../../server/identity/yandexProofReceipts';
 import { verifyYandexPlayerProof } from '../../server/identity/yandexVerifier';
 import { SYNTHETIC_ISSUED_AT, SYNTHETIC_NOW_MS, SYNTHETIC_YANDEX_SECRET, signedPlayerProfile } from './yandexProfileFixture';
 
@@ -88,5 +89,28 @@ describe.skipIf(databaseUrl === '')('provider identity links on PostgreSQL', () 
        VALUES ('dev', 'anarchy', 'world-a', 'yandex', 'Y1', $1::uuid)`,
       [A],
     )).rejects.toThrow(/player_identity_links_provider_user|duplicate key/i);
+  }, 30_000);
+
+  it('reserves one resume proof per world and releases only that attempt', async () => {
+    const name = await schema();
+    const db = open(name);
+    await db.start();
+    expect(db.appliedMigrations).toContain('0010');
+    const hash = 'a'.repeat(64);
+    const attempt = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const other = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const survival = { ...scope, serverMode: 'survival', worldId: 'survival' };
+    expect(await reserveResumeProof(db, scope, hash, A, attempt)).toBe('reserved');
+    expect(await reserveResumeProof(db, scope, hash, B, other)).toBe('reused');
+    await releaseReservedProof(db, scope, hash, other);
+    expect(await reserveResumeProof(db, scope, hash, A, other)).toBe('reused');
+    expect(await reserveResumeProof(db, survival, hash, A, other)).toBe('reserved');
+    await releaseReservedProof(db, survival, hash, other);
+    expect(await reserveResumeProof(db, survival, hash, A, attempt)).toBe('reserved');
+    const [left, right] = await Promise.all([
+      reserveResumeProof(db, { ...scope, worldId: 'world-b' }, hash, A, attempt),
+      reserveResumeProof(db, { ...scope, worldId: 'world-b' }, hash, B, other),
+    ]);
+    expect([left, right].sort()).toEqual(['reserved', 'reused']);
   }, 30_000);
 });
