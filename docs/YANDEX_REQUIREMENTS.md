@@ -27,13 +27,15 @@
 
 ## Подписанный игрок — Stage C остановлен
 
-Проверено по страницам SDK **2026-10-15**:
+Проверено по страницам SDK **2026-11-03** (английские и русские версии, полный индекс `llms-full.txt`, загрузчик `https://sdk.games.s3.yandex.net/sdk.js`):
 
-- [Player data](https://yandex.com/dev/games/doc/en/sdk/sdk-player): `ysdk.getPlayer({ signed: true })`, поле `player.signature` имеет вид `<signature>.<profile data>`, обе части base64. Секрет появляется после подключения внутриигровых покупок. Лимит `getPlayer` — 20 запросов за 5 минут. `openAuthDialog()` только после объяснения пользы.
-- [In-app purchases, Fraud prevention](https://yandex.com/dev/games/doc/en/sdk/sdk-purchases): для покупки HMAC-SHA256 считается по **декодированным** байтам второй части, подпись сравнивается с первой частью в base64. В опубликованном JSON покупки есть `algorithm`, `issuedAt` и `data.token` / `data.product`. Пример с ключом `t0p$ecret` сходится.
-- Страница игрока не перечисляет ключи JSON профиля. `getUniqueID()` и `isAuthorized()` — методы клиента, не подписанные поля. Свежесть профиля не описана. Покупку нельзя считать профилем игрока.
+- [Player data](https://yandex.com/dev/games/doc/en/sdk/sdk-player) и [Данные игрока](https://yandex.ru/dev/games/doc/ru/sdk/sdk-player): `ysdk.getPlayer({ signed: true })`, поле `player.signature` имеет вид `<signature>.<profile data>`, обе части base64. Секрет появляется после подключения внутриигровых покупок. Лимит `getPlayer` — 20 запросов за 5 минут. `openAuthDialog()` только после объяснения пользы и не вызывается при старте.
+- [In-app purchases, Fraud prevention](https://yandex.com/dev/games/doc/en/sdk/sdk-purchases): для покупки HMAC-SHA256 считается по **декодированным** байтам второй части, подпись сравнивается с первой частью в base64. В опубликованном JSON покупки есть `algorithm`, `issuedAt` и `data.token` / `data.product`. Пример с ключом `t0p$ecret` сходится. У `payments.getPurchases()` внутри `data` лежит массив, это тоже не профиль игрока.
+- [Events](https://yandex.com/dev/games/doc/en/sdk/sdk-events): `ACCOUNT_SELECTION_DIALOG_OPENED` и `ACCOUNT_SELECTION_DIALOG_CLOSED` описаны для смены прогресса. В английском тексте рядом есть предупреждение, что событие доступно на ТВ. После закрытия документация велит заново взять игрока и не продолжать старый контекст.
+- [Authorization requirement 1.2](https://yandex.com/dev/games/doc/en/requirements/1/2): вход только по кнопке, гость без авторизации обязателен.
+- Страница игрока не перечисляет ключи JSON профиля. `getUniqueID()` и `isAuthorized()` — методы клиента, не подписанные поля. Отдельного серверного endpoint проверки профиля нет: секрет проверяет HMAC локально. Свежесть профиля не описана. `issuedAt` есть у покупки и не переносится на игрока. Покупку нельзя считать профилем игрока. Типы `@types/ysdk` описывают `signature: string` и не раскрывают JSON.
 
-Пока схема профиля не опубликована, `FC_YANDEX_AUTH_ENABLED` не открывает вход и не пишет ссылку. Гостевой UUID не заменяется.
+Пока схема профиля не опубликована, `FC_YANDEX_AUTH_ENABLED` не открывает вход и не пишет ссылку. Гостевой UUID не заменяется. Меню не предлагает привязку, которая всегда закончится отказом.
 
 ## SDK: подключение и initialization
 

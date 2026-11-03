@@ -1930,7 +1930,9 @@ Natural terrain is reconstructed from `summary.seed` whenever a chunk is materia
 - platform pause/resume events переводятся в lifecycle callbacks;
 - local development не блокируется `/sdk.js`.
 
-Ads, authorization, cloud saves, leaderboards и payments находятся вне текущего adapter scope.
+Ads, authorization, cloud saves, leaderboards и payments находятся вне текущего adapter scope. На 2026-11-03 повторная проверка SDK не дала схемы подписанного профиля, поэтому адаптер не вызывает `getPlayer({ signed: true })` и не открывает окно входа. Гостевой `join` остаётся единственным входом.
+
+`AnarchyServer.handleJoin` держит один незавершённый вход на сокет. Второй `join` до завершения первого не вызывает `WorldInstance.join`. Если сокет закрылся раньше, поздний результат отключает только `connectionId` этой попытки. `supersedeOtherSockets` по-прежнему закрывает другие сокеты того же UUID.
 
 ## Performance boundaries
 

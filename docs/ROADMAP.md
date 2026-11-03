@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-11-03: Yandex ID link and resume
+
+- [x] Rechecked the official player, purchase, events, and authorization pages. The signed player JSON fields, an authorized-account bit, and profile freshness are still absent.
+- [x] `FC_YANDEX_AUTH_ENABLED` stays off with or without `FC_YANDEX_AUTH_SECRET`. No menu button promises a link.
+- [x] A client object with `verified: true` is not a provider identity. Migration `0008` is unchanged.
+- [x] One connection cannot publish two guests from overlapping `join` messages. A closed socket does not keep that attempt online.
+- [ ] LINK, RESUME, account-switch UI, and referral identity stay blocked until a real signed profile schema is confirmed outside git. Not merged.
+
 ## 2026-10-28: Integrate PR #129 with current main
 
 - [x] Integration branch from `origin/main` `6c402836`, merge of PR #129 `c90d78d`, no rewrite of either history.
@@ -35,7 +43,7 @@
 - [x] Stage 6: VPS готовит архив трёх миров и дампа PostgreSQL, хранит 3 последние копии, владелец скачивает их сам. Таймер в репозитории, на VPS не включён. Черновик, не влит. Draft PR **#129**.
 - [x] Stage A: гостевой `playerId` переживает новую вкладку и обычный перезапуск. Неизвестный ключ замену не создаёт. Отмена входа и зависший статус нового UUID не создают. Слоты браузера разделены по миру. Привязка Яндекса не делалась. Draft PR **#129**.
 - [x] Stage B: в PostgreSQL есть реестр `player_identity_links` для уже проверенного внешнего id и существующего UUID. Вход через Яндекс и смена устройства не сделаны. Это Stage C. Draft PR **#129**.
-- [ ] Stage C: сверка HMAC конверта есть, но схема подписанного профиля игрока не документирована. Вход через Яндекс выключен. Draft PR **#129**.
+- [ ] Stage C: сверка HMAC конверта есть, но схема подписанного профиля игрока не документирована и на 2026-11-03. Вход через Яндекс выключен. PR #129 уже в main через #141. Отдельная ветка привязки остаётся черновиком и вход не включает.
 
 ## 2026-10-13: Stage 4 private admin access
 

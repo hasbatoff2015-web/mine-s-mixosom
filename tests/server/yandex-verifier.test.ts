@@ -1,4 +1,6 @@
 import { createHmac } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { loadYandexAuthConfig, yandexAuthLogLabel } from '../../server/config';
 import { scopeMatchesProcess } from '../../server/identity/providerLinks';
@@ -71,6 +73,21 @@ describe('yandex player proof', () => {
     const result = verifyYandexPlayerSignature(PUBLISHED_PURCHASE_SIGNATURE, PUBLISHED_PURCHASE_SECRET);
     expect(result.ok).toBe(false);
     expect(result.reason).not.toBe('bad_signature');
+  });
+
+  it('does not authenticate a synthetic purchase-shaped profile that names a unique id', () => {
+    const secret = 'test-secret';
+    const proof = sign(JSON.stringify({
+      algorithm: 'HMAC-SHA256',
+      issuedAt: 1_700_000_000,
+      data: { uniqueID: 'user-1', isAuthorized: true },
+    }), secret);
+    expect(verifyYandexPlayerSignature(proof, secret)).toEqual({
+      ok: false,
+      reason: 'profile_schema_unverified',
+    });
+    const source = readFileSync(resolve('server/identity/yandexVerifier.ts'), 'utf8');
+    expect(source).not.toContain('issueVerifiedYandexIdentity');
   });
 });
 

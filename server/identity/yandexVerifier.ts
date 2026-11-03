@@ -12,10 +12,16 @@ export type YandexProofFailure =
   | 'profile_schema_unverified';
 
 /**
- * Signature check only. This never returns a provider user id.
- * The player page documents the `<signature>.<profile data>` envelope and points at
- * the purchase HMAC example. It does not name the JSON fields inside a player profile,
- * so a matching MAC is not enough to authenticate an account.
+ * Signature check only. This never returns a provider user id and does not mint
+ * a provider identity.
+ *
+ * Rechecked against the official player, purchases, events, and requirements pages
+ * on 2026-11-03, plus the full English documentation index. The envelope is
+ * `<signature>.<profile data>`, both base64, and the purchase page shows
+ * HMAC-SHA256 over the decoded second part. That page does not name the JSON
+ * fields inside a player profile, does not mark an authorized account inside the
+ * signature, and does not give the profile an expiry. A matching MAC is not an
+ * account. A purchase signature is not a player.
  */
 export type YandexProofResult = { readonly ok: false; readonly reason: YandexProofFailure };
 

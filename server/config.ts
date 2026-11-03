@@ -154,7 +154,8 @@ export interface YandexAuthConfig {
 
 /**
  * Provider login stays off. A flag without a secret does not accept unsigned ids.
- * The secret is never returned to logs; only whether it was present.
+ * A secret does not turn the flag on either: the signed player profile schema is
+ * still undocumented (rechecked 2026-11-03). The secret is never returned to logs.
  */
 export function loadYandexAuthConfig(env: NodeJS.ProcessEnv): YandexAuthConfig {
   const requested = env.FC_YANDEX_AUTH_ENABLED === '1' || env.FC_YANDEX_AUTH_ENABLED === 'true';

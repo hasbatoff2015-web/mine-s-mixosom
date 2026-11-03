@@ -11,7 +11,13 @@ import {
 
 export type { IdentityScope };
 
-/** A provider subject that this process has already verified. A raw client field is not this type. */
+/**
+ * Brand kept only in this process. JSON, spread copies, and `{ verified: true }`
+ * from a client do not carry it, so they cannot select or bind a player.
+ */
+const yandexVerified = Symbol('fc.yandex.verified');
+
+/** A provider subject minted by this process. A raw client field is not this type. */
 export interface VerifiedProviderIdentity {
   readonly verified: true;
   readonly provider: 'yandex';
@@ -51,12 +57,24 @@ export function identityScopeFromServer(config: ServerConfig): IdentityScope | u
   };
 }
 
+/**
+ * Mints a subject after a real server-side check. The Yandex verifier does not
+ * call this: the signed player profile schema is not documented, so no proof
+ * can reach here. Do not call it with a client id, `getUniqueID()`, or `verified: true`.
+ */
+export function issueVerifiedYandexIdentity(providerUserId: string): VerifiedProviderIdentity | undefined {
+  if (!isProviderUserId(providerUserId)) return undefined;
+  const identity: VerifiedProviderIdentity = { verified: true, provider: 'yandex', providerUserId };
+  Object.defineProperty(identity, yandexVerified, { value: true });
+  return identity;
+}
+
 export function asVerifiedProviderIdentity(value: unknown): VerifiedProviderIdentity | undefined {
   if (!value || typeof value !== 'object') return undefined;
-  const row = value as Record<string, unknown>;
-  if (row.verified !== true || row.provider !== 'yandex') return undefined;
+  const row = value as Record<PropertyKey, unknown>;
+  if (row[yandexVerified] !== true || row.verified !== true || row.provider !== 'yandex') return undefined;
   if (!isProviderUserId(row.providerUserId)) return undefined;
-  return { verified: true, provider: 'yandex', providerUserId: row.providerUserId };
+  return value as VerifiedProviderIdentity;
 }
 
 export async function lookupVerifiedProviderIdentity(
@@ -89,8 +107,8 @@ export async function lookupPlayerLinks(
 
 /**
  * Binds one already-verified provider subject to an existing player in this scope.
- * There is no network entry point. A caller must pass `verified: true` only after
- * its own server-side check, which Stage C has not added.
+ * There is no network entry point. `verified: true` on a client object is not enough:
+ * the value must be the branded object from `issueVerifiedYandexIdentity`.
  */
 export async function bindVerifiedProviderIdentity(
   db: Database,

@@ -5,6 +5,7 @@ import { DisabledDatabase } from '../../server/db/database';
 import type { Database, Queryable } from '../../server/db/types';
 import {
   bindVerifiedProviderIdentity,
+  issueVerifiedYandexIdentity,
   lookupPlayerLinks,
   lookupVerifiedProviderIdentity,
   type IdentityScope,
@@ -20,11 +21,11 @@ import {
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const B = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
 const DEV_ANARCHY: IdentityScope = { deploymentId: 'dev', serverMode: 'anarchy', worldId: 'world-a' };
-const yandex = (providerUserId: string): VerifiedProviderIdentity => ({
-  verified: true,
-  provider: 'yandex',
-  providerUserId,
-});
+function yandex(providerUserId: string): VerifiedProviderIdentity {
+  const issued = issueVerifiedYandexIdentity(providerUserId);
+  if (!issued) throw new Error('test identity was not issued');
+  return issued;
+}
 
 interface Row {
   deploymentId: string;
@@ -266,8 +267,22 @@ describe('provider identity links', () => {
     const server = readFileSync(resolve('server/AnarchyServer.ts'), 'utf8');
     const protocol = readFileSync(resolve('shared/protocol.ts'), 'utf8');
     expect(server).not.toContain('bindVerifiedProviderIdentity');
+    expect(server).not.toContain('issueVerifiedYandexIdentity');
     expect(server).not.toContain('player_identity_links');
     expect(protocol).not.toContain('providerUserId');
+  });
+
+  it('LINK-12b rejects a forged verified flag, a JSON copy, and a spread copy', async () => {
+    const db = new MemoryLinks();
+    const forged = { verified: true as const, provider: 'yandex' as const, providerUserId: 'Y1' };
+    const parsed = JSON.parse(JSON.stringify(forged)) as unknown;
+    const copied = { ...yandex('Y1') };
+    expect(await bindVerifiedProviderIdentity(db, DEV_ANARCHY, forged, A, everyone)).toEqual({ status: 'unverified' });
+    expect(await lookupVerifiedProviderIdentity(db, DEV_ANARCHY, parsed)).toEqual({ status: 'unverified' });
+    expect(await bindVerifiedProviderIdentity(db, DEV_ANARCHY, copied, A, everyone)).toEqual({ status: 'unverified' });
+    expect(issueVerifiedYandexIdentity('')).toBeUndefined();
+    expect(issueVerifiedYandexIdentity(' Y1')).toBeUndefined();
+    expect(db.rows).toHaveLength(0);
   });
 
   it('LINK-13 does not rewrite the player record it points at', async () => {

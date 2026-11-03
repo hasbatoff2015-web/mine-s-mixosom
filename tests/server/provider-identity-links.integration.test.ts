@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { PostgresDatabase } from '../../server/db/database';
-import { bindVerifiedProviderIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
+import { bindVerifiedProviderIdentity, issueVerifiedYandexIdentity, lookupVerifiedProviderIdentity, type IdentityScope } from '../../server/identity/providerLinks';
 
 const databaseUrl = process.env.FC_TEST_DATABASE_URL?.trim() ?? '';
 const A = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
@@ -60,7 +60,8 @@ describe.skipIf(databaseUrl === '')('provider identity links on PostgreSQL', () 
     const db = open(name);
     await db.start();
     expect(db.appliedMigrations).toContain('0008');
-    const verified = { verified: true as const, provider: 'yandex' as const, providerUserId: 'Y1' };
+    const verified = issueVerifiedYandexIdentity('Y1');
+    if (!verified) throw new Error('test identity was not issued');
     const [left, right] = await Promise.all([
       bindVerifiedProviderIdentity(db, scope, verified, A, () => true),
       bindVerifiedProviderIdentity(db, scope, verified, B, () => true),

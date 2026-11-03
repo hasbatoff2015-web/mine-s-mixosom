@@ -30,6 +30,11 @@ interface SocketBinding {
   superseded: boolean;
 }
 
+/** One in-flight join for a socket. A second message must not start another. */
+interface JoinFlight {
+  readonly id: number;
+}
+
 function readyLabel(mode: ServerConfig['serverMode']): string {
   if (mode === 'survival') return 'Survival';
   if (mode === 'peaceful') return 'Peaceful';
@@ -53,6 +58,8 @@ export class AnarchyServer {
   private readonly startedAt = Date.now();
   private listeningPort = 0;
   private readonly sockets = new Map<WebSocket, SocketBinding>();
+  private readonly pendingJoins = new WeakMap<WebSocket, JoinFlight>();
+  private nextJoinFlight = 1;
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
     this.world = new WorldInstance(config, options);
@@ -256,6 +263,7 @@ export class AnarchyServer {
       }
     });
     socket.on('close', () => {
+      this.pendingJoins.delete(socket);
       const binding = this.sockets.get(socket);
       this.sockets.delete(socket);
       if (binding && !binding.superseded) {
@@ -329,6 +337,12 @@ export class AnarchyServer {
     message: Extract<ClientMessage, { type: 'join' }>,
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
+    if (this.pendingJoins.has(socket)) {
+      serverLog('duplicate join ignored while another join is pending on this connection');
+      return;
+    }
+    const flight: JoinFlight = { id: this.nextJoinFlight++ };
+    this.pendingJoins.set(socket, flight);
     const sink = new WsSink(socket);
     const pending = this.world.join({
       sink,
@@ -338,14 +352,25 @@ export class AnarchyServer {
       freshGuest: message.freshGuest,
       durableFresh: true,
     });
+    const settle = (
+      result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string } | { error: string; code?: string },
+    ): void => {
+      if (this.pendingJoins.get(socket) !== flight) {
+        if (!('error' in result)) {
+          this.world.disconnect(result.player.id, true, result.player.connectionId);
+        }
+        return;
+      }
+      this.finishJoin(socket, result, onJoin);
+      if (this.pendingJoins.get(socket) === flight && !('error' in result)) {
+        this.pendingJoins.delete(socket);
+      }
+    };
     if (isPromise(pending)) {
-      pending.then(
-        (result) => this.finishJoin(socket, result, onJoin),
-        () => this.finishJoin(socket, { error: 'Сервер временно недоступен.' }, onJoin),
-      );
+      pending.then(settle, () => settle({ error: 'Сервер временно недоступен.' }));
       return;
     }
-    this.finishJoin(socket, pending, onJoin);
+    settle(pending);
   }
 
   private finishJoin(
