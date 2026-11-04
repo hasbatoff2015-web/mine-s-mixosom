@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-11-04: Automatic Yandex identity
+
+- [x] An authorized Yandex player is recognized on connect. No pause button binds the character. An unauthorized player stays a browser guest.
+- [x] The server links the current guest or resumes the linked UUID. A second character is not created for the same signed id. Conflict asks which character to open.
+- [x] `isAuthorized()` stays a client hint. The server accepts only a verified signed `uniqueID`. Referral rewards stay off.
+- [x] A reconnect of an online player keeps one slot if the old socket drops during preparation.
+- [x] `fc-backup.sh` strips a trailing CR and does not use `grep -q` on the manifest listing.
+- [ ] The owner still checks the Yandex draft and replaces `/usr/local/sbin/fc-backup` on the next agreed deploy. This branch does not deploy.
+
 ## 2026-11-03: Yandex resume fail-closed
 
 - [x] Welcome and the guest session token are sent only after the matching proof reservation is consumed.
@@ -14,7 +23,7 @@
 - [x] LINK uses the connected session. RESUME loads the linked UUID and does not create a guest. The same proof can resume once per deployment.
 - [x] `issuedAt` older than 10 minutes or more than 2 minutes ahead is rejected. Auth stays off without the flag, secret, and PostgreSQL.
 - [x] A later join lease wins. Stale cleanup uses the connection id captured at publish.
-- [x] Server list has «Войти через Яндекс». Pause in an online game has «Привязать Яндекс ID».
+- [x] Server list has «Войти через Яндекс». The pause button «Привязать Яндекс ID» from this pass was removed on 2026-11-04.
 - [ ] Live check inside the Yandex draft is still for the owner. Referral rewards are not included. Not merged.
 
 ## 2026-10-28: Integrate PR #129 with current main

@@ -308,7 +308,11 @@ export interface GuestConnectOptions {
   readonly durable?: GuestStorage | null;
   readonly legacy?: GuestStorage | null;
   readonly scopeLock?: <T>(scope: GuestIdentityScope, signal: AbortSignal, body: () => Promise<T>) => Promise<T>;
-  readonly yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean };
+  readonly yandexResume?: {
+    readonly proof: string;
+    readonly confirmOtherCharacter?: boolean;
+    readonly mode?: 'resume_yandex' | 'yandex_auto';
+  };
 }
 
 /** One status request. A hung response must not keep connect() pending. */
@@ -505,7 +509,9 @@ export class AnarchyClient {
     legacy: GuestStorage | null,
     signal: AbortSignal,
   ): Promise<void> {
-    if (options?.yandexResume) {
+    const yandex = options?.yandexResume;
+    const yandexAttaches = Boolean(yandex && (yandex.mode !== 'yandex_auto' || yandex.confirmOtherCharacter));
+    if (yandex && yandexAttaches) {
       await this.runYandexResume(attempt, url, name, appearance, options, search, hostname, target, durable, legacy, signal);
       return;
     }
@@ -517,6 +523,13 @@ export class AnarchyClient {
     if (attempt.settled) return;
     if (this.generation !== attempt.generation || signal.aborted || plan.outcome === 'cancelled') {
       this.failAttempt(attempt, cancelledJoin());
+      return;
+    }
+    if (options?.yandexResume && plan.outcome === 'untrusted') {
+      this.failAttempt(attempt, Object.assign(
+        new Error('Вход через Яндекс доступен только на официальном сервере.'),
+        { code: 'untrusted_endpoint' },
+      ));
       return;
     }
     if (plan.outcome !== 'ready_existing' && plan.outcome !== 'ready_new' && plan.outcome !== 'untrusted') {
@@ -588,7 +601,7 @@ export class AnarchyClient {
     plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' | 'untrusted' }>,
     durable: GuestStorage | null,
     legacy: GuestStorage | null,
-    yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean },
+    yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean; readonly mode?: 'resume_yandex' | 'yandex_auto' },
   ): void {
     if (attempt.settled || this.generation !== attempt.generation) {
       this.failAttempt(attempt, cancelledJoin());
@@ -619,12 +632,16 @@ export class AnarchyClient {
       }
       const resume = yandexResume;
       const guestToken = 'sendToken' in plan ? plan.sendToken : undefined;
+      const autoFresh = resume?.mode === 'yandex_auto'
+        && !resume.confirmOtherCharacter
+        && plan.outcome === 'ready_new'
+        && plan.freshGuest === true;
       this.send(resume
         ? buildAnarchyJoinMessage(
           name,
           resume.confirmOtherCharacter ? undefined : guestToken,
           appearance,
-          false,
+          autoFresh,
           resume,
         )
         : buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : guestToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
@@ -917,7 +934,7 @@ export function buildAnarchyJoinMessage(
   sessionToken?: string,
   appearance?: PlayerAppearance,
   freshGuest?: boolean,
-  yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean },
+  yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean; readonly mode?: 'resume_yandex' | 'yandex_auto' },
 ): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
   return {
@@ -934,7 +951,7 @@ export function buildAnarchyJoinMessage(
       },
     } : {}),
     ...(yandexResume ? {
-      authMode: 'resume_yandex' as const,
+      authMode: yandexResume.mode ?? 'resume_yandex' as const,
       yandexProof: yandexResume.proof,
       ...(yandexResume.confirmOtherCharacter ? { confirmYandexResume: true } : {}),
     } : {}),

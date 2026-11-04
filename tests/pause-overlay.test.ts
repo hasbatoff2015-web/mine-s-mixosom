@@ -67,6 +67,9 @@ describe('in-game pause overlay', () => {
     expect(pauseFn).not.toContain('menu-heading');
     expect(pauseFn).not.toContain('Игра на паузе');
     expect(pauseFn).not.toContain('<h1>Пауза</h1>');
+    expect(pauseFn).not.toContain('Привязать Яндекс ID');
+    expect(pauseFn).not.toContain('link-yandex');
+    expect(GAME).not.toContain('linkYandex');
     expect(pauseFn).not.toContain('eyebrow');
     expect(STYLE).not.toContain('.pause-window .menu-heading');
     expect(cssRule('.pause-actions')).toContain('padding: 22px;');

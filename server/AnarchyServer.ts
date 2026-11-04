@@ -355,7 +355,7 @@ export class AnarchyServer {
       serverLog('duplicate join ignored while another join is pending on this connection');
       return;
     }
-    if (message.authMode === 'resume_yandex' && !this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
+    if ((message.authMode === 'resume_yandex' || message.authMode === 'yandex_auto') && !this.authLimiter.allowConnection(socket, this.peerKey(socket))) {
       this.pendingJoins.delete(socket);
       this.send(socket, { type: 'error', code: 'rate_limited', message: 'Слишком много попыток входа. Подождите и повторите.' });
       socket.close();
@@ -364,6 +364,11 @@ export class AnarchyServer {
     const flight: JoinFlight = { id: this.nextJoinFlight++ };
     this.pendingJoins.set(socket, flight);
     const sink = new WsSink(socket);
+    const subjectRate = (identity: { providerUserId: string; proofHash: string }): boolean => {
+      const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
+      const proofOk = this.authLimiter.allowProof(identity.proofHash);
+      return subjectOk && proofOk;
+    };
     const pending = message.authMode === 'resume_yandex'
       ? this.world.resumeYandexJoin({
         sink,
@@ -372,12 +377,19 @@ export class AnarchyServer {
         proof: message.yandexProof ?? '',
         guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
         confirmOtherCharacter: message.confirmYandexResume === true,
-        subjectRate: (identity) => {
-          const subjectOk = this.authLimiter.allowVerifiedSubject(identity.providerUserId);
-          const proofOk = this.authLimiter.allowProof(identity.proofHash);
-          return subjectOk && proofOk;
-        },
+        subjectRate,
       })
+      : message.authMode === 'yandex_auto'
+        ? this.world.autoYandexJoin({
+          sink,
+          name: message.name,
+          appearance: message.appearance,
+          proof: message.yandexProof ?? '',
+          guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
+          freshGuest: message.freshGuest,
+          confirmOtherCharacter: message.confirmYandexResume === true,
+          subjectRate,
+        })
       : this.world.join({
         sink,
         name: message.name,
@@ -387,7 +399,7 @@ export class AnarchyServer {
         durableFresh: true,
       });
     const settle = (
-      result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string },
+      result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: ServerWelcomeMessage['yandexSync'] } | { error: string; code?: string },
     ): void => {
       if (this.pendingJoins.get(socket) !== flight) {
         if (!('error' in result)) {
@@ -409,7 +421,7 @@ export class AnarchyServer {
 
   private finishJoin(
     socket: WebSocket,
-    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string },
+    result: { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: ServerWelcomeMessage['yandexSync'] } | { error: string; code?: string },
     onJoin: (playerId: string, connectionId: string) => void,
   ): void {
     if ('error' in result) {
@@ -421,7 +433,7 @@ export class AnarchyServer {
       socket.close();
       return;
     }
-    const { player, resumed, previousConnectionId, connectionId } = result;
+    const { player, resumed, previousConnectionId, connectionId, yandexSync } = result;
     if (player.connectionId !== connectionId) {
       this.send(socket, {
         type: 'error',
@@ -465,6 +477,7 @@ export class AnarchyServer {
       buyers: this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
       inClan: Boolean(this.world.clan.playerClan(player.id)),
+      ...(yandexSync ? { yandexSync } : {}),
     };
     const encoded = encodeMessage(welcome);
     const welcomeMs = performance.now() - welcomeStarted;

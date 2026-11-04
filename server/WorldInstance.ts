@@ -3,12 +3,13 @@ import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedPr
 import {
   consumeReservedProof,
   purgeExpiredReceipts,
+  readProofReceipt,
   receiptRetentionSeconds,
   releaseReservedProof,
   reserveResumeProof,
 } from './identity/yandexProofReceipts';
 import { legacyProofFingerprint, verifyYandexPlayerProof } from './identity/yandexVerifier';
-import type { AuthLinkStatus } from '../shared/protocol';
+import type { AuthLinkStatus, YandexSyncState } from '../shared/protocol';
 import { BlockId, getBlockDefinition, isKnownBlockId } from '../src/blocks';
 import { CombatSystem } from '../src/combat';
 import { TIME_PRESETS, resolveItemId } from '../src/chat/commands';
@@ -728,6 +729,14 @@ export class WorldInstance {
   private nextPlayerJoinLease = 1;
   /** Joins that still need a free online slot and have not published yet. */
   private pendingJoinSlots = 0;
+  /** Rejoins that started while this player was already connected. */
+  private readonly replacementInflight = new Map<string, number>();
+  /**
+   * One online seat kept after that player disconnected during a rejoin.
+   * It is not a second counter of players: publish consumes it, or the last
+   * rejoin releases it.
+   */
+  private readonly reconnectReservations = new Map<string, number>();
   /**
    * Optional pause immediately before a join is published.
    * Production leaves this unset. Tests use it to overlap two resumes.
@@ -2035,7 +2044,19 @@ export class WorldInstance {
   }
 
   private holdJoinSlot(sessionToken?: string): { ok: true; release: () => void } | { ok: false } {
-    if (this.replacingConnectedPlayer(sessionToken)) return { ok: true, release: () => {} };
+    const replacingId = this.connectedPlayerIdForToken(sessionToken);
+    if (replacingId) {
+      this.replacementInflight.set(replacingId, (this.replacementInflight.get(replacingId) ?? 0) + 1);
+      let released = false;
+      return {
+        ok: true,
+        release: () => {
+          if (released) return;
+          released = true;
+          this.releaseReplacement(replacingId);
+        },
+      };
+    }
     if (!this.hasJoinRoom(sessionToken)) return { ok: false };
     this.pendingJoinSlots += 1;
     let held = true;
@@ -2049,6 +2070,49 @@ export class WorldInstance {
     };
   }
 
+  private connectedPlayerIdForToken(sessionToken?: string): string | undefined {
+    if (!sessionToken) return undefined;
+    const id = this.tokens.get(sessionToken);
+    if (!id || this.players.get(id)?.connected !== true) return undefined;
+    return id;
+  }
+
+  /** Keeps the seat of a player who disconnected while their rejoin was still pending. */
+  private noteReconnectReservation(playerId: string): void {
+    if ((this.replacementInflight.get(playerId) ?? 0) <= 0) return;
+    if ((this.reconnectReservations.get(playerId) ?? 0) > 0) return;
+    this.reconnectReservations.set(playerId, 1);
+    this.pendingJoinSlots += 1;
+  }
+
+  private releaseReplacement(playerId: string): void {
+    const left = (this.replacementInflight.get(playerId) ?? 1) - 1;
+    if (left <= 0) this.replacementInflight.delete(playerId);
+    else this.replacementInflight.set(playerId, left);
+    if (left > 0) return;
+    const reserved = this.reconnectReservations.get(playerId) ?? 0;
+    if (reserved <= 0) return;
+    this.reconnectReservations.delete(playerId);
+    this.pendingJoinSlots -= reserved;
+  }
+
+  /**
+   * A rejoin whose previous session disappeared may take the reserved seat.
+   * It does not evict a different player who already published into a free seat.
+   */
+  private claimReconnectSeat(playerId: string): { ok: true } | { ok: false } {
+    const reserved = this.reconnectReservations.get(playerId) ?? 0;
+    if (reserved > 0) {
+      const left = reserved - 1;
+      if (left <= 0) this.reconnectReservations.delete(playerId);
+      else this.reconnectReservations.set(playerId, left);
+      this.pendingJoinSlots -= 1;
+      return { ok: true };
+    }
+    if (this.onlineCount() + this.pendingJoinSlots >= this.config.maxPlayers) return { ok: false };
+    return { ok: true };
+  }
+
   private playerJoinOwns(playerId: string, lease: number): boolean {
     return this.playerJoinLease.get(playerId) === lease;
   }
@@ -2059,6 +2123,11 @@ export class WorldInstance {
 
   private sessionTokenForPlayer(playerId: string): string | undefined {
     return this.players.get(playerId)?.sessionToken ?? this.storedPlayers[playerId]?.sessionToken;
+  }
+
+  private guestPlayerId(token: string | undefined): string | undefined {
+    if (!token) return undefined;
+    return this.tokens.get(token) ?? this.storedPlayerByToken(token)?.id;
   }
 
   private yandexProofFailure(reason: string): { error: string; code: string } {
@@ -2226,6 +2295,244 @@ export class WorldInstance {
     return joined;
   }
 
+  /**
+   * Authorized connect. The signed unique id is the only provider credential.
+   * A matching guest token rejoins without spending the proof. A new link is
+   * bound before welcome. Database failure keeps the guest and does not report
+   * a link. Auth that is switched off stays a guest join with no Yandex result.
+   */
+  async autoYandexJoin(options: {
+    sink: ConnectedSink;
+    name?: string;
+    appearance?: PlayerAppearance;
+    proof: string;
+    guestToken?: string;
+    freshGuest?: boolean;
+    confirmOtherCharacter: boolean;
+    subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
+  }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
+    const auth = this.config.yandexAuth;
+    if (!auth.enabled) {
+      if (!options.guestToken && !options.freshGuest) {
+        return { error: 'Вход через Яндекс на этом сервере выключен.', code: 'auth_disabled' };
+      }
+      return this.join({
+        sink: options.sink,
+        name: options.name,
+        appearance: options.appearance,
+        sessionToken: options.guestToken,
+        freshGuest: Boolean(options.freshGuest),
+        durableFresh: true,
+      });
+    }
+    const scope = identityScopeFromServer(this.config);
+    if (!scope || !this.database.enabled) return this.finishAutoGuest(options, 'unavailable');
+    const verified = verifyYandexPlayerProof(options.proof, {
+      secret: auth.secret,
+      nowMs: Date.now(),
+      maxAgeSeconds: auth.maxAgeSeconds,
+      clockSkewSeconds: auth.clockSkewSeconds,
+    });
+    if (!verified.ok) return this.finishAutoGuest(options, 'guest');
+    let lookup;
+    try {
+      lookup = await lookupVerifiedProviderIdentity(this.database, scope, verified.identity);
+    } catch (error) {
+      serverLog(`yandex lookup failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return this.finishAutoGuest(options, 'unavailable');
+    }
+    if (lookup.status === 'unavailable') return this.finishAutoGuest(options, 'unavailable');
+    if (lookup.status !== 'found' && lookup.status !== 'absent') {
+      return { error: 'Не удалось подтвердить Яндекс ID.', code: 'proof_invalid' };
+    }
+    const guestId = options.confirmOtherCharacter ? undefined : this.guestPlayerId(options.guestToken);
+    if (lookup.status === 'found') {
+      if (guestId && guestId !== lookup.playerId) {
+        if (options.subjectRate && !options.subjectRate(verified.identity)) {
+          return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
+        }
+        return {
+          error: 'В этом браузере сохранён другой персонаж.',
+          code: 'yandex_character_conflict',
+        };
+      }
+      if (guestId === lookup.playerId) {
+        const joined = await this.join({
+          sink: options.sink,
+          name: options.name,
+          appearance: options.appearance,
+          sessionToken: options.guestToken,
+          durableFresh: true,
+        });
+        if ('error' in joined) return joined;
+        return { ...joined, yandexSync: 'restored' };
+      }
+      const resumed = await this.resumeYandexJoin({
+        sink: options.sink,
+        name: options.name,
+        appearance: options.appearance,
+        proof: options.proof,
+        confirmOtherCharacter: true,
+        subjectRate: options.subjectRate,
+      });
+      if ('error' in resumed) return resumed;
+      return { ...resumed, yandexSync: 'restored' };
+    }
+    let receipt: 'free' | 'reused' | 'unavailable' = 'free';
+    try {
+      receipt = await readProofReceipt(
+        this.database,
+        scope,
+        verified.identity.proofHash,
+        legacyProofFingerprint(options.proof),
+      );
+    } catch (error) {
+      serverLog(`yandex receipt read failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      receipt = 'unavailable';
+    }
+    if (receipt !== 'free') {
+      if (guestId) return this.finishAutoGuest(options, receipt === 'reused' ? 'guest' : 'unavailable');
+      if (receipt === 'reused') {
+        return { error: 'Это подтверждение уже использовано. Обновите игру и повторите вход.', code: 'proof_reused' };
+      }
+      return { error: 'Восстановление временно недоступно.', code: 'db_unavailable' };
+    }
+    if (options.subjectRate && !options.subjectRate(verified.identity)) {
+      if (guestId) return this.finishAutoGuest(options, 'guest');
+      return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
+    }
+    let sync: YandexSyncState | undefined;
+    const joined = await this.join({
+      sink: options.sink,
+      name: options.name,
+      appearance: options.appearance,
+      sessionToken: options.guestToken,
+      freshGuest: Boolean(options.freshGuest) && !options.guestToken,
+      durableFresh: true,
+      publishGate: async (owns, player) => {
+        if (!owns()) return this.supersededJoin();
+        let again;
+        try {
+          again = await lookupVerifiedProviderIdentity(this.database, scope, verified.identity);
+        } catch (error) {
+          serverLog(`yandex lookup failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+          sync = 'unavailable';
+          return undefined;
+        }
+        if (again.status === 'unavailable') {
+          sync = 'unavailable';
+          return undefined;
+        }
+        if (again.status === 'found' && again.playerId !== player.id) {
+          if (!options.guestToken) {
+            return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
+          }
+          return { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' };
+        }
+        if (again.status !== 'found') {
+          let bound;
+          try {
+            bound = await bindVerifiedProviderIdentity(
+              this.database,
+              scope,
+              verified.identity,
+              player.id,
+              (id) => this.players.has(id) || Boolean(this.storedPlayers[id]),
+            );
+          } catch (error) {
+            serverLog(`yandex link failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+            sync = 'unavailable';
+            return undefined;
+          }
+          if (bound.status === 'unavailable') {
+            sync = 'unavailable';
+            return undefined;
+          }
+          if (bound.status === 'provider_conflict') {
+            if (!options.guestToken) {
+              return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
+            }
+            return { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' };
+          }
+          if (bound.status !== 'linked' && bound.status !== 'already_linked') {
+            sync = 'guest';
+            return undefined;
+          }
+        }
+        sync = 'linked';
+        await this.consumeLinkedProof(scope, verified.identity.proofHash, player.id, options.proof);
+        return undefined;
+      },
+    });
+    if ('error' in joined) {
+      if (joined.code === 'yandex_link_race') {
+        const winner = await this.resumeYandexJoin({
+          sink: options.sink,
+          name: options.name,
+          appearance: options.appearance,
+          proof: options.proof,
+          confirmOtherCharacter: true,
+          subjectRate: options.subjectRate,
+        });
+        if (!('error' in winner)) return { ...winner, yandexSync: 'restored' };
+        if (winner.code === 'proof_reused') return winner;
+        return { error: 'Не удалось открыть сохранённого персонажа. Повторите вход.', code: winner.code ?? 'db_unavailable' };
+      }
+      return joined;
+    }
+    return sync ? { ...joined, yandexSync: sync } : joined;
+  }
+
+  private async finishAutoGuest(
+    options: {
+      sink: ConnectedSink;
+      name?: string;
+      appearance?: PlayerAppearance;
+      guestToken?: string;
+      freshGuest?: boolean;
+    },
+    sync: YandexSyncState,
+  ): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
+    if (!options.guestToken && !options.freshGuest) {
+      return { error: 'Не удалось подтвердить Яндекс ID.', code: 'proof_invalid' };
+    }
+    const joined = await this.join({
+      sink: options.sink,
+      name: options.name,
+      appearance: options.appearance,
+      sessionToken: options.guestToken,
+      freshGuest: Boolean(options.freshGuest) && !options.guestToken,
+      durableFresh: true,
+    });
+    if ('error' in joined) return joined;
+    return { ...joined, yandexSync: sync };
+  }
+
+  /** Records the proof after a confirmed link. A receipt failure does not remove the link or block welcome. */
+  private async consumeLinkedProof(
+    scope: NonNullable<ReturnType<typeof identityScopeFromServer>>,
+    proofHash: string,
+    playerId: string,
+    proof: string,
+  ): Promise<void> {
+    const attemptId = crypto.randomUUID();
+    try {
+      const reserved = await reserveResumeProof(
+        this.database,
+        scope,
+        proofHash,
+        playerId,
+        attemptId,
+        legacyProofFingerprint(proof),
+      );
+      if (reserved !== 'reserved') return;
+      const consumed = await consumeReservedProof(this.database, scope, proofHash, attemptId);
+      if (!consumed) await this.releaseYandexReservation(scope, proofHash, attemptId);
+    } catch (error) {
+      serverLog(`yandex link receipt failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+    }
+  }
+
   async purgeOldYandexReceipts(): Promise<void> {
     const auth = this.config.yandexAuth;
     if (!auth.enabled || !this.database.enabled) return;
@@ -2273,7 +2580,7 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh: true;
-    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
+    publishGate?: (owns: () => boolean, player: ServerPlayer) => Promise<{ error: string; code?: string } | undefined>;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }>;
   join(options: {
     sink: ConnectedSink;
@@ -2282,7 +2589,7 @@ export class WorldInstance {
     appearance?: PlayerAppearance;
     freshGuest?: boolean;
     durableFresh?: boolean;
-    publishGate?: (owns: () => boolean) => Promise<{ error: string; code?: string } | undefined>;
+    publishGate?: (owns: () => boolean, player: ServerPlayer) => Promise<{ error: string; code?: string } | undefined>;
   }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }
     | Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
     const fail = (error: { error: string; code?: string }) => (
@@ -2354,7 +2661,7 @@ export class WorldInstance {
           return { error: 'banned' };
         }
         if (options.publishGate) {
-          const blocked = await options.publishGate(() => player.owns());
+          const blocked = await options.publishGate(() => player.owns(), player.player);
           if (blocked) {
             if (player.fresh && options.durableFresh) await this.rollbackCandidate(player.player);
             return blocked;
@@ -2402,6 +2709,14 @@ export class WorldInstance {
           owns: () => this.playerJoinOwns(existing.id, lease),
           publish: () => {
             if (!this.playerJoinOwns(existing.id, lease)) return this.supersededJoin();
+            if (!existing.connected) {
+              const tracked = (this.replacementInflight.get(existing.id) ?? 0) > 0
+                || (this.reconnectReservations.get(existing.id) ?? 0) > 0;
+              if (tracked) {
+                const seat = this.claimReconnectSeat(existing.id);
+                if (!seat.ok) return { error: 'server full', code: 'server_full' };
+              }
+            }
             const connectionId = crypto.randomUUID();
             existing.connected = true;
             existing.disconnectedAt = 0;
@@ -3792,6 +4107,7 @@ export class WorldInstance {
       return;
     }
     player.connected = false;
+    this.noteReconnectReservation(player.id);
     this.removeCosmeticPetRuntime(player.id);
     this.clearPlayerEmote(player);
     this.gameplay.forceReleaseVehicle(player, false);
