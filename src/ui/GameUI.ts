@@ -1362,6 +1362,15 @@ export class GameUI {
     });
   }
 
+  offerContinueAsGuest(): Promise<boolean> {
+    return this.chooseDialog({
+      title: 'Не удалось подтвердить Яндекс ID',
+      body: 'Новый персонаж не создан. Можно продолжить гостем: прогресс останется в этом браузере, пока вы сами не войдёте через Яндекс.',
+      confirm: 'Продолжить гостем',
+      cancel: 'Назад',
+    }).then((choice) => choice === 'yandex');
+  }
+
   confirmYandexAccountChanged(): Promise<boolean> {
     return this.chooseDialog({
       title: 'Аккаунт Яндекса мог измениться',

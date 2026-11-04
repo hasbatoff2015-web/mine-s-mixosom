@@ -1289,10 +1289,21 @@ export class Game {
         await this.openOnlineConnection(id, generation, plan);
         return;
       }
-      if (code === 'proof_expired' && yandex?.kind === 'yandex') {
-        this.yandex.retireProof(yandex.proof);
-        await this.showOnlineServerList(id, nicknameDraft);
-        this.ui.setYandexStatus('Подтверждение Яндекса устарело. Перезагрузите игру, чтобы обновить Яндекс ID.');
+      if (
+        yandex?.kind === 'yandex'
+        && !yandex.confirmOtherCharacter
+        && (code === 'proof_invalid' || code === 'proof_expired' || code === 'db_unavailable' || code === 'auth_disabled')
+      ) {
+        if (code === 'proof_expired') this.yandex.retireProof(yandex.proof);
+        const playGuest = await this.ui.offerContinueAsGuest();
+        if (generation !== this.connectGeneration) return;
+        if (!playGuest) {
+          await this.showOnlineServerList(id, nicknameDraft);
+          this.ui.setYandexStatus(error instanceof Error ? error.message : 'Не удалось подтвердить Яндекс ID.');
+          return;
+        }
+        this.yandexChoices.stayGuest(id);
+        await this.openOnlineConnection(id, generation, { kind: 'guest' });
         return;
       }
       if (code === 'unknown_guest' || code === 'world_changed') {

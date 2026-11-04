@@ -218,7 +218,7 @@ describe('yandex connect choice', () => {
     expect(yandexSyncNotice('linked')).toBe('Прогресс сохранён в вашем Яндекс ID.');
     expect(yandexSyncNotice('restored')).toBe('Персонаж восстановлен через Яндекс ID.');
     expect(yandexSyncNotice('unavailable')).toBe('Синхронизация прогресса временно недоступна. Вы играете гостем.');
-    expect(yandexSyncNotice('guest')).toBeUndefined();
+    expect(yandexSyncNotice('guest')).toContain('продолжаете игру как гость');
   });
 });
 
@@ -267,6 +267,10 @@ describe('yandex server list and pause', () => {
     const choice = ui.chooseSavedCharacter();
     document.querySelector<HTMLButtonElement>('[data-choice="guest"]')?.click();
     await expect(choice).resolves.toBe('guest');
+    const offer = ui.offerContinueAsGuest();
+    expect(document.body.textContent).toContain('Продолжить гостем');
+    document.querySelector<HTMLButtonElement>('[data-choice="yandex"]')?.click();
+    await expect(offer).resolves.toBe(true);
     expect(document.querySelector('.yandex-choice-backdrop')).toBeNull();
   });
 });

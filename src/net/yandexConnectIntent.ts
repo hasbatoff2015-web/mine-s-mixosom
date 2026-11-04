@@ -54,5 +54,8 @@ export function yandexSyncNotice(sync: 'linked' | 'restored' | 'unavailable' | '
   if (sync === 'linked') return 'Прогресс сохранён в вашем Яндекс ID.';
   if (sync === 'restored') return 'Персонаж восстановлен через Яндекс ID.';
   if (sync === 'unavailable') return 'Синхронизация прогресса временно недоступна. Вы играете гостем.';
+  if (sync === 'guest') {
+    return 'Не удалось подтвердить Яндекс ID. Вы продолжаете игру как гость. Для переноса прогресса потребуется повторить вход через Яндекс.';
+  }
   return undefined;
 }

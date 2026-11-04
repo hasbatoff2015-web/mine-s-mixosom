@@ -2320,8 +2320,9 @@ export class WorldInstance {
     subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
     const auth = this.config.yandexAuth;
+    const knownGuestId = options.confirmOtherCharacter ? undefined : this.guestPlayerId(options.guestToken);
     if (!auth.enabled) {
-      if (!options.guestToken && !options.freshGuest) {
+      if (!knownGuestId) {
         return { error: 'Вход через Яндекс на этом сервере выключен.', code: 'auth_disabled' };
       }
       return this.join({
@@ -2329,42 +2330,37 @@ export class WorldInstance {
         name: options.name,
         appearance: options.appearance,
         sessionToken: options.guestToken,
-        freshGuest: Boolean(options.freshGuest),
         durableFresh: true,
       });
     }
     const scope = identityScopeFromServer(this.config);
-    if (!scope || !this.database.enabled) return this.finishAutoGuest(options, 'unavailable');
+    if (!scope || !this.database.enabled) return this.knownGuestOrRefuse(options, 'unavailable');
     const verified = verifyYandexPlayerProof(options.proof, {
       secret: auth.secret,
       nowMs: Date.now(),
       maxAgeSeconds: auth.maxAgeSeconds,
       clockSkewSeconds: auth.clockSkewSeconds,
     });
-    if (!verified.ok) return this.finishAutoGuest(options, 'guest');
+    if (!verified.ok) return this.knownGuestOrRefuse(options, 'guest', this.yandexProofFailure(verified.reason));
     let lookup;
     try {
       lookup = await lookupVerifiedProviderIdentity(this.database, scope, verified.identity);
     } catch (error) {
       serverLog(`yandex lookup failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
-      return this.finishAutoGuest(options, 'unavailable');
+      return this.knownGuestOrRefuse(options, 'unavailable');
     }
-    if (lookup.status === 'unavailable') return this.finishAutoGuest(options, 'unavailable');
+    if (lookup.status === 'unavailable') return this.knownGuestOrRefuse(options, 'unavailable');
     if (lookup.status !== 'found' && lookup.status !== 'absent') {
       return { error: 'Не удалось подтвердить Яндекс ID.', code: 'proof_invalid' };
     }
-    const guestId = options.confirmOtherCharacter ? undefined : this.guestPlayerId(options.guestToken);
+    const guestId = knownGuestId;
     if (lookup.status === 'found') {
-      if (guestId && guestId !== lookup.playerId) {
-        if (options.subjectRate && !options.subjectRate(verified.identity)) {
-          return { error: 'Слишком много попыток входа. Подождите и повторите.', code: 'rate_limited' };
-        }
-        return {
-          error: 'В этом браузере сохранён другой персонаж.',
-          code: 'yandex_character_conflict',
-        };
+      if (options.guestToken && !options.confirmOtherCharacter && guestId !== lookup.playerId) {
+        return guestId
+          ? { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' }
+          : { error: 'Этот гостевой ключ не найден в этом мире.', code: 'unknown_guest' };
       }
-      if (guestId === lookup.playerId) {
+      if (guestId && guestId === lookup.playerId) {
         const joined = await this.join({
           sink: options.sink,
           name: options.name,
@@ -2432,10 +2428,7 @@ export class WorldInstance {
           return undefined;
         }
         if (again.status === 'found' && again.playerId !== player.id) {
-          if (!options.guestToken) {
-            return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
-          }
-          return { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' };
+          return this.foreignYandexCharacter(options);
         }
         if (again.status !== 'found') {
           let bound;
@@ -2450,9 +2443,7 @@ export class WorldInstance {
           } catch (error) {
             serverLog(`yandex link failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
             const reconciled = await this.reconcileCommittedLink(scope, verified.identity, player.id);
-            if (reconciled === 'other') {
-              return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
-            }
+            if (reconciled === 'other') return this.foreignYandexCharacter(options);
             if (reconciled === 'this' || reconciled === 'unknown') {
               this.keepIdentityPlayer(player.id);
               sync = reconciled === 'this' ? 'linked' : 'unavailable';
@@ -2468,12 +2459,7 @@ export class WorldInstance {
             sync = 'unavailable';
             return undefined;
           }
-          if (bound.status === 'provider_conflict') {
-            if (!options.guestToken) {
-              return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
-            }
-            return { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' };
-          }
+          if (bound.status === 'provider_conflict') return this.foreignYandexCharacter(options);
           if (bound.status !== 'linked' && bound.status !== 'already_linked') {
             sync = 'guest';
             return undefined;
@@ -2486,7 +2472,7 @@ export class WorldInstance {
       },
     });
     if ('error' in joined) {
-      if (joined.code === 'yandex_link_race') {
+      if (joined.code === 'yandex_link_race' && !options.guestToken) {
         const winner = await this.resumeYandexJoin({
           sink: options.sink,
           name: options.name,
@@ -2502,6 +2488,45 @@ export class WorldInstance {
       return joined;
     }
     return sync ? { ...joined, yandexSync: sync } : joined;
+  }
+
+  /**
+   * A presented guest token never becomes permission to open the linked character.
+   * A first join with no token may still resolve the race onto the one canonical UUID.
+   */
+  private foreignYandexCharacter(options: {
+    guestToken?: string;
+    confirmOtherCharacter: boolean;
+  }): { error: string; code: string } {
+    if (options.confirmOtherCharacter || !options.guestToken) {
+      return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
+    }
+    if (!this.guestPlayerId(options.guestToken)) {
+      return { error: 'Этот гостевой ключ не найден в этом мире.', code: 'unknown_guest' };
+    }
+    return { error: 'В этом браузере сохранён другой персонаж.', code: 'yandex_character_conflict' };
+  }
+
+  /** Keeps a known guest. Does not create a character when Yandex itself failed. */
+  private knownGuestOrRefuse(
+    options: {
+      sink: ConnectedSink;
+      name?: string;
+      appearance?: PlayerAppearance;
+      guestToken?: string;
+      freshGuest?: boolean;
+      confirmOtherCharacter: boolean;
+    },
+    sync: YandexSyncState,
+    failure: { error: string; code: string } = {
+      error: 'Синхронизация прогресса временно недоступна.',
+      code: 'db_unavailable',
+    },
+  ): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
+    if (!options.confirmOtherCharacter && this.guestPlayerId(options.guestToken)) {
+      return this.finishAutoGuest(options, sync);
+    }
+    return Promise.resolve(failure);
   }
 
   private async finishAutoGuest(

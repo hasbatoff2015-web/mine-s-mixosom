@@ -27,6 +27,8 @@ class MemoryIdentityDb implements Database {
   readonly legacyHashes = new Set<string>();
   down = false;
   throwAfterLinkInsert = false;
+  /** Installed on the next identity insert: another UUID already owns the provider id. */
+  linkRace: { mode: 'throw' | 'conflict'; scope: string; providerUserId: string; playerId: string } | null = null;
   holdLookups = false;
   lookupWaits = 0;
   private lookupGate: Promise<void> = Promise.resolve();
@@ -95,6 +97,12 @@ class MemoryIdentityDb implements Database {
       const scope = `${String(params[0])}|${String(params[1])}|${String(params[2])}`;
       const providerUserId = String(params[3]);
       const playerId = String(params[4]);
+      const race = this.linkRace;
+      if (race) {
+        this.linkRace = null;
+        this.links.push({ scope: race.scope, providerUserId: race.providerUserId, playerId: race.playerId });
+        if (race.mode === 'throw') throw new Error('concurrent link');
+      }
       if (this.links.some((row) => row.scope === scope && (row.providerUserId === providerUserId || row.playerId === playerId))) {
         throw Object.assign(new Error('duplicate'), { code: '23505' });
       }
@@ -390,15 +398,15 @@ describe('automatic yandex join', () => {
         isAuthorized: true,
         uniqueID: 'attacker',
       });
-      const hello = await welcome(forged.messages);
-      expect(hello.yandexSync).toBe('guest');
+      await expect(welcome(forged.messages)).rejects.toMatchObject({ code: 'proof_invalid' });
+      expect(server.world.players.size).toBe(0);
       expect(db.links).toHaveLength(0);
       forged.socket.close();
       const plain = await connect(server.wsUrl(), { name: 'Bea', freshGuest: true, isAuthorized: true, uniqueID: 'attacker' });
       const guest = await welcome(plain.messages);
-      expect(guest.playerId).not.toBe(hello.playerId);
       expect(guest.yandexSync).toBeUndefined();
       expect(db.links).toHaveLength(0);
+      expect(server.world.players.size).toBe(1);
       plain.socket.close();
     } finally {
       await server.stop();
@@ -466,12 +474,15 @@ describe('automatic yandex join', () => {
       const linked = await connect(anarchy.wsUrl(), { name: 'Ada', freshGuest: true, authMode: 'yandex_auto', yandexProof: body });
       const hello = await welcome(linked.messages);
       expect(hello.yandexSync).toBe('linked');
-      const guest = await connect(survival.wsUrl(), {
+      const refused = await connect(survival.wsUrl(), {
         name: 'Ada',
         freshGuest: true,
         authMode: 'yandex_auto',
         yandexProof: proof('mode-user'),
       });
+      await expect(welcome(refused.messages)).rejects.toMatchObject({ code: 'auth_disabled' });
+      refused.socket.close();
+      const guest = await connect(survival.wsUrl(), { name: 'Ada', freshGuest: true });
       const other = await welcome(guest.messages);
       expect(other.yandexSync).toBeUndefined();
       expect(other.playerId).not.toBe(hello.playerId);
@@ -667,6 +678,160 @@ describe('automatic yandex join', () => {
       expect(JSON.stringify(asYandex.inventory)).not.toContain('diamond');
       expect(db.links).toHaveLength(1);
       opened.socket.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it.each(['throw', 'conflict'] as const)('does not open the raced Yandex character over guest A (%s)', async (mode) => {
+    const db = new MemoryIdentityDb('dev');
+    const server = await openServer(db);
+    try {
+      const guest = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true });
+      const local = await welcome(guest.messages);
+      expect(server.world.players.get(local.playerId)?.inventory.add(createItemStack('diamond', 3))).toBeNull();
+      guest.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const other = await connect(server.wsUrl(), { name: 'Bea', freshGuest: true });
+      const remote = await welcome(other.messages);
+      expect(server.world.players.get(remote.playerId)?.inventory.add(createItemStack('gold_ingot', 2))).toBeNull();
+      other.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      db.linkRace = {
+        mode,
+        scope: 'dev|anarchy|anarchy',
+        providerUserId: 'race-user',
+        playerId: remote.playerId,
+      };
+      const raced = await connect(server.wsUrl(), {
+        name: 'Ada',
+        sessionToken: local.sessionToken,
+        authMode: 'yandex_auto',
+        yandexProof: proof('race-user'),
+      });
+      await expect(welcome(raced.messages)).rejects.toMatchObject({ code: 'yandex_character_conflict' });
+      expect(db.links).toEqual([{
+        scope: 'dev|anarchy|anarchy',
+        providerUserId: 'race-user',
+        playerId: remote.playerId,
+      }]);
+      expect(server.world.players.get(remote.playerId)?.connected).not.toBe(true);
+      raced.socket.close();
+      const stayed = await connect(server.wsUrl(), { name: 'Ada', sessionToken: local.sessionToken });
+      const asGuest = await welcome(stayed.messages);
+      expect(asGuest.playerId).toBe(local.playerId);
+      expect(JSON.stringify(asGuest.inventory)).toContain('diamond');
+      expect(JSON.stringify(asGuest.inventory)).not.toContain('gold_ingot');
+      stayed.socket.send(JSON.stringify({ type: 'chat', text: 'still-a', channel: 'global' }));
+      expect(await until(() => stayed.messages.some((message) => message.type === 'chat' && message.text.includes('still-a')))).toBe(true);
+      stayed.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const opened = await connect(server.wsUrl(), {
+        name: 'Bea',
+        authMode: 'yandex_auto',
+        yandexProof: proof('race-user'),
+        confirmYandexResume: true,
+      });
+      const asYandex = await welcome(opened.messages);
+      expect(asYandex.playerId).toBe(remote.playerId);
+      expect(JSON.stringify(asYandex.inventory)).toContain('gold_ingot');
+      expect(JSON.stringify(asYandex.inventory)).not.toContain('diamond');
+      expect(server.world.players.has(local.playerId)).toBe(true);
+      opened.socket.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('does not open a linked character for an unknown guest token', async () => {
+    const db = new MemoryIdentityDb('dev');
+    const server = await openServer(db);
+    try {
+      const linked = await connect(server.wsUrl(), {
+        name: 'Bea',
+        freshGuest: true,
+        authMode: 'yandex_auto',
+        yandexProof: proof('known-user'),
+      });
+      const remote = await welcome(linked.messages);
+      linked.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const unknown = await connect(server.wsUrl(), {
+        name: 'Ada',
+        sessionToken: '99999999-9999-4999-8999-999999999999',
+        authMode: 'yandex_auto',
+        yandexProof: proof('known-user'),
+      });
+      await expect(welcome(unknown.messages)).rejects.toMatchObject({ code: 'unknown_guest' });
+      expect(server.world.players.size).toBe(1);
+      expect(db.links.map((row) => row.playerId)).toEqual([remote.playerId]);
+      unknown.socket.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('refuses an expired proof and a first join while the database is down', async () => {
+    const db = new MemoryIdentityDb('dev');
+    const server = await openServer(db);
+    try {
+      const expired = signedPlayerProfile('old-user', SYNTHETIC_YANDEX_SECRET, Math.floor(Date.now() / 1000) - 3600);
+      const stale = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true, authMode: 'yandex_auto', yandexProof: expired });
+      await expect(welcome(stale.messages)).rejects.toMatchObject({ code: 'proof_expired' });
+      expect(server.world.players.size).toBe(0);
+      expect(db.links).toHaveLength(0);
+      stale.socket.close();
+      db.down = true;
+      const blocked = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true, authMode: 'yandex_auto', yandexProof: proof('db-first') });
+      await expect(welcome(blocked.messages)).rejects.toMatchObject({ code: 'db_unavailable' });
+      expect(server.world.players.size).toBe(0);
+      blocked.socket.close();
+      db.down = false;
+      const chosen = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true });
+      const guest = await welcome(chosen.messages);
+      expect(guest.yandexSync).toBeUndefined();
+      expect(db.links).toHaveLength(0);
+      expect(server.world.players.size).toBe(1);
+      chosen.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const linked = await connect(server.wsUrl(), {
+        name: 'Ada',
+        sessionToken: guest.sessionToken,
+        authMode: 'yandex_auto',
+        yandexProof: proof('db-first'),
+      });
+      const back = await welcome(linked.messages);
+      expect(back.playerId).toBe(guest.playerId);
+      expect(back.yandexSync).toBe('linked');
+      expect(db.links).toHaveLength(1);
+      linked.socket.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('keeps guest A when a later Yandex proof cannot be verified', async () => {
+    const db = new MemoryIdentityDb('dev');
+    const server = await openServer(db);
+    try {
+      const guest = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true });
+      const hello = await welcome(guest.messages);
+      expect(server.world.players.get(hello.playerId)?.inventory.add(createItemStack('diamond', 2))).toBeNull();
+      guest.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const retry = await connect(server.wsUrl(), {
+        name: 'Ada',
+        sessionToken: hello.sessionToken,
+        authMode: 'yandex_auto',
+        yandexProof: 'not-a-signature',
+      });
+      const back = await welcome(retry.messages);
+      expect(back.playerId).toBe(hello.playerId);
+      expect(back.yandexSync).toBe('guest');
+      expect(JSON.stringify(back.inventory)).toContain('diamond');
+      expect(db.links).toHaveLength(0);
+      expect(server.world.players.size).toBe(1);
+      retry.socket.close();
     } finally {
       await server.stop();
     }
