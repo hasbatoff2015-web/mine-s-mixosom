@@ -4,6 +4,7 @@
 import { describe, expect, it } from 'vitest';
 import { GameUI } from '../src/ui/GameUI';
 import { YandexGamesService } from '../src/yandex/YandexGamesService';
+import { YandexConnectChoices, planAfterCharacterChoice, proofCacheUsable, yandexSyncNotice } from '../src/net/yandexConnectIntent';
 import { confirmGuestWelcome, writeGuestCredential, readGuestCredential } from '../src/net/guestIdentityStorage';
 import type { GuestStorage } from '../src/net/guestIdentityStorage';
 
@@ -141,6 +142,84 @@ describe('yandex client authorization', () => {
     expect(record?.sessionToken).toBe('22222222-2222-4222-8222-222222222222');
     expect(record?.retained).toContain('11111111-1111-4111-8111-111111111111');
   });
+
+  it('does not send a cached proof after the client window and does not loop on the same signature', async () => {
+    let now = 1_000;
+    let calls = 0;
+    let dialogs = 0;
+    window.YaGames = {
+      init: async () => ({
+        getPlayer: async () => {
+          calls += 1;
+          return { isAuthorized: () => true, signature: 'same-signature' };
+        },
+        auth: { openAuthDialog: async () => { dialogs += 1; } },
+      }),
+    };
+    const service = new YandexGamesService();
+    service.now = () => now;
+    await service.initialize(() => {}, () => {});
+    const first = await service.silentAuthorizedProof();
+    expect(first).toEqual({ ok: true, proof: 'same-signature', clientAuthorized: true });
+    const second = await service.silentAuthorizedProof();
+    expect(second).toEqual(first);
+    expect(calls).toBe(1);
+    expect(proofCacheUsable(now, now + 8 * 60 * 1000)).toBe(false);
+    now += 15 * 60 * 1000;
+    const stale = await service.silentAuthorizedProof();
+    expect(stale).toEqual({ ok: false, reason: 'stale' });
+    expect(calls).toBe(2);
+    expect(dialogs).toBe(0);
+    const again = await service.silentAuthorizedProof();
+    expect(again).toEqual({ ok: false, reason: 'stale' });
+    expect(calls).toBe(2);
+    service.dispose();
+  });
+
+  it('forgets the previous proof when the account dialog closes', async () => {
+    const signatures = ['old-signature', 'new-signature'];
+    let onClose: (() => void) | undefined;
+    window.YaGames = {
+      init: async () => ({
+        EVENTS: { ACCOUNT_SELECTION_DIALOG_OPENED: 'open', ACCOUNT_SELECTION_DIALOG_CLOSED: 'close' },
+        on: (event: string, callback: () => void) => {
+          if (event === 'close') onClose = callback;
+        },
+        getPlayer: async () => ({ isAuthorized: () => true, signature: signatures.shift() ?? 'new-signature' }),
+      }),
+    };
+    const service = new YandexGamesService();
+    await service.initialize(() => {}, () => {});
+    await expect(service.silentAuthorizedProof()).resolves.toMatchObject({ proof: 'old-signature' });
+    onClose?.();
+    await expect(service.silentAuthorizedProof()).resolves.toMatchObject({ proof: 'new-signature' });
+    service.dispose();
+  });
+});
+
+describe('yandex connect choice', () => {
+  it('keeps a guest choice for the page session and clears it when Yandex is chosen', () => {
+    const choices = new YandexConnectChoices();
+    expect(choices.resolve('anarchy')).toBeUndefined();
+    expect(planAfterCharacterChoice('guest', 'proof')).toEqual({ kind: 'guest' });
+    choices.stayGuest('anarchy');
+    expect(choices.resolve('anarchy')).toEqual({ kind: 'guest' });
+    expect(choices.resolve('survival')).toBeUndefined();
+    const yandex = planAfterCharacterChoice('yandex', 'proof-b');
+    expect(choices.resolve('anarchy', yandex)).toEqual({
+      kind: 'yandex',
+      proof: 'proof-b',
+      confirmOtherCharacter: true,
+    });
+    expect(choices.resolve('anarchy')).toBeUndefined();
+    choices.stayGuest('anarchy');
+    choices.clear();
+    expect(choices.resolve('anarchy')).toBeUndefined();
+    expect(yandexSyncNotice('linked')).toBe('Прогресс сохранён в вашем Яндекс ID.');
+    expect(yandexSyncNotice('restored')).toBe('Персонаж восстановлен через Яндекс ID.');
+    expect(yandexSyncNotice('unavailable')).toBe('Синхронизация прогресса временно недоступна. Вы играете гостем.');
+    expect(yandexSyncNotice('guest')).toBeUndefined();
+  });
 });
 
 describe('yandex server list and pause', () => {
@@ -178,7 +257,8 @@ describe('yandex server list and pause', () => {
     expect(document.body.textContent).toContain('Сохраните прогресс и играйте с любого устройства.');
     ui.setYandexPanel('authorized');
     expect(document.querySelector<HTMLButtonElement>('[data-action="yandex-login"]')?.hidden).toBe(true);
-    expect(document.body.textContent).toContain('Яндекс ID подключён');
+    expect(document.body.textContent).toContain('Вы авторизованы в Яндексе');
+    expect(document.body.textContent).not.toContain('Яндекс ID подключён');
     expect(document.body.textContent).not.toContain('Сохраните прогресс и играйте с любого устройства.');
     ui.setYandexBusy(true);
     expect(document.querySelector<HTMLButtonElement>('[data-action="connect"]')?.disabled).toBe(true);

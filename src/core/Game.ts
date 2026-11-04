@@ -285,6 +285,12 @@ import {
 } from '../net';
 import type { LocalServerName } from '../../shared/config';
 import { yandexLinkResultApplies } from '../net/yandexLinkCorrelation';
+import {
+  YandexConnectChoices,
+  planAfterCharacterChoice,
+  yandexSyncNotice,
+  type YandexConnectPlan,
+} from '../net/yandexConnectIntent';
 import { BuyerNpcView } from '../net/BuyerNpcView';
 import { pickBuyerInteractTarget, type BuyerRayHit } from '../net/buyerInteract';
 import { loadPlayerNickname, savePlayerNickname } from '../net/playerNickname';
@@ -682,6 +688,7 @@ export class Game {
   private connectGeneration = 0;
   private pendingOnlineClient?: AnarchyClient;
   private stopYandexAccount?: () => void;
+  private readonly yandexChoices = new YandexConnectChoices();
   private readonly onlineStatus = new ServerStatusSession();
   private readonly input: InputManager;
   private readonly ambient = new THREE.HemisphereLight(0xb7d7f2, 0x1a1612, 0.38);
@@ -1149,12 +1156,14 @@ export class Game {
     if (!signed.ok) {
       const message = signed.reason === 'anonymous' || signed.reason === 'cancelled'
         ? 'Вход отменён. Персонаж не изменён.'
-        : yandexProofMessage(signed.reason);
+        : signed.reason === 'stale'
+          ? 'Подтверждение Яндекса устарело. Перезагрузите игру, чтобы обновить Яндекс ID.'
+          : yandexProofMessage(signed.reason);
       this.endYandex(op, message);
       return;
     }
     this.endYandex(op);
-    await this.connectOnlineServer(id, { proof: signed.proof });
+    await this.connectOnlineServer(id, { kind: 'yandex', proof: signed.proof, confirmOtherCharacter: false });
   }
 
   private async refreshYandexPanel(): Promise<void> {
@@ -1173,6 +1182,10 @@ export class Game {
       this.ui.setYandexPanel('authorized');
       return;
     }
+    if (signed.reason === 'stale') {
+      this.ui.setYandexPanel('error', 'Подтверждение Яндекса устарело. Перезагрузите игру, чтобы обновить Яндекс ID.');
+      return;
+    }
     if (signed.reason === 'anonymous') this.ui.setYandexPanel('anonymous');
     else if (signed.reason === 'unavailable' || signed.reason === 'cancelled') this.ui.setYandexPanel('unavailable');
     else this.ui.setYandexPanel('error', yandexProofMessage(signed.reason));
@@ -1186,6 +1199,7 @@ export class Game {
     this.yandexOp += 1;
     this.yandexBusy = false;
     this.onlineConnectBusy = false;
+    this.yandexChoices.clear();
     this.ui.setYandexBusy(false);
     this.ui.setConnectBusy(false);
   }
@@ -1200,20 +1214,25 @@ export class Game {
     if (this.ui.isShowingOnlineServers()) await this.refreshYandexPanel();
   }
 
-  private async connectOnlineServer(id: string, yandex?: { proof: string; confirmOtherCharacter?: boolean }): Promise<void> {
+  private async connectOnlineServer(id: string, requested?: YandexConnectPlan): Promise<void> {
     if (!isLocalServerName(id) || this.onlineConnectBusy) return;
     this.onlineConnectBusy = true;
     this.ui.setConnectBusy(true);
     const generation = this.connectGeneration;
     try {
-      let intent = yandex;
+      const chosen = this.yandexChoices.resolve(id, requested);
+      let intent = chosen;
       if (!intent) {
         await this.yandex.waitUntilReady(3000);
         if (generation !== this.connectGeneration) return;
         if (this.yandex.sdkAvailable()) {
           const signed = await this.yandex.silentAuthorizedProof();
           if (generation !== this.connectGeneration) return;
-          if (signed.ok) intent = { proof: signed.proof };
+          if (signed.ok) intent = { kind: 'yandex', proof: signed.proof, confirmOtherCharacter: false };
+          else if (signed.reason === 'stale') {
+            this.ui.setYandexStatus('Подтверждение Яндекса устарело. Перезагрузите игру, чтобы обновить Яндекс ID.');
+            return;
+          }
         }
       }
       if (generation !== this.connectGeneration) return;
@@ -1229,7 +1248,7 @@ export class Game {
   private async openOnlineConnection(
     id: LocalServerName,
     generation: number,
-    yandex?: { proof: string; confirmOtherCharacter?: boolean },
+    yandex?: YandexConnectPlan,
   ): Promise<void> {
     const url = clientUrlForServer(id);
     if (!url || generation !== this.connectGeneration) return;
@@ -1238,7 +1257,9 @@ export class Game {
     this.ui.showLoading('Подключение к серверу…', 12, endpointLabel(url));
     const client = new AnarchyClient();
     this.pendingOnlineClient = client;
-    const yandexResume = yandex ? { ...yandex, mode: 'yandex_auto' as const } : undefined;
+    const yandexResume = yandex?.kind === 'yandex'
+      ? { proof: yandex.proof, confirmOtherCharacter: yandex.confirmOtherCharacter, mode: 'yandex_auto' as const }
+      : undefined;
     try {
       const welcome = await client.connect(url, loadPlayerNickname(), this.playerAppearance, {
         targetServer: id,
@@ -1259,15 +1280,19 @@ export class Game {
         : '';
       if (code === 'cancelled' || generation !== this.connectGeneration) return;
       client.disconnect();
-      if (code === 'yandex_character_conflict' && yandex && !yandex.confirmOtherCharacter) {
+      if (code === 'yandex_character_conflict' && yandex?.kind === 'yandex' && !yandex.confirmOtherCharacter) {
         const choice = await this.ui.chooseSavedCharacter();
         if (generation !== this.connectGeneration) return;
-        if (choice === 'yandex') {
-          await this.openOnlineConnection(id, generation, { proof: yandex.proof, confirmOtherCharacter: true });
-          return;
-        }
-        await this.showOnlineServerList(id);
-        this.ui.setYandexStatus('Вы остались гостем. Сохранённый персонаж не изменён.');
+        const plan = planAfterCharacterChoice(choice, yandex.proof);
+        if (plan.kind === 'guest') this.yandexChoices.stayGuest(id);
+        else this.yandexChoices.chooseYandex(id);
+        await this.openOnlineConnection(id, generation, plan);
+        return;
+      }
+      if (code === 'proof_expired' && yandex?.kind === 'yandex') {
+        this.yandex.retireProof(yandex.proof);
+        await this.showOnlineServerList(id, nicknameDraft);
+        this.ui.setYandexStatus('Подтверждение Яндекса устарело. Перезагрузите игру, чтобы обновить Яндекс ID.');
         return;
       }
       if (code === 'unknown_guest' || code === 'world_changed') {
@@ -1331,7 +1356,7 @@ export class Game {
   }
 
   private noteYandexWelcome(welcome: ServerWelcomeMessage): void {
-    const text = yandexWelcomeNotice(welcome.yandexSync);
+    const text = yandexSyncNotice(welcome.yandexSync);
     if (text) this.ui.toast(text);
   }
 
@@ -7577,13 +7602,6 @@ export class Game {
     this.firstPerson?.resize(width, height);
     this.ui.relayoutOpenOverlays();
   }
-}
-
-function yandexWelcomeNotice(sync: ServerWelcomeMessage['yandexSync']): string | undefined {
-  if (sync === 'linked') return 'Прогресс сохранён в вашем Яндекс ID.';
-  if (sync === 'unavailable') return 'Синхронизация Яндекс ID сейчас недоступна. Персонаж остаётся в этом браузере.';
-  if (sync === 'guest') return 'Не удалось подтвердить Яндекс ID. Вы играете гостем в этом браузере.';
-  return undefined;
 }
 
 function yandexProofMessage(reason: 'unavailable' | 'cancelled' | 'rate_limited' | 'error'): string {

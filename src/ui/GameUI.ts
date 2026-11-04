@@ -1324,7 +1324,7 @@ export class GameUI {
       copy.textContent = mode === 'pending'
         ? 'Проверка Яндекс ID…'
         : mode === 'authorized'
-          ? 'Яндекс ID подключён'
+          ? 'Вы авторизованы в Яндексе'
           : mode === 'anonymous'
             ? 'Сохраните прогресс и играйте с любого устройства.'
             : mode === 'error'

@@ -742,6 +742,14 @@ export class WorldInstance {
    * Production leaves this unset. Tests use it to overlap two resumes.
    */
   beforeJoinPublish?: () => Promise<void>;
+  /**
+   * One-shot refusal applied after the join gate and before welcome.
+   * Production leaves this unset. Tests use it to stop publication after a
+   * committed identity link.
+   */
+  publishRefusal?: { error: string; code?: string };
+  /** Player ids whose provider link is committed or whose commit outcome is unknown. */
+  private readonly retainedIdentityPlayers = new Set<string>();
   readonly gameplay: ServerGameplay;
   readonly database: Database;
   readonly adminIdentity: AdminIdentityPolicy;
@@ -2441,6 +2449,18 @@ export class WorldInstance {
             );
           } catch (error) {
             serverLog(`yandex link failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+            const reconciled = await this.reconcileCommittedLink(scope, verified.identity, player.id);
+            if (reconciled === 'other') {
+              return { error: 'К этому Яндекс ID уже привязан другой персонаж.', code: 'yandex_link_race' };
+            }
+            if (reconciled === 'this' || reconciled === 'unknown') {
+              this.keepIdentityPlayer(player.id);
+              sync = reconciled === 'this' ? 'linked' : 'unavailable';
+              if (reconciled === 'this') {
+                await this.consumeLinkedProof(scope, verified.identity.proofHash, player.id, options.proof);
+              }
+              return undefined;
+            }
             sync = 'unavailable';
             return undefined;
           }
@@ -2459,6 +2479,7 @@ export class WorldInstance {
             return undefined;
           }
         }
+        this.keepIdentityPlayer(player.id);
         sync = 'linked';
         await this.consumeLinkedProof(scope, verified.identity.proofHash, player.id, options.proof);
         return undefined;
@@ -2506,6 +2527,30 @@ export class WorldInstance {
     });
     if ('error' in joined) return joined;
     return { ...joined, yandexSync: sync };
+  }
+
+  private keepIdentityPlayer(playerId: string): void {
+    this.retainedIdentityPlayers.add(playerId);
+  }
+
+  /**
+   * A thrown bind does not say whether PostgreSQL committed.
+   * `unknown` keeps the candidate. `absent` means this read saw no row.
+   */
+  private async reconcileCommittedLink(
+    scope: NonNullable<ReturnType<typeof identityScopeFromServer>>,
+    identity: { providerUserId: string; proofHash: string },
+    playerId: string,
+  ): Promise<'this' | 'other' | 'absent' | 'unknown'> {
+    try {
+      const again = await lookupVerifiedProviderIdentity(this.database, scope, identity);
+      if (again.status === 'found') return again.playerId === playerId ? 'this' : 'other';
+      if (again.status === 'absent') return 'absent';
+      return 'unknown';
+    } catch (error) {
+      serverLog(`yandex link reconcile failed: ${error instanceof Error ? error.name : 'error'}`, 'error');
+      return 'unknown';
+    }
   }
 
   /** Records the proof after a confirmed link. A receipt failure does not remove the link or block welcome. */
@@ -2611,6 +2656,11 @@ export class WorldInstance {
     }
     const player = prepared;
     const publishIfAllowed = (): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string } => {
+      const refusal = this.publishRefusal;
+      if (refusal) {
+        this.publishRefusal = undefined;
+        return refusal;
+      }
       if (this.database.enabled && !this.adminBansReady) return { error: 'moderation unavailable' };
       if (this.isPlayerBanned(player.player.id)) return { error: 'banned' };
       return player.publish();
@@ -7861,9 +7911,9 @@ export class WorldInstance {
   }
 
   private async rollbackCandidate(player: ServerPlayer): Promise<void> {
-    if (this.players.has(player.id)) return;
+    if (this.players.has(player.id) || this.retainedIdentityPlayers.has(player.id)) return;
     const run = this.saveQueue.then(async () => {
-      if (this.players.has(player.id)) return;
+      if (this.players.has(player.id) || this.retainedIdentityPlayers.has(player.id)) return;
       const players: Record<string, SerializedPersistedPlayer> = { ...this.storedPlayers };
       delete players[player.id];
       await this.worldStore.savePlayers(this.worldId, players);

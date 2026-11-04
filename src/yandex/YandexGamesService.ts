@@ -1,3 +1,5 @@
+import { proofCacheUsable } from '../net/yandexConnectIntent';
+
 interface YandexGameplayApi {
   start(): void;
   stop(): void;
@@ -26,7 +28,7 @@ interface YandexSdk {
 
 export type SignedProofResult =
   | { readonly ok: true; readonly proof: string; readonly clientAuthorized: true }
-  | { readonly ok: false; readonly reason: 'unavailable' | 'cancelled' | 'rate_limited' | 'error' | 'anonymous' };
+  | { readonly ok: false; readonly reason: 'unavailable' | 'cancelled' | 'rate_limited' | 'error' | 'anonymous' | 'stale' };
 
 export type YandexInitState = 'pending' | 'ready' | 'unavailable';
 export type YandexAccountPhase = 'opened' | 'closed';
@@ -47,8 +49,11 @@ export class YandexGamesService {
   private proofGeneration = 0;
   private initState: YandexInitState = 'pending';
   private initPromise?: Promise<void>;
-  private cached?: { generation: number; result: SignedProofResult };
+  private cached?: { generation: number; result: SignedProofResult; at: number };
+  private readonly retiredProofs = new Set<string>();
   private inflight?: Promise<SignedProofResult>;
+  /** Test clock. Production uses Date.now. Not a credential. */
+  now: () => number = () => Date.now();
   private readonly playerCalls: number[] = [];
   private readonly readyWaiters: Array<() => void> = [];
   private readonly accountListeners: Array<(phase: YandexAccountPhase) => void> = [];
@@ -150,19 +155,53 @@ export class YandexGamesService {
     return this.authorizedProof(true);
   }
 
+  /** Drops one proof the server already rejected. Later calls do not send it again. */
+  retireProof(proof: string): void {
+    if (proof.length === 0) return;
+    this.retiredProofs.add(proof);
+    if (this.cached?.result.ok && this.cached.result.proof === proof) {
+      this.cached = { generation: this.proofGeneration, result: { ok: false, reason: 'stale' }, at: this.now() };
+    }
+  }
+
   private async authorizedProof(openDialog: boolean): Promise<SignedProofResult> {
     if (!openDialog && this.inflight) return this.inflight;
-    if (!openDialog && this.cached && this.cached.generation === this.proofGeneration) return this.cached.result;
+    const ready = this.usableCache();
+    if (!openDialog && ready) return ready;
     if (openDialog && this.inflight) await this.inflight;
-    if (openDialog && this.cached?.generation === this.proofGeneration && this.cached.result.ok) {
-      return this.cached.result;
+    const afterWait = this.usableCache();
+    if (openDialog && afterWait?.ok) return afterWait;
+    if (this.cached?.result.ok && this.cached.generation === this.proofGeneration && !proofCacheUsable(this.cached.at, this.now())) {
+      return this.refreshStaleProof();
     }
+    return this.startProof(openDialog);
+  }
+
+  private usableCache(): SignedProofResult | undefined {
+    const cached = this.cached;
+    if (!cached || cached.generation !== this.proofGeneration) return undefined;
+    if (cached.result.ok && !proofCacheUsable(cached.at, this.now())) return undefined;
+    if (cached.result.ok && this.retiredProofs.has(cached.result.proof)) return { ok: false, reason: 'stale' };
+    return cached.result;
+  }
+
+  /** One SDK read. The same signature is not requested again in this page generation. */
+  private async refreshStaleProof(): Promise<SignedProofResult> {
+    const previous = this.cached?.result.ok ? this.cached.result.proof : undefined;
     const started = this.proofGeneration;
-    const run = this.requestSignedProof(openDialog).then((result) => {
-      const cacheable = result.ok || result.reason === 'anonymous';
-      if (cacheable && started === this.proofGeneration) this.cached = { generation: started, result };
-      return result;
+    this.cached = undefined;
+    const run = this.requestSignedProof(false).then((result) => this.rememberProof(started, result, previous));
+    let flight: Promise<SignedProofResult>;
+    flight = run.finally(() => {
+      if (this.inflight === flight) this.inflight = undefined;
     });
+    this.inflight = flight;
+    return flight;
+  }
+
+  private startProof(openDialog: boolean): Promise<SignedProofResult> {
+    const started = this.proofGeneration;
+    const run = this.requestSignedProof(openDialog).then((result) => this.rememberProof(started, result));
     if (!openDialog) {
       let flight: Promise<SignedProofResult>;
       flight = run.finally(() => {
@@ -172,6 +211,21 @@ export class YandexGamesService {
       return flight;
     }
     return run;
+  }
+
+  private rememberProof(started: number, result: SignedProofResult, previous?: string): SignedProofResult {
+    if (started !== this.proofGeneration) return result;
+    const repeated = result.ok && previous !== undefined && result.proof === previous;
+    const retired = result.ok && this.retiredProofs.has(result.proof);
+    if (repeated || retired) {
+      const stale: SignedProofResult = { ok: false, reason: 'stale' };
+      this.cached = { generation: started, result: stale, at: this.now() };
+      return stale;
+    }
+    if (result.ok || result.reason === 'anonymous' || result.reason === 'stale') {
+      this.cached = { generation: started, result, at: this.now() };
+    }
+    return result;
   }
 
   /**
@@ -233,6 +287,7 @@ export class YandexGamesService {
       this.accountDialogOpen = true;
       this.proofGeneration += 1;
       this.cached = undefined;
+      this.retiredProofs.clear();
       this.inflight = undefined;
       this.emitAccount('opened');
     };
@@ -240,6 +295,7 @@ export class YandexGamesService {
       this.accountDialogOpen = false;
       this.proofGeneration += 1;
       this.cached = undefined;
+      this.retiredProofs.clear();
       this.inflight = undefined;
       this.emitAccount('closed');
     };

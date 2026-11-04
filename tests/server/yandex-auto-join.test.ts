@@ -6,6 +6,7 @@ import { WebSocket } from 'ws';
 import { PROTOCOL_VERSION } from '../../shared/config';
 import type { ServerMessage } from '../../shared/protocol';
 import { createItemStack } from '../../src/inventory';
+import { planAfterCharacterChoice } from '../../src/net/yandexConnectIntent';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { AnarchyServer } from '../../server/AnarchyServer';
 import { loadServerConfig, type ServerMode } from '../../server/config';
@@ -25,6 +26,7 @@ class MemoryIdentityDb implements Database {
   readonly receipts = new Map<string, { state: 'reserved' | 'consumed'; attemptId: string; playerId: string }>();
   readonly legacyHashes = new Set<string>();
   down = false;
+  throwAfterLinkInsert = false;
   holdLookups = false;
   lookupWaits = 0;
   private lookupGate: Promise<void> = Promise.resolve();
@@ -97,6 +99,10 @@ class MemoryIdentityDb implements Database {
         throw Object.assign(new Error('duplicate'), { code: '23505' });
       }
       this.links.push({ scope, providerUserId, playerId });
+      if (this.throwAfterLinkInsert) {
+        this.throwAfterLinkInsert = false;
+        throw new Error('link commit outcome unknown');
+      }
       return { rows: [], rowCount: 1 };
     }
     if (sql.includes('OR player_id')) {
@@ -129,11 +135,11 @@ function proof(uniqueId: string): string {
   return signedPlayerProfile(uniqueId, SYNTHETIC_YANDEX_SECRET, issuedAt);
 }
 
-async function openServer(
+async function openTracked(
   db: MemoryIdentityDb,
   mode: ServerMode = 'anarchy',
   auth = true,
-): Promise<AnarchyServer> {
+): Promise<{ server: AnarchyServer; dir: string }> {
   const dir = await mkdtemp(join(tmpdir(), 'fc-yandex-auto-'));
   dirs.push(dir);
   const env: NodeJS.ProcessEnv = {
@@ -161,7 +167,15 @@ async function openServer(
   };
   const server = new AnarchyServer(config, { database: db });
   await server.start();
-  return server;
+  return { server, dir };
+}
+
+async function openServer(
+  db: MemoryIdentityDb,
+  mode: ServerMode = 'anarchy',
+  auth = true,
+): Promise<AnarchyServer> {
+  return (await openTracked(db, mode, auth)).server;
 }
 
 function connect(url: string, join: Record<string, unknown>): Promise<{ socket: WebSocket; messages: ServerMessage[] }> {
@@ -495,6 +509,165 @@ describe('automatic yandex join', () => {
       right.socket.close();
     } finally {
       db.releaseLookups();
+      await server.stop();
+    }
+  });
+
+  it('keeps a committed link when publication is refused and the next join returns that uuid', async () => {
+    const db = new MemoryIdentityDb('dev');
+    const { server, dir } = await openTracked(db);
+    let stopped = false;
+    try {
+      server.world.beforeJoinPublish = async () => {
+        server.world.publishRefusal = { error: 'publication held', code: 'publish_held' };
+      };
+      const created = await connect(server.wsUrl(), {
+        name: 'Ada',
+        freshGuest: true,
+        authMode: 'yandex_auto',
+        yandexProof: proof('held-user'),
+      });
+      await expect(welcome(created.messages)).rejects.toMatchObject({ code: 'publish_held' });
+      expect(db.links).toHaveLength(1);
+      const linkedId = db.links[0]!.playerId;
+      expect(server.world.players.has(linkedId)).toBe(false);
+      created.socket.close();
+      server.world.beforeJoinPublish = undefined;
+      const again = await connect(server.wsUrl(), { name: 'Ada', authMode: 'yandex_auto', yandexProof: proof('held-user') });
+      const back = await welcome(again.messages);
+      expect(back.playerId).toBe(linkedId);
+      expect(back.yandexSync).toBe('restored');
+      const inventory = JSON.stringify(back.inventory);
+      again.socket.send(JSON.stringify({ type: 'chat', text: 'held-ok', channel: 'global' }));
+      expect(await until(() => again.messages.some((message) => message.type === 'chat' && message.text.includes('held-ok')))).toBe(true);
+      again.socket.close();
+      await server.stop();
+      stopped = true;
+      const restarted = new AnarchyServer({
+        ...loadServerConfig({
+          HOST: '127.0.0.1',
+          PORT: '0',
+          WORLD: 'anarchy',
+          SERVER_MODE: 'anarchy',
+          WORLD_SEED: ANARCHY_WORLD_SEED,
+          MAX_PLAYERS: '8',
+          CHUNK_VIEW_RADIUS: '1',
+          TICK_RATE: '20',
+          PERSIST_INTERVAL_MS: '600000',
+          FC_DATABASE_URL: 'postgres://local/yandex-test',
+          FC_DEPLOYMENT_ID: 'dev',
+          FC_YANDEX_AUTH_ENABLED: '1',
+          FC_YANDEX_AUTH_SECRET: SYNTHETIC_YANDEX_SECRET,
+        }, process.cwd()),
+        dataDir: dir,
+        chunkViewRadius: 1,
+        persistIntervalMs: 600_000,
+      }, { database: db });
+      await restarted.start();
+      try {
+        const afterRestart = await connect(restarted.wsUrl(), {
+          name: 'Ada',
+          authMode: 'yandex_auto',
+          yandexProof: proof('held-user'),
+        });
+        const restored = await welcome(afterRestart.messages);
+        expect(restored.playerId).toBe(linkedId);
+        expect(JSON.stringify(restored.inventory)).toBe(inventory);
+        expect(db.links).toHaveLength(1);
+        expect(restarted.world.players.size).toBe(1);
+        afterRestart.socket.close();
+      } finally {
+        await restarted.stop();
+      }
+    } finally {
+      if (!stopped) await server.stop();
+    }
+  });
+
+  it('keeps the player when the link insert is committed and the driver then throws', async () => {
+    const db = new MemoryIdentityDb('dev');
+    db.throwAfterLinkInsert = true;
+    const server = await openServer(db);
+    try {
+      const created = await connect(server.wsUrl(), {
+        name: 'Ada',
+        freshGuest: true,
+        authMode: 'yandex_auto',
+        yandexProof: proof('thrown-link'),
+      });
+      const hello = await welcome(created.messages);
+      expect(hello.yandexSync).toBe('linked');
+      expect(db.links.map((row) => row.playerId)).toEqual([hello.playerId]);
+      created.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const again = await connect(server.wsUrl(), { name: 'Ada', authMode: 'yandex_auto', yandexProof: proof('thrown-link') });
+      const back = await welcome(again.messages);
+      expect(back.playerId).toBe(hello.playerId);
+      expect(db.links).toHaveLength(1);
+      expect(server.world.players.size).toBe(1);
+      again.socket.close();
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('stays on guest A after the conflict choice and opens B only when that choice is explicit', async () => {
+    const db = new MemoryIdentityDb('dev');
+    const server = await openServer(db);
+    try {
+      const guest = await connect(server.wsUrl(), { name: 'Ada', freshGuest: true });
+      const local = await welcome(guest.messages);
+      expect(server.world.players.get(local.playerId)?.inventory.add(createItemStack('diamond', 3))).toBeNull();
+      guest.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const linked = await connect(server.wsUrl(), {
+        name: 'Bea',
+        freshGuest: true,
+        authMode: 'yandex_auto',
+        yandexProof: proof('choice-user'),
+      });
+      const remote = await welcome(linked.messages);
+      expect(server.world.players.get(remote.playerId)?.inventory.add(createItemStack('gold_ingot', 2))).toBeNull();
+      linked.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const conflict = await connect(server.wsUrl(), {
+        name: 'Ada',
+        sessionToken: local.sessionToken,
+        authMode: 'yandex_auto',
+        yandexProof: proof('choice-user'),
+      });
+      await expect(welcome(conflict.messages)).rejects.toMatchObject({ code: 'yandex_character_conflict' });
+      const guestPlan = planAfterCharacterChoice('guest', proof('choice-user'));
+      const guestJoin = guestPlan.kind === 'guest'
+        ? { name: 'Ada', sessionToken: local.sessionToken }
+        : { name: 'Ada', authMode: 'yandex_auto' as const, yandexProof: guestPlan.proof, confirmYandexResume: true };
+      expect(guestJoin).not.toHaveProperty('authMode');
+      expect(guestJoin).toMatchObject({ sessionToken: local.sessionToken });
+      const stayed = await connect(server.wsUrl(), guestJoin);
+      const asGuest = await welcome(stayed.messages);
+      expect(asGuest.playerId).toBe(local.playerId);
+      expect(asGuest.yandexSync).toBeUndefined();
+      expect(JSON.stringify(asGuest.inventory)).toContain('diamond');
+      expect(JSON.stringify(asGuest.inventory)).not.toContain('gold_ingot');
+      stayed.socket.send(JSON.stringify({ type: 'chat', text: 'guest-ok', channel: 'global' }));
+      expect(await until(() => stayed.messages.some((message) => message.type === 'chat' && message.text.includes('guest-ok')))).toBe(true);
+      stayed.socket.close();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const yandexPlan = planAfterCharacterChoice('yandex', proof('choice-user'));
+      expect(yandexPlan.kind).toBe('yandex');
+      const opened = await connect(server.wsUrl(), {
+        name: 'Bea',
+        authMode: 'yandex_auto',
+        yandexProof: yandexPlan.kind === 'yandex' ? yandexPlan.proof : '',
+        confirmYandexResume: yandexPlan.kind === 'yandex' && yandexPlan.confirmOtherCharacter,
+      });
+      const asYandex = await welcome(opened.messages);
+      expect(asYandex.playerId).toBe(remote.playerId);
+      expect(JSON.stringify(asYandex.inventory)).toContain('gold_ingot');
+      expect(JSON.stringify(asYandex.inventory)).not.toContain('diamond');
+      expect(db.links).toHaveLength(1);
+      opened.socket.close();
+    } finally {
       await server.stop();
     }
   });
