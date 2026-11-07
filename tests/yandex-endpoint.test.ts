@@ -64,4 +64,22 @@ describe('yandex proof endpoint trust', () => {
     expect(messages.join('\n')).not.toContain('11111111-1111-4111-8111-111111111111');
     expect(storage.getItem('fc.guest.v2/local/anarchy/anarchy')).toContain('11111111-1111-4111-8111-111111111111');
   });
+
+  it('does not send an automatic Yandex proof to an overridden socket', async () => {
+    const { url, messages } = await listen();
+    const storage = memoryStorage();
+    const client = new AnarchyClient();
+    await expect(client.connect(url, 'Ada', undefined, {
+      targetServer: 'anarchy',
+      hostname: 'localhost',
+      search: `?anarchyUrl=${encodeURIComponent(url)}`,
+      durable: storage,
+      legacy: storage,
+      yandexResume: { proof: 'automatic-proof-value', mode: 'yandex_auto' },
+      fetchStatus: async () => ({ ok: true, ready: true, mode: 'anarchy', world: 'anarchy' }),
+    })).rejects.toMatchObject({ code: 'untrusted_endpoint' });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(messages.join('\n')).not.toContain('automatic-proof-value');
+    expect(storage.keys()).toEqual([]);
+  });
 });

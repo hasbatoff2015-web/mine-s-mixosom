@@ -14,6 +14,15 @@ WHERE deployment_id = $1
   AND server_mode = 'legacy'
 LIMIT 1`;
 
+/** Current-scope receipt. A row means this proof was already reserved or consumed here. */
+export const SELECT_PROOF_RECEIPT_SQL = `SELECT state, player_id
+FROM yandex_proof_receipts
+WHERE deployment_id = $1
+  AND server_mode = $2
+  AND world_id = $3
+  AND proof_hash = $4
+LIMIT 1`;
+
 export const INSERT_PROOF_RESERVATION_SQL = `INSERT INTO yandex_proof_receipts (
   deployment_id, server_mode, world_id, proof_hash, player_id, purpose, state, attempt_id
 ) VALUES ($1, $2, $3, $4, $5::uuid, 'resume', 'reserved', $6::uuid)
@@ -73,6 +82,32 @@ export function receiptRetentionSeconds(maxAgeSeconds: number, clockSkewSeconds:
  * A legacy row blocks that proof only when its stored hash is the verified
  * proof's old string hash. The new row is always the canonical fingerprint.
  */
+/**
+ * Whether this verified proof already has a receipt in the scope.
+ * `reused` blocks a second character. It does not by itself choose a UUID.
+ */
+export async function readProofReceipt(
+  db: Database,
+  scope: IdentityScope,
+  proofHash: string,
+  legacyFingerprint?: string,
+): Promise<'free' | 'reused' | 'unavailable'> {
+  if (!db.enabled) return 'unavailable';
+  return db.transaction(async (tx) => {
+    if (legacyFingerprint && /^[0-9a-f]{64}$/.test(legacyFingerprint)) {
+      const legacy = await tx.query(SELECT_LEGACY_RECEIPT_SQL, [scope.deploymentId, legacyFingerprint]);
+      if (legacy.rowCount > 0) return 'reused';
+    }
+    const row = await tx.query(SELECT_PROOF_RECEIPT_SQL, [
+      scope.deploymentId,
+      scope.serverMode,
+      scope.worldId,
+      proofHash,
+    ]);
+    return row.rowCount > 0 ? 'reused' : 'free';
+  });
+}
+
 export async function reserveResumeProof(
   db: Database,
   scope: IdentityScope,

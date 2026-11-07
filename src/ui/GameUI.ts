@@ -343,8 +343,9 @@ export interface PauseActions {
   resume(): void;
   settings(): void;
   saveAndQuit(): void;
-  linkYandex?(): void;
 }
+
+export type YandexPanelMode = 'pending' | 'unavailable' | 'anonymous' | 'authorized' | 'error';
 
 export interface HudState {
   inventory: Inventory;
@@ -558,6 +559,7 @@ export class GameUI {
   private onlineActions?: OnlineServersActions;
   private onlineSelected: LocalServerName = 'anarchy';
   private yandexBusy = false;
+  private connectBusy = false;
   private onlineStatuses?: ServerStatusMap;
   /** True when disabling «Обновить» moved focus off that button. */
   private onlineRefreshFocused = false;
@@ -1103,9 +1105,9 @@ export class GameUI {
           </div>
           <div class="server-list">${renderOnlineServerRows(statuses, this.onlineSelected)}</div>
         </div>
-        <div class="yandex-auth-panel">
-          <p>Сохраните персонажа и входите с другого устройства. Подписанный Яндекс ID позже понадобится для реферальной программы.</p>
-          <button type="button" class="game-button" data-action="yandex-login">Войти через Яндекс</button>
+        <div class="yandex-auth-panel" data-yandex-panel="pending">
+          <p data-yandex-copy>Проверка Яндекс ID…</p>
+          <button type="button" class="game-button" data-action="yandex-login" hidden>Войти через Яндекс</button>
           <p data-yandex-status role="status"></p>
         </div>
         <footer class="menu-footer server-menu-footer">
@@ -1127,7 +1129,7 @@ export class GameUI {
       actions.connect(this.onlineSelected);
     });
     this.bindAction('yandex-login', () => {
-      if (this.yandexBusy) return;
+      if (this.yandexBusy || this.connectBusy) return;
       actions.yandexLogin?.(this.onlineSelected);
     });
     this.bindOnlineServerRows();
@@ -1208,7 +1210,7 @@ export class GameUI {
     }
     this.paintOnlineRefreshButton(pending);
     const connect = this.screen?.querySelector<HTMLButtonElement>('[data-action="connect"]');
-    if (connect) connect.disabled = !this.canConnectOnlineSelection();
+    if (connect) connect.disabled = this.yandexBusy || this.connectBusy || !this.canConnectOnlineSelection();
     const badge = this.screen?.querySelector('.mock-badge');
     if (badge) badge.textContent = this.onlineEndpointBadge();
   }
@@ -1302,16 +1304,37 @@ export class GameUI {
         <div class="menu-card pause-window">
           <div class="menu-stack pause-actions">
             <button class="game-button primary" data-action="resume">Продолжить</button>
-            ${actions.linkYandex ? '<button class="game-button" data-action="link-yandex">Привязать Яндекс ID</button>' : ''}
             <button class="game-button" data-action="settings">Настройки</button>
             <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
           </div>
         </div>
       </section>`);
     this.bindAction('resume', actions.resume);
-    if (actions.linkYandex) this.bindAction('link-yandex', actions.linkYandex);
     this.bindAction('settings', actions.settings);
     this.bindAction('quit', actions.saveAndQuit);
+  }
+
+  setYandexPanel(mode: YandexPanelMode, detail = ''): void {
+    const panel = this.screen?.querySelector<HTMLElement>('[data-yandex-panel]');
+    if (!panel) return;
+    panel.dataset.yandexPanel = mode;
+    const copy = panel.querySelector('[data-yandex-copy]');
+    const button = panel.querySelector<HTMLButtonElement>('[data-action="yandex-login"]');
+    if (copy) {
+      copy.textContent = mode === 'pending'
+        ? 'Проверка Яндекс ID…'
+        : mode === 'authorized'
+          ? 'Вы авторизованы в Яндексе'
+          : mode === 'anonymous'
+            ? 'Сохраните прогресс и играйте с любого устройства.'
+            : mode === 'error'
+              ? (detail || 'Не удалось проверить Яндекс ID. Можно играть гостем.')
+              : 'Вход через Яндекс недоступен. Можно играть гостем в этом браузере.';
+    }
+    if (button) {
+      button.hidden = mode !== 'anonymous';
+      button.disabled = this.yandexBusy || this.connectBusy;
+    }
   }
 
   setYandexStatus(text: string): void {
@@ -1322,8 +1345,74 @@ export class GameUI {
 
   setYandexBusy(busy: boolean): void {
     this.yandexBusy = busy;
-    this.screen?.querySelectorAll<HTMLButtonElement>('[data-action="yandex-login"], [data-action="link-yandex"]').forEach((button) => {
+    this.paintYandexControls();
+  }
+
+  setConnectBusy(busy: boolean): void {
+    this.connectBusy = busy;
+    this.paintYandexControls();
+  }
+
+  chooseSavedCharacter(): Promise<'yandex' | 'guest'> {
+    return this.chooseDialog({
+      title: 'В этом браузере сохранён другой персонаж',
+      body: 'Открыть персонажа Яндекс ID? Старый гостевой персонаж останется сохранённым.',
+      confirm: 'Открыть персонажа Яндекса',
+      cancel: 'Остаться гостем',
+    });
+  }
+
+  offerContinueAsGuest(): Promise<boolean> {
+    return this.chooseDialog({
+      title: 'Не удалось подтвердить Яндекс ID',
+      body: 'Новый персонаж не создан. Можно продолжить гостем: прогресс останется в этом браузере, пока вы сами не войдёте через Яндекс.',
+      confirm: 'Продолжить гостем',
+      cancel: 'Назад',
+    }).then((choice) => choice === 'yandex');
+  }
+
+  confirmYandexAccountChanged(): Promise<boolean> {
+    return this.chooseDialog({
+      title: 'Аккаунт Яндекса мог измениться',
+      body: 'Текущая сессия не переключается. Выйти в меню и открыть правильного персонажа при следующем входе? Прогресс этой сессии останется на сервере.',
+      confirm: 'Выйти в меню',
+      cancel: 'Остаться',
+    }).then((choice) => choice === 'yandex');
+  }
+
+  private paintYandexControls(): void {
+    const busy = this.yandexBusy || this.connectBusy;
+    this.screen?.querySelectorAll<HTMLButtonElement>('[data-action="yandex-login"]').forEach((button) => {
       button.disabled = busy;
+    });
+    const connect = this.screen?.querySelector<HTMLButtonElement>('[data-action="connect"]');
+    if (connect) connect.disabled = busy || !this.canConnectOnlineSelection();
+  }
+
+  private chooseDialog(copy: { title: string; body: string; confirm: string; cancel: string }): Promise<'yandex' | 'guest'> {
+    return new Promise((resolve) => {
+      const existing = this.root.querySelector('.yandex-choice-backdrop');
+      existing?.remove();
+      const dialog = document.createElement('div');
+      dialog.className = 'world-confirm-backdrop yandex-choice-backdrop';
+      dialog.innerHTML = `<section class="world-confirm" role="dialog" aria-modal="true">
+        <h2>${this.escape(copy.title)}</h2>
+        <p>${this.escape(copy.body)}</p>
+        <div class="world-confirm-actions">
+          <button type="button" class="game-button" data-choice="guest">${this.escape(copy.cancel)}</button>
+          <button type="button" class="game-button primary" data-choice="yandex">${this.escape(copy.confirm)}</button>
+        </div>
+      </section>`;
+      const finish = (choice: 'yandex' | 'guest'): void => {
+        dialog.remove();
+        resolve(choice);
+      };
+      dialog.querySelector('[data-choice="guest"]')?.addEventListener('click', () => finish('guest'));
+      dialog.querySelector('[data-choice="yandex"]')?.addEventListener('click', () => finish('yandex'));
+      dialog.addEventListener('pointerdown', (event) => {
+        if (event.target === dialog) finish('guest');
+      });
+      this.root.append(dialog);
     });
   }
 

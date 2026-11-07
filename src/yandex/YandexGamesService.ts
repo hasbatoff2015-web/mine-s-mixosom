@@ -1,3 +1,5 @@
+import { proofCacheUsable } from '../net/yandexConnectIntent';
+
 interface YandexGameplayApi {
   start(): void;
   stop(): void;
@@ -25,8 +27,11 @@ interface YandexSdk {
 }
 
 export type SignedProofResult =
-  | { readonly ok: true; readonly proof: string; readonly clientAuthorized: boolean }
-  | { readonly ok: false; readonly reason: 'unavailable' | 'cancelled' | 'rate_limited' | 'error' };
+  | { readonly ok: true; readonly proof: string; readonly clientAuthorized: true }
+  | { readonly ok: false; readonly reason: 'unavailable' | 'cancelled' | 'rate_limited' | 'error' | 'anonymous' | 'stale' };
+
+export type YandexInitState = 'pending' | 'ready' | 'unavailable';
+export type YandexAccountPhase = 'opened' | 'closed';
 
 declare global {
   interface Window {
@@ -42,11 +47,29 @@ export class YandexGamesService {
   private resumeCallback?: () => void;
   private accountDialogOpen = false;
   private proofGeneration = 0;
+  private initState: YandexInitState = 'pending';
+  private initPromise?: Promise<void>;
+  private cached?: { generation: number; result: SignedProofResult; at: number };
+  private readonly retiredProofs = new Set<string>();
+  private inflight?: Promise<SignedProofResult>;
+  /** Test clock. Production uses Date.now. Not a credential. */
+  now: () => number = () => Date.now();
   private readonly playerCalls: number[] = [];
+  private readonly readyWaiters: Array<() => void> = [];
+  private readonly accountListeners: Array<(phase: YandexAccountPhase) => void> = [];
   private unsubscribers: Array<() => void> = [];
 
-  async initialize(onPause: () => void, onResume: () => void): Promise<void> {
-    if (!window.YaGames) return;
+  initialize(onPause: () => void, onResume: () => void): Promise<void> {
+    if (this.initPromise) return this.initPromise;
+    this.initPromise = this.initializeOnce(onPause, onResume);
+    return this.initPromise;
+  }
+
+  private async initializeOnce(onPause: () => void, onResume: () => void): Promise<void> {
+    if (!window.YaGames) {
+      this.markInit('unavailable');
+      return;
+    }
     try {
       this.sdk = await window.YaGames.init();
       this.pauseCallback = onPause;
@@ -54,8 +77,10 @@ export class YandexGamesService {
       this.sdk.on?.('game_api_pause', onPause);
       this.sdk.on?.('game_api_resume', onResume);
       this.watchAccountSelection(this.sdk);
+      this.markInit(this.sdk.getPlayer ? 'ready' : 'unavailable');
     } catch (error) {
       console.warn('Yandex Games SDK unavailable; continuing in local mode.', error);
+      this.markInit('unavailable');
     }
   }
 
@@ -85,10 +110,128 @@ export class YandexGamesService {
     return Boolean(this.sdk?.getPlayer);
   }
 
+  initializationState(): YandexInitState {
+    return this.initState;
+  }
+
+  /** Resolves when init finishes, or after `timeoutMs` if it is still pending. */
+  waitUntilReady(timeoutMs: number): Promise<void> {
+    if (this.initState !== 'pending') return Promise.resolve();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        const index = this.readyWaiters.indexOf(finish);
+        if (index >= 0) this.readyWaiters.splice(index, 1);
+        resolve();
+      }, timeoutMs);
+      const finish = (): void => {
+        clearTimeout(timer);
+        resolve();
+      };
+      this.readyWaiters.push(finish);
+    });
+  }
+
+  onAccountSelection(listener: (phase: YandexAccountPhase) => void): () => void {
+    this.accountListeners.push(listener);
+    return () => {
+      const index = this.accountListeners.indexOf(listener);
+      if (index >= 0) this.accountListeners.splice(index, 1);
+    };
+  }
+
+  /**
+   * Signed profile of a player who is already authorized. Does not open a dialog.
+   * An anonymous signed profile is not returned: `isAuthorized()` is the client hint.
+   */
+  silentAuthorizedProof(): Promise<SignedProofResult> {
+    return this.authorizedProof(false);
+  }
+
+  /**
+   * Opens the auth dialog only when the current player is not authorized.
+   * An already authorized player is not prompted again.
+   */
+  explicitAuthorizedProof(): Promise<SignedProofResult> {
+    return this.authorizedProof(true);
+  }
+
+  /** Drops one proof the server already rejected. Later calls do not send it again. */
+  retireProof(proof: string): void {
+    if (proof.length === 0) return;
+    this.retiredProofs.add(proof);
+    if (this.cached?.result.ok && this.cached.result.proof === proof) {
+      this.cached = { generation: this.proofGeneration, result: { ok: false, reason: 'stale' }, at: this.now() };
+    }
+  }
+
+  private async authorizedProof(openDialog: boolean): Promise<SignedProofResult> {
+    if (!openDialog && this.inflight) return this.inflight;
+    const ready = this.usableCache();
+    if (!openDialog && ready) return ready;
+    if (openDialog && this.inflight) await this.inflight;
+    const afterWait = this.usableCache();
+    if (openDialog && afterWait?.ok) return afterWait;
+    if (this.cached?.result.ok && this.cached.generation === this.proofGeneration && !proofCacheUsable(this.cached.at, this.now())) {
+      return this.refreshStaleProof();
+    }
+    return this.startProof(openDialog);
+  }
+
+  private usableCache(): SignedProofResult | undefined {
+    const cached = this.cached;
+    if (!cached || cached.generation !== this.proofGeneration) return undefined;
+    if (cached.result.ok && !proofCacheUsable(cached.at, this.now())) return undefined;
+    if (cached.result.ok && this.retiredProofs.has(cached.result.proof)) return { ok: false, reason: 'stale' };
+    return cached.result;
+  }
+
+  /** One SDK read. The same signature is not requested again in this page generation. */
+  private async refreshStaleProof(): Promise<SignedProofResult> {
+    const previous = this.cached?.result.ok ? this.cached.result.proof : undefined;
+    const started = this.proofGeneration;
+    this.cached = undefined;
+    const run = this.requestSignedProof(false).then((result) => this.rememberProof(started, result, previous));
+    let flight: Promise<SignedProofResult>;
+    flight = run.finally(() => {
+      if (this.inflight === flight) this.inflight = undefined;
+    });
+    this.inflight = flight;
+    return flight;
+  }
+
+  private startProof(openDialog: boolean): Promise<SignedProofResult> {
+    const started = this.proofGeneration;
+    const run = this.requestSignedProof(openDialog).then((result) => this.rememberProof(started, result));
+    if (!openDialog) {
+      let flight: Promise<SignedProofResult>;
+      flight = run.finally(() => {
+        if (this.inflight === flight) this.inflight = undefined;
+      });
+      this.inflight = flight;
+      return flight;
+    }
+    return run;
+  }
+
+  private rememberProof(started: number, result: SignedProofResult, previous?: string): SignedProofResult {
+    if (started !== this.proofGeneration) return result;
+    const repeated = result.ok && previous !== undefined && result.proof === previous;
+    const retired = result.ok && this.retiredProofs.has(result.proof);
+    if (repeated || retired) {
+      const stale: SignedProofResult = { ok: false, reason: 'stale' };
+      this.cached = { generation: started, result: stale, at: this.now() };
+      return stale;
+    }
+    if (result.ok || result.reason === 'anonymous' || result.reason === 'stale') {
+      this.cached = { generation: started, result, at: this.now() };
+    }
+    return result;
+  }
+
   /**
    * Asks the SDK for a signed profile. The dialog opens only when `openDialog`
-   * is true. The returned string is sent to the game server and is not stored.
-   * `clientAuthorized` is a UI hint; the server does not trust it.
+   * is true and `isAuthorized()` is false. The string is for one server request.
+   * It is not stored. `isAuthorized()` is only a client hint.
    */
   async requestSignedProof(openDialog: boolean): Promise<SignedProofResult> {
     const sdk = this.sdk;
@@ -98,7 +241,7 @@ export class YandexGamesService {
     try {
       let player = await sdk.getPlayer({ signed: true });
       if (generation !== this.proofGeneration) return { ok: false, reason: 'cancelled' };
-      const authorized = player.isAuthorized?.() === true;
+      let authorized = player.isAuthorized?.() === true;
       if (openDialog && player.isAuthorized && !authorized) {
         if (!sdk.auth?.openAuthDialog) return { ok: false, reason: 'unavailable' };
         try {
@@ -110,12 +253,15 @@ export class YandexGamesService {
           return { ok: false, reason: generation !== this.proofGeneration ? 'cancelled' : 'rate_limited' };
         }
         player = await sdk.getPlayer({ signed: true });
+        if (generation !== this.proofGeneration) return { ok: false, reason: 'cancelled' };
+        authorized = player.isAuthorized?.() === true;
       }
       if (generation !== this.proofGeneration) return { ok: false, reason: 'cancelled' };
+      if (!authorized) return { ok: false, reason: openDialog ? 'cancelled' : 'anonymous' };
       if (typeof player.signature !== 'string' || player.signature.length === 0) {
         return { ok: false, reason: 'error' };
       }
-      return { ok: true, proof: player.signature, clientAuthorized: player.isAuthorized?.() === true };
+      return { ok: true, proof: player.signature, clientAuthorized: true };
     } catch {
       return { ok: false, reason: 'error' };
     }
@@ -140,15 +286,33 @@ export class YandexGamesService {
     const onOpen = (): void => {
       this.accountDialogOpen = true;
       this.proofGeneration += 1;
+      this.cached = undefined;
+      this.retiredProofs.clear();
+      this.inflight = undefined;
+      this.emitAccount('opened');
     };
     const onClose = (): void => {
       this.accountDialogOpen = false;
       this.proofGeneration += 1;
+      this.cached = undefined;
+      this.retiredProofs.clear();
+      this.inflight = undefined;
+      this.emitAccount('closed');
     };
     const stopOpen = sdk.on(opened, onOpen);
     const stopClose = sdk.on(closed, onClose);
     if (typeof stopOpen === 'function') this.unsubscribers.push(stopOpen);
     if (typeof stopClose === 'function') this.unsubscribers.push(stopClose);
+  }
+
+  private markInit(state: YandexInitState): void {
+    this.initState = state;
+    const waiters = this.readyWaiters.splice(0);
+    for (const wake of waiters) wake();
+  }
+
+  private emitAccount(phase: YandexAccountPhase): void {
+    for (const listener of [...this.accountListeners]) listener(phase);
   }
 
   private notePlayerCall(): boolean {

@@ -798,4 +798,87 @@ exec /bin/mv "$@"
     expect(combined).not.toContain(SESSION);
     expect(combined).not.toContain('postgresql://');
   });
+
+  it('reads LF and CRLF env values without printing secrets', async () => {
+    const script = await readFile(SCRIPT, 'utf8');
+    expect(script).toContain('set -euo pipefail');
+    const fn = script.slice(script.indexOf('read_env_value() {'), script.indexOf('url_decode() {'));
+    const dir = await mkdtemp(join(tmpdir(), 'fc-env-'));
+    roots.push(dir);
+    const secret = 'postgresql://backupuser:stage6-secret-value@127.0.0.1:5432/fc_backup_unit';
+    await writeFile(join(dir, 'lf.env'), `PORT=2567\nWORLD=anarchy\nFC_DATABASE_URL=${secret}\nEMPTY=\n`);
+    await writeFile(join(dir, 'crlf.env'), `PORT="2567"\r\nWORLD='anarchy'\r\nFC_DATABASE_URL=${secret}\r\nEMPTY=\r\n`);
+    const result = await run('bash', ['-c', `${fn}
+read_env_value "$1" PORT
+printf '\\n'
+read_env_value "$1" WORLD
+printf '\\n'
+read_env_value "$1" EMPTY
+printf '\\n'
+read_env_value "$1" MISSING
+`, 'bash', join(dir, 'lf.env')], process.env);
+    expect(result.code, result.err).toBe(0);
+    expect(result.out.split('\n').slice(0, 4)).toEqual(['2567', 'anarchy', '', '']);
+    expect(result.out).not.toContain('stage6-secret-value');
+    expect(result.out).not.toContain('postgresql://');
+    const crlf = await run('bash', ['-c', `${fn}
+read_env_value "$1" PORT; printf '\\n'
+read_env_value "$1" WORLD; printf '\\n'
+read_env_value "$1" EMPTY
+`, 'bash', join(dir, 'crlf.env')], process.env);
+    expect(crlf.code, crlf.err).toBe(0);
+    expect(crlf.out.split('\n').slice(0, 3)).toEqual(['2567', 'anarchy', '']);
+    expect(crlf.out).not.toContain(secret);
+  });
+
+  it('accepts a CRLF env file in a real backup and does not print the database url', async () => {
+    const box = await layout({
+      databaseUrl: `postgresql://backupuser:${SECRET}@127.0.0.1:5432/fc_backup_unit`,
+    });
+    for (const name of ['anarchy', 'survival', 'peaceful']) {
+      const path = join(box.envDir, `${name}.env`);
+      const text = await readFile(path, 'utf8');
+      const quoted = text.replace(/^PORT=(\d+)$/m, 'PORT="$1"').replace(/\n/g, '\r\n');
+      await writeFile(path, quoted);
+    }
+    const worldsBefore = await readFile(join(box.worlds, 'anarchy/players.json'), 'utf8');
+    const result = await run('bash', [SCRIPT, 'backup'], box.env);
+    expect(result.code, result.err).toBe(0);
+    expect(result.out).toContain('backup: success');
+    expect(`${result.out}\n${result.err}`).not.toContain(SECRET);
+    expect(`${result.out}\n${result.err}`).not.toContain('postgresql://');
+    expect(await readFile(join(box.worlds, 'anarchy/players.json'), 'utf8')).toBe(worldsBefore);
+  });
+
+  it('checks manifest.json without a false SIGPIPE and rejects an archive that lacks it', async () => {
+    const script = await readFile(SCRIPT, 'utf8');
+    expect(script).not.toContain("grep -qx 'manifest.json'");
+    expect(script).toContain("grep -x 'manifest.json' >/dev/null");
+    const dir = await mkdtemp(join(tmpdir(), 'fc-manifest-'));
+    roots.push(dir);
+    await mkdir(join(dir, 'payload'));
+    await writeFile(join(dir, 'payload/manifest.json'), '{}\n');
+    for (let i = 0; i < 2500; i += 1) {
+      await writeFile(join(dir, 'payload', `file-${i}.txt`), 'x\n');
+    }
+    const archive = join(dir, 'frontier-cubes-2026-11-04_120000.tar.gz');
+    const packed = await run('tar', ['-czf', archive, '-C', join(dir, 'payload'), '.'], process.env);
+    expect(packed.code).toBe(0);
+    const listed = await run('bash', ['-c', 'set -o pipefail; tar -tzf "$1" | sed "s|^\\./||" | grep -x manifest.json >/dev/null', 'bash', archive], process.env);
+    expect(listed.code, listed.err).toBe(0);
+    const missingDir = join(dir, 'missing');
+    await mkdir(missingDir);
+    await writeFile(join(missingDir, 'checksums.sha256'), 'nope\n');
+    const missing = join(dir, 'frontier-cubes-2026-11-04_120001.tar.gz');
+    const packedMissing = await run('tar', ['-czf', missing, '-C', missingDir, 'checksums.sha256'], process.env);
+    expect(packedMissing.code).toBe(0);
+    const hash = createHash('sha256').update(await readFile(missing)).digest('hex');
+    await writeFile(`${missing}.sha256`, `${hash}  frontier-cubes-2026-11-04_120001.tar.gz\n`);
+    const box = await layout();
+    const worldsBefore = await readFile(join(box.worlds, 'peaceful/players.json'), 'utf8');
+    const verified = await run('bash', [SCRIPT, 'verify', missing], box.env);
+    expect(verified.code).not.toBe(0);
+    expect(verified.err).toContain('verify: failed');
+    expect(await readFile(join(box.worlds, 'peaceful/players.json'), 'utf8')).toBe(worldsBefore);
+  });
 });

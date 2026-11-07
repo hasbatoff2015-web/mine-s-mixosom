@@ -328,8 +328,13 @@ export interface ClientJoinMessage {
   /** Explicit new-guest request. Does not reuse or erase a stored credential by itself. */
   readonly freshGuest?: boolean;
   readonly appearance?: PlayerAppearance;
-  /** Present only when the player chose Yandex resume. Guest join omits it. */
-  readonly authMode?: 'resume_yandex';
+  /**
+   * `resume_yandex` opens an already linked character.
+   * `yandex_auto` asks the server to resume a linked character or, when none
+   * exists, keep the guest join and bind that signed id. A client boolean is
+   * not a mode and is ignored.
+   */
+  readonly authMode?: 'resume_yandex' | 'yandex_auto';
   readonly yandexProof?: string;
   /** Explicit switch away from the local guest after the server reported a conflict. */
   readonly confirmYandexResume?: boolean;
@@ -880,6 +885,9 @@ export type ClientMessage =
   | ClientEmoteMessage
   | ClientAuthLinkMessage;
 
+export const YANDEX_SYNC_STATES = ['linked', 'restored', 'unavailable', 'guest'] as const;
+export type YandexSyncState = (typeof YANDEX_SYNC_STATES)[number];
+
 export interface ServerWelcomeMessage {
   readonly type: 'welcome';
   readonly protocol: typeof PROTOCOL_VERSION;
@@ -909,6 +917,13 @@ export interface ServerWelcomeMessage {
    * Missing on older servers. An empty array means nothing is burning.
    */
   readonly furnacesLit?: readonly FurnaceLitState[];
+  /**
+   * Set only after the server decided the Yandex outcome.
+   * `linked` is a confirmed new bind. `restored` opened the linked character.
+   * `unavailable` and `guest` stay on the guest session and were not bound.
+   * Absent on a normal guest join and on older servers.
+   */
+  readonly yandexSync?: YandexSyncState;
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -2331,10 +2346,12 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const freshGuest = raw.freshGuest === true;
       const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
       if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
-      const authMode = raw.authMode === 'resume_yandex' ? 'resume_yandex' as const : undefined;
+      const authMode = raw.authMode === 'resume_yandex' || raw.authMode === 'yandex_auto'
+        ? raw.authMode
+        : undefined;
       const yandexProof = typeof raw.yandexProof === 'string' ? raw.yandexProof : undefined;
       if (yandexProof && yandexProof.length > 8192) return { error: 'join.proof too large' };
-      if (authMode === 'resume_yandex' && !yandexProof) return { error: 'join.proof required' };
+      if (authMode && !yandexProof) return { error: 'join.proof required' };
       const confirmYandexResume = raw.confirmYandexResume === true;
       return {
         type: 'join',
@@ -3299,7 +3316,18 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
       if (!cell) return { error: 'furnace_lit invalid' };
       return { type: 'furnace_lit', x: cell.x, y: cell.y, z: cell.z, burning: cell.burning };
     }
-    case 'welcome':
+    case 'welcome': {
+      const yandexSync = raw.yandexSync === 'linked' || raw.yandexSync === 'restored'
+        || raw.yandexSync === 'unavailable' || raw.yandexSync === 'guest'
+        ? raw.yandexSync
+        : undefined;
+      const welcome = yandexSync ? { ...raw, yandexSync } : { ...raw };
+      if (!yandexSync) delete welcome.yandexSync;
+      if (!Object.prototype.hasOwnProperty.call(raw, 'furnacesLit')) {
+        return welcome as unknown as ServerMessage;
+      }
+      return { ...welcome, furnacesLit: parseFurnaceLitSnapshot(raw.furnacesLit) } as unknown as ServerMessage;
+    }
     case 'chunk_data': {
       if (!Object.prototype.hasOwnProperty.call(raw, 'furnacesLit')) {
         return raw as unknown as ServerMessage;

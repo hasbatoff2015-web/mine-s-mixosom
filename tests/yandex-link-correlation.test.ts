@@ -50,5 +50,27 @@ describe('yandex link request correlation', () => {
       status: 'linked',
     });
     expect(parseClientMessage({ type: 'join', protocol: 4 })).toHaveProperty('type', 'join');
+    const auto = parseClientMessage({
+      type: 'join',
+      protocol: 4,
+      authMode: 'yandex_auto',
+      yandexProof: 'signed-proof',
+      isAuthorized: true,
+      uniqueID: 'attacker',
+      verified: true,
+    });
+    expect(auto).toMatchObject({ type: 'join', authMode: 'yandex_auto', yandexProof: 'signed-proof' });
+    expect(auto).not.toHaveProperty('isAuthorized');
+    expect(auto).not.toHaveProperty('uniqueID');
+    expect(auto).not.toHaveProperty('verified');
+    expect(parseClientMessage({ type: 'join', protocol: 4, authMode: 'yandex_auto' })).toEqual({
+      error: 'join.proof required',
+    });
+    expect(parseServerMessage({
+      type: 'welcome',
+      yandexSync: 'linked',
+      isAuthorized: true,
+    })).toMatchObject({ type: 'welcome', yandexSync: 'linked' });
+    expect(parseServerMessage({ type: 'welcome', yandexSync: 'yes' })).not.toHaveProperty('yandexSync');
   });
 });

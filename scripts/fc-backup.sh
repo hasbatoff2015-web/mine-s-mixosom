@@ -107,13 +107,18 @@ assert_inside() {
 read_env_value() {
   local file=$1 key=$2 line
   line=$(grep -E "^[[:space:]]*${key}=" "$file" | tail -n 1 || true)
+  # Env files copied from Windows keep a trailing CR. Strip it before quotes
+  # are inspected, or PORT="2567"\r is rejected as non-numeric.
+  line=${line%$'\r'}
   line=${line#"${line%%[![:space:]]*}"}
   line=${line#"${key}="}
+  line=${line%$'\r'}
   if [[ ${#line} -ge 2 && "$line" == \"*\" && "$line" == *\" ]]; then
     line=${line:1:${#line}-2}
   elif [[ ${#line} -ge 2 && "$line" == \'*\' && "$line" == *\' ]]; then
     line=${line:1:${#line}-2}
   fi
+  line=${line%$'\r'}
   printf '%s' "$line"
 }
 
@@ -510,7 +515,9 @@ copy_plugins() {
   local real world_real
   plugins_included=0
   [[ -d "$FC_PLUGIN_DIR" ]] || return 0
-  if ! find "$FC_PLUGIN_DIR" -mindepth 1 -print -quit | grep -q .; then
+  local plugin_entry
+  plugin_entry=$(find "$FC_PLUGIN_DIR" -mindepth 1 -print -quit)
+  if [[ -z "$plugin_entry" ]]; then
     return 0
   fi
   real=$(real_path "$FC_PLUGIN_DIR")
@@ -681,7 +688,9 @@ publish_archive() {
   if ! tar -tzf "$partial" >/dev/null; then
     die "archive is not readable"
   fi
-  if ! tar -tzf "$partial" | sed 's|^\./||' | grep -qx 'manifest.json'; then
+  # grep -q exits at the first match and, with pipefail, can SIGPIPE tar
+  # before the listing finishes. Read the listing through.
+  if ! tar -tzf "$partial" | sed 's|^\./||' | grep -x 'manifest.json' >/dev/null; then
     die "archive is missing manifest.json"
   fi
   hash=$(sha256sum "$partial" | awk '{print $1}')
@@ -894,7 +903,7 @@ cmd_verify() {
     echo "verify: failed" >&2
     exit 1
   fi
-  if ! tar -tzf "$archive" | sed 's|^\./||' | grep -qx 'manifest.json'; then
+  if ! tar -tzf "$archive" | sed 's|^\./||' | grep -x 'manifest.json' >/dev/null; then
     echo "verify: failed" >&2
     exit 1
   fi
