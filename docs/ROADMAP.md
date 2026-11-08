@@ -1,5 +1,15 @@
 # Roadmap
 
+## 2026-11-08: Referral program
+
+- [x] Server-owned referral code, Yandex `payload=ref_CODE`, and an explicit accept.
+- [x] Three hours of active play qualify one invitee once. AFK, a held key, and a camera turn do not.
+- [x] Three qualified friends grant VIP for 7 days. Five grant PREMIUM for 7 days. Each milestone once.
+- [x] Paid ranks stay stored. The effective rank is the higher of the paid grant and the active referral grant.
+- [x] `referral_starter` uses the existing kit store. A missing or empty kit stays pending. The receipt is saved with the inventory.
+- [x] Friends menu keeps requests, chat, and teleport, and adds «Приглашения».
+- [ ] The owner checks the Yandex draft, `FC_YANDEX_GAME_URL`, and the production migration `0011`. This branch does not deploy.
+
 ## 2026-11-04: Automatic Yandex identity
 
 - [x] An authorized Yandex player is recognized on connect. No pause button binds the character. An unauthorized player stays a browser guest.

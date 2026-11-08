@@ -458,6 +458,7 @@ import {
 import { ExplosionQueue } from '../world/ExplosionQueue';
 import { getTntProfile } from '../world/tnt';
 import { YandexGamesService } from '../yandex/YandexGamesService';
+import { captureReferralLaunch } from '../yandex/referralIntent';
 
 export interface GameSession {
   summary: WorldSummary;
@@ -930,6 +931,7 @@ export class Game {
         () => this.pauseForPlatform(),
         () => this.resumeFromPlatform(),
       ).then(() => {
+        captureReferralLaunch(this.yandex.referralPayload(), this.yandex.referralAppId());
         this.stopYandexAccount ??= this.yandex.onAccountSelection((phase) => {
           this.invalidateYandexFlow();
           if (phase === 'closed') void this.afterYandexAccountClosed();

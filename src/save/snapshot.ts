@@ -110,6 +110,13 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     ...(Array.isArray(value.settlementReceipts)
       ? { settlementReceipts: value.settlementReceipts.filter((receipt): receipt is string => typeof receipt === 'string') }
       : {}),
+    ...(Array.isArray(value.referralKitReceipts)
+      ? {
+        referralKitReceipts: value.referralKitReceipts.filter((receipt): receipt is string => (
+          typeof receipt === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(receipt)
+        )).slice(0, 4),
+      }
+      : {}),
     ...(Array.isArray(value.heldReturns) ? { heldReturns: value.heldReturns } : {}),
     ...(parseCosmeticPetSelection(value.cosmeticPet)
       ? { cosmeticPet: parseCosmeticPetSelection(value.cosmeticPet)! }

@@ -122,7 +122,7 @@ const SAMPLE: readonly Migration[] = [
 
 describe('migration manifest', () => {
   it('is ordered, unique, and checksum-stable', () => {
-    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010']);
+    expect(MIGRATIONS.map((migration) => migration.version)).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011']);
     expect(new Set(MIGRATIONS.map((migration) => migration.version)).size).toBe(MIGRATIONS.length);
     expect(new Set(MIGRATIONS.map((migration) => migration.name)).size).toBe(MIGRATIONS.length);
     const checksum = migrationChecksum(MIGRATIONS[0]!);
@@ -137,6 +137,8 @@ describe('migration manifest', () => {
     expect(sql).not.toMatch(/DROP\s+TABLE/i);
     expect(sql).not.toMatch(/DELETE\s+FROM/i);
     expect(sql).toContain('player_identity_links');
+    expect(sql).toContain('referral_relations');
+    expect(sql).toContain('referral_rewards_milestone_unique');
     expect(sql).toContain('admin_audit_log is append-only');
     const pinned: Record<string, string> = {
       '0001': '60333f77a224e45b9d80a8a61baa220cba14455a842ad846942928707174d79f',
@@ -248,7 +250,7 @@ describe('migration manifest', () => {
   it('records the foundation statements and their checksum', async () => {
     const shared = sharedState();
     const result = await runMigrations(new MigrationDb(shared), MIGRATIONS);
-    expect(result.applied).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010']);
+    expect(result.applied).toEqual(['0001', '0002', '0003', '0004', '0005', '0006', '0007', '0008', '0009', '0010', '0011']);
     expect(shared.statements).toEqual(MIGRATIONS.flatMap((migration) => [...migration.statements]));
     expect(shared.rows.map((row) => row.checksum)).toEqual(MIGRATIONS.map((migration) => migrationChecksum(migration)));
     expect(shared.statements.join('\n')).toContain('DROP CONSTRAINT admin_audit_log_request_scope');

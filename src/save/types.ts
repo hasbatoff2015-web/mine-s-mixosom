@@ -64,6 +64,11 @@ export interface SerializedPersistedPlayer {
   /** Idempotency markers for item effects. Missing on old saves means none. */
   readonly settlementReceipts?: readonly string[];
   /**
+   * Referral starter kits already saved with this inventory.
+   * Missing on old saves means none. One id per accepted invite.
+   */
+  readonly referralKitReceipts?: readonly string[];
+  /**
    * Player-owned stacks that did not fit in `inventory` at save time.
    * Missing on old saves means none. Not a second copy of inventory stacks.
    */

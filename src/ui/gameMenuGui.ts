@@ -246,6 +246,9 @@ export function menuFriendsHtml(state: ServerMenuMessage, escape: (value: string
   }).join('');
   return `<div class="mc-menu-body" data-menu-screen="friends">
     ${menuHeadingHtml('Друзья')}
+    <div class="mc-menu-add">
+      <button type="button" class="mc-ah-btn" data-menu-open="friends-invites">Приглашения</button>
+    </div>
     <div class="mc-menu-toggle">
       <span>Телепортация друзей ко мне: <strong class="${allowed ? 'mc-menu-online' : 'mc-menu-offline'}">${allowed ? 'Разрешена' : 'Запрещена'}</strong></span>
       <button type="button" class="mc-toggle${allowed ? ' is-on' : ''}" data-menu-tp="${allowed ? 'off' : 'on'}" role="switch" aria-checked="${allowed ? 'true' : 'false'}" aria-label="Телепортация друзей ко мне">
@@ -570,8 +573,79 @@ export function menuDuelsHtml(state: ServerMenuMessage, escape: (value: string) 
   </div>`;
 }
 
+export function menuReferralHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const referral = state.referral;
+  if (!referral?.available) {
+    const reason = referral?.unavailableReason || state.message || 'Реферальная программа временно недоступна.';
+    return `<div class="mc-menu-body" data-menu-screen="friends-invites">
+      ${menuHeadingHtml('Приглашения')}
+      <p class="mc-menu-empty">${escape(reason)}</p>
+      <p class="mc-player-meta">${escape(referral?.activityNote || 'Активная игра засчитывается на Анархии.')}</p>
+    </div>`;
+  }
+  const invitees = referral.invitees.map((row) => `
+    <div class="mc-player-row">
+      <div class="mc-player-main">
+        <span class="mc-player-name">${escape(row.name)}</span>
+        <span class="mc-player-meta">${escape(row.progressLabel)}</span>
+      </div>
+    </div>`).join('');
+  const rewards = referral.rewards.map((row) => `
+    <div class="mc-player-row">
+      <div class="mc-player-main">
+        <span class="mc-player-name">${escape(row.title)}</span>
+        <span class="mc-player-meta">${escape(row.detail)}</span>
+      </div>
+    </div>`).join('');
+  const linkButton = referral.link
+    ? `<button type="button" class="mc-ah-btn" data-referral-copy="link" data-referral-value="${escape(referral.link)}">Скопировать ссылку</button>`
+    : `<button type="button" class="mc-ah-btn" data-referral-copy="link" data-referral-value="" disabled>Скопировать ссылку</button>`;
+  const pages = referral.pageCount > 1
+    ? `<div class="mc-menu-add">
+        <button type="button" class="mc-ah-btn" data-menu-action="referral_refresh" data-referral-page="${Math.max(1, referral.page - 1)}">Назад</button>
+        <span class="mc-player-meta">${referral.page}/${referral.pageCount}</span>
+        <button type="button" class="mc-ah-btn" data-menu-action="referral_refresh" data-referral-page="${Math.min(referral.pageCount, referral.page + 1)}">Дальше</button>
+      </div>`
+    : '';
+  const invited = referral.invitedBy
+    ? `<p class="mc-player-meta">Вас пригласил ${escape(referral.invitedBy)}. ${escape(referral.inviteeProgress ?? '')}</p>`
+    : '';
+  const warning = referral.guestWarning ? `<p class="mc-menu-empty">${escape(referral.guestWarning)}</p>` : '';
+  const rank = referral.rankNote ? `<p class="mc-player-meta">${escape(referral.rankNote)}</p>` : '';
+  return `<div class="mc-menu-body" data-menu-screen="friends-invites">
+    ${menuHeadingHtml('Приглашения')}
+    <p class="mc-player-meta">${escape(referral.activityNote)}</p>
+    ${warning}
+    <div class="mc-menu-count">Мой код: <strong data-referral-code>${escape(referral.code ?? '')}</strong></div>
+    <div class="mc-menu-add">
+      <button type="button" class="mc-ah-btn" data-referral-copy="code" data-referral-value="${escape(referral.code ?? '')}">Скопировать код</button>
+      ${linkButton}
+    </div>
+    <p class="mc-menu-copy-note" data-referral-copy-note hidden></p>
+    <div class="mc-menu-add">
+      <input data-referral-code-input type="text" maxlength="12" value="${escape(referral.codeDraft ?? '')}" placeholder="Код друга" autocomplete="off" spellcheck="false" />
+      <button type="button" class="mc-ah-btn mc-btn-positive" data-menu-action="referral_accept">Принять приглашение</button>
+    </div>
+    <div class="mc-menu-count">Приглашено: ${referral.invitedCount}. Подтверждено: ${referral.qualifiedCount}.</div>
+    <div class="mc-menu-count">Награды</div>
+    <div class="mc-menu-list">${rewards}</div>
+    ${rank}
+    <div class="mc-menu-count">Приглашённые</div>
+    <div class="mc-menu-list mc-referral-list">${invitees || '<p class="mc-menu-empty">Пока никого.</p>'}</div>
+    ${pages}
+    ${invited}
+    <div class="mc-menu-count">Стартовый набор: ${escape(referral.kit.detail || '')}</div>
+    <div class="mc-menu-add">
+      <button type="button" class="mc-ah-btn" data-menu-action="referral_claim"${referral.kit.state === 'available' ? '' : ''}>Получить набор</button>
+      <button type="button" class="mc-ah-btn" data-menu-action="referral_refresh">Обновить</button>
+    </div>
+    ${menuMessage(state.message, escape)}
+  </div>`;
+}
+
 export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
   if (state.screen === 'homes' || state.screen === 'home-delete-confirm') return menuHomesHtml(state, escape);
+  if (state.screen === 'friends-invites') return menuReferralHtml(state, escape);
   if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') return menuFriendsHtml(state, escape);
   if (state.screen === 'friend-chat') return menuFriendChatHtml(state, escape);
   if (state.screen === 'clans') return menuClansHtml(state);

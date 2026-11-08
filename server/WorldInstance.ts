@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedProviderIdentity } from './identity/providerLinks';
+import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupPlayerLinks, lookupVerifiedProviderIdentity } from './identity/providerLinks';
 import {
   consumeReservedProof,
   purgeExpiredReceipts,
@@ -151,6 +151,14 @@ import { JsonFileStore } from './services/jsonStore';
 import { IdentityIncidentLog } from './identity/incidents';
 import { countMonitoredResources, ResourceLedger } from './resources/accounting';
 import { isMonitoredResource } from './resources/monitored';
+import { AdminAuditService } from './db/audit';
+import { parseUuid } from './db/uuid';
+import { parseKitStore, type KitStack } from './services/kit';
+import { applyKit } from './referral/kitFit';
+import { PostgresReferralRepository } from './referral/repository';
+import { ReferralService } from './referral/service';
+import type { ReferralRepository } from './referral/types';
+import { REFERRAL_KIT_NAME } from '../shared/referral';
 import {
   IDENTITY_TRANSFER_BLOCKED,
   scanIdentity,
@@ -349,6 +357,8 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   readonly settlementReceipts = new Set<string>();
+  /** One referral starter-kit receipt per accepted invite. Saved with the inventory. */
+  readonly referralKitReceipts = new Set<string>();
   /** Stacks removed from a trade or buyer window that did not fit back into inventory. */
   heldReturns: ItemStack[] = [];
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
@@ -680,6 +690,8 @@ function inputFromCommand(command: PlayerCommand): ClientInputMessage {
 export interface WorldInstanceOptions {
   /** Tests inject a fake. Production builds one from `config.database`. */
   readonly database?: Database;
+  /** Tests inject the referral store. Production uses PostgreSQL when it is enabled. */
+  readonly referralRepository?: ReferralRepository;
 }
 
 export class WorldInstance {
@@ -697,6 +709,7 @@ export class WorldInstance {
   readonly pluginStore: JsonFileStore;
   readonly permissions: PermissionService;
   readonly donation: DonationRankService;
+  readonly referral: ReferralService;
   private readonly inventoryEditLocks = new Set<string>();
   readonly teleports: TeleportService;
   readonly teleportHistory: TeleportHistoryService;
@@ -1015,6 +1028,12 @@ export class WorldInstance {
     this.permissions = new PermissionService(this.pluginStore, config.operators);
     this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
     this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
+    this.referral = this.createReferralService(options?.referralRepository);
+    this.donation.setReferralRank((playerId, now) => this.referral.rankView(playerId, now));
+    this.donation.setPaidRankListener((playerId) => {
+      void this.referral.reconcilePaid(playerId);
+    });
+    this.bindReferralActivity();
     this.clan.setCreateCost((playerId) => (
       this.donation.effectiveRank(playerId) === 'default' ? CLAN_CREATE_COST : CLAN_DONATE_CREATE_COST
     ));
@@ -1897,6 +1916,11 @@ export class WorldInstance {
       if (this.canonicalWorldLoaded) await this.save();
     } catch (error) {
       failure = error;
+    }
+    try {
+      await this.referral.shutdown();
+    } catch (error) {
+      if (!failure) failure = error;
     }
     try {
       await this.money.shutdown?.();
@@ -3592,6 +3616,10 @@ export class WorldInstance {
     const session = this.menuSessions.get(player.id) ?? createMenuSession();
     this.menuSessions.set(player.id, session);
     session.message = undefined;
+    if (this.isReferralMenuAction(message)) {
+      void this.handleReferralMenu(player, session, message);
+      return;
+    }
     this.applyMenuOutcome(player, session, applyGameMenuAction(this.menuHost(), this.menuPlayer(player), session, message));
   }
 
@@ -3959,6 +3987,12 @@ export class WorldInstance {
           activeFriendOnline: this.players.get(friendId)?.connected === true,
         };
       }
+    }
+    if (session.screen === 'friends-invites') {
+      return {
+        ...base,
+        ...(session.referral ? { referral: session.referral } : {}),
+      };
     }
     if (session.screen === 'friends' || session.screen === 'friend-delete-confirm') {
       const state = this.friends.state(player.id);
@@ -5957,6 +5991,7 @@ export class WorldInstance {
       );
     }
     this.lastTickMetrics = metrics;
+    this.sampleReferralActivity();
     this.finishRtpSearches();
     this.teleports.tick(dt * 1000);
     if (this.tickNumber % 20 === 0) this.refreshOpenDonateMenus();
@@ -7481,6 +7516,10 @@ export class WorldInstance {
         player.settlementReceipts.add(receipt);
       }
     }
+    for (const receipt of stored.referralKitReceipts ?? []) {
+      const parsed = typeof receipt === 'string' ? parseUuid(receipt) : undefined;
+      if (parsed) player.referralKitReceipts.add(parsed);
+    }
     this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
     this.assignMissingItemIdentities(player);
     player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
@@ -7528,6 +7567,7 @@ export class WorldInstance {
       appearance: toNetworkAppearance(player.appearance),
       ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
       ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
+      ...(player.referralKitReceipts.size > 0 ? { referralKitReceipts: [...player.referralKitReceipts] } : {}),
       ...(player.heldReturns.length > 0
         ? { heldReturns: player.heldReturns.map((stack) => cloneStack(stack)!) }
         : {}),
@@ -8262,7 +8302,260 @@ export class WorldInstance {
     return ok(selection === 'bee' ? 'Рядом появилась пчела.' : 'Рядом появился мини-крипер.');
   }
 
+  private createReferralService(repository: ReferralRepository | undefined): ReferralService {
+    if (!this.config.referralActivityEnabled) {
+      return ReferralService.unavailable('Активная игра засчитывается на Анархии. Этот режим часы не копит.');
+    }
+    const databaseReady = this.database.enabled && this.config.database.enabled;
+    if (!databaseReady && !repository) {
+      return ReferralService.unavailable('Реферальная программа временно недоступна. Нужна PostgreSQL.');
+    }
+    const scope = identityScopeFromServer(this.config) ?? {
+      deploymentId: databaseReady ? this.config.database.deploymentId : 'local',
+      serverMode: this.config.serverMode,
+      worldId: this.config.worldId,
+    };
+    const repo = repository ?? new PostgresReferralRepository(this.database, scope);
+    const audit = databaseReady
+      ? new AdminAuditService(this.database, this.config.database.deploymentId)
+      : undefined;
+    return ReferralService.create({
+      repository: repo,
+      activityEnabled: true,
+      devTools: this.config.referralDevTools,
+      publicGameUrl: this.config.referralPublicGameUrl,
+      now: () => Date.now(),
+      paidRank: (playerId, now) => this.donation.activeGrant(playerId, now)?.rank ?? 'default',
+      paidRankUnreadable: () => this.donation.loadFailed(),
+      displayName: (playerId) => this.players.get(playerId)?.name
+        ?? this.storedPlayers[playerId]?.name
+        ?? playerId.slice(0, 8),
+      yandexLink: async (playerId) => {
+        const linkScope = identityScopeFromServer(this.config);
+        if (!linkScope || !this.database.enabled) return 'unknown';
+        const result = await lookupPlayerLinks(this.database, linkScope, playerId);
+        if (result.status === 'found') return 'linked';
+        if (result.status === 'absent') return 'guest';
+        return 'unknown';
+      },
+      kitItems: () => {
+        const store = parseKitStore(this.pluginStore.load('kit/store', undefined));
+        const kit = store.kits.find((entry) => entry.name === REFERRAL_KIT_NAME);
+        return kit && kit.items.length > 0 ? kit.items : null;
+      },
+      kitDelivery: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player?.connected) return null;
+        return {
+          hasReceipt: (referralId) => player.referralKitReceipts.has(referralId),
+          deliver: (referralId, items) => this.deliverReferralKit(player, referralId, items),
+        };
+      },
+      notify: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      onBenefitsChanged: (playerId) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        const session = this.menuSessions.get(playerId);
+        if (session?.screen === 'donate' || session?.screen.startsWith('donate-')) this.flushMenu(target);
+      },
+      auditDev: async (actorId, action, targetId, detail) => {
+        serverLog(`referral ${action} actor=${actorId} target=${targetId} ${detail}`);
+        if (!audit) return;
+        await audit.append({
+          requestId: crypto.randomUUID(),
+          adminId: actorId,
+          action,
+          targetType: 'player',
+          targetId,
+          reason: detail.slice(0, 200),
+          serverMode: this.config.serverMode,
+          worldId: this.config.worldId,
+          success: true,
+        });
+      },
+    });
+  }
+
+  private bindReferralActivity(): void {
+    this.events.on('blockBroken', (event) => {
+      if (event.playerId) this.referral.noteAction(event.playerId);
+    });
+    this.events.on('blockPlaced', (event) => {
+      this.referral.noteAction(event.playerId);
+    });
+    this.events.on('craft', (event) => {
+      this.referral.noteAction(event.playerId);
+    });
+    this.events.on('playerDamaged', (event) => {
+      if (event.attackerId) this.referral.noteAction(event.attackerId);
+    });
+    this.events.on('entityDeath', (event) => {
+      if (event.attackerId) this.referral.noteAction(event.attackerId);
+    });
+    this.events.on('projectileHit', (event) => {
+      if (event.playerId) this.referral.noteAction(event.playerId);
+    });
+    this.events.on('playerJoin', (event) => {
+      const joined = this.players.get(event.playerId);
+      if (!joined) return;
+      void this.referral.onJoin(joined.id, joined.connectionId);
+    });
+    this.events.on('playerQuit', (event) => {
+      const quitting = this.players.get(event.playerId);
+      void this.referral.onQuit(event.playerId, quitting?.connectionId);
+    });
+  }
+
+  private sampleReferralActivity(): void {
+    if (!this.referral.tracking()) return;
+    const now = Date.now();
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const input = player.lastInput;
+      this.referral.sample({
+        playerId: player.id,
+        connectionId: player.connectionId,
+        now,
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+        onGround: player.controller.onGround,
+        steered: Math.abs(input.forward) > 0.05
+          || Math.abs(input.right) > 0.05
+          || Math.abs(player.vehicleForward) > 0.05
+          || Math.abs(input.vehicleForward ?? 0) > 0.05,
+        dead: player.survival.dead,
+        connected: true,
+        epoch: player.movementEpoch,
+        miningProgress: player.miningProgress,
+      });
+    }
+  }
+
+  private isReferralMenuAction(message: { action: string; screen?: string }): boolean {
+    return message.action === 'referral_refresh'
+      || message.action === 'referral_accept'
+      || message.action === 'referral_claim'
+      || (message.action === 'open' && message.screen === 'friends-invites');
+  }
+
+  private async handleReferralMenu(
+    player: ServerPlayer,
+    session: ReturnType<typeof createMenuSession>,
+    message: { action: string; name?: string; page?: number },
+  ): Promise<void> {
+    const connectionId = player.connectionId;
+    session.screen = 'friends-invites';
+    if (message.action === 'referral_refresh') {
+      if (!this.referral.allowRefresh(player.id)) {
+        session.message = 'Подождите немного перед обновлением.';
+      } else if (message.page) session.referralPage = message.page;
+    }
+    if (message.action === 'referral_accept') {
+      session.message = await this.referral.accept(player.id, message.name);
+      this.referral.bindConnection(player.id, connectionId);
+    }
+    if (message.action === 'referral_claim') {
+      session.message = await this.referral.claim(player.id);
+    }
+    if (message.action === 'open') {
+      session.referralPage = 1;
+      const preview = await this.referral.previewMessage(player.id, message.name);
+      if (preview) session.message = preview;
+    }
+    const state = await this.referral.view(
+      player.id,
+      session.referralPage,
+      message.action === 'open' ? message.name : undefined,
+    );
+    if (!player.connected || player.connectionId !== connectionId) return;
+    session.referral = state;
+    if (!state.available && state.unavailableReason) session.message = state.unavailableReason;
+    this.flushMenu(player);
+    if (message.action === 'referral_claim') this.flushPlayerInventory(player);
+  }
+
+  private async deliverReferralKit(
+    player: ServerPlayer,
+    referralId: string,
+    items: readonly KitStack[],
+  ): Promise<'delivered' | 'full' | 'missing' | 'already' | 'failed'> {
+    const id = parseUuid(referralId);
+    if (!id || !player.connected) return 'missing';
+    if (player.referralKitReceipts.has(id)) return 'already';
+    const before = player.inventory.serialize();
+    if (!applyKit(player.inventory, items)) return 'full';
+    ensureInventoryInstanceIds(player.inventory, () => crypto.randomUUID());
+    player.referralKitReceipts.add(id);
+    player.inventoryDirty = true;
+    try {
+      await this.savePlayersCritical();
+    } catch (error) {
+      player.inventory.restore(before);
+      player.referralKitReceipts.delete(id);
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`referral kit save failed: ${detail}`, 'warn');
+      return 'failed';
+    }
+    for (const item of items) {
+      if (isMonitoredResource(item.itemId)) this.resources.noteGrant(item.itemId, item.count);
+    }
+    this.flushPlayerInventory(player);
+    return 'delivered';
+  }
+
+  private referralTarget(token: string | undefined, senderId: string): string | undefined {
+    if (!token || token === 'me') return parseUuid(senderId);
+    const parsed = parseUuid(token);
+    if (parsed) return parsed;
+    const lowered = token.toLowerCase();
+    const online = [...this.players.values()].find((player) => player.name.toLowerCase() === lowered);
+    if (online) return online.id;
+    const stored = Object.values(this.storedPlayers).find((player) => player.name.toLowerCase() === lowered);
+    return stored ? parseUuid(stored.id) : undefined;
+  }
+
   private registerBuiltinCommands(): void {
+    this.commands.register({
+      name: 'referral',
+      usage: '/referral | /referral status [player] | /referral dev addtime <player> <seconds>',
+      description: 'Реферальный код, прогресс и DEV-проверка',
+      permission: 'player',
+      execute: async (args, sender) => {
+        const operator = sender.operator === true || sender.kind === 'console';
+        if (args[0] === 'dev') {
+          if (!operator) return fail('Недостаточно прав.');
+          const target = this.referralTarget(args[2], sender.playerId);
+          if (!target) return fail('Игрок не найден.');
+          if (args[1] === 'addtime') {
+            const text = await this.referral.devAddTime(sender.playerId || 'console', target, Number(args[3]));
+            return text.startsWith('Записано') ? ok(text) : fail(text);
+          }
+          if (args[1] === 'qualify') {
+            const text = await this.referral.devAddTime(sender.playerId || 'console', target, 10_800);
+            return text.startsWith('Записано') ? ok(text) : fail(text);
+          }
+          return fail('Использование: /referral dev addtime <игрок> <секунды> или /referral dev qualify <игрок>');
+        }
+        const target = args[0] === 'status'
+          ? this.referralTarget(args[1] ?? sender.playerId, sender.playerId)
+          : this.referralTarget(sender.playerId, sender.playerId);
+        if (args[0] === 'status' && args[1] && !operator) return fail('Недостаточно прав.');
+        if (!target) return fail('Игрок не найден.');
+        const text = await this.referral.devStatus(sender.playerId || 'console', target);
+        return text.includes('недоступ') || text.includes('Недоступ') ? fail(text) : ok(text);
+      },
+    });
     this.commands.register({
       name: 'help',
       usage: '/help [command]',

@@ -376,7 +376,8 @@ describe('Phase 8 plugin platform', () => {
     await world.plugins.disable('B');
     join(world, 'Three');
     expect(bHits).toEqual(['One', 'Two']);
-    expect(world.events.listenerCount('playerJoin')).toBe(0);
+    // Plugin listeners are gone. The referral host observer stays for the life of the world.
+    expect(world.events.listenerCount('playerJoin')).toBe(1);
   });
 
   it('reloads a plugin through disable, cleanup, load, and enable', async () => {

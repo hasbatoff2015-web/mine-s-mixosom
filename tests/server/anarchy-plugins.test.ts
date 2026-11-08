@@ -740,12 +740,13 @@ describe('Anarchy builtin plugins', () => {
     expect(reloaded.ok).toBe(true);
     expect(world.events.listenerCount('blockBreak')).toBe(before);
     expect(world.events.listenerCount('blockPlace')).toBe(2);
-    expect(world.events.listenerCount('blockPlaced')).toBe(2);
-    expect(world.events.listenerCount('blockBroken')).toBe(2);
+    // Two plugin listeners plus the referral host observer. A second enable must not add another.
+    expect(world.events.listenerCount('blockPlaced')).toBe(3);
+    expect(world.events.listenerCount('blockBroken')).toBe(3);
     await world.plugins.enableAll();
     expect(world.events.listenerCount('blockBreak')).toBe(before);
-    expect(world.events.listenerCount('blockPlaced')).toBe(2);
-    expect(world.events.listenerCount('blockBroken')).toBe(2);
+    expect(world.events.listenerCount('blockPlaced')).toBe(3);
+    expect(world.events.listenerCount('blockBroken')).toBe(3);
   });
 
   it('does not leak cancel from one blockBreak event onto the next', async () => {
