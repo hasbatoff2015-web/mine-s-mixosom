@@ -9,6 +9,7 @@ import {
 import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
 import { stampInventoryIntent } from '../net/inventoryIntent';
+import { referralIntentCode, referralLinkFromApp, settleReferralIntent } from '../yandex/referralIntent';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
@@ -5565,12 +5566,58 @@ export class GameUI {
       </div>`;
     this.bindGameMenuChrome();
     this.applyFriendChatPanelHeight();
+    this.prefillReferralCode();
+    this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     this.reconcileDonateLocalState();
     this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
     if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
       this.paintFriendChatLog('restore', preservedScroll);
+    }
+  }
+
+  private prefillReferralCode(): void {
+    if (this.menuState?.screen !== 'friends-invites') return;
+    const input = this.modal?.querySelector<HTMLInputElement>('[data-referral-code-input]');
+    if (!input || input.value.trim()) return;
+    const code = referralIntentCode();
+    if (code) input.value = code;
+  }
+
+  private applyLocalReferralLink(): void {
+    if (this.menuState?.screen !== 'friends-invites') return;
+    const button = this.modal?.querySelector<HTMLButtonElement>('[data-referral-copy="link"]');
+    if (!button || button.dataset.referralValue) return;
+    const code = this.menuState.referral?.code;
+    const link = referralLinkFromApp(code);
+    if (!link) return;
+    button.dataset.referralValue = link;
+    button.disabled = false;
+  }
+
+  private async copyReferralValue(value: string): Promise<void> {
+    const note = this.modal?.querySelector<HTMLElement>('[data-referral-copy-note]');
+    if (!value) {
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Ссылка недоступна. Передайте код вручную.';
+      }
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else throw new Error('clipboard');
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Скопировано.';
+      }
+    } catch {
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Не удалось скопировать. Выделите код вручную.';
+      }
     }
   }
 
@@ -5769,6 +5816,9 @@ export class GameUI {
       this.syncEchoField(current, incoming, false);
     });
     this.reconcileDonateLocalState();
+    this.prefillReferralCode();
+    this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     return true;
   }
 
@@ -5947,6 +5997,14 @@ export class GameUI {
         actions.close();
         return;
       }
+      const copy = target.closest<HTMLElement>('[data-referral-copy]');
+      if (copy?.dataset.referralCopy) {
+        if (copy instanceof HTMLButtonElement && copy.disabled) return;
+        event.preventDefault();
+        const value = copy.dataset.referralValue ?? '';
+        void this.copyReferralValue(value);
+        return;
+      }
       const open = target.closest<HTMLElement>('[data-menu-open]');
       if (open?.dataset.menuOpen) {
         if (open instanceof HTMLButtonElement && open.disabled) return;
@@ -5955,7 +6013,8 @@ export class GameUI {
         if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
         else if (id === 'rating') actions.send({ type: 'menu_action', action: 'open', screen: 'rating' });
         else if (isGameMenuScreenKind(id) && id !== 'closed') {
-          actions.send({ type: 'menu_action', action: 'open', screen: id });
+          const code = id === 'friends-invites' ? referralIntentCode() : undefined;
+          actions.send({ type: 'menu_action', action: 'open', screen: id, ...(code ? { name: code } : {}) });
         }
         return;
       }
@@ -6087,6 +6146,20 @@ export class GameUI {
       if (kind === 'friends_request') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-friend-name]')?.value ?? current.friendNameText;
         actions.send({ type: 'menu_action', action: 'friends_request', name });
+        return;
+      }
+      if (kind === 'referral_accept') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-referral-code-input]')?.value ?? current.referral?.codeDraft ?? '';
+        actions.send({ type: 'menu_action', action: 'referral_accept', name });
+        return;
+      }
+      if (kind === 'referral_refresh' || kind === 'referral_claim') {
+        const page = Number(button?.dataset.referralPage);
+        actions.send({
+          type: 'menu_action',
+          action: kind,
+          ...(Number.isInteger(page) && page > 0 ? { page } : {}),
+        });
         return;
       }
       if (kind === 'claim_rename') {

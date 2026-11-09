@@ -3,6 +3,7 @@ import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 import type { PlayerNameStyle } from './donationRanks';
+import type { ReferralMenuState } from './referral';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
 import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
@@ -733,6 +734,9 @@ export type MenuActionKind =
   | 'friends_cancel_delete'
   | 'friends_chat'
   | 'set_friend_name'
+  | 'referral_refresh'
+  | 'referral_accept'
+  | 'referral_claim'
   | 'clans_mine'
   | 'clans_list'
   | 'clans_create'
@@ -778,6 +782,7 @@ export type GameMenuScreenKind =
   | 'homes'
   | 'home-delete-confirm'
   | 'friends'
+  | 'friends-invites'
   | 'friend-delete-confirm'
   | 'friend-chat'
   | 'clans'
@@ -1644,6 +1649,7 @@ export interface ServerMenuMessage {
   readonly duelArenaConfigured?: boolean;
   readonly duelAvailable?: boolean;
   readonly donate?: NetworkDonateMenu;
+  readonly referral?: ReferralMenuState;
 }
 
 export interface NetworkDonateAction {
@@ -2008,6 +2014,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
   'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'friends_chat', 'set_friend_name',
+  'referral_refresh', 'referral_accept', 'referral_claim',
   'clans_mine', 'clans_list', 'clans_create', 'clans_invitations',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
@@ -2020,7 +2027,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
-  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friends-invites', 'friend-delete-confirm', 'friend-chat',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
   'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];

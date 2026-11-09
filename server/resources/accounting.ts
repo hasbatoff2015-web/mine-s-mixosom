@@ -73,6 +73,8 @@ interface ResourceFile {
   readonly transformedOut: Record<MonitoredResourceId, number>;
   readonly sunk: Record<MonitoredResourceId, number>;
   readonly sourceKeys: readonly string[];
+  /** Referral grants. Ordinary source keys must not evict these. */
+  readonly durableKeys?: readonly string[];
   readonly recent: readonly ResourceSourceEvent[];
   readonly anomalies: readonly ResourceAnomaly[];
 }
@@ -89,6 +91,7 @@ export class ResourceLedger {
   private transformedOut = emptyResourceCounts();
   private sunk = emptyResourceCounts();
   private sourceKeys: string[] = [];
+  private durableKeys: string[] = [];
   private readonly seenKeys = new Set<string>();
   private recent: ResourceSourceEvent[] = [];
   private anomalies: ResourceAnomaly[] = [];
@@ -106,14 +109,20 @@ export class ResourceLedger {
     this.transformedOut = { ...emptyResourceCounts(), ...(file.transformedOut ?? {}) };
     this.sunk = { ...emptyResourceCounts(), ...(file.sunk ?? {}) };
     const sourceKeys = Array.isArray(file.sourceKeys) ? file.sourceKeys.filter((key) => typeof key === 'string') : [];
+    const storedDurable = Array.isArray(file.durableKeys) ? file.durableKeys.filter((key) => typeof key === 'string') : [];
     const recent = Array.isArray(file.recent) ? file.recent.filter(isSourceEvent) : [];
     const anomalies = Array.isArray(file.anomalies) ? file.anomalies.filter(isAnomaly) : [];
-    this.sourceKeys = sourceKeys.slice(-RESOURCE_SOURCE_KEY_LIMIT);
+    const promoted = sourceKeys.filter(isDurableReferralKey);
+    const ordinary = sourceKeys.filter((key) => !isDurableReferralKey(key));
+    this.durableKeys = uniqueKeys([...storedDurable.filter(isDurableReferralKey), ...promoted]);
+    this.sourceKeys = ordinary.slice(-RESOURCE_SOURCE_KEY_LIMIT);
     this.seenKeys.clear();
+    for (const key of this.durableKeys) this.seenKeys.add(key);
     for (const key of this.sourceKeys) this.seenKeys.add(key);
     this.recent = recent.slice(-RESOURCE_RECENT_LIMIT);
     this.anomalies = anomalies.slice(-RESOURCE_ANOMALY_LIMIT);
-    this.dirty = sourceKeys.length > this.sourceKeys.length
+    this.dirty = ordinary.length > this.sourceKeys.length
+      || promoted.length > 0
       || recent.length > this.recent.length
       || anomalies.length > this.anomalies.length;
   }
@@ -128,6 +137,7 @@ export class ResourceLedger {
       transformedOut: { ...this.transformedOut },
       sunk: { ...this.sunk },
       sourceKeys: [...this.sourceKeys],
+      durableKeys: [...this.durableKeys],
       recent: [...this.recent],
       anomalies: [...this.anomalies],
     };
@@ -162,10 +172,15 @@ export class ResourceLedger {
     this.dirty = true;
   }
 
-  noteGrant(itemId: string, quantity: number): void {
+  noteGrant(itemId: string, quantity: number, sourceId?: string): void {
     if (!isMonitoredResource(itemId) || quantity <= 0) return;
+    if (sourceId) {
+      const key = `grant:${sourceId}:${itemId}`;
+      if (this.seenKeys.has(key)) return;
+      this.rememberKey(key);
+    }
     this.minted[itemId] += quantity;
-    this.pushRecent({ kind: 'server-grant', itemId, quantity, at: Date.now() });
+    this.pushRecent({ kind: 'server-grant', itemId, quantity, at: Date.now(), ...(sourceId ? { sourceId } : {}) });
     this.dirty = true;
   }
 
@@ -346,7 +361,12 @@ export class ResourceLedger {
   }
 
   private rememberKey(key: string): void {
+    if (this.seenKeys.has(key)) return;
     this.seenKeys.add(key);
+    if (isDurableReferralKey(key)) {
+      this.durableKeys.push(key);
+      return;
+    }
     this.sourceKeys.push(key);
     if (this.sourceKeys.length > RESOURCE_SOURCE_KEY_LIMIT) {
       const dropped = this.sourceKeys.splice(0, this.sourceKeys.length - RESOURCE_SOURCE_KEY_LIMIT);
@@ -358,6 +378,22 @@ export class ResourceLedger {
     this.recent.push(event);
     if (this.recent.length > RESOURCE_RECENT_LIMIT) this.recent.splice(0, this.recent.length - RESOURCE_RECENT_LIMIT);
   }
+}
+
+/** A referral kit credit. These keys stay after the ordinary 500-key window moves on. */
+export function isDurableReferralKey(key: string): boolean {
+  return key.startsWith('grant:referral:');
+}
+
+function uniqueKeys(keys: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const key of keys) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(key);
+  }
+  return out;
 }
 
 export function countMonitoredResources(input: IdentityScanInput): Record<MonitoredResourceId, number> {

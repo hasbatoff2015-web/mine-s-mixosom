@@ -114,6 +114,7 @@ export function menuLogicalWidth(screen: string, viewportWidth = Number.POSITIVE
 export function menuLogicalHeight(screen: string): number {
   if (screen === 'root') return MC_MENU_ROOT_HEIGHT;
   if (screen === 'friends' || screen === 'friend-delete-confirm' || screen === 'friend-chat') return 268;
+  if (screen === 'friends-invites') return 340;
   if (screen === 'homes' || screen === 'home-delete-confirm') return 236;
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 248;
   if (screen === 'trade') return 268;

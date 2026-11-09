@@ -10,6 +10,7 @@ import {
   DEFAULT_TICK_RATE,
   DEFAULT_WORLD_ID,
 } from '../shared/config';
+import { normalizeYandexGameUrl, yandexGameBaseUrl } from '../shared/referral';
 
 export const SERVER_MODES = ['anarchy', 'survival', 'peaceful'] as const;
 export type ServerMode = (typeof SERVER_MODES)[number];
@@ -68,6 +69,15 @@ export interface ServerConfig {
    * Production `npm run start:server` does not set this.
    */
   readonly rankTestEnabled: boolean;
+  /**
+   * OP-only referral time tools. Off unless `FC_REFERRAL_DEV=1`.
+   * Production start does not set this.
+   */
+  readonly referralDevTools: boolean;
+  /** Official `https://yandex.ru/games/app/{id}` URL, or null when it is not configured. */
+  readonly referralPublicGameUrl: string | null;
+  /** Active-play accrual. Default is Anarchy only. The service is not tied to that string. */
+  readonly referralActivityEnabled: boolean;
 }
 
 export type EconomyBackendConfig =
@@ -312,7 +322,22 @@ export function loadServerConfig(env: NodeJS.ProcessEnv = process.env, cwd = pro
     adminIdentity,
     adminHttp: loadAdminHttpConfig(env, adminIdentity),
     rankTestEnabled: env.FC_RANK_TEST === '1' || env.FC_RANK_TEST === 'true',
+    referralDevTools: env.FC_REFERRAL_DEV === '1' || env.FC_REFERRAL_DEV === 'true',
+    referralPublicGameUrl: loadReferralPublicGameUrl(env),
+    referralActivityEnabled: referralActivityEnabled(env, serverMode),
   };
+}
+
+function loadReferralPublicGameUrl(env: NodeJS.ProcessEnv): string | null {
+  const explicit = normalizeYandexGameUrl(env.FC_YANDEX_GAME_URL);
+  if (explicit) return explicit;
+  return yandexGameBaseUrl(env.FC_YANDEX_GAME_ID?.trim()) ?? null;
+}
+
+function referralActivityEnabled(env: NodeJS.ProcessEnv, serverMode: ServerMode): boolean {
+  const raw = env.FC_REFERRAL_ACTIVITY_MODES?.trim();
+  const modes = (raw ? raw.split(',') : ['anarchy']).map((part) => part.trim().toLowerCase()).filter(Boolean);
+  return modes.includes(serverMode);
 }
 
 export function worldDirectory(config: ServerConfig): string {

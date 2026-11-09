@@ -2448,6 +2448,17 @@ textarea,
   font-weight: 700;
 }
 
+.mc-referral-list {
+  max-height: calc(120px * var(--mc-ui-scale, 3));
+}
+
+.mc-menu-copy-note {
+  margin: 0;
+  color: #1d6b32;
+  font-size: calc(7px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+}
+
 .mc-menu-list {
   display: flex;
   flex-direction: column;

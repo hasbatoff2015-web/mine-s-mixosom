@@ -1,0 +1,253 @@
+import { randomBytes } from 'node:crypto';
+import pg from 'pg';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { EffectiveRank } from '../../shared/donationRanks';
+import { REFERRAL_ACTIVE_SECONDS, REFERRAL_REWARD_MS } from '../../shared/referral';
+import { PostgresDatabase } from '../../server/db/database';
+import { PostgresReferralRepository } from '../../server/referral/repository';
+import type { AcceptResult, RewardRow } from '../../server/referral/types';
+import { ReferralService } from '../../server/referral/service';
+import type { ReferralScope } from '../../server/referral/types';
+
+const databaseUrl = process.env.FC_TEST_DATABASE_URL?.trim() ?? '';
+const REFERRER = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const INVITEE = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const OTHER = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+
+function assertSafeTestUrl(value: string): void {
+  const parsed = new URL(value);
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') throw new Error('FC_TEST_DATABASE_URL scheme');
+  const name = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  if (name === '' || /prod/i.test(name)) throw new Error('refusing database name');
+}
+
+function quoteIdent(name: string): string {
+  if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error('invalid schema');
+  return `"${name}"`;
+}
+
+describe.skipIf(databaseUrl === '')('referral program on PostgreSQL', () => {
+  const schemas: string[] = [];
+  const opened: PostgresDatabase[] = [];
+  let admin: pg.Client | undefined;
+
+  function open(searchPath: string): PostgresDatabase {
+    const database = new PostgresDatabase({ url: databaseUrl, deploymentId: 'dev', poolMax: 4, searchPath });
+    opened.push(database);
+    return database;
+  }
+
+  beforeAll(async () => {
+    assertSafeTestUrl(databaseUrl);
+    admin = new pg.Client({ connectionString: databaseUrl });
+    await admin.connect();
+  }, 30_000);
+
+  afterAll(async () => {
+    for (const database of opened.splice(0)) await database.close().catch(() => undefined);
+    if (!admin) return;
+    try {
+      for (const name of schemas) await admin.query(`DROP SCHEMA IF EXISTS ${quoteIdent(name)} CASCADE`);
+    } finally {
+      await admin.end().catch(() => undefined);
+    }
+  }, 30_000);
+
+  async function schema(): Promise<string> {
+    const name = `fc_ref_${randomBytes(4).toString('hex')}`;
+    await admin!.query(`CREATE SCHEMA ${quoteIdent(name)}`);
+    schemas.push(name);
+    return name;
+  }
+
+  function scope(): ReferralScope {
+    return { deploymentId: 'dev', serverMode: 'anarchy', worldId: 'anarchy' };
+  }
+
+  function service(database: PostgresDatabase, devTools = true): ReferralService {
+    return ReferralService.create({
+      repository: new PostgresReferralRepository(database, scope()),
+      activityEnabled: true,
+      devTools,
+      publicGameUrl: null,
+      now: () => 1_700_000_000_000,
+      paidRank: () => 'default',
+      paidRankUnreadable: () => false,
+      displayName: (id) => id.slice(0, 8),
+      yandexLink: async () => 'unknown',
+      kitItems: () => null,
+      kitDelivery: () => null,
+      notify: () => undefined,
+      onBenefitsChanged: () => undefined,
+    });
+  }
+
+  it('migrates, keeps one code, and lets only one concurrent accept win', async () => {
+    const name = await schema();
+    const database = open(name);
+    await database.start();
+    expect(database.appliedMigrations).toContain('0012');
+    const live = service(database);
+    const first = await live.view(REFERRER, 1);
+    const second = await live.view(REFERRER, 1);
+    expect(second.code).toBe(first.code);
+    const [left, right] = await Promise.all([
+      live.accept(INVITEE, first.code),
+      live.accept(INVITEE, first.code),
+    ]);
+    expect([left, right].filter((line) => line.includes('принят'))).toHaveLength(1);
+    expect([left, right].filter((line) => line === 'Вы уже приняли приглашение.')).toHaveLength(1);
+    expect(await live.accept(REFERRER, first.code)).toBe('Нельзя использовать собственный код.');
+    const other = (await service(database).view(OTHER, 1)).code!;
+    expect(other).not.toBe(first.code);
+    expect(await live.accept(INVITEE, other)).toBe('Вы уже приняли приглашение.');
+    const relation = await new PostgresReferralRepository(database, scope()).invitee(INVITEE);
+    expect(relation?.referrerId).toBe(REFERRER);
+    await expect(database.query(
+      `INSERT INTO referral_codes (deployment_id, server_mode, world_id, owner_player_id, public_code)
+       VALUES ('dev', 'anarchy', 'anarchy', $1::uuid, $2)`,
+      [OTHER, first.code],
+    )).rejects.toMatchObject({ code: '23505' });
+  }, 30_000);
+
+  it('lets two transactions pass the empty read and still accepts once', async () => {
+    const name = await schema();
+    const database = open(name);
+    await database.start();
+    const setup = new PostgresReferralRepository(database, scope());
+    const code = await setup.ensureCode(REFERRER);
+    let arrived = 0;
+    let releaseBoth: () => void = () => undefined;
+    const both = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const barrier = async () => {
+      arrived += 1;
+      if (arrived === 2) releaseBoth();
+      await both;
+    };
+    const left = new PostgresReferralRepository(database, scope(), barrier);
+    const right = new PostgresReferralRepository(database, scope(), barrier);
+    const [first, second] = await Promise.all([
+      left.accept(INVITEE, code, 1_700_000_000_000),
+      right.accept(INVITEE, code, 1_700_000_000_000),
+    ]);
+    const results = [first, second];
+    expect(results.filter((row) => row.status === 'accepted')).toHaveLength(1);
+    expect(results.filter((row) => row.status === 'already')).toHaveLength(1);
+    const winner = results.find((row) => row.status === 'already') as Extract<AcceptResult, { status: 'already' }>;
+    expect(winner.referrerId).toBe(REFERRER);
+    const page = await setup.page(REFERRER, 10, 0);
+    expect(page.total).toBe(1);
+    expect(page.qualified).toBe(0);
+    const live = service(database);
+    expect(await live.accept(INVITEE, code)).toBe('Вы уже приняли приглашение.');
+    expect(await live.view(INVITEE, 1)).toMatchObject({ available: true });
+  }, 30_000);
+
+  it('qualifies once and does not duplicate the milestone under a second flush', async () => {
+    const name = await schema();
+    const database = open(name);
+    await database.start();
+    const live = service(database);
+    const code = (await live.view(REFERRER, 1)).code!;
+    expect(await live.accept(INVITEE, code)).toContain('принят');
+    const repo = new PostgresReferralRepository(database, scope());
+    const pending = await repo.invitee(INVITEE);
+    const first = await repo.flush(pending!.referralId, 0, REFERRAL_ACTIVE_SECONDS, 1_700_000_000_000);
+    expect(first.applied).toBe(true);
+    if (!first.applied) return;
+    expect(first.row.status).toBe('qualified');
+    expect(first.justQualified).toBe(true);
+    const second = await repo.flush(pending!.referralId, 0, REFERRAL_ACTIVE_SECONDS, 1_700_000_000_000);
+    expect(second.applied).toBe(false);
+    const rewards = await repo.rewards(REFERRER);
+    expect(rewards.map((row) => row.milestone)).toEqual([]);
+    await live.devAddTime('op', INVITEE, REFERRAL_ACTIVE_SECONDS);
+    const after = await repo.rewards(REFERRER);
+    expect(after).toHaveLength(0);
+    for (let index = 0; index < 4; index += 1) {
+      const invitee = `dddddddd-dddd-4ddd-8ddd-${(index + 1).toString(16).padStart(12, '0')}`;
+      const fresh = service(database);
+      expect(await fresh.accept(invitee, code)).toContain('принят');
+      expect(await fresh.devAddTime('op', invitee, REFERRAL_ACTIVE_SECONDS)).toContain('qualified');
+    }
+    const milestones = (await repo.rewards(REFERRER)).map((row) => row.milestone).sort();
+    expect(milestones).toEqual(['3_confirmed', '5_confirmed']);
+    await live.devAddTime('op', INVITEE, REFERRAL_ACTIVE_SECONDS);
+    expect(await repo.rewards(REFERRER)).toHaveLength(2);
+    const restarted = service(database, false);
+    await restarted.onJoin(REFERRER, 'again');
+    expect(await repo.rewards(REFERRER)).toHaveLength(2);
+  }, 30_000);
+
+  it('keeps a newer paused VIP when a later read still returns the old active row', async () => {
+    const name = await schema();
+    const database = open(name);
+    await database.start();
+    const repo = new PostgresReferralRepository(database, scope());
+    const started = 1_700_000_000_000;
+    let now = started;
+    let paid: EffectiveRank = 'default';
+    const setup = ReferralService.create({
+      repository: repo,
+      activityEnabled: true,
+      devTools: true,
+      publicGameUrl: null,
+      now: () => now,
+      paidRank: () => paid,
+      paidRankUnreadable: () => false,
+      displayName: (id) => id.slice(0, 8),
+      yandexLink: async () => 'unknown',
+      kitItems: () => null,
+      kitDelivery: () => null,
+      notify: () => undefined,
+      onBenefitsChanged: () => undefined,
+    });
+    const code = (await setup.view(REFERRER, 1)).code!;
+    for (let index = 0; index < 3; index += 1) {
+      const invitee = `eeeeeeee-eeee-4eee-8eee-${(index + 1).toString(16).padStart(12, '0')}`;
+      expect(await setup.accept(invitee, code)).toContain('принят');
+      expect(await setup.devAddTime('op', invitee, REFERRAL_ACTIVE_SECONDS)).toContain('qualified');
+    }
+    let stored: RewardRow[] = [];
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      stored = await repo.rewards(REFERRER);
+      if (stored.some((row) => row.milestone === '3_confirmed' && row.status === 'active')) break;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    const active = stored.find((row) => row.milestone === '3_confirmed');
+    expect(active?.status).toBe('active');
+    const frozen = new PostgresReferralRepository(database, scope());
+    const realRewards = frozen.rewards.bind(frozen);
+    frozen.rewards = async () => [active!];
+    const live = ReferralService.create({
+      repository: frozen,
+      activityEnabled: true,
+      devTools: true,
+      publicGameUrl: null,
+      now: () => now,
+      paidRank: () => paid,
+      paidRankUnreadable: () => false,
+      displayName: (id) => id.slice(0, 8),
+      yandexLink: async () => 'unknown',
+      kitItems: () => null,
+      kitDelivery: () => null,
+      notify: () => undefined,
+      onBenefitsChanged: () => undefined,
+    });
+    await live.view(REFERRER, 1);
+    paid = 'boss';
+    await live.reconcilePaid(REFERRER);
+    now += 120_000;
+    await live.view(REFERRER, 1);
+    await live.reconcilePaid(REFERRER);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const saved = await realRewards(REFERRER);
+    const vip = saved.find((row) => row.milestone === '3_confirmed');
+    expect(vip?.status).toBe('paused');
+    expect(vip?.remainingMs).toBe(REFERRAL_REWARD_MS);
+    expect(vip?.expiresAt).toBeNull();
+    expect((vip?.revision ?? 0) > (active?.revision ?? 0)).toBe(true);
+  }, 30_000);
+});

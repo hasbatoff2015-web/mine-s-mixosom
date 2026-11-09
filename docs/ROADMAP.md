@@ -1,5 +1,25 @@
 # Roadmap
 
+## 2026-11-09: Referral reliability
+
+- [x] Reward phase writes are serialized per player. A stale snapshot cannot overwrite a newer `revision`.
+- [x] One starter-kit delivery runs at a time. PostgreSQL is marked claimed only after the inventory save succeeds.
+- [x] Two accepts of the same invitee return one `accepted` and one `already`.
+- [x] A failed join reloads the activity tracker without a reconnect. The outage gap is not credited.
+- [x] Monitored kit items are credited once in the resource ledger and replayed after restart. Their keys are not evicted by the ordinary 500-key window.
+- [x] A stale reward read cannot replace a newer in-memory phase. Shutdown saves a reward created by the final activity flush.
+- [ ] Yandex draft and the production migration remain for the owner. This branch does not deploy.
+
+## 2026-11-08: Referral program
+
+- [x] Server-owned referral code, Yandex `payload=ref_CODE`, and an explicit accept.
+- [x] Three hours of active play qualify one invitee once. AFK, a held key, and a camera turn do not.
+- [x] Three qualified friends grant VIP for 7 days. Five grant PREMIUM for 7 days. Each milestone once.
+- [x] Paid ranks stay stored. The effective rank is the higher of the paid grant and the active referral grant.
+- [x] `referral_starter` uses the existing kit store. A missing or empty kit stays pending. The receipt is saved with the inventory.
+- [x] Friends menu keeps requests, chat, and teleport, and adds «Приглашения».
+- [ ] The owner checks the Yandex draft, `FC_YANDEX_GAME_URL`, and the production migration `0011`. This branch does not deploy.
+
 ## 2026-11-04: Automatic Yandex identity
 
 - [x] An authorized Yandex player is recognized on connect. No pause button binds the character. An unauthorized player stays a browser guest.
