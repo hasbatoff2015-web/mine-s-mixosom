@@ -33,6 +33,7 @@ interface RewardSql {
   reward_rank: 'vip' | 'premium';
   status: RewardRow['status'];
   remaining_ms: string | number;
+  revision: string | number;
   earned_at: Date | string;
   activated_at: Date | string | null;
   expires_at: Date | string | null;
@@ -63,6 +64,7 @@ function reward(row: RewardSql): RewardRow {
     rank: row.reward_rank,
     status: row.status,
     remainingMs: Number(row.remaining_ms),
+    revision: Number(row.revision ?? 0),
     earnedAt: millis(row.earned_at) ?? 0,
     activatedAt: millis(row.activated_at),
     expiresAt: millis(row.expires_at),
@@ -73,10 +75,18 @@ export function isUniqueViolation(error: unknown): boolean {
   return typeof error === 'object' && error !== null && (error as { code?: string }).code === '23505';
 }
 
+/** Expected race on one invitee. Other unique violations stay real database errors. */
+export function isInviteeConflict(error: unknown): boolean {
+  return isUniqueViolation(error)
+    && (error as { constraint?: string }).constraint === 'referral_relations_invitee_unique';
+}
+
 export class PostgresReferralRepository implements ReferralRepository {
   constructor(
     private readonly database: Database,
     private readonly scope: ReferralScope,
+    /** Test seam. Production leaves this unset. Both racers wait here after the empty read. */
+    private readonly beforeRelationInsert?: () => Promise<void>,
   ) {}
 
   async ensureCode(ownerId: string): Promise<string> {
@@ -128,15 +138,31 @@ export class PostgresReferralRepository implements ReferralRepository {
       if (referrer === invitee) return { status: 'self' };
       const current = await this.readInvitee(invitee, tx);
       if (current) return { status: 'already', referrerId: current.referrerId };
+      if (this.beforeRelationInsert) await this.beforeRelationInsert();
       const referralId = randomUUID();
       const acceptedAt = new Date(now).toISOString();
-      await tx.query(
-        `INSERT INTO referral_relations (
-          referral_id, deployment_id, server_mode, world_id,
-          referrer_player_id, invitee_player_id, accepted_at, active_seconds, status
-        ) VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6::uuid, $7::timestamptz, 0, 'pending')`,
-        [referralId, this.scope.deploymentId, this.scope.serverMode, this.scope.worldId, referrer, invitee, acceptedAt],
-      );
+      let inserted: { rows: { referral_id: string }[]; rowCount?: number | null };
+      try {
+        inserted = await tx.query<{ referral_id: string }>(
+          `INSERT INTO referral_relations (
+            referral_id, deployment_id, server_mode, world_id,
+            referrer_player_id, invitee_player_id, accepted_at, active_seconds, status
+          ) VALUES ($1::uuid, $2, $3, $4, $5::uuid, $6::uuid, $7::timestamptz, 0, 'pending')
+          ON CONFLICT ON CONSTRAINT referral_relations_invitee_unique DO NOTHING
+          RETURNING referral_id`,
+          [referralId, this.scope.deploymentId, this.scope.serverMode, this.scope.worldId, referrer, invitee, acceptedAt],
+        );
+      } catch (error) {
+        if (!isInviteeConflict(error)) throw error;
+        const winner = await this.readInvitee(invitee, tx);
+        if (!winner) throw error;
+        return { status: 'already', referrerId: winner.referrerId };
+      }
+      if ((inserted.rowCount ?? 0) === 0) {
+        const winner = await this.readInvitee(invitee, tx);
+        if (!winner) throw new Error('referral accept lost the invitee row');
+        return { status: 'already', referrerId: winner.referrerId };
+      }
       await tx.query(
         `INSERT INTO referral_kit_claims (
           deployment_id, server_mode, world_id, referral_id, invitee_player_id, reward_code, state
@@ -200,13 +226,15 @@ export class PostgresReferralRepository implements ReferralRepository {
       for (const row of rows) {
         await tx.query(
           `UPDATE referral_rewards
-           SET status = $1, remaining_ms = $2, activated_at = $3::timestamptz, expires_at = $4::timestamptz
-           WHERE deployment_id = $5 AND server_mode = $6 AND world_id = $7 AND reward_id = $8::uuid`,
+           SET status = $1, remaining_ms = $2, activated_at = $3::timestamptz, expires_at = $4::timestamptz, revision = $5
+           WHERE deployment_id = $6 AND server_mode = $7 AND world_id = $8 AND reward_id = $9::uuid
+             AND revision < $5`,
           [
             row.status,
             Math.max(0, Math.min(REFERRAL_REWARD_MS, Math.floor(row.remainingMs))),
             row.activatedAt === null ? null : new Date(row.activatedAt).toISOString(),
             row.expiresAt === null ? null : new Date(row.expiresAt).toISOString(),
+            Math.max(0, Math.floor(row.revision ?? 0)),
             this.scope.deploymentId,
             this.scope.serverMode,
             this.scope.worldId,
@@ -334,7 +362,7 @@ export class PostgresReferralRepository implements ReferralRepository {
 
   private async readRewards(playerId: string, tx: Queryable = this.database): Promise<RewardRow[]> {
     const found = await tx.query<RewardSql>(
-      `SELECT reward_id, milestone, reward_rank, status, remaining_ms, earned_at, activated_at, expires_at
+      `SELECT reward_id, milestone, reward_rank, status, remaining_ms, revision, earned_at, activated_at, expires_at
        FROM referral_rewards
        WHERE deployment_id = $1 AND server_mode = $2 AND world_id = $3 AND player_id = $4::uuid
        ORDER BY milestone ASC`,

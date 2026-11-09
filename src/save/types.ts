@@ -69,6 +69,14 @@ export interface SerializedPersistedPlayer {
    */
   readonly referralKitReceipts?: readonly string[];
   /**
+   * Monitored resources included in a saved referral kit grant.
+   * Written in the same player snapshot as the receipt and the inventory.
+   */
+  readonly referralKitGrants?: readonly {
+    referralId: string;
+    items: readonly { itemId: string; count: number }[];
+  }[];
+  /**
    * Player-owned stacks that did not fit in `inventory` at save time.
    * Missing on old saves means none. Not a second copy of inventory stacks.
    */

@@ -117,11 +117,35 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
         )).slice(0, 4),
       }
       : {}),
+    ...(Array.isArray(value.referralKitGrants)
+      ? { referralKitGrants: parseReferralKitGrants(value.referralKitGrants) }
+      : {}),
     ...(Array.isArray(value.heldReturns) ? { heldReturns: value.heldReturns } : {}),
     ...(parseCosmeticPetSelection(value.cosmeticPet)
       ? { cosmeticPet: parseCosmeticPetSelection(value.cosmeticPet)! }
       : {}),
   };
+}
+
+function parseReferralKitGrants(raw: unknown[]): { referralId: string; items: { itemId: string; count: number }[] }[] {
+  const grants: { referralId: string; items: { itemId: string; count: number }[] }[] = [];
+  for (const entry of raw.slice(0, 4)) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as { referralId?: unknown; items?: unknown };
+    if (typeof row.referralId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(row.referralId)) {
+      continue;
+    }
+    if (!Array.isArray(row.items)) continue;
+    const items = row.items.slice(0, 16).flatMap((item) => {
+      if (!item || typeof item !== 'object') return [];
+      const stack = item as { itemId?: unknown; count?: unknown };
+      if (typeof stack.itemId !== 'string' || stack.itemId.length === 0 || stack.itemId.length > 64) return [];
+      if (!Number.isInteger(stack.count) || (stack.count as number) < 1 || (stack.count as number) > 9_999) return [];
+      return [{ itemId: stack.itemId, count: stack.count as number }];
+    });
+    grants.push({ referralId: row.referralId.toLowerCase(), items });
+  }
+  return grants;
 }
 
 function parsePlayers(value: unknown): Record<string, SerializedPersistedPlayer> | undefined {

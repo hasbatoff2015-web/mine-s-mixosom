@@ -20,7 +20,13 @@ function sample(now: number, patch: Partial<ActivitySample> = {}): ActivitySampl
 }
 
 describe('referral activity clock', () => {
-  it('credits wall time after a real action and caps an AFK gap at five minutes', () => {
+  it('credits a steered walk and a confirmed action, then caps an AFK gap at five minutes', () => {
+    const walking = new InviteeActivityClock(0, 0);
+    walking.observe(sample(0, { x: 0, steered: true }), true);
+    walking.observe(sample(1_000, { x: 1.2, steered: true }), true);
+    walking.observe(sample(2_000, { x: 2.4, steered: true }), true);
+    expect(walking.pendingSeconds).toBe(1);
+
     const clock = new InviteeActivityClock(0, 0);
     clock.mark(0, true);
     clock.observe(sample(60_000), true);

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { REFERRAL_MIGRATION_STATEMENTS } from './referralMigration';
+import { REFERRAL_MIGRATION_STATEMENTS, REFERRAL_REWARDS_REVISION_STATEMENTS } from './referralMigration';
 
 export interface Migration {
   readonly version: string;
@@ -601,6 +601,11 @@ export const MIGRATIONS: readonly Migration[] = [
     version: '0011',
     name: 'referral_program',
     statements: REFERRAL_MIGRATION_STATEMENTS,
+  },
+  {
+    version: '0012',
+    name: 'referral_reward_revision',
+    statements: REFERRAL_REWARDS_REVISION_STATEMENTS,
   },
 ];
 

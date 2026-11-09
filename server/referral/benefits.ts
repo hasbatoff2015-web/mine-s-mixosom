@@ -12,6 +12,8 @@ export interface RewardEntitlement {
   earnedAt: number;
   activatedAt: number | null;
   expiresAt: number | null;
+  /** Monotonic write generation. A lower revision must not overwrite a higher one. */
+  revision: number;
 }
 
 export interface ResolvedRewards {
@@ -37,6 +39,7 @@ export function blankEntitlement(
     earnedAt,
     activatedAt: null,
     expiresAt: null,
+    revision: 0,
   };
 }
 

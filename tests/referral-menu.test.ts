@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { menuFriendsHtml, menuReferralHtml } from '../src/ui/gameMenuGui';
 import { menuLogicalHeight } from '../src/ui/containerTheme';
-import { captureReferralLaunch, referralIntentCode, referralLinkFromApp } from '../src/yandex/referralIntent';
+import { captureReferralLaunch, clearReferralIntent, referralIntentCode, referralLinkFromApp, settleReferralIntent } from '../src/yandex/referralIntent';
 import { parseReferralPayload, referralPublicUrl } from '../shared/referral';
 import type { ServerMenuMessage } from '../shared/protocol';
 import { isGameMenuScreenKind } from '../shared/protocol';
@@ -105,5 +105,12 @@ describe('referral menu', () => {
     expect(referralLinkFromApp('ZXCV2345')).toBe('https://yandex.ru/games/app/99?payload=ref_ZXCV2345');
     captureReferralLaunch('broken', undefined);
     expect(referralIntentCode()).toBe('ZXCV2345');
+    settleReferralIntent({ available: false, invitedBy: 'Ada' });
+    expect(referralIntentCode()).toBe('ZXCV2345');
+    settleReferralIntent({ available: true });
+    expect(referralIntentCode()).toBe('ZXCV2345');
+    settleReferralIntent({ available: true, invitedBy: 'Ada' });
+    expect(referralIntentCode()).toBeUndefined();
+    clearReferralIntent();
   });
 });

@@ -1,5 +1,14 @@
 # Roadmap
 
+## 2026-11-09: Referral reliability
+
+- [x] Reward phase writes are serialized per player. A stale snapshot cannot overwrite a newer `revision`.
+- [x] One starter-kit delivery runs at a time. PostgreSQL is marked claimed only after the inventory save succeeds.
+- [x] Two accepts of the same invitee return one `accepted` and one `already`.
+- [x] A failed join reloads the activity tracker without a reconnect. The outage gap is not credited.
+- [x] Monitored kit items are credited once in the resource ledger and replayed after restart.
+- [ ] Yandex draft and the production migration remain for the owner. This branch does not deploy.
+
 ## 2026-11-08: Referral program
 
 - [x] Server-owned referral code, Yandex `payload=ref_CODE`, and an explicit accept.

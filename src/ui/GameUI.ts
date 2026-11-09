@@ -9,7 +9,7 @@ import {
 import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
 import { stampInventoryIntent } from '../net/inventoryIntent';
-import { referralIntentCode, referralLinkFromApp } from '../yandex/referralIntent';
+import { referralIntentCode, referralLinkFromApp, settleReferralIntent } from '../yandex/referralIntent';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
@@ -5568,6 +5568,7 @@ export class GameUI {
     this.applyFriendChatPanelHeight();
     this.prefillReferralCode();
     this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     this.reconcileDonateLocalState();
     this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
@@ -5817,6 +5818,7 @@ export class GameUI {
     this.reconcileDonateLocalState();
     this.prefillReferralCode();
     this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     return true;
   }
 

@@ -15,6 +15,7 @@ import { InviteeActivityClock, REFERRAL_OUTAGE_PENDING_MS } from './activity';
 import type { ActivitySample } from './activity';
 import { resolveEntitlements, type RewardEntitlement } from './benefits';
 import type { KitStack } from '../services/kit';
+import { isInviteeConflict } from './repository';
 import type { ReferralRepository } from './types';
 import type { RelationRow, RewardRow } from './types';
 
@@ -43,6 +44,8 @@ export interface ReferralDeps {
   kitDelivery(playerId: string): ReferralKitDelivery | null;
   notify(playerId: string, text: string): void;
   onBenefitsChanged(playerId: string): void;
+  /** Live socket for a connected player. Recovery uses this instead of a tick query. */
+  connectionLive?(playerId: string): string | null;
   auditDev?(actorId: string, action: string, targetId: string, detail: string): Promise<void>;
 }
 
@@ -79,6 +82,12 @@ export class ReferralService {
   private dbOk = true;
   private stopped = false;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  private readonly rewardRevision = new Map<string, number>();
+  private readonly rewardDirty = new Set<string>();
+  private readonly rewardWriting = new Set<string>();
+  private readonly rewardRetry = new Map<string, ReturnType<typeof setTimeout>>();
+  private readonly claimLanes = new Map<string, Promise<unknown>>();
+  private readonly recoveries = new Map<string, { connectionId: string; attempt: number; timer?: ReturnType<typeof setTimeout> }>();
 
   private constructor(private readonly deps: ReferralDeps | null, private readonly disabledNote: string | null) {}
 
@@ -111,10 +120,7 @@ export class ReferralService {
       return { rank: 'default' };
     }
     const resolved = resolveEntitlements(rows, paid, now);
-    if (resolved.changed) {
-      this.rewards.set(playerId, resolved.rows);
-      this.scheduleRewardSave(playerId, resolved.rows);
-    }
+    if (resolved.changed) this.stampRewards(playerId, resolved.rows);
     const view = {
       rank: resolved.activeRank,
       ...(resolved.activeExpiresAt !== null ? { expiresAt: resolved.activeExpiresAt } : {}),
@@ -150,35 +156,18 @@ export class ReferralService {
         const listed = await deps.repository.page(playerId, 1, 0);
         const rewards = await deps.repository.ensureMilestones(playerId, listed.qualified, deps.now());
         this.remember(playerId, rewards);
-        const relation = await deps.repository.invitee(playerId);
-        this.dbOk = true;
-        if (!deps.activityEnabled || !relation || relation.status !== 'pending') {
-          this.tracks.delete(playerId);
-          return;
-        }
-        const existing = this.tracks.get(playerId);
-        if (existing) {
-          await this.flushTrack(playerId);
-          const live = this.tracks.get(playerId);
-          if (live) live.connectionId = connectionId;
-          return;
-        }
-        this.tracks.set(playerId, {
-          connectionId,
-          referralId: relation.referralId,
-          clock: new InviteeActivityClock(relation.activeSeconds, deps.now()),
-          flushing: false,
-          uncertain: false,
-          inFlight: null,
-        });
+        await this.loadInviteeTrack(playerId, connectionId);
+        this.cancelRecovery(playerId, connectionId);
       } catch {
         this.dbOk = false;
+        this.scheduleRecovery(playerId, connectionId);
       }
     });
   }
 
   onQuit(playerId: string, connectionId?: string): Promise<void> {
     if (!this.deps) return Promise.resolve();
+    this.cancelRecovery(playerId, connectionId);
     return this.lane(playerId, async () => {
       const track = this.tracks.get(playerId);
       if (!track) return;
@@ -197,6 +186,25 @@ export class ReferralService {
     this.stopped = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
+    for (const timer of this.rewardRetry.values()) clearTimeout(timer);
+    this.rewardRetry.clear();
+    for (const job of this.recoveries.values()) {
+      if (job.timer) clearTimeout(job.timer);
+    }
+    this.recoveries.clear();
+    const rewardIds = new Set<string>([...this.rewards.keys(), ...this.rewardDirty]);
+    for (const playerId of rewardIds) {
+      while (this.rewardWriting.has(playerId)) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const rows = this.rewards.get(playerId);
+      if (!rows || !this.deps) continue;
+      try {
+        await this.deps.repository.saveRewards(rows.map((row) => ({ ...row })));
+      } catch {
+        this.dbOk = false;
+      }
+    }
     const ids = [...this.tracks.keys()];
     for (const id of ids) await this.onQuit(id);
   }
@@ -218,6 +226,18 @@ export class ReferralService {
       let preview: string | undefined;
       if (draftCode) preview = await this.preview(playerId, draftCode);
       this.dbOk = true;
+      const liveConnection = this.deps.connectionLive?.(playerId) ?? null;
+      if (liveConnection && !this.tracks.has(playerId)) {
+        void this.lane(playerId, async () => {
+          try {
+            await this.loadInviteeTrack(playerId, liveConnection);
+            this.cancelRecovery(playerId, liveConnection);
+          } catch {
+            this.dbOk = false;
+            this.scheduleRecovery(playerId, liveConnection);
+          }
+        });
+      }
       const qualified = listed.qualified;
       return {
         available: true,
@@ -287,7 +307,12 @@ export class ReferralService {
       }
       const name = this.deps.displayName(result.referrerId);
       return `Приглашение от ${name} принято. Активное время начнёт копиться с этого момента.`;
-    } catch {
+    } catch (error) {
+      if (isInviteeConflict(error)) {
+        this.dbOk = true;
+        const existing = await this.deps.repository.invitee(playerId).catch(() => null);
+        if (existing) return 'Вы уже приняли приглашение.';
+      }
       this.dbOk = false;
       return UNAVAILABLE;
     }
@@ -304,6 +329,18 @@ export class ReferralService {
     if (!this.deps) return this.disabledNote ?? UNAVAILABLE;
     if (!this.deps.activityEnabled) return ANARCHY_ONLY;
     if (!this.allow(`claim:${playerId}`, CLAIM_LIMIT, WINDOW_MS)) return 'Слишком много попыток. Подождите немного.';
+    return this.claimLane(playerId, () => this.claimOnce(playerId));
+  }
+
+  private claimLane<T>(playerId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.claimLanes.get(playerId) ?? Promise.resolve();
+    const run = previous.then(fn, fn);
+    this.claimLanes.set(playerId, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
+  private async claimOnce(playerId: string): Promise<string> {
+    if (!this.deps) return this.disabledNote ?? UNAVAILABLE;
     try {
       const relation = await this.deps.repository.invitee(playerId);
       if (!relation) return 'Сначала примите приглашение.';
@@ -334,8 +371,8 @@ export class ReferralService {
     const rows = this.rewards.get(playerId);
     if (!rows) return;
     const resolved = resolveEntitlements(rows, this.deps.paidRank(playerId, this.deps.now()), this.deps.now());
-    this.rewards.set(playerId, resolved.rows);
-    if (resolved.changed) await this.persistRewards(playerId, resolved.rows);
+    if (resolved.changed) this.stampRewards(playerId, resolved.rows);
+    else this.rewards.set(playerId, resolved.rows.map((row) => ({ ...row, revision: row.revision ?? 0 })));
     this.deps.onBenefitsChanged(playerId);
   }
 
@@ -416,30 +453,67 @@ export class ReferralService {
 
   private remember(playerId: string, rows: RewardRow[]): void {
     const resolved = resolveEntitlements(rows, this.deps!.paidRank(playerId, this.deps!.now()), this.deps!.now());
-    this.rewards.set(playerId, resolved.rows);
-    this.ranks.delete(playerId);
-    if (resolved.changed) this.scheduleRewardSave(playerId, resolved.rows);
+    const loaded = Math.max(0, ...rows.map((row) => row.revision ?? 0), this.rewardRevision.get(playerId) ?? 0);
+    this.rewardRevision.set(playerId, Math.max(loaded, this.rewardRevision.get(playerId) ?? 0));
+    if (!resolved.changed) {
+      this.rewards.set(playerId, resolved.rows.map((row) => ({ ...row, revision: Math.max(row.revision ?? 0, loaded) })));
+      this.ranks.delete(playerId);
+      this.deps!.onBenefitsChanged(playerId);
+      return;
+    }
+    this.stampRewards(playerId, resolved.rows);
     this.deps!.onBenefitsChanged(playerId);
   }
 
-  private scheduleRewardSave(playerId: string, rows: readonly RewardEntitlement[]): void {
-    const timer = setTimeout(() => {
-      void this.persistRewards(playerId, rows);
-    }, 0);
-    timer.unref?.();
+  private stampRewards(playerId: string, rows: readonly RewardEntitlement[]): void {
+    const loaded = Math.max(0, ...rows.map((row) => row.revision ?? 0), this.rewardRevision.get(playerId) ?? 0);
+    const revision = loaded + 1;
+    this.rewardRevision.set(playerId, revision);
+    this.rewards.set(playerId, rows.map((row) => ({ ...row, revision })));
+    this.ranks.delete(playerId);
+    this.scheduleRewardSave(playerId);
   }
 
-  private async persistRewards(playerId: string, rows: readonly RewardEntitlement[]): Promise<void> {
-    if (!this.deps) return;
+  /** One in-flight write per player. Each attempt reads the latest memory snapshot. */
+  private scheduleRewardSave(playerId: string): void {
+    this.rewardDirty.add(playerId);
+    if (this.rewardWriting.has(playerId) || this.stopped) return;
+    this.rewardWriting.add(playerId);
+    void this.drainRewardSave(playerId);
+  }
+
+  private async drainRewardSave(playerId: string): Promise<void> {
     try {
-      await this.deps.repository.saveRewards(rows);
-      this.dbOk = true;
-      this.ranks.delete(playerId);
-      this.deps.onBenefitsChanged(playerId);
-    } catch {
-      this.dbOk = false;
+      while (this.rewardDirty.has(playerId) && !this.stopped) {
+        this.rewardDirty.delete(playerId);
+        const rows = this.rewards.get(playerId)?.map((row) => ({ ...row }));
+        if (!rows || !this.deps) break;
+        try {
+          await this.deps.repository.saveRewards(rows);
+          this.dbOk = true;
+        } catch {
+          this.dbOk = false;
+          this.rewardDirty.add(playerId);
+          this.armRewardRetry(playerId);
+          break;
+        }
+      }
+    } finally {
+      this.rewardWriting.delete(playerId);
+      if (this.rewardDirty.has(playerId) && !this.stopped && !this.rewardRetry.has(playerId)) {
+        this.scheduleRewardSave(playerId);
+      }
     }
-    void playerId;
+  }
+
+  private armRewardRetry(playerId: string): void {
+    if (this.stopped || this.rewardRetry.has(playerId)) return;
+    const timer = setTimeout(() => {
+      this.rewardRetry.delete(playerId);
+      if (!this.stopped) this.scheduleRewardSave(playerId);
+    }, 1000);
+    timer.unref?.();
+    this.rewardRetry.set(playerId, timer);
   }
 
   private rankNote(playerId: string): string | undefined {
@@ -512,10 +586,7 @@ export class ReferralService {
     await this.lane(row.referrerId, async () => {
       const rewards = await deps.repository.ensureMilestones(row.referrerId, qualifiedCount, deps.now());
       this.remember(row.referrerId, rewards);
-      const resolved = resolveEntitlements(rewards, deps.paidRank(row.referrerId, deps.now()), deps.now());
-      if (resolved.changed) await deps.repository.saveRewards(resolved.rows);
-      this.rewards.set(row.referrerId, resolved.rows);
-      this.announceMilestone(row.referrerId, qualifiedCount, resolved.rows);
+      this.announceMilestone(row.referrerId, qualifiedCount, this.rewards.get(row.referrerId) ?? rewards);
     });
     const inviteeKey = `invitee:${row.referralId}`;
     if (!this.announced.has(inviteeKey)) {
@@ -538,6 +609,75 @@ export class ReferralService {
     };
     if (qualifiedCount === 3) tell('3_confirmed', 'Вам начислен VIP на 7 дней.');
     if (qualifiedCount === 5) tell('5_confirmed', 'Вам начислен PREMIUM на 7 дней.');
+  }
+
+  private async loadInviteeTrack(playerId: string, connectionId: string): Promise<void> {
+    const deps = this.deps;
+    if (!deps) return;
+    const relation = await deps.repository.invitee(playerId);
+    this.dbOk = true;
+    if (!deps.activityEnabled || !relation || relation.status !== 'pending') {
+      this.tracks.delete(playerId);
+      return;
+    }
+    const existing = this.tracks.get(playerId);
+    if (existing) {
+      if (existing.connectionId !== connectionId) {
+        await this.flushTrack(playerId);
+        const live = this.tracks.get(playerId);
+        if (live) live.connectionId = connectionId;
+      }
+      return;
+    }
+    this.tracks.set(playerId, {
+      connectionId,
+      referralId: relation.referralId,
+      clock: new InviteeActivityClock(relation.activeSeconds, deps.now()),
+      flushing: false,
+      uncertain: false,
+      inFlight: null,
+    });
+  }
+
+  private scheduleRecovery(playerId: string, connectionId: string): void {
+    if (this.stopped) return;
+    const current = this.recoveries.get(playerId);
+    if (current?.connectionId === connectionId && current.timer) return;
+    if (current?.timer) clearTimeout(current.timer);
+    const attempt = current?.connectionId === connectionId ? current.attempt + 1 : 1;
+    const delay = Math.min(8_000, 200 * 2 ** Math.min(attempt - 1, 5));
+    const timer = setTimeout(() => {
+      const job = this.recoveries.get(playerId);
+      if (job) job.timer = undefined;
+      void this.lane(playerId, () => this.restoreTrack(playerId, connectionId));
+    }, delay);
+    timer.unref?.();
+    this.recoveries.set(playerId, { connectionId, attempt, timer });
+  }
+
+  private async restoreTrack(playerId: string, connectionId: string): Promise<void> {
+    const job = this.recoveries.get(playerId);
+    if (!job || job.connectionId !== connectionId || this.stopped) return;
+    const live = this.deps?.connectionLive?.(playerId) ?? null;
+    if (live !== connectionId) {
+      this.cancelRecovery(playerId, connectionId);
+      return;
+    }
+    try {
+      await this.loadInviteeTrack(playerId, connectionId);
+      this.cancelRecovery(playerId, connectionId);
+    } catch {
+      this.dbOk = false;
+      this.scheduleRecovery(playerId, connectionId);
+    }
+  }
+
+  private cancelRecovery(playerId: string, connectionId?: string): void {
+    const job = this.recoveries.get(playerId);
+    if (!job) return;
+    if (connectionId && job.connectionId !== connectionId) return;
+    if (job.timer) clearTimeout(job.timer);
+    this.recoveries.delete(playerId);
   }
 
   private arm(delay: number): void {

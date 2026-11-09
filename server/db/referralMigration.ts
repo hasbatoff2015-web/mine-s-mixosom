@@ -104,6 +104,14 @@ export const REFERRAL_KIT_CLAIMS_SQL = `CREATE TABLE referral_kit_claims (
   CONSTRAINT referral_kit_claims_world_len CHECK (char_length(world_id) BETWEEN 1 AND 128)
 )`;
 
+export const REFERRAL_REWARDS_REVISION_SQL = `ALTER TABLE referral_rewards
+  ADD COLUMN revision BIGINT NOT NULL DEFAULT 0,
+  ADD CONSTRAINT referral_rewards_revision_nonnegative CHECK (revision >= 0)`;
+
+export const REFERRAL_REWARDS_REVISION_STATEMENTS = [
+  REFERRAL_REWARDS_REVISION_SQL,
+] as const;
+
 export const REFERRAL_MIGRATION_STATEMENTS = [
   REFERRAL_CODES_SQL,
   REFERRAL_RELATIONS_SQL,

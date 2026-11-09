@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 import { createItemStack } from '../../src/inventory';
+import { ItemId } from '../../src/items';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { PROTOCOL_VERSION } from '../../shared/config';
 import type { ServerMenuMessage, ServerMessage } from '../../shared/protocol';
@@ -196,6 +197,51 @@ describe('referral world integration', () => {
     expect(countItem(misha.player, 'stone')).toBe(0);
     expect(countItem(misha.player, 'cobblestone')).toBe(misha.player.inventory.slots.length * 64);
     expect(misha.player.referralKitReceipts.size).toBe(0);
+  }, 120_000);
+});
+
+describe('referral resource recovery', () => {
+  it('restores a monitored kit grant once after the ledger file is lost', async () => {
+    const repo = new MemoryReferralRepository();
+    const dir = await mkdtemp(join(tmpdir(), 'fc-referral-resource-'));
+    dirs.push(dir);
+    const world = await boot(repo, dir);
+    const ada = enter(world, 'Ada');
+    const misha = enter(world, 'Misha');
+    const opened = await menu(world, ada, { action: 'open', screen: 'friends-invites' });
+    await menu(world, misha, { action: 'referral_accept', name: opened.referral?.code });
+    world.pluginStore.save('kit/store', {
+      kits: [{ name: 'referral_starter', items: [{ itemId: ItemId.Diamond, count: 3 }, { itemId: 'stone', count: 2 }] }],
+      receivedStart: [],
+      pendingStart: [],
+    });
+    const before = countItem(misha.player, ItemId.Diamond);
+    const claimed = await menu(world, misha, { action: 'referral_claim' });
+    expect(claimed.message).toBe('Стартовый набор получен.');
+    expect(countItem(misha.player, ItemId.Diamond)).toBe(before + 3);
+    const ledgerPath = join(dir, 'anarchy', 'plugin-data', 'resource-accounting.json');
+    const ledger = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number>; sourceKeys: string[] };
+    const granted = ledger.minted[ItemId.Diamond] ?? 0;
+    expect(granted).toBeGreaterThanOrEqual(3);
+    const receipt = [...misha.player.referralKitReceipts][0];
+    const reduced = granted - 3;
+    ledger.minted[ItemId.Diamond] = reduced;
+    ledger.sourceKeys = ledger.sourceKeys.filter((key) => !key.includes(receipt ?? 'missing'));
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`);
+    const token = misha.player.sessionToken;
+    await world.stop();
+    worlds.splice(worlds.indexOf(world), 1);
+    const restarted = await boot(repo, dir);
+    const back = enter(restarted, 'Misha', token);
+    expect(countItem(back.player, ItemId.Diamond)).toBe(before + 3);
+    const again = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number> };
+    expect(again.minted[ItemId.Diamond] ?? 0).toBe(reduced + 3);
+    const replay = await menu(restarted, back, { action: 'referral_claim' });
+    expect(replay.message).toBe('Стартовый набор уже получен.');
+    expect(countItem(back.player, ItemId.Diamond)).toBe(before + 3);
+    const afterReplay = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number> };
+    expect(afterReplay.minted[ItemId.Diamond] ?? 0).toBe(again.minted[ItemId.Diamond] ?? 0);
   }, 120_000);
 });
 

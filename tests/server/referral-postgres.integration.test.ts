@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { REFERRAL_ACTIVE_SECONDS } from '../../shared/referral';
 import { PostgresDatabase } from '../../server/db/database';
 import { PostgresReferralRepository } from '../../server/referral/repository';
+import type { AcceptResult } from '../../server/referral/types';
 import { ReferralService } from '../../server/referral/service';
 import type { ReferralScope } from '../../server/referral/types';
 
@@ -84,7 +85,7 @@ describe.skipIf(databaseUrl === '')('referral program on PostgreSQL', () => {
     const name = await schema();
     const database = open(name);
     await database.start();
-    expect(database.appliedMigrations).toContain('0011');
+    expect(database.appliedMigrations).toContain('0012');
     const live = service(database);
     const first = await live.view(REFERRER, 1);
     const second = await live.view(REFERRER, 1);
@@ -106,6 +107,41 @@ describe.skipIf(databaseUrl === '')('referral program on PostgreSQL', () => {
        VALUES ('dev', 'anarchy', 'anarchy', $1::uuid, $2)`,
       [OTHER, first.code],
     )).rejects.toMatchObject({ code: '23505' });
+  }, 30_000);
+
+  it('lets two transactions pass the empty read and still accepts once', async () => {
+    const name = await schema();
+    const database = open(name);
+    await database.start();
+    const setup = new PostgresReferralRepository(database, scope());
+    const code = await setup.ensureCode(REFERRER);
+    let arrived = 0;
+    let releaseBoth: () => void = () => undefined;
+    const both = new Promise<void>((resolve) => {
+      releaseBoth = resolve;
+    });
+    const barrier = async () => {
+      arrived += 1;
+      if (arrived === 2) releaseBoth();
+      await both;
+    };
+    const left = new PostgresReferralRepository(database, scope(), barrier);
+    const right = new PostgresReferralRepository(database, scope(), barrier);
+    const [first, second] = await Promise.all([
+      left.accept(INVITEE, code, 1_700_000_000_000),
+      right.accept(INVITEE, code, 1_700_000_000_000),
+    ]);
+    const results = [first, second];
+    expect(results.filter((row) => row.status === 'accepted')).toHaveLength(1);
+    expect(results.filter((row) => row.status === 'already')).toHaveLength(1);
+    const winner = results.find((row) => row.status === 'already') as Extract<AcceptResult, { status: 'already' }>;
+    expect(winner.referrerId).toBe(REFERRER);
+    const page = await setup.page(REFERRER, 10, 0);
+    expect(page.total).toBe(1);
+    expect(page.qualified).toBe(0);
+    const live = service(database);
+    expect(await live.accept(INVITEE, code)).toBe('Вы уже приняли приглашение.');
+    expect(await live.view(INVITEE, 1)).toMatchObject({ available: true });
   }, 30_000);
 
   it('qualifies once and does not duplicate the milestone under a second flush', async () => {

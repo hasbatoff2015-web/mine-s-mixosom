@@ -359,6 +359,8 @@ export class ServerPlayer implements GameplayPlayer {
   readonly settlementReceipts = new Set<string>();
   /** One referral starter-kit receipt per accepted invite. Saved with the inventory. */
   readonly referralKitReceipts = new Set<string>();
+  /** Monitored items saved with the referral kit receipt. One record per referral. */
+  referralKitGrants: { referralId: string; items: { itemId: string; count: number }[] }[] = [];
   /** Stacks removed from a trade or buyer window that did not fit back into inventory. */
   heldReturns: ItemStack[] = [];
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
@@ -788,6 +790,8 @@ export class WorldInstance {
   private identityLogLoaded = false;
   /** A failed incident write stays pending until the next allowed checkpoint. */
   private identityPersistPending = false;
+  /** One referral kit delivery at a time for a player. The next claim waits for the save. */
+  private readonly kitClaimFlights = new Map<string, Promise<unknown>>();
   private unresolvedIdentitySources = 0;
   private readonly resources = new ResourceLedger();
   private resourceLogLoaded = false;
@@ -1740,6 +1744,7 @@ export class WorldInstance {
       this.canonicalWorldLoaded = true;
       this.ensureResourceLog();
       await this.recoverSettlements();
+      this.replayReferralResourceGrants();
       this.observeIdentity('startup');
       this.observeResources('startup');
       await this.loadBanAuthority();
@@ -1767,6 +1772,7 @@ export class WorldInstance {
     // The in-memory create is complete. This write commits it. The flag stays
     // false until the write resolves, so a failed create is not saved again from stop().
     await this.writeCanonicalSnapshot();
+    this.replayReferralResourceGrants();
     this.observeIdentity('startup');
     this.observeResources('startup');
     this.readyState = 'READY';
@@ -7520,6 +7526,12 @@ export class WorldInstance {
       const parsed = typeof receipt === 'string' ? parseUuid(receipt) : undefined;
       if (parsed) player.referralKitReceipts.add(parsed);
     }
+    for (const grant of stored.referralKitGrants ?? []) {
+      player.referralKitGrants.push({
+        referralId: grant.referralId,
+        items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+      });
+    }
     this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
     this.assignMissingItemIdentities(player);
     player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
@@ -7568,6 +7580,10 @@ export class WorldInstance {
       ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
       ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
       ...(player.referralKitReceipts.size > 0 ? { referralKitReceipts: [...player.referralKitReceipts] } : {}),
+      ...(player.referralKitGrants.length > 0 ? { referralKitGrants: player.referralKitGrants.map((grant) => ({
+        referralId: grant.referralId,
+        items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+      })) } : {}),
       ...(player.heldReturns.length > 0
         ? { heldReturns: player.heldReturns.map((stack) => cloneStack(stack)!) }
         : {}),
@@ -8368,6 +8384,10 @@ export class WorldInstance {
         const session = this.menuSessions.get(playerId);
         if (session?.screen === 'donate' || session?.screen.startsWith('donate-')) this.flushMenu(target);
       },
+      connectionLive: (playerId) => {
+        const live = this.players.get(playerId);
+        return live?.connected ? live.connectionId : null;
+      },
       auditDev: async (actorId, action, targetId, detail) => {
         serverLog(`referral ${action} actor=${actorId} target=${targetId} ${detail}`);
         if (!audit) return;
@@ -8485,7 +8505,18 @@ export class WorldInstance {
     if (message.action === 'referral_claim') this.flushPlayerInventory(player);
   }
 
-  private async deliverReferralKit(
+  private deliverReferralKit(
+    player: ServerPlayer,
+    referralId: string,
+    items: readonly KitStack[],
+  ): Promise<'delivered' | 'full' | 'missing' | 'already' | 'failed'> {
+    const previous = this.kitClaimFlights.get(player.id) ?? Promise.resolve();
+    const run = previous.then(() => this.deliverReferralKitNow(player, referralId, items), () => this.deliverReferralKitNow(player, referralId, items));
+    this.kitClaimFlights.set(player.id, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
+  private async deliverReferralKitNow(
     player: ServerPlayer,
     referralId: string,
     items: readonly KitStack[],
@@ -8496,22 +8527,50 @@ export class WorldInstance {
     const before = player.inventory.serialize();
     if (!applyKit(player.inventory, items)) return 'full';
     ensureInventoryInstanceIds(player.inventory, () => crypto.randomUUID());
+    const monitored = items
+      .filter((item) => isMonitoredResource(item.itemId))
+      .map((item) => ({ itemId: item.itemId, count: item.count }));
     player.referralKitReceipts.add(id);
+    player.referralKitGrants.push({ referralId: id, items: monitored });
     player.inventoryDirty = true;
     try {
       await this.savePlayersCritical();
     } catch (error) {
       player.inventory.restore(before);
       player.referralKitReceipts.delete(id);
+      player.referralKitGrants = player.referralKitGrants.filter((grant) => grant.referralId !== id);
       const detail = error instanceof Error ? error.message : String(error);
       serverLog(`referral kit save failed: ${detail}`, 'warn');
       return 'failed';
     }
-    for (const item of items) {
-      if (isMonitoredResource(item.itemId)) this.resources.noteGrant(item.itemId, item.count);
+    for (const item of monitored) {
+      this.resources.noteGrant(item.itemId, item.count, `referral:${id}`);
     }
+    if (monitored.length > 0) this.persistResources();
     this.flushPlayerInventory(player);
     return 'delivered';
+  }
+
+  /** One credit per saved referral grant. A crash before the ledger file is repaired on the next boot. */
+  private replayReferralResourceGrants(): void {
+    this.ensureResourceLog();
+    const grants: { referralId: string; items: { itemId: string; count: number }[] }[] = [];
+    for (const stored of Object.values(this.storedPlayers)) {
+      for (const grant of stored.referralKitGrants ?? []) {
+        grants.push({
+          referralId: grant.referralId,
+          items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+        });
+      }
+    }
+    for (const player of this.players.values()) grants.push(...player.referralKitGrants);
+    for (const grant of grants) {
+      for (const item of grant.items) {
+        if (!isMonitoredResource(item.itemId)) continue;
+        this.resources.noteGrant(item.itemId, item.count, `referral:${grant.referralId}`);
+      }
+    }
+    if (this.resources.isDirty()) this.persistResources();
   }
 
   private referralTarget(token: string | undefined, senderId: string): string | undefined {

@@ -33,6 +33,7 @@ interface StoredReward {
   earnedAt: number;
   activatedAt: number | null;
   expiresAt: number | null;
+  revision: number;
 }
 interface MutableKit {
   referralId: string;
@@ -138,10 +139,13 @@ export class MemoryReferralRepository implements ReferralRepository {
       for (const row of rows) {
         const current = this.rewardRows.find((entry) => entry.rewardId === row.rewardId);
         if (!current) continue;
+        const nextRevision = Math.max(0, Math.floor(row.revision ?? 0));
+        if (nextRevision <= current.revision) continue;
         current.status = row.status;
         current.remainingMs = row.remainingMs;
         current.activatedAt = row.activatedAt;
         current.expiresAt = row.expiresAt;
+        current.revision = nextRevision;
       }
     });
   }
@@ -225,6 +229,7 @@ export class MemoryReferralRepository implements ReferralRepository {
         earnedAt: now,
         activatedAt: null,
         expiresAt: null,
+        revision: 0,
       });
     }
   }

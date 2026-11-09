@@ -162,10 +162,15 @@ export class ResourceLedger {
     this.dirty = true;
   }
 
-  noteGrant(itemId: string, quantity: number): void {
+  noteGrant(itemId: string, quantity: number, sourceId?: string): void {
     if (!isMonitoredResource(itemId) || quantity <= 0) return;
+    if (sourceId) {
+      const key = `grant:${sourceId}:${itemId}`;
+      if (this.seenKeys.has(key)) return;
+      this.rememberKey(key);
+    }
     this.minted[itemId] += quantity;
-    this.pushRecent({ kind: 'server-grant', itemId, quantity, at: Date.now() });
+    this.pushRecent({ kind: 'server-grant', itemId, quantity, at: Date.now(), ...(sourceId ? { sourceId } : {}) });
     this.dirty = true;
   }
 

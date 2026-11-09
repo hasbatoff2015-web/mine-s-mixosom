@@ -22,3 +22,12 @@ export function referralLinkFromApp(code: string | undefined): string | undefine
 export function clearReferralIntent(): void {
   pendingCode = undefined;
 }
+
+/**
+ * Drop a launch code only after the server says this character already accepted an invite.
+ * A database outage leaves the code in place. A wrong code does not count as accepted.
+ */
+export function settleReferralIntent(referral: { available: boolean; invitedBy?: string } | undefined): void {
+  if (!referral?.available) return;
+  if (referral.invitedBy) clearReferralIntent();
+}
