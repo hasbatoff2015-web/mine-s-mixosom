@@ -220,13 +220,19 @@ describe('referral resource recovery', () => {
     expect(claimed.message).toBe('Стартовый набор получен.');
     expect(countItem(misha.player, ItemId.Diamond)).toBe(before + 3);
     const ledgerPath = join(dir, 'anarchy', 'plugin-data', 'resource-accounting.json');
-    const ledger = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number>; sourceKeys: string[] };
+    const ledger = JSON.parse(await readFile(ledgerPath, 'utf8')) as {
+      minted: Record<string, number>;
+      sourceKeys: string[];
+      durableKeys?: string[];
+    };
     const granted = ledger.minted[ItemId.Diamond] ?? 0;
     expect(granted).toBeGreaterThanOrEqual(3);
     const receipt = [...misha.player.referralKitReceipts][0];
+    expect((ledger.durableKeys ?? []).some((key) => key.includes(receipt ?? 'none'))).toBe(true);
     const reduced = granted - 3;
     ledger.minted[ItemId.Diamond] = reduced;
     ledger.sourceKeys = ledger.sourceKeys.filter((key) => !key.includes(receipt ?? 'missing'));
+    ledger.durableKeys = (ledger.durableKeys ?? []).filter((key) => !key.includes(receipt ?? 'missing'));
     const { writeFile } = await import('node:fs/promises');
     await writeFile(ledgerPath, `${JSON.stringify(ledger, null, 2)}\n`);
     const token = misha.player.sessionToken;
@@ -242,6 +248,13 @@ describe('referral resource recovery', () => {
     expect(countItem(back.player, ItemId.Diamond)).toBe(before + 3);
     const afterReplay = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number> };
     expect(afterReplay.minted[ItemId.Diamond] ?? 0).toBe(again.minted[ItemId.Diamond] ?? 0);
+    await restarted.stop();
+    worlds.splice(worlds.indexOf(restarted), 1);
+    const third = await boot(repo, dir);
+    const backAgain = enter(third, 'Misha', token);
+    expect(countItem(backAgain.player, ItemId.Diamond)).toBe(before + 3);
+    const settled = JSON.parse(await readFile(ledgerPath, 'utf8')) as { minted: Record<string, number> };
+    expect(settled.minted[ItemId.Diamond] ?? 0).toBe(again.minted[ItemId.Diamond] ?? 0);
   }, 120_000);
 });
 

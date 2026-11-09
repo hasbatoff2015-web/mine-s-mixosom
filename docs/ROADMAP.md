@@ -6,7 +6,8 @@
 - [x] One starter-kit delivery runs at a time. PostgreSQL is marked claimed only after the inventory save succeeds.
 - [x] Two accepts of the same invitee return one `accepted` and one `already`.
 - [x] A failed join reloads the activity tracker without a reconnect. The outage gap is not credited.
-- [x] Monitored kit items are credited once in the resource ledger and replayed after restart.
+- [x] Monitored kit items are credited once in the resource ledger and replayed after restart. Their keys are not evicted by the ordinary 500-key window.
+- [x] A stale reward read cannot replace a newer in-memory phase. Shutdown saves a reward created by the final activity flush.
 - [ ] Yandex draft and the production migration remain for the owner. This branch does not deploy.
 
 ## 2026-11-08: Referral program

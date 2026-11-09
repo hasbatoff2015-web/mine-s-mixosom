@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { REFERRAL_REWARD_MS } from '../../shared/referral';
-import { ResourceLedger } from '../../server/resources/accounting';
+import type { EffectiveRank } from '../../shared/donationRanks';
+import { REFERRAL_ACTIVE_SECONDS, REFERRAL_REWARD_MS } from '../../shared/referral';
+import { RESOURCE_SOURCE_KEY_LIMIT, ResourceLedger } from '../../server/resources/accounting';
 import { ItemId } from '../../src/items';
 import { MemoryReferralRepository } from '../../server/referral/memoryRepository';
 import { ReferralService, type ReferralKitDelivery } from '../../server/referral/service';
@@ -12,6 +13,7 @@ function pid(n: number): string {
 
 function serviceFor(repo: MemoryReferralRepository, options: {
   now?: () => number;
+  paidRank?: () => EffectiveRank;
   connectionLive?: (playerId: string) => string | null;
   items?: { itemId: string; count: number }[] | null;
   delivery?: ReferralKitDelivery | null;
@@ -22,7 +24,7 @@ function serviceFor(repo: MemoryReferralRepository, options: {
     devTools: true,
     publicGameUrl: null,
     now: options.now ?? (() => 1_700_000_000_000),
-    paidRank: () => 'default',
+    paidRank: options.paidRank ?? (() => 'default'),
     paidRankUnreadable: () => false,
     displayName: (id) => id.slice(0, 4),
     yandexLink: async () => 'unknown',
@@ -210,5 +212,247 @@ describe('referral resource ledger', () => {
     expect(restored.serialize().minted[ItemId.Diamond]).toBe(3);
     restored.noteGrant(ItemId.Diamond, 1);
     expect(restored.serialize().minted[ItemId.Diamond]).toBe(4);
+  });
+
+  it('keeps referral grant keys after the ordinary 500-key window drops them', () => {
+    const ledger = new ResourceLedger();
+    const referralId = '11111111-1111-4111-8111-111111111111';
+    ledger.noteGrant(ItemId.Diamond, 3, `referral:${referralId}`);
+    ledger.noteGrant(ItemId.IronIngot, 2, `referral:${referralId}`);
+    for (let index = 0; index < RESOURCE_SOURCE_KEY_LIMIT + 1; index += 1) {
+      ledger.noteMine(ItemId.GoldIngot, 1, `vein-${index}`);
+    }
+    const saved = ledger.serialize();
+    expect(saved.sourceKeys).toHaveLength(RESOURCE_SOURCE_KEY_LIMIT);
+    expect(saved.sourceKeys.some((key) => key.startsWith('grant:referral:'))).toBe(false);
+    expect(saved.durableKeys).toEqual([
+      `grant:referral:${referralId}:${ItemId.Diamond}`,
+      `grant:referral:${referralId}:${ItemId.IronIngot}`,
+    ]);
+    expect(saved.minted[ItemId.Diamond]).toBe(3);
+    expect(saved.minted[ItemId.IronIngot]).toBe(2);
+    expect(saved.minted[ItemId.GoldIngot]).toBe(RESOURCE_SOURCE_KEY_LIMIT + 1);
+
+    const restarted = new ResourceLedger();
+    restarted.load(saved);
+    restarted.noteGrant(ItemId.Diamond, 3, `referral:${referralId}`);
+    restarted.noteGrant(ItemId.IronIngot, 2, `referral:${referralId}`);
+    const afterReplay = restarted.serialize();
+    expect(afterReplay.minted[ItemId.Diamond]).toBe(3);
+    expect(afterReplay.minted[ItemId.IronIngot]).toBe(2);
+
+    const lost = new ResourceLedger();
+    lost.noteGrant(ItemId.Diamond, 3, `referral:${referralId}`);
+    lost.noteGrant(ItemId.IronIngot, 2, `referral:${referralId}`);
+    const recovered = lost.serialize();
+    const secondBoot = new ResourceLedger();
+    secondBoot.load(recovered);
+    secondBoot.noteGrant(ItemId.Diamond, 3, `referral:${referralId}`);
+    secondBoot.noteGrant(ItemId.IronIngot, 2, `referral:${referralId}`);
+    expect(secondBoot.serialize().minted[ItemId.Diamond]).toBe(recovered.minted[ItemId.Diamond]);
+    expect(secondBoot.serialize().minted[ItemId.IronIngot]).toBe(recovered.minted[ItemId.IronIngot]);
+
+    secondBoot.noteMine(ItemId.GoldIngot, 1, 'vein-0');
+    expect(secondBoot.serialize().minted[ItemId.GoldIngot]).toBe(1);
+    expect(secondBoot.serialize().sourceKeys?.length).toBeLessThanOrEqual(RESOURCE_SOURCE_KEY_LIMIT);
+  });
+});
+
+describe('referral reward reads', () => {
+  it('does not let a stale database read replace a newer paused VIP', async () => {
+    const repo = new MemoryReferralRepository();
+    const started = 1_700_000_000_000;
+    let now = started;
+    let paid: EffectiveRank = 'default';
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const originalSave = repo.saveRewards.bind(repo);
+    const originalRewards = repo.rewards.bind(repo);
+    repo.saveRewards = async (rows: readonly RewardRow[]) => {
+      calls += 1;
+      if (calls === 1) await gate;
+      return originalSave(rows);
+    };
+    await repo.ensureMilestones(pid(1), 3, started);
+    const [created] = await originalRewards(pid(1));
+    await originalSave([{
+      ...created!,
+      status: 'active',
+      revision: 1,
+      activatedAt: started,
+      expiresAt: started + REFERRAL_REWARD_MS,
+      remainingMs: REFERRAL_REWARD_MS,
+    }]);
+    const live = serviceFor(repo, { now: () => now, paidRank: () => paid });
+    await live.view(pid(1), 1);
+    paid = 'boss';
+    await live.reconcilePaid(pid(1));
+    expect(calls).toBe(1);
+    now += 120_000;
+    await live.view(pid(1), 1);
+    await live.reconcilePaid(pid(1));
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const saved = await originalRewards(pid(1));
+    const vip = saved.find((row) => row.milestone === '3_confirmed');
+    expect(vip?.status).toBe('paused');
+    expect(vip?.remainingMs).toBe(REFERRAL_REWARD_MS);
+    expect(vip?.expiresAt).toBeNull();
+    expect(vip?.revision).toBeGreaterThanOrEqual(2);
+
+    const restarted = serviceFor(repo, { now: () => now, paidRank: () => paid });
+    await restarted.onJoin(pid(1), 'later');
+    const again = await originalRewards(pid(1));
+    expect(again.filter((row) => row.milestone === '3_confirmed')).toHaveLength(1);
+    expect(again[0]?.remainingMs).toBe(REFERRAL_REWARD_MS);
+    expect(again[0]?.expiresAt).toBeNull();
+    expect(again[0]?.rewardId).toBe(vip?.rewardId);
+  });
+
+  it('keeps the in-memory reward when PostgreSQL still has a lower revision', async () => {
+    const repo = new MemoryReferralRepository();
+    const started = 1_700_000_000_000;
+    let now = started;
+    let paid: EffectiveRank = 'default';
+    const originalRewards = repo.rewards.bind(repo);
+    await repo.ensureMilestones(pid(1), 3, started);
+    const [created] = await originalRewards(pid(1));
+    const active = {
+      ...created!,
+      status: 'active' as const,
+      revision: 1,
+      activatedAt: started,
+      expiresAt: started + REFERRAL_REWARD_MS,
+      remainingMs: REFERRAL_REWARD_MS,
+    };
+    await repo.saveRewards([active]);
+    const live = serviceFor(repo, { now: () => now, paidRank: () => paid });
+    await live.view(pid(1), 1);
+    paid = 'boss';
+    await live.reconcilePaid(pid(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    repo.rewards = async () => [active];
+    now += 120_000;
+    await live.view(pid(1), 1);
+    await live.reconcilePaid(pid(1));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const saved = await originalRewards(pid(1));
+    expect(saved[0]?.status).toBe('paused');
+    expect(saved[0]?.remainingMs).toBe(REFERRAL_REWARD_MS);
+    expect(saved[0]?.expiresAt).toBeNull();
+    expect(saved[0]?.revision).toBeGreaterThan(active.revision);
+  });
+});
+
+describe('referral shutdown', () => {
+  it('saves the VIP created by the final activity flush', async () => {
+    const repo = new MemoryReferralRepository();
+    let now = 1_800_000_000_000;
+    const live = serviceFor(repo, { now: () => now });
+    const code = (await live.view(pid(1), 1)).code!;
+    for (const friend of [2, 3]) {
+      await live.accept(pid(friend), code);
+      await live.devAddTime('op', pid(friend), REFERRAL_ACTIVE_SECONDS);
+    }
+    await live.accept(pid(4), code);
+    await live.devAddTime('op', pid(4), REFERRAL_ACTIVE_SECONDS - 1);
+    await live.onJoin(pid(4), 'socket');
+    live.noteAction(pid(4));
+    now += 1_000;
+    live.noteAction(pid(4));
+    await live.shutdown();
+    const relation = await repo.invitee(pid(4));
+    expect(relation?.status).toBe('qualified');
+    expect(relation?.activeSeconds).toBe(REFERRAL_ACTIVE_SECONDS);
+    expect((await repo.page(pid(1), 10, 0)).qualified).toBe(3);
+    const vip = (await repo.rewards(pid(1))).find((row) => row.milestone === '3_confirmed');
+    expect(vip?.status).toBe('active');
+    expect(vip?.revision).toBeGreaterThan(0);
+    expect(vip?.activatedAt).toBe(now);
+    expect(vip?.expiresAt).toBe(now + REFERRAL_REWARD_MS);
+
+    const restarted = serviceFor(repo, { now: () => now + 5_000 });
+    await restarted.onJoin(pid(1), 'restart');
+    const again = await repo.rewards(pid(1));
+    expect(again.filter((row) => row.milestone === '3_confirmed')).toHaveLength(1);
+    expect(again[0]?.rewardId).toBe(vip?.rewardId);
+    expect(again[0]?.activatedAt).toBe(vip?.activatedAt);
+    expect(again[0]?.expiresAt).toBe(vip?.expiresAt);
+  });
+
+  it('writes the reward created during shutdown after an older save finishes', async () => {
+    const repo = new MemoryReferralRepository();
+    let now = 1_800_000_000_000;
+    let paid: EffectiveRank = 'default';
+    const live = serviceFor(repo, { now: () => now, paidRank: () => paid });
+    const code = (await live.view(pid(1), 1)).code!;
+    for (const friend of [2, 3, 4, 5]) {
+      await live.accept(pid(friend), code);
+      await live.devAddTime('op', pid(friend), REFERRAL_ACTIVE_SECONDS);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const before = await repo.rewards(pid(1));
+    expect(before.map((row) => row.milestone)).toEqual(['3_confirmed']);
+    await live.accept(pid(6), code);
+    await live.devAddTime('op', pid(6), REFERRAL_ACTIVE_SECONDS - 1);
+    await live.onJoin(pid(6), 'socket');
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let calls = 0;
+    const original = repo.saveRewards.bind(repo);
+    repo.saveRewards = async (rows: readonly RewardRow[]) => {
+      calls += 1;
+      const call = calls;
+      if (call === 1) await gate;
+      return original(rows);
+    };
+    paid = 'boss';
+    await live.reconcilePaid(pid(1));
+    expect(calls).toBe(1);
+    paid = 'default';
+    live.noteAction(pid(6));
+    now += 1_000;
+    live.noteAction(pid(6));
+    const stopping = live.shutdown();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    release();
+    await stopping;
+    const rows = await repo.rewards(pid(1));
+    const vip = rows.find((row) => row.milestone === '3_confirmed');
+    const premium = rows.find((row) => row.milestone === '5_confirmed');
+    expect(premium?.status).toBe('active');
+    expect(premium?.expiresAt).toBe(now + REFERRAL_REWARD_MS);
+    expect(vip?.status).toBe('paused');
+    expect(vip?.expiresAt).toBeNull();
+    expect(vip?.remainingMs).toBe(REFERRAL_REWARD_MS);
+    expect(premium?.revision).toBeGreaterThan(0);
+    expect(vip?.revision).toBe(premium?.revision);
+    expect((vip?.revision ?? 0) > (before[0]?.revision ?? 0)).toBe(true);
+  });
+
+  it('reports a failed final reward save instead of a clean shutdown', async () => {
+    const repo = new MemoryReferralRepository();
+    let now = 1_800_000_000_000;
+    const live = serviceFor(repo, { now: () => now });
+    const code = (await live.view(pid(1), 1)).code!;
+    for (const friend of [2, 3]) {
+      await live.accept(pid(friend), code);
+      await live.devAddTime('op', pid(friend), REFERRAL_ACTIVE_SECONDS);
+    }
+    await live.accept(pid(4), code);
+    await live.devAddTime('op', pid(4), REFERRAL_ACTIVE_SECONDS - 1);
+    await live.onJoin(pid(4), 'socket');
+    live.noteAction(pid(4));
+    now += 1_000;
+    live.noteAction(pid(4));
+    repo.saveRewards = async () => {
+      throw new Error('disk full');
+    };
+    await expect(live.shutdown()).rejects.toThrow(/referral reward shutdown save failed/);
   });
 });

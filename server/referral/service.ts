@@ -15,6 +15,7 @@ import { InviteeActivityClock, REFERRAL_OUTAGE_PENDING_MS } from './activity';
 import type { ActivitySample } from './activity';
 import { resolveEntitlements, type RewardEntitlement } from './benefits';
 import type { KitStack } from '../services/kit';
+import { serverLog } from '../log';
 import { isInviteeConflict } from './repository';
 import type { ReferralRepository } from './types';
 import type { RelationRow, RewardRow } from './types';
@@ -192,21 +193,9 @@ export class ReferralService {
       if (job.timer) clearTimeout(job.timer);
     }
     this.recoveries.clear();
-    const rewardIds = new Set<string>([...this.rewards.keys(), ...this.rewardDirty]);
-    for (const playerId of rewardIds) {
-      while (this.rewardWriting.has(playerId)) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-      const rows = this.rewards.get(playerId);
-      if (!rows || !this.deps) continue;
-      try {
-        await this.deps.repository.saveRewards(rows.map((row) => ({ ...row })));
-      } catch {
-        this.dbOk = false;
-      }
-    }
     const ids = [...this.tracks.keys()];
     for (const id of ids) await this.onQuit(id);
+    await this.persistRewardsOnShutdown();
   }
 
   async view(playerId: string, page: number, draft?: string): Promise<ReferralMenuState> {
@@ -452,17 +441,61 @@ export class ReferralService {
   }
 
   private remember(playerId: string, rows: RewardRow[]): void {
-    const resolved = resolveEntitlements(rows, this.deps!.paidRank(playerId, this.deps!.now()), this.deps!.now());
-    const loaded = Math.max(0, ...rows.map((row) => row.revision ?? 0), this.rewardRevision.get(playerId) ?? 0);
-    this.rewardRevision.set(playerId, Math.max(loaded, this.rewardRevision.get(playerId) ?? 0));
+    const merged = this.adoptRewards(playerId, rows);
+    const resolved = resolveEntitlements(merged, this.deps!.paidRank(playerId, this.deps!.now()), this.deps!.now());
+    const known = Math.max(0, ...merged.map((row) => row.revision ?? 0), this.rewardRevision.get(playerId) ?? 0);
+    this.rewardRevision.set(playerId, Math.max(known, this.rewardRevision.get(playerId) ?? 0));
     if (!resolved.changed) {
-      this.rewards.set(playerId, resolved.rows.map((row) => ({ ...row, revision: Math.max(row.revision ?? 0, loaded) })));
+      this.rewards.set(playerId, resolved.rows.map((row) => ({ ...row })));
       this.ranks.delete(playerId);
       this.deps!.onBenefitsChanged(playerId);
       return;
     }
     this.stampRewards(playerId, resolved.rows);
     this.deps!.onBenefitsChanged(playerId);
+  }
+
+  /**
+   * A database read may be older than memory. Keep the newer row itself, not
+   * only its revision number. A dirty or in-flight write always wins for rows
+   * already in memory. New milestones from the database are still added.
+   */
+  private adoptRewards(playerId: string, incoming: readonly RewardRow[]): RewardRow[] {
+    const local = this.rewards.get(playerId);
+    const pendingWrite = this.rewardDirty.has(playerId) || this.rewardWriting.has(playerId);
+    const chosen = new Map<string, RewardRow>();
+    for (const row of incoming) chosen.set(row.milestone, { ...row });
+    for (const row of local ?? []) {
+      const loaded = chosen.get(row.milestone);
+      const localRevision = row.revision ?? 0;
+      const loadedRevision = loaded?.revision ?? -1;
+      if (!loaded || pendingWrite || localRevision >= loadedRevision) chosen.set(row.milestone, { ...row });
+    }
+    return [...chosen.values()];
+  }
+
+  private async persistRewardsOnShutdown(): Promise<void> {
+    const errors: string[] = [];
+    const playerIds = new Set<string>([...this.rewards.keys(), ...this.rewardDirty]);
+    for (const playerId of playerIds) {
+      while (this.rewardWriting.has(playerId)) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      }
+      const rows = this.rewards.get(playerId);
+      if (!rows || rows.length === 0 || !this.deps) continue;
+      try {
+        await this.deps.repository.saveRewards(rows.map((row) => ({ ...row })));
+        this.rewardDirty.delete(playerId);
+      } catch (error) {
+        this.dbOk = false;
+        const detail = error instanceof Error ? error.message : String(error);
+        errors.push(`${playerId}: ${detail}`);
+      }
+    }
+    if (errors.length === 0) return;
+    const message = `referral reward shutdown save failed: ${errors.join('; ')}`;
+    serverLog(message, 'error');
+    throw new Error(message);
   }
 
   private stampRewards(playerId: string, rows: readonly RewardEntitlement[]): void {
