@@ -89,6 +89,7 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'trade.*',
     'duels.admin',
     'kit.*',
+    'dailyreward.manage',
   ],
   vip: [
     'home.multiple',

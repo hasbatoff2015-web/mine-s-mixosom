@@ -4,6 +4,7 @@ import type {
   EconomyTopEntry,
   EconomyTransaction,
 } from '../services/economy';
+import type { DailyRewardPortResult } from './dailyReward';
 
 /** Network or admin request. Distinct from an economic source id. */
 export interface EconomyCommandRequest {
@@ -57,6 +58,16 @@ export interface CurrencyPort {
     request?: EconomyCommandRequest,
   ): Promise<EconomyResult>;
   hasEconomicSource?(sourceType: string, sourceId: string): Promise<boolean>;
+  /**
+   * PostgreSQL only. One Moscow date pays once inside this economy scope.
+   * JSON mode does not implement this and must not be used as a fallback.
+   */
+  claimDailyReward?(input: {
+    readonly playerId: string;
+    readonly displayName?: string;
+    readonly claimDate: string;
+    readonly series: readonly number[];
+  }): Promise<DailyRewardPortResult>;
   transfer(
     fromPlayerId: string,
     toPlayerId: string,

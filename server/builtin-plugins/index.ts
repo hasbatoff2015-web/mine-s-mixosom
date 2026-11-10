@@ -9,6 +9,7 @@ import { createBackPlugin } from './back';
 import { createClaimsPlugin } from './claims';
 import { createClanPlugin } from './clan';
 import { createEconomyPlugin } from './economy';
+import { createDailyRewardsPlugin } from './dailyRewards';
 import { createHomePlugin } from './home';
 import { createHologramsPlugin } from './holograms';
 import { createMenuPlugin } from './menu';
@@ -31,6 +32,7 @@ export function createBuiltinPlugins(ctx: BuiltinPluginContext): Plugin[] {
     createPermissionsPlugin(ctx),
     createPluginAdminPlugin(ctx),
     createEconomyPlugin(ctx),
+    createDailyRewardsPlugin(ctx),
     createAuctionPlugin(ctx),
     createClanPlugin(ctx),
     createTpaPlugin(ctx),

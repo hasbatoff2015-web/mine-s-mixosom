@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-11-10: Daily login rewards
+
+- [x] One `DAILY_REWARD` source per player, Moscow date, economy scope, and deployment. The ledger insert and the balance update commit together.
+- [x] Streaks reset after a missed Moscow day and stay on the last configured amount. Online players are checked about every 10 seconds.
+- [x] `/dailyreward` edits the per-mode series without a restart. The feature ships disabled. JSON mode does not pay.
+- [ ] The owner enables it on DEV and checks Anarchy, Survival, and Peaceful. This branch does not change production.
+
 ## 2026-11-04: Automatic Yandex identity
 
 - [x] An authorized Yandex player is recognized on connect. No pause button binds the character. An unauthorized player stays a browser guest.

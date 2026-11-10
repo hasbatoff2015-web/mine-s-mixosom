@@ -173,6 +173,30 @@ export interface EconomyHistoryQuery {
 }
 
 /**
+ * One daily login reward. `claimDate` is the server's Moscow civil date.
+ * `series` is the amount table read at claim time. An existing source for
+ * that date returns the posted amount and does not apply a newer series.
+ */
+export interface DailyRewardClaimInput {
+  readonly playerId: string;
+  readonly displayName?: string;
+  readonly claimDate: string;
+  readonly series: readonly number[];
+}
+
+export interface DailyRewardClaimResult {
+  readonly outcome: 'claimed' | 'already_claimed';
+  readonly playerId: string;
+  readonly amount: number | null;
+  readonly streakDay: number | null;
+  readonly claimDate: string;
+  readonly balance: number;
+  readonly operationId: string;
+  /** Yesterday's payout existed, but its streak metadata could not be trusted. */
+  readonly streakRestarted: boolean;
+}
+
+/**
  * Future JSON balance import. Stage 2B chooses whether to run one.
  * Validating a plan does not read or write PostgreSQL and is not called on startup.
  */
