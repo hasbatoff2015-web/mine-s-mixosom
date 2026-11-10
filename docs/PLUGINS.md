@@ -167,9 +167,11 @@ In-game: `/permissions help`, `/op`, `/deop`, `/plugins help`. Server terminal: 
 
 ## Daily rewards
 
-Builtin plugin `daily-rewards` (`server/builtin-plugins/dailyRewards.ts`). It is server-only. There is no client window and no new gameplay packet. A successful payout is one system chat message.
+Builtin plugin `daily-rewards` (`server/builtin-plugins/dailyRewards.ts`). It is server-only. There is no client window and no new gameplay packet. A successful payout is one personal system line: `🎁 Награда за ежедневный вход: +50 Мегакоинов.` The number is the committed PostgreSQL amount. `already_claimed`, a database error, and the balance cap do not send that line.
 
 The reward is for a successful join, or for a player who is still online when the Moscow calendar day changes. No play time, ad, or quest is required. The calendar is `Europe/Moscow`, not the VPS zone and not the browser zone. Anarchy, Survival, and Peaceful each have their own series and their own payout. The id is the server UUID, including guests. The nickname is not the id.
+
+Joins and the midnight sweep share one queue. One plugin instance runs at most four `claimDailyReward` calls at once. The same player and Moscow date are one task. The series is read when a slot starts, so a config change applies before PostgreSQL and not inside an open transaction. A database error or the balance cap waits 30 seconds, then 60, then 120, then 300. A new join uses that same wait. `/dailyreward disable` drops tasks that have not started. An SQL call that already started may commit and does not pay twice. While the builtin plugin itself is disabled, it sends no chat. If the player was offline at commit, the process remembers one notice until the next join or until that same plugin instance is enabled again. The notice does not survive a process crash and is not a second payout.
 
 `/dailyreward status` and `/dailyreward series` show the current mode, backend, timezone, and series. `/dailyreward help` lists the commands. `/dailyreward enable`, `/dailyreward disable`, and `/dailyreward set <день> <сумма>` require `dailyreward.manage`. OP and the console pass that check through the existing permission service. `set` changes an existing level or appends the next level. It does not leave a gap. Changes apply on the next claim without a restart. Defaults are `enabled: false` and `seriesJson: []`, so a fresh install pays nothing.
 

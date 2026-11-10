@@ -121,6 +121,8 @@ No new migration. A daily reward is an ordinary `SOURCE` operation on the existi
 
 If today's source is absent, the same transaction reads yesterday's `DAILY_REWARD`. A readable streak becomes the next day. A missing previous payout, or metadata that is missing or does not match that previous date, pays day 1. After the last configured level the streak number can keep growing, and the amount stays on the last level. The balance update and the ledger leg are inserted only after that decision. `ECONOMY_MAX_BALANCE` still applies: the transaction rolls back, no operation and no partial leg are kept, and the day is not claimed. There is no JSON fallback and no plugin-data claim mark. A closed or failed database leaves the wallet unchanged.
 
+The plugin queues claims and runs at most four of them per process. That limit is not the idempotency guarantee. Two servers can still race; the unique source lets one commit and the other read `already_claimed`. A failed attempt waits before the next SQL, including when the player joins again. Turning the plugin off does not cancel an open transaction. The chat line is not stored in the ledger. If the process dies after commit and before that line is sent, the money stays and a later join does not pay again.
+
 ## Release
 
 `build:server` keeps `pg` external, same as `ws`. `pack:release` copies the production dependency closure by reading package manifests. The VPS does not run `npm install`. World directories are not part of the release.

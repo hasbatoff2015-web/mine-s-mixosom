@@ -12,7 +12,7 @@ import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginH
 import type { BuiltinPluginContext } from './context';
 
 const SWEEP_MS = 10_000;
-const MAX_SWEEP_IN_FLIGHT = 4;
+const MAX_IN_FLIGHT = 4;
 const BACKOFF_MS = [30_000, 60_000, 120_000, 300_000] as const;
 const PROBE_SOURCE_ID = 'probe:1970-01-01';
 
@@ -41,12 +41,29 @@ interface FailureState {
   nextAt: number;
 }
 
+interface ClaimJob {
+  readonly playerId: string;
+  readonly name: string;
+  readonly dateKey: string;
+}
+
+interface PendingNotice {
+  readonly playerId: string;
+  readonly dateKey: string;
+  readonly amount: number;
+  readonly streakDay: number;
+}
+
 type LevelChange =
   | { ok: true; series: number[]; replacedDamage: boolean }
   | { ok: false; error: string };
 
 function claimKey(playerId: string, dateKey: string): string {
   return `${playerId}:${dateKey}`;
+}
+
+function rewardMessage(amount: number): string {
+  return `🎁 Награда за ежедневный вход: +${formatMegacoins(amount)}.`;
 }
 
 function postgresClaim(economy: CurrencyPort): NonNullable<CurrencyPort['claimDailyReward']> | undefined {
@@ -84,22 +101,20 @@ export function createDailyRewardsPlugin(
   const sweepMs = options.sweepMs ?? SWEEP_MS;
   let api: ServerAPI | undefined;
   let alive = false;
+  let lifecycle = 0;
   let openDate = '';
-  let sweepBusy = false;
   const completed = new Set<string>();
   const failures = new Map<string, FailureState>();
-  const inFlight = new Map<string, object>();
+  const waiting: ClaimJob[] = [];
+  const waitingKeys = new Set<string>();
+  const running = new Map<string, object>();
+  const pendingNotices = new Map<string, PendingNotice>();
+  const deliveredNotices = new Set<string>();
   const damageNotes = new Set<string>();
-  const limitNotices = new Set<string>();
 
-  const resetTransient = (): void => {
-    openDate = '';
-    sweepBusy = false;
-    completed.clear();
-    failures.clear();
-    inFlight.clear();
-    damageNotes.clear();
-    limitNotices.clear();
+  const dropWaiting = (): void => {
+    waiting.length = 0;
+    waitingKeys.clear();
   };
 
   const enabledFlag = (): boolean => api?.getConfig<boolean>('enabled', false) === true;
@@ -134,7 +149,16 @@ export function createDailyRewardsPlugin(
     for (const key of [...completed]) if (!key.endsWith(suffix)) completed.delete(key);
     for (const key of [...failures.keys()]) if (!key.endsWith(suffix)) failures.delete(key);
     for (const key of [...damageNotes]) if (!key.endsWith(suffix)) damageNotes.delete(key);
-    for (const key of [...limitNotices]) if (!key.endsWith(suffix)) limitNotices.delete(key);
+    for (const key of [...deliveredNotices]) if (!key.endsWith(suffix)) deliveredNotices.delete(key);
+    for (const [key, notice] of [...pendingNotices]) {
+      if (notice.dateKey !== today) pendingNotices.delete(key);
+    }
+    for (let index = waiting.length - 1; index >= 0; index -= 1) {
+      const job = waiting[index];
+      if (!job || job.dateKey === today) continue;
+      waitingKeys.delete(claimKey(job.playerId, job.dateKey));
+      waiting.splice(index, 1);
+    }
   };
 
   const noteDate = (today: string): void => {
@@ -143,96 +167,149 @@ export function createDailyRewardsPlugin(
     prune(today);
   };
 
-  const eligible = (playerId: string, dateKey: string, ignoreBackoff: boolean): boolean => {
-    const key = claimKey(playerId, dateKey);
-    if (completed.has(key) || inFlight.has(key)) return false;
-    if (ignoreBackoff) return true;
+  const backoffReady = (key: string): boolean => {
     const failure = failures.get(key);
     return !failure || clock().getTime() >= failure.nextAt;
   };
 
-  const rememberFailure = (key: string, reason: string, fromJoin: boolean): void => {
+  const rememberFailure = (key: string, reason: string): void => {
     const attempts = (failures.get(key)?.attempts ?? 0) + 1;
     const delay = BACKOFF_MS[Math.min(attempts - 1, BACKOFF_MS.length - 1)] ?? 300_000;
     failures.set(key, { attempts, nextAt: clock().getTime() + delay });
-    if (fromJoin && reason === 'balance_limit' && !limitNotices.has(key)) {
-      limitNotices.add(key);
-      const playerId = key.slice(0, key.lastIndexOf(':'));
-      const player = api?.getPlayer(playerId);
-      if (player?.connected) player.sendMessage('Ежедневная награда не выдана: достигнут максимальный баланс.');
-    }
     if (attempts === 1 || attempts % 10 === 0) api?.log(`ежедневная награда отложена (${reason})`);
   };
 
-  const startClaim = (
+  const flushNotices = (playerId?: string): void => {
+    if (!alive || !api) return;
+    const today = moscowDateKey(clock());
+    for (const [key, notice] of [...pendingNotices]) {
+      if (notice.dateKey !== today) {
+        pendingNotices.delete(key);
+        continue;
+      }
+      if (playerId && notice.playerId !== playerId) continue;
+      if (deliveredNotices.has(key)) {
+        pendingNotices.delete(key);
+        continue;
+      }
+      const player = api.getPlayer(notice.playerId);
+      if (!player?.connected) continue;
+      player.sendMessage(rewardMessage(notice.amount));
+      deliveredNotices.add(key);
+      pendingNotices.delete(key);
+    }
+  };
+
+  const rememberNotice = (
     playerId: string,
-    name: string,
     dateKey: string,
-    series: readonly number[],
-    fromJoin: boolean,
-  ): Promise<void> => {
-    const port = postgresClaim(ctx.economy);
-    if (!alive || !api || !port || !eligible(playerId, dateKey, fromJoin)) return Promise.resolve();
+    amount: number,
+    streakDay: number,
+    allowSend: boolean,
+  ): void => {
     const key = claimKey(playerId, dateKey);
+    if (deliveredNotices.has(key)) return;
+    if (allowSend && alive && api) {
+      const player = api.getPlayer(playerId);
+      if (player?.connected) {
+        player.sendMessage(rewardMessage(amount));
+        deliveredNotices.add(key);
+        pendingNotices.delete(key);
+        return;
+      }
+    }
+    pendingNotices.set(key, { playerId, dateKey, amount, streakDay });
+  };
+
+  const pump = (): void => {
+    if (!alive) {
+      dropWaiting();
+      return;
+    }
+    while (running.size < MAX_IN_FLIGHT && waiting.length > 0) {
+      const job = waiting.shift();
+      if (!job) break;
+      const key = claimKey(job.playerId, job.dateKey);
+      waitingKeys.delete(key);
+      if (completed.has(key) || running.has(key) || !backoffReady(key)) continue;
+      if (!payableSeries()) {
+        dropWaiting();
+        return;
+      }
+      launch(job);
+    }
+  };
+
+  const launch = (job: ClaimJob): void => {
+    const key = claimKey(job.playerId, job.dateKey);
     const token = {};
-    inFlight.set(key, token);
+    const epoch = lifecycle;
+    running.set(key, token);
     const work = (async () => {
+      let called = false;
       try {
-        // Keep PostgresGameplayEconomy as `this` so the balance cache updates after commit.
-        const result = await port.call(ctx.economy, { playerId, displayName: name, claimDate: dateKey, series });
+        await Promise.resolve();
+        if (!alive) return;
+        const series = payableSeries();
+        const port = postgresClaim(ctx.economy);
+        if (!series || !port) return;
+        called = true;
+        const result = await port.call(ctx.economy, {
+          playerId: job.playerId,
+          displayName: job.name,
+          claimDate: job.dateKey,
+          series,
+        });
         if (!result.ok) {
-          rememberFailure(key, result.reason, fromJoin);
+          rememberFailure(key, result.reason);
           return;
         }
         failures.delete(key);
         completed.add(key);
-        if (result.outcome !== 'claimed' || result.amount === null || result.streakDay === null) {
-          if (result.amount === null || result.streakDay === null) {
-            if (!damageNotes.has(key)) {
-              damageNotes.add(key);
-              api?.log('ежедневная награда уже есть, но её metadata повреждены');
-            }
-          }
+        if (result.outcome === 'claimed' && result.amount !== null && result.streakDay !== null) {
+          const sameLife = alive && epoch === lifecycle;
+          rememberNotice(job.playerId, job.dateKey, result.amount, result.streakDay, sameLife);
+          if (alive && !sameLife) flushNotices(job.playerId);
           return;
         }
-        const player = api?.getPlayer(playerId);
-        if (!player?.connected) return;
-        player.sendMessage('🎁 Ежедневная награда получена!');
-        player.sendMessage(`День серии: ${result.streakDay}`);
-        player.sendMessage(`Начислено: ${formatMegacoins(result.amount)}.`);
+        if ((result.amount === null || result.streakDay === null) && !damageNotes.has(key)) {
+          damageNotes.add(key);
+          api?.log('ежедневная награда уже есть, но её metadata повреждены');
+        }
+        if (alive && epoch === lifecycle) flushNotices(job.playerId);
       } catch (error) {
-        if (!completed.has(key)) rememberFailure(key, 'unavailable', fromJoin);
+        if (called && !completed.has(key)) rememberFailure(key, 'unavailable');
         api?.log(`ежедневная награда не выполнена (${error instanceof Error ? error.name : 'Error'})`);
       } finally {
-        if (inFlight.get(key) === token) inFlight.delete(key);
+        if (running.get(key) === token) running.delete(key);
+        pump();
       }
     })();
     ctx.economy.track?.(work);
-    return work;
+  };
+
+  const enqueue = (playerId: string, name: string, dateKey: string): void => {
+    if (!alive || !payableSeries()) return;
+    const key = claimKey(playerId, dateKey);
+    if (completed.has(key) || waitingKeys.has(key) || running.has(key) || !backoffReady(key)) return;
+    waiting.push({ playerId, name, dateKey });
+    waitingKeys.add(key);
+    pump();
   };
 
   const sweep = (): void => {
     if (!alive || !api) return;
     const today = moscowDateKey(clock());
     noteDate(today);
-    const series = payableSeries();
-    if (!series || sweepBusy) return;
-    const waiting = api.getPlayers().filter((player) => player.connected && eligible(player.id, today, false));
-    if (waiting.length === 0) return;
-    sweepBusy = true;
-    const pump = (): void => {
-      if (!alive) {
-        sweepBusy = false;
-        return;
-      }
-      while (inFlight.size < MAX_SWEEP_IN_FLIGHT && waiting.length > 0) {
-        const player = waiting.shift();
-        if (!player || !eligible(player.id, today, false)) continue;
-        void startClaim(player.id, player.name, today, series, false).finally(pump);
-      }
-      if (waiting.length === 0 && inFlight.size === 0) sweepBusy = false;
-    };
-    pump();
+    flushNotices();
+    if (!payableSeries()) {
+      dropWaiting();
+      return;
+    }
+    for (const player of api.getPlayers()) {
+      if (!player.connected) continue;
+      enqueue(player.id, player.name, today);
+    }
   };
 
   const canManage = (sender: CommandSender): boolean => {
@@ -269,21 +346,18 @@ export function createDailyRewardsPlugin(
     apiVersion: 1,
     onEnable(next) {
       api = next;
-      alive = true;
-      resetTransient();
+      lifecycle += 1;
       alive = true;
       next.loadConfig({
         enabled: false,
         seriesJson: '[]',
       });
       next.registerEvent('playerJoin', (event) => {
-        const series = payableSeries();
-        if (!series) return;
+        if (!alive) return;
         const today = moscowDateKey(clock());
         noteDate(today);
-        void startClaim(event.playerId, event.name, today, series, true).catch((error: unknown) => {
-          next.log(`ежедневная награда не выполнена (${error instanceof Error ? error.name : 'Error'})`);
-        });
+        flushNotices(event.playerId);
+        enqueue(event.playerId, event.name, today);
       });
       next.scheduleOnce(0, () => sweep());
       next.scheduleRepeating(sweepMs, () => sweep());
@@ -307,6 +381,7 @@ export function createDailyRewardsPlugin(
           }
           if (sub === 'disable') {
             next.setConfig('enabled', false);
+            dropWaiting();
             return ok('Ежедневные награды выключены. Уже выданные награды сохраняются.');
           }
           if (sub === 'set') {
@@ -334,7 +409,8 @@ export function createDailyRewardsPlugin(
     },
     onDisable() {
       alive = false;
-      resetTransient();
+      lifecycle += 1;
+      dropWaiting();
     },
   };
 

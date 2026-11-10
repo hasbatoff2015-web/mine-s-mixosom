@@ -414,9 +414,7 @@ describe.skipIf(databaseUrl === '')('postgres daily reward', () => {
     if ('error' in ada) throw new Error(ada.error);
     await first.money.idle?.();
     expect(first.money.getBalance(ada.player.id)).toBe(ECONOMY_INITIAL_BALANCE + 50);
-    expect(chatLines(adaSink).some((line) => line.includes('Ежедневная награда получена'))).toBe(true);
-    expect(chatLines(adaSink).some((line) => line.includes('День серии: 1'))).toBe(true);
-    expect(chatLines(adaSink).some((line) => line.includes('Начислено: 50 Мегакоинов.'))).toBe(true);
+    expect(chatLines(adaSink).some((line) => line === '🎁 Награда за ежедневный вход: +50 Мегакоинов.')).toBe(true);
     const token = ada.player.sessionToken;
     const againSink = new MemorySink();
     const againJoin = first.join({ sink: againSink, name: 'Ada', sessionToken: token });
@@ -425,7 +423,7 @@ describe.skipIf(databaseUrl === '')('postgres daily reward', () => {
     await first.money.idle?.();
     expect(again.player.id).toBe(ada.player.id);
     expect(first.money.getBalance(ada.player.id)).toBe(ECONOMY_INITIAL_BALANCE + 50);
-    expect(chatLines(againSink).some((line) => line.includes('Ежедневная награда получена'))).toBe(false);
+    expect(chatLines(againSink).some((line) => line.includes('Награда за ежедневный вход'))).toBe(false);
     await first.stop();
 
     const secondDb = open(schema, 'test');
@@ -440,7 +438,7 @@ describe.skipIf(databaseUrl === '')('postgres daily reward', () => {
     await second.money.idle?.();
     expect(restarted.player.id).toBe(ada.player.id);
     expect(second.money.getBalance(ada.player.id)).toBe(ECONOMY_INITIAL_BALANCE + 50);
-    expect(chatLines(restartedSink).some((line) => line.includes('Ежедневная награда получена'))).toBe(false);
+    expect(chatLines(restartedSink).some((line) => line.includes('Награда за ежедневный вход'))).toBe(false);
     const claimDate = moscowDateKey(new Date());
     const rows = await secondDb.query<{ n: string; delta: string }>(
       `SELECT count(*)::text AS n, max(l.delta)::text AS delta
