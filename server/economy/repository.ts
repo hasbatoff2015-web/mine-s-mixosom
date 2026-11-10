@@ -12,6 +12,8 @@ import type {
   EconomyTransferInput,
   EconomyWriteInput,
   EnsureAccountInput,
+  DailyRewardClaimInput,
+  DailyRewardClaimResult,
 } from './types';
 
 /**
@@ -23,6 +25,12 @@ export interface EconomyRepository {
   getAccount(tx: Queryable, playerId: string): Promise<EconomyAccount | null>;
   credit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation>;
   debit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation>;
+  /**
+   * Posts at most one DAILY_REWARD for `playerId:claimDate` in this scope.
+   * The account lock, source check, balance update, and ledger leg commit together.
+   * A repeated source returns the original ledger amount and does not compare a new series.
+   */
+  claimDailyReward(tx: Queryable, input: DailyRewardClaimInput): Promise<DailyRewardClaimResult>;
   transfer(tx: Queryable, input: EconomyTransferInput): Promise<EconomyMutation>;
   transferFraction(tx: Queryable, input: EconomyFractionInput): Promise<EconomyMutation & { readonly amount: number }>;
   setBalance(tx: Queryable, input: EconomySetBalanceInput): Promise<EconomyAdjustment>;

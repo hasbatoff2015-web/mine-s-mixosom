@@ -21,6 +21,7 @@ import {
   EconomySourceConflictError,
   EconomyValidationError,
 } from './errors';
+import type { DailyRewardPortResult } from './dailyReward';
 import type { EconomyCommandRequest, CurrencyPort } from './currencyPort';
 import type { MegacoinService } from './service';
 import type { EconomyAccount, EconomyLedgerEntry, EconomyMutation } from './types';
@@ -74,6 +75,42 @@ export class PostgresGameplayEconomy implements CurrencyPort {
   async hasEconomicSource(sourceType: string, sourceId: string): Promise<boolean> {
     const operation = await this.megacoin.findBySource(sourceType, sourceId);
     return Boolean(operation);
+  }
+
+  /**
+   * Cache follows a committed claim only. A rejected or rolled-back claim
+   * leaves the in-memory balance where it was. An already posted day does not
+   * write the cache again, so a replay cannot put an older balance back.
+   */
+  async claimDailyReward(input: {
+    playerId: string;
+    displayName?: string;
+    claimDate: string;
+    series: readonly number[];
+  }): Promise<DailyRewardPortResult> {
+    try {
+      const displayName = input.displayName ?? this.names.get(input.playerId);
+      const result = await this.megacoin.claimDailyReward({
+        playerId: input.playerId,
+        claimDate: input.claimDate,
+        series: input.series,
+        ...(displayName !== undefined ? { displayName } : {}),
+      });
+      if (result.outcome === 'claimed') this.balances.set(result.playerId, result.balance);
+      return {
+        ok: true,
+        outcome: result.outcome,
+        amount: result.amount,
+        streakDay: result.streakDay,
+        claimDate: result.claimDate,
+        balance: result.balance,
+      };
+    } catch (error) {
+      if (error instanceof EconomyLimitError) return { ok: false, reason: 'balance_limit' };
+      if (error instanceof EconomyValidationError) return { ok: false, reason: 'rejected' };
+      serverLog('daily reward claim failed', 'error');
+      return { ok: false, reason: 'unavailable' };
+    }
   }
 
   async findSourceDebit(sourceType: string, sourceId: string): Promise<string | null> {

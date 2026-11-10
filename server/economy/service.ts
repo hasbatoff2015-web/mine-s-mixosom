@@ -1,8 +1,11 @@
 import { DatabaseDisabledError } from '../db/errors';
 import type { Database, Queryable } from '../db/types';
 import { parseUuid } from '../db/uuid';
+import { serverLog } from '../log';
 import { ECONOMY_MAX_BALANCE } from '../services/economy';
+import { requireDailyRewardSeries } from './dailyReward';
 import { EconomyValidationError } from './errors';
+import { isMoscowDateKey } from './moscowCalendar';
 import { PostgresEconomyRepository } from './postgresRepository';
 import type { EconomyRepository } from './repository';
 import {
@@ -22,6 +25,8 @@ import {
   type EconomyTransferInput,
   type EconomyWriteInput,
   type EnsureAccountInput,
+  type DailyRewardClaimInput,
+  type DailyRewardClaimResult,
 } from './types';
 
 const REASON_TEXT = /^[A-Z][A-Z0-9_]{0,63}$/;
@@ -92,6 +97,31 @@ export class MegacoinService {
   async credit(input: EconomyWriteInput, tx?: Queryable): Promise<EconomyMutation> {
     const parsed = parseWrite(input);
     return this.run(tx, (db) => this.repository.credit(db, parsed));
+  }
+
+  /**
+   * One Moscow day, one source, one ledger leg. The series is chosen inside
+   * the same transaction as the insert. A later series does not pay the difference.
+   */
+  async claimDailyReward(input: DailyRewardClaimInput, tx?: Queryable): Promise<DailyRewardClaimResult> {
+    if (!isMoscowDateKey(input.claimDate)) {
+      throw new EconomyValidationError('claimDate must be a Moscow calendar date');
+    }
+    const displayName = input.displayName === undefined ? undefined : safeDisplayName(input.displayName);
+    const parsed: DailyRewardClaimInput = {
+      playerId: parsePlayerId(input.playerId),
+      ...(displayName !== undefined ? { displayName } : {}),
+      claimDate: input.claimDate,
+      series: requireDailyRewardSeries(input.series),
+    };
+    const result = await this.run(tx, (db) => this.repository.claimDailyReward(db, parsed));
+    if (result.outcome === 'claimed' && result.streakRestarted) {
+      serverLog(
+        `daily reward streak metadata for ${parsed.playerId} before ${parsed.claimDate} is unusable; paid day 1`,
+        'warn',
+      );
+    }
+    return result;
   }
 
   async debit(input: EconomyWriteInput, tx?: Queryable): Promise<EconomyMutation> {
@@ -240,6 +270,15 @@ function parsePlayerId(value: unknown): string {
 
 function parseDisplayName(value: unknown): string {
   return requireToken(value, 'displayName', 64);
+}
+
+/** A bad nickname must not block a reward for an account that already exists. */
+function safeDisplayName(value: unknown): string | undefined {
+  try {
+    return parseDisplayName(value);
+  } catch {
+    return undefined;
+  }
 }
 
 function parsePositiveAmount(value: unknown): number {

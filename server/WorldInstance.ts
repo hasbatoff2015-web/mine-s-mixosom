@@ -1782,6 +1782,7 @@ export class WorldInstance {
     if (this.config.loadBuiltinPlugins !== false) {
       const builtins = createBuiltinPlugins({
         permissions: this.permissions,
+        serverMode: this.config.serverMode,
         teleports: this.teleports,
         history: this.teleportHistory,
         rtp: this.rtp,
