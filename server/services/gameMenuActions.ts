@@ -81,6 +81,11 @@ export function applyGameMenuAction(
       session.activeFriendId = undefined;
       return { kind: 'flush' };
     }
+    if (requested === 'dm-review') {
+      session.screen = session.dmReview ? 'dm-review' : 'root';
+      return { kind: 'flush' };
+    }
+    session.dmReview = undefined;
     session.activeFriendId = undefined;
     session.screen = requested as GameMenuSession['screen'];
     if (session.screen === 'rating') {
@@ -121,6 +126,7 @@ export function applyGameMenuAction(
   }
   if (action === 'back') {
     if (session.screen === 'friend-chat') session.activeFriendId = undefined;
+    if (session.screen === 'dm-review') session.dmReview = undefined;
     session.screen = parentMenuScreen(session.screen);
     return { kind: 'flush' };
   }

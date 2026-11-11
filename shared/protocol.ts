@@ -780,6 +780,7 @@ export type GameMenuScreenKind =
   | 'friends'
   | 'friend-delete-confirm'
   | 'friend-chat'
+  | 'dm-review'
   | 'clans'
   | 'claims'
   | 'claim-settings'
@@ -1579,6 +1580,21 @@ export interface NetworkDirectMessage {
   readonly createdAt: number;
 }
 
+/** One stored direct message as shown to an operator. Text is the saved body, not a new copy. */
+export interface NetworkDmReviewMessage {
+  readonly senderId: string;
+  readonly senderName: string;
+  readonly text: string;
+  readonly createdAt: number;
+}
+
+export interface NetworkDmReview {
+  readonly leftName: string;
+  readonly rightName: string;
+  readonly title: string;
+  readonly messages: readonly NetworkDmReviewMessage[];
+}
+
 export interface NetworkMenuClaim {
   readonly claimId: string;
   readonly name: string;
@@ -1629,6 +1645,7 @@ export interface ServerMenuMessage {
   readonly activeFriendId?: string;
   readonly activeFriendName?: string;
   readonly activeFriendOnline?: boolean;
+  readonly dmReview?: NetworkDmReview;
   readonly claims?: readonly NetworkMenuClaim[];
   readonly claimCount?: number;
   readonly claimMax?: number;
@@ -2036,7 +2053,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
-  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat', 'dm-review',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
   'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];

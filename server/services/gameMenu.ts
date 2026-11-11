@@ -34,6 +34,19 @@ export interface GameMenuSession {
   pendingFriendId?: string;
   pendingFriendName?: string;
   activeFriendId?: string;
+  dmReview?: {
+    leftId: string;
+    rightId: string;
+    leftName: string;
+    rightName: string;
+    title: string;
+    messages: Array<{
+      senderId: string;
+      senderName: string;
+      text: string;
+      createdAt: number;
+    }>;
+  };
   claimId?: string;
   claimNameText: string;
   claimMemberText: string;
@@ -60,6 +73,7 @@ export function createMenuSession(): GameMenuSession {
 export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   if (screen === 'home-delete-confirm') return 'homes';
   if (screen === 'friend-delete-confirm' || screen === 'friend-chat') return 'friends';
+  if (screen === 'dm-review') return 'root';
   if (screen === 'auction-history') return 'auction';
   if (
     screen === 'donate-color'
@@ -139,6 +153,7 @@ export function buildTradeMessage(
 export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'homes' || screen === 'home-delete-confirm') return 'Дома';
   if (screen === 'friend-chat') return 'Чат';
+  if (screen === 'dm-review') return 'Личная переписка';
   if (screen === 'friends' || screen === 'friend-delete-confirm') return 'Друзья';
   if (screen === 'clans') return 'Кланы';
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';

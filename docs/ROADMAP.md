@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-11-12: Operator transcript `/chat`
+
+- [x] `/chat <nick1> <nick2>` is server-gated to OP and opens a read-only menu of one stored direct-message pair.
+- [x] The view uses the saved censored text, works for offline players, and does not send, edit, or mark the conversation read.
+- [ ] Not merged. Not deployed.
+
 ## 2026-11-04: Automatic Yandex identity
 
 - [x] An authorized Yandex player is recognized on connect. No pause button binds the character. An unauthorized player stays a browser guest.

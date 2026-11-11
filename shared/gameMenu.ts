@@ -23,6 +23,7 @@ export type GameMenuScreen =
   | 'friends'
   | 'friend-delete-confirm'
   | 'friend-chat'
+  | 'dm-review'
   | 'clans'
   | 'claims'
   | 'claim-settings'
@@ -44,7 +45,7 @@ export type GameMenuScreen =
   | 'closed';
 
 export function showsMenuBack(screen: GameMenuScreen): boolean {
-  return screen !== 'root' && screen !== 'closed';
+  return screen !== 'root' && screen !== 'closed' && screen !== 'dm-review';
 }
 
 export function claimAnchorTitle(block: string | undefined, name: string): string {

@@ -5600,7 +5600,7 @@ export class GameUI {
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    const panelClass = state.screen === 'friend-chat'
+    const panelClass = state.screen === 'friend-chat' || state.screen === 'dm-review'
       ? 'mc-panel mc-menu-panel mc-menu-panel-chat'
       : 'mc-panel mc-menu-panel';
     const modal = this.resetOverlayModal();
@@ -5612,6 +5612,7 @@ export class GameUI {
         </div>
       </div>`;
     this.bindGameMenuChrome();
+    this.pinDirectMessageReview();
     this.applyFriendChatPanelHeight();
     this.reconcileDonateLocalState();
     this.resetFieldEcho(this.modal!);
@@ -5620,6 +5621,13 @@ export class GameUI {
     if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
       this.paintFriendChatLog('restore', preservedScroll);
     }
+  }
+
+  private pinDirectMessageReview(): void {
+    if (this.menuState?.screen !== 'dm-review') return;
+    const log = this.modal?.querySelector<HTMLElement>('[data-dm-review-log]');
+    if (!log) return;
+    log.scrollTop = log.scrollHeight;
   }
 
   private rememberFriendsPanelHeight(): void {
@@ -5806,7 +5814,7 @@ export class GameUI {
    * A different screen, or another claim, rebuilds so the old draft cannot leak.
    */
   private tryPatchMenuBody(state: ServerMenuMessage): boolean {
-    if (state.screen === 'friend-chat') return false;
+    if (state.screen === 'friend-chat' || state.screen === 'dm-review') return false;
     const live = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
     if (!live) return false;
     const fresh = parseMarkup(menuBodyHtml(state, (value) => this.escape(value)));

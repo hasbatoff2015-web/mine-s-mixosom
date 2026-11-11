@@ -2732,6 +2732,45 @@ textarea,
   gap: calc(4px * var(--mc-ui-scale, 3));
 }
 
+.mc-menu-panel-chat .mc-dm-review {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.mc-dm-review .mc-menu-heading {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+.mc-dm-review-line {
+  display: flex;
+  flex-direction: column;
+  align-self: stretch;
+  gap: calc(1px * var(--mc-ui-scale, 3));
+  min-width: 0;
+}
+
+.mc-dm-review-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: calc(6px * var(--mc-ui-scale, 3));
+  min-width: 0;
+  color: #c8c8c8;
+  font-size: calc(6px * var(--mc-ui-scale, 3));
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.mc-dm-review-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: #ffe14a;
+}
+
+.mc-dm-review-text {
+  background: #2c3036;
+}
+
 .mc-friend-chat-head .mc-menu-heading {
   overflow: hidden;
   text-overflow: ellipsis;

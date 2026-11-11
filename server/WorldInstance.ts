@@ -3965,6 +3965,30 @@ export class WorldInstance {
         ...(session.pendingHomeName ? { pendingHomeName: session.pendingHomeName } : {}),
       };
     }
+    if (session.screen === 'dm-review') {
+      if (!session.dmReview || !this.isOperator(player)) {
+        session.screen = 'root';
+        session.dmReview = undefined;
+        return this.buildMenuMessage(player);
+      }
+      const review = session.dmReview;
+      return {
+        ...base,
+        screen: 'dm-review',
+        title: review.title,
+        dmReview: {
+          leftName: review.leftName,
+          rightName: review.rightName,
+          title: review.title,
+          messages: review.messages.map((message) => ({
+            senderId: message.senderId,
+            senderName: message.senderName,
+            text: message.text,
+            createdAt: message.createdAt,
+          })),
+        },
+      };
+    }
     if (session.screen === 'friend-chat') {
       const friendId = session.activeFriendId;
       if (!friendId || !this.friends.isFriend(player.id, friendId)) {
@@ -8323,6 +8347,54 @@ export class WorldInstance {
     return ok(selection === 'bee' ? 'Рядом появилась пчела.' : 'Рядом появился мини-крипер.');
   }
 
+  private openDirectMessageReview(args: readonly string[], sender: CommandSender): CommandResult {
+    if (isConsoleSender(sender)) return fail('Эту команду может использовать только игрок.');
+    const player = this.players.get(sender.playerId);
+    if (!player?.connected || !this.isOperator(player)) {
+      return fail('Недостаточно прав для выполнения этой команды.');
+    }
+    const leftLabel = args[0]?.trim() ?? '';
+    const rightLabel = args[1]?.trim() ?? '';
+    if (!leftLabel || !rightLabel || args.length !== 2) return fail('Использование: /chat <ник1> <ник2>');
+    const left = this.resolvePermissionSubject(leftLabel);
+    if (!left.ok) return fail(this.directMessageReviewLookupError(leftLabel, left.error));
+    const right = this.resolvePermissionSubject(rightLabel);
+    if (!right.ok) return fail(this.directMessageReviewLookupError(rightLabel, right.error));
+    if (left.playerId === right.playerId) return fail('Укажите двух разных игроков.');
+    const transcript = this.directMessages.inspect(left.playerId, right.playerId);
+    if (!transcript.ok) return fail(transcript.error);
+    const title = `Личная переписка: ${left.name} ↔ ${right.name}`;
+    const session = this.menuSessions.get(player.id) ?? createMenuSession();
+    session.screen = 'dm-review';
+    session.message = undefined;
+    session.activeFriendId = undefined;
+    session.dmReview = {
+      leftId: left.playerId,
+      rightId: right.playerId,
+      leftName: left.name,
+      rightName: right.name,
+      title,
+      messages: transcript.messages.map((message) => ({
+        senderId: message.senderId,
+        senderName: message.senderId === left.playerId
+          ? left.name
+          : message.senderId === right.playerId
+            ? right.name
+            : message.senderId,
+        text: message.text,
+        createdAt: message.createdAt,
+      })),
+    };
+    this.menuSessions.set(player.id, session);
+    this.flushMenu(player);
+    return ok(`Открыта личная переписка ${left.name} и ${right.name}.`);
+  }
+
+  private directMessageReviewLookupError(label: string, error: string): string {
+    if (error.startsWith('Ambiguous')) return `Ник «${label}» неоднозначен. Укажите id игрока.`;
+    return `Игрок «${label}» не найден.`;
+  }
+
   private registerBuiltinCommands(): void {
     this.commands.register({
       name: 'help',
@@ -8336,6 +8408,13 @@ export class WorldInstance {
         }
         return ok(this.commands.list().map((command) => `${command.usage} — ${command.description}`));
       },
+    });
+    this.commands.register({
+      name: 'chat',
+      usage: '/chat <ник1> <ник2>',
+      description: 'Просмотр личной переписки двух игроков',
+      permission: 'operator',
+      execute: (args, sender) => this.openDirectMessageReview(args, sender),
     });
     this.commands.register({
       name: 'gamemode',
