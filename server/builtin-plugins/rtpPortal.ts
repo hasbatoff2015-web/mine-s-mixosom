@@ -3,6 +3,7 @@ import type { Plugin } from '../PluginManager';
 import { fail, ok } from '../commands';
 import { volumeContains, type SelectionVolume } from '../services/selection';
 import { formatPluginHelp, isHelpRequest, usageError } from '../services/pluginHelp';
+import { TELEPORT_COOLDOWN_MESSAGE } from '../../shared/playerRules';
 import type { BuiltinPluginContext } from './context';
 
 const HELP = {
@@ -66,7 +67,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
         inside.add(key);
         const until = cooldownUntil.get(`${key}:${hit.name}`) ?? 0;
         if (Date.now() < until) {
-          player.sendMessage('This RTP portal is on cooldown.');
+          player.sendMessage(TELEPORT_COOLDOWN_MESSAGE);
           return;
         }
         const started = ctx.rtpSessions.enqueue(event.playerId, {

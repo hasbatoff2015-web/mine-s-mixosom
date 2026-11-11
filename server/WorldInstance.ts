@@ -192,7 +192,7 @@ import {
   type GameMenuSession,
 } from './services/gameMenu';
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
-import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
+import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount, normalizeDirectMessageText } from '../shared/directMessages';
 import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, resolveHomeLimit } from '../shared/homes';
 import { CLAN_CREATE_COST, CLAN_DONATE_CREATE_COST } from '../shared/clans';
 import { formatDurationMs, sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
@@ -205,6 +205,12 @@ import {
 } from './services/gameMenuActions';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
+import { PlayerRules } from './services/playerRules';
+import { censorChatText } from './services/chatCensor';
+import {
+  CHAT_COOLDOWN_MESSAGE,
+  isTeleportRestrictionMessage,
+} from '../shared/playerRules';
 import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
 import { MegaZombieService, bossLootStacks } from './services/megaZombie';
@@ -699,6 +705,7 @@ export class WorldInstance {
   readonly donation: DonationRankService;
   private readonly inventoryEditLocks = new Set<string>();
   readonly teleports: TeleportService;
+  readonly playerRules = new PlayerRules();
   readonly teleportHistory: TeleportHistoryService;
   readonly pluginConfig: PluginConfigService;
   readonly rtp: RtpService;
@@ -942,6 +949,12 @@ export class WorldInstance {
           ...(extra?.style ? { style: extra.style } : {}),
         });
       },
+      acceptPlayerChat: (playerId) => {
+        const now = Date.now();
+        if (this.playerRules.chatBlocked(playerId, now)) return CHAT_COOLDOWN_MESSAGE;
+        this.playerRules.acceptChat(playerId, now);
+        return undefined;
+      },
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       friendRelation: (viewerId, targetId) => this.friends.relation(viewerId, targetId),
       requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
@@ -1037,15 +1050,14 @@ export class WorldInstance {
         }),
         teleport: (x, y, z, look) => this.hardRelocatePlayer(player, x, y, z, look),
         sendMessage: (text) => {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text,
-            kind: 'system',
-          });
+          this.sendPlayerNotice(player, text, 'system');
         },
       };
+    }, {
+      block: (playerId, _reason, now) => this.playerRules.teleportBlockReason(playerId, now),
+      begin: (playerId) => this.playerRules.beginTeleport(playerId),
+      finish: (playerId) => this.playerRules.finishTeleport(playerId),
+      commit: (playerId, reason, now) => this.playerRules.acceptTeleport(playerId, reason, now),
     });
     this.teleports.attach(this.events);
     this.pluginConfig = new PluginConfigService(this.pluginStore);
@@ -1204,6 +1216,15 @@ export class WorldInstance {
     });
     this.gameplay.blocksManualItemDrop = (playerId) => this.duels.blocksManualDrop(playerId);
     this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
+    this.gameplay.blocksPlayerStrike = (attackerId, victimId) => (
+      this.playerRules.blocksPvp(attackerId, victimId, Date.now())
+    );
+    this.gameplay.notePlayerStrike = (attackerId, victimId) => {
+      if (!this.players.has(attackerId) || !this.players.has(victimId)) return;
+      const until = this.playerRules.acceptPvp(attackerId, victimId, Date.now());
+      this.syncPvpTimer(attackerId, until);
+      this.syncPvpTimer(victimId, until);
+    };
     this.gameplay.onDeathLoot = (player, ids) => {
       this.duels.finalizeDeath(player.id, ids);
       this.teleportHistory.recordDeath(player.id, {
@@ -1216,7 +1237,9 @@ export class WorldInstance {
     this.teleports.setExternalDeny((playerId, reason) => (
       reason === 'duel' ? undefined : this.duels.externalTeleportError(playerId)
     ));
-    this.rtpSessions.setExternalDeny((playerId) => this.duels.externalTeleportError(playerId));
+    this.rtpSessions.setExternalDeny((playerId) => (
+      this.duels.externalTeleportError(playerId) ?? this.playerRules.teleportBlockReason(playerId, Date.now())
+    ));
     this.events.on('playerDamage', (event) => {
       if (this.duels.shouldCancelPlayerDamage(event.playerId, event.attackerId, event.cause)) event.cancel();
     });
@@ -4099,10 +4122,34 @@ export class WorldInstance {
     }
     const text = message.text ?? '';
     const clientRequestId = message.clientRequestId;
+    const normalized = normalizeDirectMessageText(text);
+    if (!normalized.ok) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId: message.friendId,
+        error: normalized.error,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      });
+      return;
+    }
+    const now = Date.now();
+    if (this.playerRules.chatBlocked(player.id, now)) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId: message.friendId,
+        error: CHAT_COOLDOWN_MESSAGE,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      });
+      return;
+    }
+    const censored = censorChatText(normalized.text);
     const viewing = this.isViewingFriendChat(message.friendId, player.id);
-    const result = this.directMessages.send(player.id, message.friendId, text, viewing
+    const result = this.directMessages.send(player.id, message.friendId, censored, viewing
       ? { markReadFor: message.friendId }
       : undefined);
+    if (result.ok) this.playerRules.acceptChat(player.id, now);
     if (!result.ok) {
       this.sendTo(player, {
         type: 'direct_message',
@@ -5628,13 +5675,7 @@ export class WorldInstance {
       this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
       const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
       this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
-      this.sendTo(player, {
-        type: 'chat',
-        from: 'server',
-        playerId: 'server',
-        text: lines.join('\n'),
-        kind: okResult ? 'command' : 'error',
-      });
+      this.sendPlayerNotice(player, lines.join('\n'), okResult ? 'command' : 'error');
       return { ok: okResult, lines };
     };
     if (isPromise(dispatched.result)) {
@@ -5680,21 +5721,9 @@ export class WorldInstance {
           name,
           lines: result?.lines ?? [],
         });
-        this.sendTo(player, {
-          type: 'chat',
-          from: 'server',
-          playerId: 'server',
-          text,
-          kind,
-        });
+        this.sendPlayerNotice(player, text, kind);
         for (const line of result?.lines ?? []) {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text: line,
-            kind,
-          });
+          this.sendPlayerNotice(player, line, kind);
         }
         this.flushPlayerInventory(player);
         this.flushBlockChanges();
@@ -5718,7 +5747,43 @@ export class WorldInstance {
     }
     const recipients = this.chatRecipients(player, channel);
     if (!recipients) return;
-    this.deliverPlayerChat(player, trimmed, channel, recipients);
+    const now = Date.now();
+    if (this.playerRules.chatBlocked(player.id, now)) {
+      this.sendPlayerNotice(player, CHAT_COOLDOWN_MESSAGE, 'system', channel);
+      return;
+    }
+    const censored = censorChatText(trimmed);
+    this.playerRules.acceptChat(player.id, now);
+    this.deliverPlayerChat(player, censored, channel, recipients);
+  }
+
+  /** Yellow for rate-limit and PvP teleport notices. Other server lines keep their kind. */
+  sendPlayerNotice(
+    player: ServerPlayer,
+    text: string,
+    kind: 'system' | 'command' | 'error' = 'system',
+    channel?: ChatChannel,
+  ): void {
+    const notice = text === CHAT_COOLDOWN_MESSAGE || isTeleportRestrictionMessage(text);
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text,
+      kind: notice ? 'system' : kind,
+      ...(notice ? { style: 'notice' as const, channel: channel ?? 'global' } : {}),
+      ...(!notice && channel ? { channel } : {}),
+    });
+  }
+
+  syncPvpTimer(playerId: string, until: number, now = Date.now()): void {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return;
+    this.sendTo(player, {
+      type: 'pvp_timer',
+      until: until > now ? until : 0,
+      serverNow: now,
+    });
   }
 
   sendChatError(player: ServerPlayer, text: string): void {
@@ -5983,13 +6048,7 @@ export class WorldInstance {
           cancelOnDamage: result.request.cancelOnDamage,
         });
         if (!teleported.ok && player) {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text: teleported.error ?? 'RTP failed.',
-            kind: 'error',
-          });
+          this.sendPlayerNotice(player, teleported.error ?? 'RTP failed.', 'error');
         } else if (player) {
           this.sendTo(player, {
             type: 'chat',
@@ -6560,6 +6619,7 @@ export class WorldInstance {
       if (now - player.disconnectedAt < 5 * 60_000) continue;
       this.tokens.delete(player.sessionToken);
       this.storedPlayers[player.id] = this.toStored(player);
+      this.playerRules.forget(player.id);
       this.players.delete(player.id);
     }
   }
@@ -7180,6 +7240,7 @@ export class WorldInstance {
       armor: getArmorPoints(player.inventory),
       fire: player.survival.isOnFire,
       dead: player.survival.dead,
+      pvpUntil: this.playerRules.pvpUntil(player.id, Date.now()),
     };
     const signature = JSON.stringify(health);
     if (signature !== player.healthSignature) {

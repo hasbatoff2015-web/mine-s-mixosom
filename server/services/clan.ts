@@ -65,6 +65,7 @@ import {
   type ClanRole,
 } from '../../shared/clans';
 import { CHAT_TOO_LONG_ERROR, normalizeOutgoingChatText } from '../../shared/chat';
+import { censorChatText } from './chatCensor';
 import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
@@ -202,6 +203,8 @@ export interface ClanRuntime {
   isOnline(playerId: string): boolean;
   displayName(playerId: string): string;
   sendMessage(playerId: string, text: string, extra?: { channel?: 'global' | 'nearby' | 'clan'; style?: 'announcement' }): void;
+  /** Shared 3s chat window. Returns the player-facing error, or undefined when the line may be sent. */
+  acceptPlayerChat?(playerId: string): string | undefined;
   lookupPlayer?(idOrName: string): { id: string; name: string; connected: boolean } | undefined;
   friendRelation?(viewerId: string, targetId: string): 'self' | 'friend' | 'outgoing' | 'none';
   requestFriend?(fromId: string, targetId: string): { ok: boolean; error?: string };
@@ -1081,11 +1084,16 @@ export class ClanService {
         session.message = clanAnnounceCooldownLabel(remaining);
         return { ok: false, error: session.message, clan };
       }
+      const chatError = this.runtime.acceptPlayerChat?.(playerId);
+      if (chatError) {
+        session.message = chatError;
+        return { ok: false, error: chatError, clan };
+      }
       clan.announcementCooldownUntil = this.now() + CLAN_ANNOUNCEMENT_COOLDOWN_MS;
       this.persist();
       session.announceText = '';
       session.message = undefined;
-      const line = clanAnnouncementChat(parsed);
+      const line = clanAnnouncementChat(censorChatText(parsed));
       for (const memberId of clan.memberIds) {
         if (!this.runtime.isOnline(memberId)) continue;
         this.runtime.sendMessage(memberId, line, { channel: 'clan', style: 'announcement' });

@@ -567,6 +567,16 @@ All `.mc-stage` overlays share `overlayStageStyle()` (scale + close/back sprite 
 
 In-game social menu stays on `ServerMenuMessage` / `menu_action` / `gameMenuGui`. The visual pass adds `balance` + `balanceLabel` to the existing snapshot (`WorldInstance.buildMenuMessage` reads `EconomyService.getBalance`). Client chrome is `.mc-menu-stage` + `.mc-menu-panel` with a content-sized dark panel, 4+4 `.mc-menu-tile` grid (Spawn/Homes/Friends/Clans + Claims/Trade/Auction/Рейтинг), and PNG faces from `public/ui/menu/` including `icon_rating.png`. Nested `rating` screen uses `buildRankingSnapshot` (players/clans × money/kills, top 50, 10/page). Close HTML is still `closeButtonHtml()`; menu-stage CSS swaps the face to the close/back sprites. HUD `#hud-corner` uses the same sheet. Auction House and Clan overlays are unchanged systems.
 
+## Chat limits, PvP timer and teleport safety — 2026-11-01
+
+`PlayerRules` on `WorldInstance` stores per-player server timestamps: `chatUntil`, `teleportUntil`, `pvpDeadline`, `protectionUntil`. Nothing in that object is a zone or world flag.
+
+`handleChat` checks the 3-second window only after the line is a non-empty player message with recipients. A rejection is one `style: 'notice'` line to the sender. The accepted text is passed through `censorChatText` and only that string is delivered. Commands return before this path. Clan announcements censor the player-written body before the existing `[ОБЪЯВЛЕНИЕ…]` wrapper. `handleDirectMessage` uses the same cooldown and `censorChatText` before the line is stored. A rejected direct message returns the Russian cooldown text to the sender and does not start the cooldown.
+
+`TeleportService` asks `TeleportRuleGate` immediately before a governed move (`spawn`, `home`, `rtp`, `portal`, `tpa`, `friends`). The shared 5-second cooldown and the 20-second safety window are committed only after `teleport()` returns true. Spawn commits the cooldown and does not read or write the safety deadline. A second call that re-enters `now()` for the same player is rejected before the first commit. PvP is checked first and returns `Нельзя телепортироваться во время PvP.`
+
+`ServerGameplay.hurtPlayerResult` asks `blocksPlayerStrike(attacker, victim)` before damage. Only a melee or projectile hit that `survival.damage` accepts calls `notePlayerStrike`, which sets both players' deadlines to `now + 10s` and sends `pvp_timer` to each of them. Welcome also carries `pvpUntil` for that player. The client converts it with `serverNow` and only replaces the text of `#pvp-badge`.
+
 ## Chat channels — 2026-09-12
 
 Player chat stays on the existing `ClientChatMessage` / `ServerChatMessage` / `ChatLog` / `GameUI` `#chat` path. The client sends only intent `{ type: 'chat', text, channel?: 'global'|'nearby'|'clan' }`. Parse strips forged `from` / `playerId` / recipients / coords / `clanId`. Sender is the authenticated player. `MAX_CHAT_LENGTH` is **128**; over-length is rejected (not sliced).

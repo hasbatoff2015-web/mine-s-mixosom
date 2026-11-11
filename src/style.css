@@ -793,6 +793,29 @@ textarea,
   background: #67d960;
 }
 
+#pvp-badge {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + var(--hud-status-icon-size) + 12px);
+  transform: translateX(-50%);
+  z-index: 8;
+  max-width: calc(100vw - 24px);
+  padding: 4px 12px;
+  border-radius: 8px;
+  background: rgba(18, 18, 20, 0.72);
+  color: #ffe14a;
+  font: 700 13px/1.2 var(--font-ui, "Segoe UI", sans-serif);
+  letter-spacing: 0.01em;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+#pvp-badge[hidden] {
+  display: none;
+}
+
 #selected-item {
   position: absolute;
   bottom: calc(max(10px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + var(--hud-status-icon-size) + 24px);
@@ -1300,6 +1323,7 @@ textarea,
 .chat-line.kind-death { color: #ffb0b0; }
 .chat-line.kind-system { color: #c8c8c8; }
 .chat-line.style-announcement { color: #4ecfdc; }
+.chat-line.style-notice { color: #ffe14a; }
 
 #chat-form {
   display: flex;
@@ -2835,6 +2859,12 @@ textarea,
 .mc-menu-panel .mc-ah-message,
 .mc-menu-panel .mc-menu-empty {
   color: #c8c8c8;
+}
+
+.mc-ah-message.is-warn,
+.mc-menu-panel .mc-ah-message.is-warn,
+.mc-friend-chat-error.is-warn {
+  color: #ffe14a;
 }
 
 .mc-menu-panel .mc-ah-btn {

@@ -1,13 +1,14 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { DirectMessageService } from '../../server/services/directMessages';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { CHAT_TOO_LONG_ERROR } from '../../shared/chat';
+import { CHAT_COOLDOWN_MESSAGE } from '../../shared/playerRules';
 import {
   DIRECT_MESSAGE_EMPTY_ERROR,
   DIRECT_MESSAGE_LIMIT,
@@ -294,6 +295,7 @@ describe('direct messages on the authoritative server', () => {
   const worlds: WorldInstance[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const world of worlds.splice(0)) await world.stop();
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -343,6 +345,8 @@ describe('direct messages on the authoritative server', () => {
     expect(lastOf<ServerMenuMessage>(bob.sink, 'menu')?.notifications?.friends).toBe(1);
 
     const secret = 'secret-dm-alpha';
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     for (const text of [`${secret}-1`, `${secret}-2`, `${secret}-3`]) {
       world.handleDirectMessage(ada.player, {
         type: 'direct_message_action',
@@ -351,6 +355,7 @@ describe('direct messages on the authoritative server', () => {
         text,
         senderId: eve.player.id,
       } as never);
+      now += 3_000;
     }
     for (const text of ['cara-1', 'cara-2']) {
       world.handleDirectMessage(cara.player, {
@@ -359,6 +364,7 @@ describe('direct messages on the authoritative server', () => {
         friendId: bob.player.id,
         text,
       });
+      now += 3_000;
     }
 
     const adaEcho = ofType<ServerDirectMessage>(ada.sink, 'direct_message');
@@ -458,6 +464,8 @@ describe('direct messages on the authoritative server', () => {
     const bobToken = bob.player.sessionToken;
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'friends_chat', playerId: ada.player.id });
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -473,6 +481,7 @@ describe('direct messages on the authoritative server', () => {
     })).toBe(false);
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'back' });
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -484,6 +493,7 @@ describe('direct messages on the authoritative server', () => {
     expect(ofType<ServerDirectMessage>(bob.sink, 'direct_message').some((message) => message.messages?.some((row) => row.text === 'later'))).toBe(false);
 
     const longText = 'я'.repeat(128);
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -508,6 +518,7 @@ describe('direct messages on the authoritative server', () => {
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'close' });
     world.disconnect(bob.player.id);
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -618,7 +629,7 @@ describe('direct messages on the authoritative server', () => {
     }
     const limited = lastOf<ServerDirectMessage>(ada.sink, 'direct_message');
     expect(limited?.event).toBe('error');
-    expect(limited?.error).toBe(DIRECT_MESSAGE_RATE_LIMIT_ERROR);
+    expect(limited?.error).toBe(CHAT_COOLDOWN_MESSAGE);
     expect(limited?.clientRequestId).toBe('burst-3');
     expect(bob.sink.payloads.filter((payload) => {
       const message = payload as ServerDirectMessage;

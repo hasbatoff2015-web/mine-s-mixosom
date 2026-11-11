@@ -441,7 +441,8 @@ import {
   takePendingAppearance,
 } from '../net/remoteAppearance';
 import type { ClientInventoryActionMessage, ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
-import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
+import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, retainedChatDraft, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
+import { CHAT_COOLDOWN_MESSAGE, clientPvpDeadline } from '../../shared/playerRules';
 import { sanitizePlayerNameStyle, type PlayerNameStyle } from '../../shared/donationRanks';
 import { adaptiveJobBudgetMs, countInitialAreaProgress, initialAreaReady, lightContextReady, lightingHaloRadius, missingChunkCoords } from '../world/worldJobs';
 import {
@@ -775,6 +776,8 @@ export class Game {
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
   private serverTimeOffsetMs = 0;
+  /** Last online chat line, restored if the server rejects it for the rate limit. */
+  private pendingChatDraft = '';
   private claimBoundaries?: ClaimBoundaryRenderer;
   private worldBorderRenderer?: WorldBorderRenderer;
   private readonly hurt = new HurtFeedback();
@@ -1468,6 +1471,7 @@ export class Game {
     if (typeof welcome.serverNow === 'number' && Number.isFinite(welcome.serverNow)) {
       this.serverTimeOffsetMs = welcome.serverNow - Date.now();
     }
+    this.ui.setPvpDeadline(clientPvpDeadline(welcome.pvpUntil, this.serverTimeOffsetMs));
     this.holograms?.dispose();
     this.holograms = new HologramRenderer(this.scene, this.camera, () => Date.now() + this.serverTimeOffsetMs);
     this.holograms.sync(welcome.holograms ?? []);
@@ -1658,6 +1662,9 @@ export class Game {
           this.hurt.trigger(performance.now(), { periodic: false });
           this.playLocal('player.hurt');
         }
+        if (typeof message.pvpUntil === 'number') {
+          this.ui.setPvpDeadline(clientPvpDeadline(message.pvpUntil, this.serverTimeOffsetMs));
+        }
         this.refreshHud();
         return;
       }
@@ -1732,6 +1739,7 @@ export class Game {
         return;
       case 'chat':
         if (message.kind === 'player') {
+          if (message.playerId === session.online.playerId) this.pendingChatDraft = '';
           presentRemoteChatBubble(session.online.remotes, message, performance.now());
           if (message.channel === 'clan') this.ui.setPlayerInClan(true);
           this.pushChat('player', message.text, {
@@ -1742,12 +1750,22 @@ export class Game {
           });
         } else {
           if (message.text === CHAT_NO_CLAN_HINT) this.ui.setPlayerInClan(false);
+          if (message.text === CHAT_COOLDOWN_MESSAGE) {
+            const restored = retainedChatDraft(this.ui.chatDraftValue(), this.pendingChatDraft, this.ui.isChatOpen());
+            if (restored !== undefined) this.ui.setChatDraft(restored);
+          }
           this.pushChat(message.kind === 'error' ? 'error' : message.kind === 'command' ? 'command' : 'system', message.text, {
             channel: message.channel,
             style: message.style,
             id: message.messageId,
           });
         }
+        return;
+      case 'pvp_timer':
+        if (typeof message.serverNow === 'number' && Number.isFinite(message.serverNow)) {
+          this.serverTimeOffsetMs = message.serverNow - Date.now();
+        }
+        this.ui.setPvpDeadline(clientPvpDeadline(message.until, this.serverTimeOffsetMs));
         return;
       case 'inventory':
         try {
@@ -5025,6 +5043,7 @@ export class Game {
       });
       if (snapshot) this.profiler.paint(this.ui.overlayRoot(), snapshot);
     }
+    this.ui.syncPvpBadge(Date.now());
     this.frameHandle = requestAnimationFrame((time) => this.frame(time));
   }
 
@@ -6536,6 +6555,7 @@ export class Game {
     const trimmed = parsed.text;
     this.chat.rememberInput(trimmed);
     this.ui.setChatInputHistory(this.chat.history);
+    this.pendingChatDraft = trimmed;
     this.ui.clearChatDraft();
     if (session.online) {
       session.online.client.send({

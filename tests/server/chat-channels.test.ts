@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
@@ -72,6 +72,7 @@ describe('server chat channels', () => {
   const worlds: WorldInstance[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const world of worlds.splice(0)) await world.stop();
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -178,7 +179,9 @@ describe('server chat channels', () => {
     bob.player.controller.teleport([80, 70, 80]);
     ada.sink.payloads.length = 0;
     bob.sink.payloads.length = 0;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_000);
     world.handleChat(ada.player, 'alone', 'nearby');
+    vi.restoreAllMocks();
     expect(playerChats(ada.sink)).toHaveLength(1);
     expect(playerChats(bob.sink)).toHaveLength(0);
     expect(errorChats(ada.sink)).toHaveLength(0);
@@ -239,7 +242,9 @@ describe('server chat channels', () => {
     const bob = join(world, 'Bob');
     expect(playerChats(bob.sink).some((message) => message.text === 'before bob')).toBe(false);
     bob.sink.payloads.length = 0;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 3_000);
     world.handleChat(ada.player, 'after bob');
+    vi.restoreAllMocks();
     expect(playerChats(bob.sink).some((message) => message.text === 'after bob')).toBe(true);
   });
 
