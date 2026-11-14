@@ -2,22 +2,29 @@
  * Build two independent world directories from one stopped Anarchy snapshot.
  *
  * The source must already be a consistent copy (fc-backup extract, lock removed).
- * This script does not talk to a live server, PostgreSQL, or the original directory
- * except to read it. Existing targets are left in place unless --force is passed,
- * and even then the previous directory is renamed aside rather than deleted.
+ * This script only reads that directory. It does not talk to a live server or
+ * PostgreSQL. Both copies are prepared and checked before either target is
+ * replaced. If the second install fails, the first is rolled back.
+ *
+ * The whole world.json is copied, including modifications far from spawn.
+ * Claims are copied in full. A claim is treated as a PvP arena only when its
+ * own flags.pvp is boolean true. The claim name is reported, not required.
  *
  *   node scripts/clone-world-snapshot.mjs \
  *     --source /tmp/fc-restore/worlds/anarchy \
  *     --survival /var/lib/frontier-cubes/worlds/survival \
  *     --peaceful /var/lib/frontier-cubes/worlds/peaceful
+ *
+ * Before the first start of each copy, set WORLD_SEED to the printed seed.
+ * The process generates new chunks from WORLD_SEED, then overwrites meta.seed
+ * with that value.
  */
-import { copyFile, cp, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { copyFile, cp, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const SPAWN_NAMES = new Set(['spawn', 'спавн']);
-const ALLOWED_PLUGIN_FILES = [
+const MAP_JSON = [
   'claims/claims.json',
   'holograms/holograms.json',
   'buyers/buyers.json',
@@ -25,6 +32,25 @@ const ALLOWED_PLUGIN_FILES = [
   'automine/automines.json',
   'mega-zombie/config.json',
   'duels/arena.json',
+  'world-events/state.json',
+];
+
+const PERSONAL_MARKERS = [
+  'economy/',
+  'auction/',
+  'friends/',
+  'home/',
+  'clans/',
+  'permissions.json',
+  'donation/',
+  'notifications/',
+  'admin-bans.json',
+  'identity-incidents.json',
+  'resource-accounting.json',
+  'back/',
+  'kit/',
+  'messages/',
+  'duels/stats.json',
 ];
 
 export class CloneWorldError extends Error {
@@ -80,6 +106,53 @@ function assertWorldId(id, label) {
   if (id === 'anarchy') fail(`${label} cannot be anarchy. That directory stays the original.`);
 }
 
+function normalizeClaimName(name) {
+  return String(name ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function nameHint(name) {
+  const normalized = normalizeClaimName(name);
+  if (normalized === 'spawn' || normalized === 'спавн' || normalized.includes('спавн') || normalized.split(' ').includes('spawn')) {
+    return 'spawn-like';
+  }
+  if (normalized.includes('arena') || normalized.includes('арена') || normalized.includes('пвп') || normalized.split(' ').includes('pvp')) {
+    return 'arena-like';
+  }
+  return null;
+}
+
+function volumeOf(claim) {
+  const volume = claim?.volume;
+  if (!volume || typeof volume !== 'object') return undefined;
+  const keys = ['minX', 'minY', 'minZ', 'maxX', 'maxY', 'maxZ'];
+  const box = {};
+  for (const key of keys) {
+    if (typeof volume[key] !== 'number' || !Number.isFinite(volume[key])) return undefined;
+    box[key] = volume[key];
+  }
+  return box;
+}
+
+function volumeContains(volume, x, y, z) {
+  return x >= volume.minX && x <= volume.maxX
+    && y >= volume.minY && y <= volume.maxY
+    && z >= volume.minZ && z <= volume.maxZ;
+}
+
+function effectivePvp(claims) {
+  const setters = claims.filter((claim) => typeof claim?.flags?.pvp === 'boolean');
+  if (setters.length === 0) return false;
+  setters.sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0));
+  return setters[0].flags.pvp === true;
+}
+
+function describeClaims(claims) {
+  return claims.map((claim) => {
+    const hint = nameHint(claim?.name);
+    return `${claim?.name ?? '(unnamed)'}${hint ? ` [${hint}]` : ''} pvp=${String(claim?.flags?.pvp)} priority=${claim?.priority ?? 0}`;
+  }).join('; ') || '(none)';
+}
+
 async function assertStoppedSource(source) {
   const lockPath = path.join(source, '.instance.lock');
   if (!existsSync(lockPath)) return;
@@ -110,9 +183,9 @@ async function loadSource(source) {
   if (!modifications || typeof modifications !== 'object' || Array.isArray(modifications)) {
     fail('world.json has no modifications object. The built map is not in this snapshot.');
   }
-  const modificationCount = Object.keys(modifications).length;
-  if (modificationCount === 0) {
-    fail('world.json modifications are empty. The same seed does not contain the built spawn.');
+  const modificationKeys = Object.keys(modifications);
+  if (modificationKeys.length === 0) {
+    fail('world.json modifications are empty. The same seed does not contain the built map.');
   }
   if (!existsSync(path.join(source, 'players.json'))) {
     fail('players.json is missing. Refusing a partial world directory.');
@@ -122,28 +195,56 @@ async function loadSource(source) {
   if (!Array.isArray(claimStore.claims) || claimStore.claims.length === 0) {
     fail('claims.json has no claims.');
   }
-  const spawnClaim = claimStore.claims.find((claim) => (
-    claim && typeof claim.name === 'string' && SPAWN_NAMES.has(claim.name.toLowerCase())
-  ));
-  const arenaClaim = claimStore.claims.find((claim) => claim?.flags?.pvp === true);
-  if (!spawnClaim) {
-    const names = claimStore.claims.map((claim) => claim?.name).filter(Boolean).join(', ') || '(none)';
-    fail(`spawn claim was not found. Expected a claim named spawn or спавн. Present names: ${names}`);
-  }
-  if (!arenaClaim) {
-    fail('PvP arena was not found. Expected a claim whose flags.pvp is true.');
-  }
-  for (const claim of [spawnClaim, arenaClaim]) {
+  for (const claim of claimStore.claims) {
+    if (!volumeOf(claim)) fail(`claim '${claim?.name ?? '(unnamed)'}' has no finite volume.`);
     if (claim.worldId !== meta.worldId) {
-      fail(`claim '${claim.name}' worldId is '${claim.worldId}', meta.worldId is '${meta.worldId}'.`);
+      fail(`claim '${claim?.name ?? '(unnamed)'}' worldId is '${claim.worldId}', meta.worldId is '${meta.worldId}'.`);
     }
+  }
+  const explicitPvp = claimStore.claims.filter((claim) => claim?.flags?.pvp === true);
+  if (explicitPvp.length === 0) {
+    fail(
+      'No claim has flags.pvp set to true. Peaceful arena PvP needs that explicit flag. '
+      + `Present claims: ${describeClaims(claimStore.claims)}. `
+      + 'The claim name is not used for this check.',
+    );
+  }
+  const spawnBlock = meta.spawn.map((value) => Math.floor(value));
+  const covering = claimStore.claims.filter((claim) => volumeContains(volumeOf(claim), spawnBlock[0], spawnBlock[1], spawnBlock[2]));
+  const review = {
+    spawnBlock,
+    spawnInsideClaim: covering.length > 0,
+    spawnPvp: covering.length > 0 ? effectivePvp(covering) : null,
+    explicitPvpClaims: explicitPvp.map((claim) => ({
+      name: claim.name ?? null,
+      normalizedName: normalizeClaimName(claim.name),
+      priority: claim.priority ?? 0,
+      volume: volumeOf(claim),
+    })),
+    nameHints: claimStore.claims.map((claim) => ({
+      name: claim.name ?? null,
+      normalizedName: normalizeClaimName(claim.name),
+      hint: nameHint(claim.name),
+    })).filter((entry) => entry.hint),
+  };
+  const warnings = [];
+  if (!review.spawnInsideClaim) {
+    warnings.push(
+      `Saved spawn block ${spawnBlock.join(',')} is not inside any claim. `
+      + `Claims: ${describeClaims(claimStore.claims)}. Confirm this against the real backup before starting the copies.`,
+    );
+  } else if (review.spawnPvp === true) {
+    warnings.push(
+      `Saved spawn block ${spawnBlock.join(',')} has effective pvp=true. `
+      + 'Confirm that this block is the intended arena and not an unprotected spawn.',
+    );
   }
   return {
     meta,
-    modificationCount,
+    modificationKeys,
     claims: claimStore.claims,
-    spawnClaim,
-    arenaClaim,
+    review,
+    warnings,
   };
 }
 
@@ -159,6 +260,14 @@ async function writeJson(file, value) {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
+function stripBuyerPersonalData(store) {
+  return { buyers: Array.isArray(store.buyers) ? store.buyers : [] };
+}
+
+function stripWorldEvents(store) {
+  return { templates: Array.isArray(store.templates) ? store.templates : [] };
+}
+
 async function copyOptionalJson(sourceRoot, partial, relativePath, fromId, toId, transform) {
   const from = path.join(sourceRoot, 'plugin-data', relativePath);
   if (!existsSync(from)) return false;
@@ -168,8 +277,15 @@ async function copyOptionalJson(sourceRoot, partial, relativePath, fromId, toId,
   return true;
 }
 
-function stripBuyerPersonalData(store) {
-  return { buyers: Array.isArray(store.buyers) ? store.buyers : [] };
+async function copyConfig(source, partial, fromId, toId, copied) {
+  const dir = path.join(source, 'plugin-data', 'config');
+  if (!existsSync(dir)) return;
+  const names = await readdir(dir);
+  for (const name of names) {
+    if (!name.endsWith('.json')) continue;
+    const relativePath = `config/${name}`;
+    if (await copyOptionalJson(source, partial, relativePath, fromId, toId)) copied.push(relativePath);
+  }
 }
 
 async function buildPartial(source, partial, worldId, loaded) {
@@ -179,11 +295,13 @@ async function buildPartial(source, partial, worldId, loaded) {
   await writeJson(path.join(partial, 'meta.json'), meta);
   await copyFile(path.join(source, 'world.json'), path.join(partial, 'world.json'));
   await writeJson(path.join(partial, 'players.json'), { players: {} });
-  const copied = ['claims/claims.json'];
-  await copyOptionalJson(source, partial, 'claims/claims.json', loaded.meta.worldId, worldId);
-  for (const relativePath of ALLOWED_PLUGIN_FILES) {
-    if (relativePath === 'claims/claims.json') continue;
-    const transform = relativePath === 'buyers/buyers.json' ? stripBuyerPersonalData : undefined;
+  const copied = [];
+  for (const relativePath of MAP_JSON) {
+    const transform = relativePath === 'buyers/buyers.json'
+      ? stripBuyerPersonalData
+      : relativePath === 'world-events/state.json'
+        ? stripWorldEvents
+        : undefined;
     if (await copyOptionalJson(source, partial, relativePath, loaded.meta.worldId, worldId, transform)) {
       copied.push(relativePath);
     }
@@ -193,22 +311,55 @@ async function buildPartial(source, partial, worldId, loaded) {
     await cp(originals, path.join(partial, 'plugin-data', 'automine', 'originals'), { recursive: true });
     copied.push('automine/originals/');
   }
+  await copyConfig(source, partial, loaded.meta.worldId, worldId, copied);
+  copied.sort();
   return copied;
+}
+
+async function listFiles(root) {
+  if (!existsSync(root)) return [];
+  const found = [];
+  async function walk(directory) {
+    const entries = await readdir(directory, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else found.push(path.relative(root, full).split(path.sep).join('/'));
+    }
+  }
+  await walk(root);
+  return found.sort();
+}
+
+function leftoverWorldId(value, sourceId, pathName, found) {
+  if (Array.isArray(value)) {
+    value.forEach((entry, index) => leftoverWorldId(entry, sourceId, `${pathName}[${index}]`, found));
+    return;
+  }
+  if (!value || typeof value !== 'object') return;
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === 'worldId' && entry === sourceId) found.push(pathName || key);
+    else leftoverWorldId(entry, sourceId, pathName ? `${pathName}.${key}` : key, found);
+  }
 }
 
 async function verifyPartial(partial, worldId, loaded) {
   const meta = asRecord(await readJson(path.join(partial, 'meta.json'), 'copied meta.json'), 'copied meta');
   if (meta.worldId !== worldId) fail(`${partial} meta.worldId is ${meta.worldId}, expected ${worldId}.`);
   if (meta.seed !== loaded.meta.seed) fail(`${partial} seed changed.`);
+  if (meta.worldgenVersion !== loaded.meta.worldgenVersion) fail(`${partial} worldgenVersion changed.`);
   if (JSON.stringify(meta.spawn) !== JSON.stringify(loaded.meta.spawn)) fail(`${partial} spawn changed.`);
-  const world = asRecord(await readJson(path.join(partial, 'world.json'), 'copied world.json'), 'copied world');
-  const count = world.modifications && typeof world.modifications === 'object'
-    ? Object.keys(world.modifications).length
-    : 0;
-  if (count !== loaded.modificationCount) fail(`${partial} modification count is ${count}, source has ${loaded.modificationCount}.`);
+  const worldText = await readFile(path.join(partial, 'world.json'), 'utf8');
+  const sourceText = await readFile(path.join(loaded.source, 'world.json'), 'utf8');
+  if (worldText !== sourceText) fail(`${partial} world.json is not a full copy of the source.`);
+  const world = asRecord(JSON.parse(worldText), 'copied world');
+  const keys = Object.keys(world.modifications);
+  if (keys.length !== loaded.modificationKeys.length) {
+    fail(`${partial} modification count is ${keys.length}, source has ${loaded.modificationKeys.length}.`);
+  }
   const players = asRecord(await readJson(path.join(partial, 'players.json'), 'copied players.json'), 'copied players');
-  const table = players.players && typeof players.players === 'object' ? players.players : players;
-  if (Object.keys(table).length !== 0) fail(`${partial} players.json is not empty.`);
+  const table = players.players && typeof players.players === 'object' ? players.players : null;
+  if (!table || Object.keys(table).length !== 0) fail(`${partial} players.json is not an empty player list.`);
   if (existsSync(path.join(partial, '.instance.lock'))) fail(`${partial} contains .instance.lock.`);
   const claims = asRecord(
     await readJson(path.join(partial, 'plugin-data', 'claims', 'claims.json'), 'copied claims'),
@@ -219,10 +370,27 @@ async function verifyPartial(partial, worldId, loaded) {
   }
   for (const claim of claims.claims) {
     if (claim.worldId !== worldId) fail(`claim '${claim.name}' in ${partial} still has worldId ${claim.worldId}.`);
+    const sourceClaim = loaded.claims.find((entry) => entry.id === claim.id);
+    if (!sourceClaim) fail(`${partial} has an unexpected claim '${claim.name}'.`);
+    if (JSON.stringify(claim.volume) !== JSON.stringify(sourceClaim.volume)) {
+      fail(`claim '${claim.name}' volume changed.`);
+    }
+    if (JSON.stringify(claim.flags) !== JSON.stringify(sourceClaim.flags)) {
+      fail(`claim '${claim.name}' flags changed.`);
+    }
   }
-  const arena = claims.claims.find((claim) => claim?.flags?.pvp === true);
-  const spawn = claims.claims.find((claim) => SPAWN_NAMES.has(String(claim?.name ?? '').toLowerCase()));
-  if (!arena || !spawn) fail(`${partial} lost the spawn claim or the pvp=true arena.`);
+  const files = await listFiles(path.join(partial, 'plugin-data'));
+  for (const file of files) {
+    const portable = file.endsWith('/') ? file : file;
+    if (PERSONAL_MARKERS.some((marker) => portable === marker || portable.startsWith(marker) || portable.includes(`/${marker}`))) {
+      fail(`${partial} still has personal data at plugin-data/${portable}.`);
+    }
+    if (!portable.endsWith('.json')) continue;
+    const parsed = JSON.parse(await readFile(path.join(partial, 'plugin-data', file), 'utf8'));
+    const leftovers = [];
+    leftoverWorldId(parsed, loaded.meta.worldId, file, leftovers);
+    if (leftovers.length > 0) fail(`${partial} still points ${leftovers.join(', ')} at ${loaded.meta.worldId}.`);
+  }
   const buyersPath = path.join(partial, 'plugin-data', 'buyers', 'buyers.json');
   if (existsSync(buyersPath)) {
     const buyers = asRecord(await readJson(buyersPath, 'copied buyers'), 'copied buyers');
@@ -230,24 +398,68 @@ async function verifyPartial(partial, worldId, loaded) {
       if (buyers[key] !== undefined) fail(`${partial} buyers.json still has ${key}.`);
     }
   }
-  return { modificationCount: count, claimCount: claims.claims.length };
+  const eventsPath = path.join(partial, 'plugin-data', 'world-events', 'state.json');
+  if (existsSync(eventsPath)) {
+    const events = asRecord(await readJson(eventsPath, 'copied world-events'), 'copied world-events');
+    if (events.active !== undefined || events.journal !== undefined) {
+      fail(`${partial} world-events still has a live event.`);
+    }
+  }
+  return { modificationCount: keys.length, claimCount: claims.claims.length, worldText };
 }
 
-async function commitDirectory(partial, target, force) {
-  if (await targetOccupied(target)) {
-    if (!force) {
-      fail(`${target} already has a world. Pass --force to move it aside. Nothing was replaced.`);
+async function rollbackInstall(journal) {
+  const errors = [];
+  for (const step of [...journal].reverse()) {
+    try {
+      if (step.kind === 'installed' && existsSync(step.target)) {
+        const trash = `${step.target}.failed-${process.pid}`;
+        await rm(trash, { recursive: true, force: true });
+        await rename(step.target, trash);
+        await rm(trash, { recursive: true, force: true });
+      }
+      if (step.kind === 'aside') {
+        if (existsSync(step.target)) {
+          throw new Error(`cannot restore ${step.target}: the path is still occupied`);
+        }
+        await rename(step.aside, step.target);
+      }
+    } catch (error) {
+      errors.push(error instanceof Error ? error.message : String(error));
     }
-    if (existsSync(path.join(target, '.instance.lock'))) {
-      fail(`${target} has .instance.lock. Stop that process before replacing the directory.`);
-    }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const aside = `${target}.previous-${stamp}`;
-    if (existsSync(aside)) fail(`refusing to replace ${target}: ${aside} already exists.`);
-    await rename(target, aside);
   }
-  await mkdir(path.dirname(target), { recursive: true });
-  await rename(partial, target);
+  if (errors.length > 0) {
+    fail(`rollback did not finish cleanly: ${errors.join('; ')}`);
+  }
+}
+
+async function installBoth(steps, force) {
+  const journal = [];
+  try {
+    for (const step of steps) {
+      if (await targetOccupied(step.target)) {
+        if (!force) {
+          fail(`${step.target} already has a world. Pass --force to move it aside. Nothing was replaced.`);
+        }
+        if (existsSync(path.join(step.target, '.instance.lock'))) {
+          fail(`${step.target} has .instance.lock. Stop that process before replacing the directory.`);
+        }
+        const aside = `${step.target}.rollback-${Date.now()}-${process.pid}-${step.id}`;
+        if (existsSync(aside)) fail(`refusing to replace ${step.target}: ${aside} already exists.`);
+        await rename(step.target, aside);
+        journal.push({ kind: 'aside', target: step.target, aside });
+      }
+      if (process.env.FC_CLONE_FAIL_INSTALL === step.id) {
+        throw new CloneWorldError(`injected failure installing ${step.id}`);
+      }
+      await mkdir(path.dirname(step.target), { recursive: true });
+      await rename(step.partial, step.target);
+      journal.push({ kind: 'installed', target: step.target, partial: step.partial });
+    }
+  } catch (error) {
+    await rollbackInstall(journal);
+    throw error;
+  }
 }
 
 /**
@@ -275,7 +487,7 @@ export async function cloneWorldSnapshot(options) {
     if (samePath(source, target)) fail(`target ${target} is the source. The original snapshot is not modified.`);
   }
   if (samePath(survivalDir, peacefulDir)) fail('the two target directories are the same.');
-  const loaded = await loadSource(source);
+  const loaded = { ...(await loadSource(source)), source };
   if (!force) {
     for (const target of [survivalDir, peacefulDir]) {
       if (await targetOccupied(target)) {
@@ -290,35 +502,30 @@ export async function cloneWorldSnapshot(options) {
     const peacefulCopied = await buildPartial(source, peacefulPartial, peacefulId, loaded);
     const survivalCheck = await verifyPartial(survivalPartial, survivalId, loaded);
     const peacefulCheck = await verifyPartial(peacefulPartial, peacefulId, loaded);
-    if (survivalCheck.modificationCount !== peacefulCheck.modificationCount) {
-      fail('the two copies do not have the same modification count.');
+    if (survivalCheck.worldText !== peacefulCheck.worldText) {
+      fail('the two prepared copies do not have the same world.json.');
     }
-    await commitDirectory(survivalPartial, survivalDir, force);
-    try {
-      await commitDirectory(peacefulPartial, peacefulDir, force);
-    } catch (error) {
-      fail(
-        `survival copy is at ${survivalDir}, peaceful copy was not committed: `
-        + (error instanceof Error ? error.message : String(error)),
-      );
+    if (JSON.stringify(survivalCopied) !== JSON.stringify(peacefulCopied)) {
+      fail('the two prepared copies do not have the same map files.');
     }
-    const claimLines = loaded.claims.map((claim) => ({
-      name: claim.name,
-      priority: claim.priority ?? 0,
-      pvp: claim.flags?.pvp,
-    }));
+    await installBoth([
+      { id: survivalId, partial: survivalPartial, target: survivalDir },
+      { id: peacefulId, partial: peacefulPartial, target: peacefulDir },
+    ], force);
     return {
       source,
       seed: loaded.meta.seed,
       worldgenVersion: typeof loaded.meta.worldgenVersion === 'number' ? loaded.meta.worldgenVersion : null,
       spawn: loaded.meta.spawn.slice(0, 3),
-      modifications: loaded.modificationCount,
+      modifications: loaded.modificationKeys.length,
+      modificationKeys: loaded.modificationKeys,
       sourceWorldId: loaded.meta.worldId,
-      claims: claimLines,
+      review: loaded.review,
+      warnings: loaded.warnings,
       copiedPluginData: survivalCopied,
       targets: [
-        { id: survivalId, directory: survivalDir, ...survivalCheck, copiedPluginData: survivalCopied },
-        { id: peacefulId, directory: peacefulDir, ...peacefulCheck, copiedPluginData: peacefulCopied },
+        { id: survivalId, directory: survivalDir, modificationCount: survivalCheck.modificationCount, claimCount: survivalCheck.claimCount },
+        { id: peacefulId, directory: peacefulDir, modificationCount: peacefulCheck.modificationCount, claimCount: peacefulCheck.claimCount },
       ],
     };
   } catch (error) {
@@ -356,6 +563,10 @@ async function main() {
     peacefulId: optionValue(argv, '--peaceful-id'),
     force: argv.includes('--force'),
   });
+  if (summary.warnings.length > 0) {
+    for (const warning of summary.warnings) console.error(`review: ${warning}`);
+  }
+  console.error(`Set WORLD_SEED=${summary.seed} before the first start of each copy.`);
   console.log(JSON.stringify(summary, null, 2));
 }
 

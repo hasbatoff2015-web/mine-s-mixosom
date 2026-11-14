@@ -12,7 +12,7 @@
 
 - `cellAllowsExplicitPvp` и проверка обеих позиций в `ServerGameplay.cancelDisallowedPlayerStrike`, в том числе для урона питомца с `attackerPlayerId`.
 - Запрет поджига TNT, фитиля крипера и детонации вагонетки, когда `explosionsAllowed` ложен. Уже зажжённый TNT возвращается в клетку, если она свободна.
-- `scripts/clone-world-snapshot.mjs`.
+- `scripts/clone-world-snapshot.mjs` копирует весь мир и картовые plugin-data. Имя привата не решает, что это арена: нужен явный `flags.pvp === true`. Обе копии устанавливаются вместе и откатываются вместе. Живая структура PROD по-прежнему не прочитана.
 
 ## Not done
 
