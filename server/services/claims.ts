@@ -102,6 +102,22 @@ export function effectiveFlag(claims: readonly Claim[], flag: ClaimFlag): boolea
   return setter.flags[flag] === true;
 }
 
+/**
+ * Peaceful arena gate. True only when this block sits in a claim whose
+ * effective `pvp` flag is true. Unclaimed land is closed. Anarchy and Survival
+ * do not use this: outside a claim their PvP stays allowed.
+ */
+export function cellAllowsExplicitPvp(
+  claims: readonly Claim[],
+  worldId: string,
+  x: number,
+  y: number,
+  z: number,
+): boolean {
+  const here = claimsAt(claims, worldId, x, y, z);
+  return here.length > 0 && effectiveFlag(here, 'pvp');
+}
+
 export function effectiveFlags(claims: readonly Claim[]): Record<ClaimFlag, boolean> {
   const resolved = {} as Record<ClaimFlag, boolean>;
   for (const flag of CLAIM_FLAGS) resolved[flag] = effectiveFlag(claims, flag);

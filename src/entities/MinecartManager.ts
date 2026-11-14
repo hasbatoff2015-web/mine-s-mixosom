@@ -224,6 +224,7 @@ export class MinecartManager {
   private readonly pendingExplosions: MinecartExplosionEvent[] = [];
   private idCounter = 0;
   private disposed = false;
+  private explosionsAllowed: (() => boolean) | undefined;
 
   constructor(
     sceneOrHost: EntityHost | object,
@@ -241,6 +242,15 @@ export class MinecartManager {
 
   get count(): number {
     return this.carts.size;
+  }
+
+  /** Server modes that forbid blasts keep the TNT cargo in the cart. */
+  setExplosionsAllowed(check: () => boolean): void {
+    this.explosionsAllowed = check;
+  }
+
+  private blastsAllowed(): boolean {
+    return this.explosionsAllowed?.() !== false;
   }
 
   spawn(
@@ -391,6 +401,7 @@ export class MinecartManager {
   }
 
   primeTnt(cart: MinecartEntity, ticks = TNT_MINECART_FUSE_TICKS): boolean {
+    if (!this.blastsAllowed()) return false;
     if (cart.variant !== 'tnt') return false;
     if (cart.fuseTicks > 0) return false;
     cart.fuseTicks = Math.max(1, Math.floor(ticks));
@@ -398,6 +409,7 @@ export class MinecartManager {
   }
 
   explodeNow(cart: MinecartEntity): boolean {
+    if (!this.blastsAllowed()) return false;
     if (cart.variant !== 'tnt') return false;
     this.detonate(cart);
     return true;
@@ -560,6 +572,9 @@ export class MinecartManager {
     const dt = Number.isFinite(deltaSeconds) ? Math.min(deltaSeconds, 0.1) : FIXED_DT;
     for (const cart of [...this.carts.values()]) {
       this.commitVisualPrevious(cart);
+      if (cart.fuseTicks > 0 && !this.blastsAllowed()) {
+        cart.fuseTicks = 0;
+      }
       if (cart.fuseTicks > 0) {
         cart.fuseTicks -= 1;
         if (cart.visual) this.host.pulseMinecartTnt(cart.visual, 1 - cart.fuseTicks / TNT_MINECART_FUSE_TICKS);

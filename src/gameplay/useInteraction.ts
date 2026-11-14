@@ -1014,7 +1014,7 @@ function applyFlint(
   }
   if (action.type === 'prime-tnt-block') {
     if (!gameplayMayMutateBlock(action.x, action.z)) return;
-    ctx.redstone.primeTnt(action.x, action.y, action.z);
+    if (!ctx.redstone.primeTnt(action.x, action.y, action.z)) return;
     if (ctx.gamemode === 'survival') wearHeld(ctx);
     ctx.effects?.onFlintIgnite?.();
     return;
@@ -1028,10 +1028,7 @@ function applyFlint(
 function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number): boolean {
   if (!gameplayMayMutateBlock(x, z)) return false;
   const block = ctx.world.getBlock(x, y, z, false);
-  if (isTntBlock(block)) {
-    ctx.redstone.primeTnt(x, y, z);
-    return true;
-  }
+  if (isTntBlock(block)) return ctx.redstone.primeTnt(x, y, z) !== undefined;
   const definition = getBlockDefinition(block);
   if (block !== BlockId.Air && definition.replaceable !== true) return false;
   return ctx.world.setBlock(x, y, z, BlockId.Fire);
