@@ -276,6 +276,11 @@ export class ServerGameplay {
    * A protected player does not disable PvP for everyone else nearby.
    */
   blocksPlayerStrike?: (attackerId: string, victimId: string) => boolean;
+  /**
+   * Peaceful only. True when both players stand in a claim whose effective
+   * pvp flag is true. Missing callback keeps the whole mode closed.
+   */
+  peacefulStrikeAllowed?: (attackerId: string, victimId: string) => boolean;
   /** Called only after a player melee or projectile hit has actually landed. */
   notePlayerStrike?: (attackerId: string, victimId: string) => void;
   private pendingUseReject: string | undefined;
@@ -327,6 +332,7 @@ export class ServerGameplay {
       onRemove: (mob, reason) => {
         this.mobRemovedListener?.(mob, reason);
       },
+      explosionsAllowed: () => explosionsAllowed(this.serverMode),
       onProjectileSpawn: (event) => this.pushEntityEvent(event.projectileId, 'projectile_spawn'),
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
       onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
@@ -337,6 +343,7 @@ export class ServerGameplay {
       },
     });
     this.minecarts = new MinecartManager(host, world);
+    this.minecarts.setExplosionsAllowed(() => explosionsAllowed(this.serverMode));
     this.arrows = new PlayerArrowManager(host, world, this.mobs, {
       minecarts: this.minecarts,
       random: this.random,
@@ -366,7 +373,9 @@ export class ServerGameplay {
         }
       },
     });
-    this.redstone = new RedstoneSystem(world);
+    this.redstone = new RedstoneSystem(world, {
+      explosionsAllowed: () => explosionsAllowed(this.serverMode),
+    });
     this.farming = new FarmingSystem(world, { random: this.random });
   }
 
@@ -525,6 +534,7 @@ export class ServerGameplay {
             event.source,
             event.attackerPlayerId,
           );
+          this.cancelDisallowedPlayerStrike(damageEvent, victim.id);
           this.events.emit('playerDamage', damageEvent);
           if (damageEvent.cancelled) continue;
           const result = victim.survival.damage(event.amount, event.source === 'arrow' ? 'projectile' : 'melee', {
@@ -2148,6 +2158,20 @@ export class ServerGameplay {
     return this.hurtPlayerResult(victim, amount, cause, from, extras) === 'hit';
   }
 
+  /**
+   * Anarchy and Survival keep the old global switch. Peaceful closes every
+   * player strike unless both feet are inside an effective pvp=true claim.
+   */
+  private cancelDisallowedPlayerStrike(
+    event: { cancel(): void; readonly attackerId?: string },
+    victimId: string,
+  ): void {
+    const attackerId = event.attackerId;
+    if (!attackerId || attackerId === victimId || pvpAllowed(this.serverMode)) return;
+    if (this.peacefulStrikeAllowed?.(attackerId, victimId) === true) return;
+    event.cancel();
+  }
+
   private hurtPlayerResult(
     victim: GameplayPlayer,
     amount: number,
@@ -2172,7 +2196,7 @@ export class ServerGameplay {
       return 'blocked';
     }
     const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
-    if (extras.attackerId && !pvpAllowed(this.serverMode)) event.cancel();
+    this.cancelDisallowedPlayerStrike(event, victim.id);
     this.events.emit('playerDamage', event);
     if (event.cancelled) return 'blocked';
     const result = victim.survival.damage(amount, cause, {

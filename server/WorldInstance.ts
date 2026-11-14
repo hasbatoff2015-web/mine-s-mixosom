@@ -224,7 +224,7 @@ import {
 } from '../shared/duels';
 import type { NotificationCategory } from '../shared/notifications';
 import { ClaimBoundaryNetwork } from './services/claimBoundaries';
-import { migrateClaimStore } from './services/claims';
+import { cellAllowsExplicitPvp, migrateClaimStore } from './services/claims';
 import { ServerGameplay, type GameplayPlayer } from './gameplay';
 import { clearMiningLock, shouldKeepMiningLock } from './miningLock';
 import {
@@ -1219,6 +1219,23 @@ export class WorldInstance {
     this.gameplay.blocksPlayerStrike = (attackerId, victimId) => (
       this.playerRules.blocksPvp(attackerId, victimId, Date.now())
     );
+    this.gameplay.peacefulStrikeAllowed = (attackerId, victimId) => {
+      const attacker = this.players.get(attackerId);
+      const victim = this.players.get(victimId);
+      if (!attacker || !victim || attackerId === victimId) return false;
+      const claims = this.loadClaimStore().claims;
+      const allows = (player: ServerPlayer) => {
+        const pos = player.controller.position;
+        return cellAllowsExplicitPvp(
+          claims,
+          this.worldId,
+          Math.floor(pos.x),
+          Math.floor(pos.y),
+          Math.floor(pos.z),
+        );
+      };
+      return allows(attacker) && allows(victim);
+    };
     this.gameplay.notePlayerStrike = (attackerId, victimId) => {
       if (!this.players.has(attackerId) || !this.players.has(victimId)) return;
       const until = this.playerRules.acceptPvp(attackerId, victimId, Date.now());
