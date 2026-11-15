@@ -273,15 +273,41 @@ async function writeJson(file, value) {
   await writeFile(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
 }
 
-function volumeOf(claim) {
-  const volume = claim?.volume;
-  if (!volume || typeof volume !== 'object') return undefined;
+const CLAIM_PRIORITY_MIN = -1000000;
+const CLAIM_PRIORITY_MAX = 1000000;
+const ANCHOR_RADIUS = { iron_block: 10, gold_block: 20, diamond_block: 30 };
+const MIN_WORLD_Y = 0;
+const MAX_WORLD_Y = 255;
+
+function integerVolume(volume) {
+  if (!volume || typeof volume !== 'object' || Array.isArray(volume)) return undefined;
   const box = {};
   for (const key of ['minX', 'minY', 'minZ', 'maxX', 'maxY', 'maxZ']) {
-    if (typeof volume[key] !== 'number' || !Number.isFinite(volume[key])) return undefined;
+    if (typeof volume[key] !== 'number' || !Number.isInteger(volume[key])) return undefined;
     box[key] = volume[key];
   }
   return box;
+}
+
+function anchorVolume(anchor) {
+  if (!anchor || typeof anchor !== 'object' || Array.isArray(anchor)) return undefined;
+  const radius = ANCHOR_RADIUS[anchor.block];
+  if (radius === undefined) return undefined;
+  const { x, y, z } = anchor;
+  if (![x, y, z].every((value) => typeof value === 'number' && Number.isInteger(value))) return undefined;
+  return {
+    minX: x - radius,
+    minY: Math.max(MIN_WORLD_Y, y - radius),
+    minZ: z - radius,
+    maxX: x + radius,
+    maxY: Math.min(MAX_WORLD_Y, y + radius),
+    maxZ: z + radius,
+  };
+}
+
+function serverPriority(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(CLAIM_PRIORITY_MIN, Math.min(CLAIM_PRIORITY_MAX, Math.trunc(value)));
 }
 
 function contains(volume, x, y, z) {
@@ -290,11 +316,37 @@ function contains(volume, x, y, z) {
     && z >= volume.minZ && z <= volume.maxZ;
 }
 
+function loadedClaim(claim, worldId) {
+  if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return undefined;
+  if (typeof claim.id !== 'string' || typeof claim.name !== 'string' || typeof claim.owner !== 'string') return undefined;
+  if (claim.worldId !== worldId) return undefined;
+  const stored = integerVolume(claim.volume);
+  if (!stored) return undefined;
+  return {
+    name: claim.name,
+    priority: serverPriority(claim.priority),
+    flags: claim.flags && typeof claim.flags === 'object' ? claim.flags : {},
+    volume: anchorVolume(claim.anchor) ?? stored,
+  };
+}
+
+// Same rule as flagSetter + effectiveFlag('pvp') in server/services/claims.ts.
+// A higher-priority claim that does not store flags.pvp does not beat a lower one that does.
+// Equal clamped priority keeps the earlier claim. No explicit setter means the default, false.
+function pvpSetter(claims) {
+  const setters = [];
+  claims.forEach((claim, index) => {
+    if (typeof claim.flags?.pvp === 'boolean') setters.push({ claim, index });
+  });
+  if (setters.length === 0) return undefined;
+  setters.sort((left, right) => right.claim.priority - left.claim.priority || left.index - right.index);
+  return setters[0].claim;
+}
+
 function effectivePvp(claims) {
-  const setters = claims.filter((claim) => typeof claim?.flags?.pvp === 'boolean');
-  if (setters.length === 0) return false;
-  setters.sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0));
-  return setters[0].flags.pvp === true;
+  const setter = pvpSetter(claims);
+  if (!setter) return false;
+  return setter.flags.pvp === true;
 }
 
 const world = await readJson(path.join(source, 'world.json'));
@@ -356,34 +408,49 @@ if (existsSync(configDir)) {
 }
 
 const claimsFile = path.join(dest, 'plugin-data', 'claims', 'claims.json');
-let review = { explicitPvpClaims: [], spawnInsideClaim: false, spawnPvp: null, warnings: [] };
-if (existsSync(claimsFile)) {
+const spawnBlock = meta.spawn.slice(0, 3).map((value) => Math.floor(Number(value)));
+const review = {
+  spawnBlock,
+  spawnInsideClaim: false,
+  spawnPvp: null,
+  spawnPvpSetter: null,
+  pvpRule: 'explicit-flag-setter',
+  claimsStatus: 'missing',
+  explicitPvpClaims: [],
+  warnings: [],
+};
+if (!existsSync(claimsFile)) {
+  review.warnings.push('claims.json is missing. The archive has no privates, and clone-world-snapshot.mjs will refuse it.');
+} else {
   const store = await readJson(claimsFile);
-  const claims = Array.isArray(store.claims) ? store.claims : [];
-  const explicit = claims.filter((claim) => claim?.flags?.pvp === true).map((claim) => ({
-    name: claim.name ?? null,
-    priority: claim.priority ?? 0,
-    volume: volumeOf(claim) ?? null,
-  }));
-  const spawnBlock = meta.spawn.slice(0, 3).map((value) => Math.floor(Number(value)));
-  const covering = claims.filter((claim) => {
-    const volume = volumeOf(claim);
-    return volume && contains(volume, spawnBlock[0], spawnBlock[1], spawnBlock[2]);
-  });
-  review = {
-    spawnBlock,
-    spawnInsideClaim: covering.length > 0,
-    spawnPvp: covering.length > 0 ? effectivePvp(covering) : null,
-    explicitPvpClaims: explicit,
-    warnings: [],
-  };
-  if (explicit.length === 0) {
-    review.warnings.push('No claim has flags.pvp set to true. clone-world-snapshot.mjs will refuse this archive until that is confirmed.');
-  }
-  if (!review.spawnInsideClaim) {
-    review.warnings.push(`Spawn block ${spawnBlock.join(',')} is not inside a claim.`);
-  } else if (review.spawnPvp === true) {
-    review.warnings.push(`Spawn block ${spawnBlock.join(',')} has effective pvp=true.`);
+  const rawClaims = store && typeof store === 'object' && Array.isArray(store.claims) ? store.claims : [];
+  if (rawClaims.length === 0) {
+    review.claimsStatus = 'empty';
+    review.warnings.push('claims.json has no claims. clone-world-snapshot.mjs will refuse this archive.');
+  } else {
+    const loaded = rawClaims.map((claim) => loadedClaim(claim, meta.worldId)).filter((claim) => claim !== undefined);
+    const arena = loaded.filter((claim) => claim.flags.pvp === true);
+    review.explicitPvpClaims = arena.map((claim) => ({
+      name: claim.name,
+      priority: claim.priority,
+      volume: claim.volume,
+    }));
+    const covering = loaded.filter((claim) => contains(claim.volume, spawnBlock[0], spawnBlock[1], spawnBlock[2]));
+    const setter = pvpSetter(covering);
+    review.spawnInsideClaim = covering.length > 0;
+    review.spawnPvp = covering.length > 0 ? effectivePvp(covering) : null;
+    review.spawnPvpSetter = setter ? setter.name : null;
+    if (arena.length === 0) {
+      review.claimsStatus = 'no-arena';
+      review.warnings.push('claims.json has no usable arena: no loaded claim has flags.pvp set to true. clone-world-snapshot.mjs will refuse this archive.');
+    } else {
+      review.claimsStatus = 'ok';
+    }
+    if (!review.spawnInsideClaim) {
+      review.warnings.push(`Spawn block ${spawnBlock.join(',')} is not inside a claim.`);
+    } else if (review.spawnPvp === true) {
+      review.warnings.push(`Spawn block ${spawnBlock.join(',')} has effective pvp=true.`);
+    }
   }
 }
 await writeJson(path.join(dest, 'map-review.json'), review);
@@ -422,18 +489,25 @@ acquire_lock() {
   fi
 }
 
+require_map_files() {
+  local archive=$1 listing entry
+  listing=$("$FC_TAR" -tzf "$archive" | sed 's|^\./||') || return 1
+  for entry in worlds/anarchy/world.json worlds/anarchy/meta.json; do
+    if ! grep -qx -- "$entry" <<< "$listing"; then
+      echo "error: archive is missing $entry" >&2
+      return 1
+    fi
+  done
+}
+
 publish_archive() {
   local stamp=$1 final partial hash
   final="$FC_BACKUP_DIR/frontier-cubes-anarchy-map-${stamp}.tar.gz"
   [[ -e "$final" ]] && die "archive already exists: $final"
   partial="$work_dir/archive.tar.gz.partial"
   "$FC_TAR" -C "$work_dir/staging" -czf "$partial" manifest.json export-summary.json worlds
-  "$FC_TAR" -tzf "$partial" >/dev/null
-  if ! "$FC_TAR" -tzf "$partial" | sed 's|^\./||' | grep -qx 'worlds/anarchy/world.json'; then
-    die "archive is missing worlds/anarchy/world.json"
-  fi
-  if ! "$FC_TAR" -tzf "$partial" | sed 's|^\./||' | grep -qx 'worlds/anarchy/meta.json'; then
-    die "archive is missing worlds/anarchy/meta.json"
+  if ! require_map_files "$partial"; then
+    die "archive is missing a required map file"
   fi
   hash=$(sha256sum "$partial" | awk '{ print $1 }')
   [[ "$hash" =~ ^[0-9a-f]{64}$ ]] || die "checksum generation failed"
@@ -493,8 +567,13 @@ cmd_verify() {
     echo "verify: failed" >&2
     exit 1
   fi
-  "$FC_TAR" -tzf "$archive" >/dev/null
+  if ! require_map_files "$archive"; then
+    echo "verify: failed" >&2
+    exit 1
+  fi
   echo "verify: ok"
+  echo "verify: worlds/anarchy/world.json"
+  echo "verify: worlds/anarchy/meta.json"
 }
 
 cmd_backup() {

@@ -23,7 +23,12 @@ function run(command: string, args: string[], env: NodeJS.ProcessEnv): Promise<{
   });
 }
 
-async function layout(options?: { failExport?: boolean; anarchyDown?: boolean; dropSurvival?: boolean }): Promise<{
+async function layout(options?: {
+  failExport?: boolean;
+  anarchyDown?: boolean;
+  dropSurvival?: boolean;
+  claimsMode?: 'default' | 'missing' | 'empty' | 'no-arena' | 'omitted-flag' | 'clamped-priority';
+}): Promise<{
   root: string;
   worlds: string;
   backup: string;
@@ -45,6 +50,13 @@ async function layout(options?: { failExport?: boolean; anarchyDown?: boolean; d
     await mkdir(join(dir, 'plugin-data', 'config'), { recursive: true });
     await mkdir(join(dir, 'plugin-data', 'claims'), { recursive: true });
     await mkdir(join(dir, 'plugin-data', 'economy'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'friends'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'home'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'clans'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'messages'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'kit'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'duels'), { recursive: true });
+    await mkdir(join(dir, 'plugin-data', 'holograms'), { recursive: true });
     await writeFile(join(dir, 'meta.json'), `${JSON.stringify({
       worldId: id, seed: 'anarchy-spawn-v1', worldgenVersion: 3, spawn: [53.5, 68, 70.5],
     })}\n`);
@@ -53,23 +65,43 @@ async function layout(options?: { failExport?: boolean; anarchyDown?: boolean; d
       chests: { '8,70,8': { slots: [] } },
     })}\n`);
     await writeFile(join(dir, 'players.json'), `${JSON.stringify({
-      players: { ada: { sessionToken: SESSION, inventory: [{ id: 'diamond' }] } },
+      players: { ada: { sessionToken: SESSION, inventory: [{ id: 'inventory-secret-stack' }] } },
     })}\n`);
-    await writeFile(join(dir, 'plugin-data', 'claims', 'claims.json'), `${JSON.stringify({
-      claims: [
+    const claimsMode = options?.claimsMode ?? 'default';
+    const spawnVolume = { minX: 40, minY: 60, minZ: 60, maxX: 80, maxY: 90, maxZ: 90 };
+    const claims = claimsMode === 'empty' ? []
+      : claimsMode === 'no-arena' ? [
+        { id: 'hub', name: 'Главный спавн', owner: 'server', worldId: id, priority: 0, volume: spawnVolume, flags: { pvp: false } },
+      ]
+      : claimsMode === 'omitted-flag' ? [
+        { id: 'high', name: 'высокий', owner: 'server', worldId: id, priority: 100, volume: spawnVolume, flags: { 'block-break': false } },
+        { id: 'low', name: 'низкий', owner: 'server', worldId: id, priority: 1, volume: spawnVolume, flags: { pvp: true } },
+      ]
+      : claimsMode === 'clamped-priority' ? [
+        { id: 'wide', name: 'ранний', owner: 'server', worldId: id, priority: 1_000_000, volume: spawnVolume, flags: { pvp: true } },
+        { id: 'over', name: 'поздний', owner: 'server', worldId: id, priority: 5_000_000, volume: spawnVolume, flags: { pvp: false } },
+      ]
+      : [
+        { id: 'hub', name: 'Главный спавн', owner: 'server', worldId: id, priority: 0, volume: spawnVolume, flags: { pvp: false } },
         {
-          id: 'hub', name: 'Главный спавн', worldId: id, priority: 0,
-          volume: { minX: 40, minY: 60, minZ: 60, maxX: 80, maxY: 90, maxZ: 90 },
-          flags: { pvp: false },
-        },
-        {
-          id: 'pit', name: 'бойцовская', worldId: id, priority: 10,
+          id: 'pit', name: 'бойцовская', owner: 'server', worldId: id, priority: 10,
           volume: { minX: 10, minY: 60, minZ: 10, maxX: 20, maxY: 80, maxZ: 20 },
           flags: { pvp: true },
         },
-      ],
-    })}\n`);
+      ];
+    const claimsPath = join(dir, 'plugin-data', 'claims', 'claims.json');
+    if (claimsMode === 'missing') await rm(claimsPath, { force: true });
+    else await writeFile(claimsPath, `${JSON.stringify({ claims })}\n`);
     await writeFile(join(dir, 'plugin-data', 'economy', 'balances.json'), '{"balances":{"ada":99}}\n');
+    await writeFile(join(dir, 'plugin-data', 'friends', 'friends.json'), '{"friends":{"ada":["bob"]}}\n');
+    await writeFile(join(dir, 'plugin-data', 'home', 'homes.json'), '{"homes":{"ada":[]}}\n');
+    await writeFile(join(dir, 'plugin-data', 'clans', 'clans.json'), '{"clans":[]}\n');
+    await writeFile(join(dir, 'plugin-data', 'permissions.json'), '{"ops":["ada"]}\n');
+    await writeFile(join(dir, 'plugin-data', 'messages', 'inbox.json'), '{"messages":["hello"]}\n');
+    await writeFile(join(dir, 'plugin-data', 'kit', 'kits.json'), '{"kits":[]}\n');
+    await writeFile(join(dir, 'plugin-data', 'duels', 'stats.json'), '{"players":{"ada":{"wins":4}}}\n');
+    await writeFile(join(dir, 'plugin-data', 'duels', 'arena.json'), '{"spawn1":{"x":12,"y":64,"z":12}}\n');
+    await writeFile(join(dir, 'plugin-data', 'holograms', 'holograms.json'), '{"holograms":[{"name":"welcome"}]}\n');
     await writeFile(join(dir, 'plugin-data', 'config', 'spawn.json'), '{"cooldownSeconds":5,"sessionToken":"secret-config"}\n');
     await writeFile(join(dir, 'plugin-data', 'config', 'auction.json'), `{"apiToken":"${SECRET}"}\n`);
     await writeFile(join(dir, 'only-this-world.txt'), `${id}-marker\n`);
@@ -226,11 +258,44 @@ describe('anarchy map backup', () => {
     const packed = await readFile(archive);
     expect(packed.includes(Buffer.from(SESSION))).toBe(false);
     expect(packed.includes(Buffer.from(SECRET))).toBe(false);
+    expect(packed.includes(Buffer.from('inventory-secret-stack'))).toBe(false);
     const listing = await run('tar', ['-tzf', archive], box.env);
     expect(listing.out).not.toContain('worlds/survival');
     expect(listing.out).not.toContain('worlds/peaceful');
     expect(listing.out).not.toContain('postgres');
     expect(listing.out).not.toContain('players.json.bak');
+    for (const entry of [
+      'manifest.json',
+      'export-summary.json',
+      'worlds/anarchy/meta.json',
+      'worlds/anarchy/world.json',
+      'worlds/anarchy/players.json',
+      'worlds/anarchy/map-review.json',
+      'worlds/anarchy/plugin-data/claims/claims.json',
+      'worlds/anarchy/plugin-data/duels/arena.json',
+      'worlds/anarchy/plugin-data/holograms/holograms.json',
+      'worlds/anarchy/plugin-data/config/spawn.json',
+    ]) {
+      expect(listing.out.split('\n').map((line) => line.replace(/^\.\//, ''))).toContain(entry);
+    }
+    for (const banned of [
+      'economy/',
+      'friends/',
+      'home/',
+      'clans/',
+      'permissions.json',
+      'messages/',
+      'kit/',
+      'duels/stats.json',
+    ]) {
+      expect(listing.out).not.toContain(banned);
+    }
+    expect(verified.out).toContain('verify: worlds/anarchy/world.json');
+    expect(verified.out).toContain('verify: worlds/anarchy/meta.json');
+    const review = JSON.parse(await readFile(join(extracted, 'worlds/anarchy/map-review.json'), 'utf8'));
+    expect(review.claimsStatus).toBe('ok');
+    expect(review.spawnPvp).toBe(false);
+    expect(review.warnings).toEqual([]);
   });
 
   it('does not start Anarchy when it was already stopped', async () => {
@@ -269,6 +334,81 @@ describe('anarchy map backup', () => {
     expect(source).not.toMatch(/"\$FC_SYSTEMCTL" start "\$PEACEFUL_UNIT"/);
     expect(source).not.toContain('pg_dump');
     expect(source).not.toMatch(/read_env_value "\$FC_ENV_FILE" FC_DATABASE_URL/);
+  });
+
+  it('warns when claims.json is missing and still publishes the map', async () => {
+    const box = await layout({ claimsMode: 'missing' });
+    const result = await run('bash', [SCRIPT], box.env);
+    expect(result.code, `${result.out}\n${result.err}`).toBe(0);
+    expect(result.err).toContain('claims.json is missing');
+    const archive = result.out.split('\n').find((line) => line.startsWith('archive: '))?.slice('archive: '.length) ?? '';
+    const extracted = join(box.root, 'missing-extracted');
+    await mkdir(extracted);
+    expect((await run('tar', ['-xzf', archive, '-C', extracted], box.env)).code).toBe(0);
+    const review = JSON.parse(await readFile(join(extracted, 'worlds/anarchy/map-review.json'), 'utf8'));
+    expect(review.claimsStatus).toBe('missing');
+    expect(review.warnings.join('\n')).toContain('claims.json is missing');
+    await expect(readFile(join(extracted, 'worlds/anarchy/plugin-data/claims/claims.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('warns when claims are empty or have no explicit arena', async () => {
+    const empty = await layout({ claimsMode: 'empty' });
+    const emptyResult = await run('bash', [SCRIPT], empty.env);
+    expect(emptyResult.code, emptyResult.err).toBe(0);
+    expect(emptyResult.err).toContain('claims.json has no claims');
+    const noArena = await layout({ claimsMode: 'no-arena' });
+    const noArenaResult = await run('bash', [SCRIPT], noArena.env);
+    expect(noArenaResult.code, noArenaResult.err).toBe(0);
+    expect(noArenaResult.err).toContain('no usable arena');
+  });
+
+  it('resolves pvp from the explicit flag setter, not the highest claim that omits the flag', async () => {
+    const omitted = await layout({ claimsMode: 'omitted-flag' });
+    const omittedResult = await run('bash', [SCRIPT], omitted.env);
+    expect(omittedResult.code, omittedResult.err).toBe(0);
+    const omittedArchive = omittedResult.out.split('\n').find((line) => line.startsWith('archive: '))?.slice('archive: '.length) ?? '';
+    const omittedDir = join(omitted.root, 'review');
+    await mkdir(omittedDir);
+    expect((await run('tar', ['-xzf', omittedArchive, '-C', omittedDir], omitted.env)).code).toBe(0);
+    const omittedReview = JSON.parse(await readFile(join(omittedDir, 'worlds/anarchy/map-review.json'), 'utf8'));
+    expect(omittedReview.spawnPvp).toBe(true);
+    expect(omittedReview.spawnPvpSetter).toBe('низкий');
+    const clamped = await layout({ claimsMode: 'clamped-priority' });
+    const clampedResult = await run('bash', [SCRIPT], clamped.env);
+    expect(clampedResult.code, clampedResult.err).toBe(0);
+    const clampedArchive = clampedResult.out.split('\n').find((line) => line.startsWith('archive: '))?.slice('archive: '.length) ?? '';
+    const clampedDir = join(clamped.root, 'review');
+    await mkdir(clampedDir);
+    expect((await run('tar', ['-xzf', clampedArchive, '-C', clampedDir], clamped.env)).code).toBe(0);
+    const clampedReview = JSON.parse(await readFile(join(clampedDir, 'worlds/anarchy/map-review.json'), 'utf8'));
+    expect(clampedReview.spawnPvp).toBe(true);
+    expect(clampedReview.spawnPvpSetter).toBe('ранний');
+  });
+
+  it('rejects an archive whose checksum matches but a required map file is absent', async () => {
+    const box = await layout({ anarchyDown: true });
+    const dir = join(box.root, 'crafted');
+    await mkdir(join(dir, 'worlds/anarchy'), { recursive: true });
+    await writeFile(join(dir, 'manifest.json'), '{}\n');
+    await writeFile(join(dir, 'worlds/anarchy/meta.json'), '{}\n');
+    const archive = join(box.backup, 'frontier-cubes-anarchy-map-2026-11-15_120000.tar.gz');
+    expect((await run('tar', ['-C', dir, '-czf', archive, 'manifest.json', 'worlds'], box.env)).code).toBe(0);
+    const sum = await run('sha256sum', [archive], box.env);
+    expect(sum.code).toBe(0);
+    const hash = sum.out.split(/\s+/)[0];
+    await writeFile(`${archive}.sha256`, `${hash}  ${archive.split('/').pop()}\n`);
+    const missingWorld = await run('bash', [SCRIPT, 'verify', archive], box.env);
+    expect(missingWorld.code).not.toBe(0);
+    expect(missingWorld.err).toContain('archive is missing worlds/anarchy/world.json');
+    expect(missingWorld.out).not.toContain('verify: ok');
+    await writeFile(join(dir, 'worlds/anarchy/world.json'), '{}\n');
+    expect((await run('tar', ['-C', dir, '-czf', archive, 'manifest.json', 'worlds'], box.env)).code).toBe(0);
+    const sum2 = await run('sha256sum', [archive], box.env);
+    await writeFile(`${archive}.sha256`, `${sum2.out.split(/\s+/)[0]}  ${archive.split('/').pop()}\n`);
+    const complete = await run('bash', [SCRIPT, 'verify', archive], box.env);
+    expect(complete.code, complete.err).toBe(0);
+    expect(complete.out).toContain('verify: worlds/anarchy/world.json');
+    expect(complete.out).toContain('verify: worlds/anarchy/meta.json');
   });
 
   it('starts Anarchy again when map export fails and does not stop the other modes', async () => {

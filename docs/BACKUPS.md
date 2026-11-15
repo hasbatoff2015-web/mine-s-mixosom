@@ -110,7 +110,7 @@ frontier-cubes-anarchy-map-YYYY-MM-DD_HHMMSS.tar.gz
 frontier-cubes-anarchy-map-YYYY-MM-DD_HHMMSS.tar.gz.sha256
 ```
 
-`FC_KEEP` у этого скрипта старые файлы не удаляет. Проверка пары — `sha256sum -c` и `tar -tzf`. `verify` игру не останавливает.
+`FC_KEEP` у этого скрипта старые файлы не удаляет. `verify` сверяет SHA-256, читает архив и требует внутри `worlds/anarchy/world.json` и `worlds/anarchy/meta.json`. Игру он не останавливает. Если `claims.json` нет, он пуст или в нём нет загружаемого claim с `flags.pvp: true`, скрипт публикует архив и пишет предупреждение в stderr и в `map-review.json`. Эффективный PvP на спавне считается как на сервере: участвует только явно заданный `flags.pvp`, побеждает больший обрезанный priority, при равенстве остаётся более ранний claim, а claim без этого флага чужой `pvp` не перекрывает.
 
 Установка и запуск — только вручную, отдельной командой. Игровые unit-ы Survival и Peaceful из-за установки не перезапускаются:
 

@@ -47,6 +47,14 @@ No client screen changed.
 
 Local fixtures only. The live Anarchy world was reported at 8.5 MB with 71 GB free. The script was not timed on the VPS.
 
+## Audit follow-up
+
+`verify` now requires `worlds/anarchy/world.json` and `worlds/anarchy/meta.json` after the checksum matches. A missing `claims.json`, an empty claim list, or no loaded claim with `flags.pvp: true` is written to stderr and `map-review.json`. The archive is still published.
+
+Spawn PvP in that review follows `flagSetter` and `effectiveFlag` for `pvp`. Only a claim that stores `flags.pvp` as a boolean competes. Priority is truncated and clamped to `-1000000..1000000`, matching `clampClaimPriority`. The higher clamped priority wins. Equal priority keeps the earlier claim. A higher-priority claim that omits `pvp` does not override a lower one that sets it. No setter means the server default, `false`. A claim counts only when the server would load it: string `id`, `name`, and `owner`, `worldId` equal to `meta.worldId`, and an integer volume. A valid anchor replaces that volume with the iron, gold, or diamond box. Claim member ids stay in `claims.json` because they are the region ACL.
+
+The clone script uses the same clamped explicit-flag rule for its spawn warning. It still measures the stored volume, not an anchor box.
+
 ## Known issues
 
 The live claims, arena volume, and spawn were not read. The script warns instead of guessing. Member ids inside `claims.json` remain in the archive. The installed `/usr/local/sbin/fc-backup` is unchanged and may be older than git.

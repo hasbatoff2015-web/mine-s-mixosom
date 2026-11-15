@@ -139,11 +139,26 @@ function volumeContains(volume, x, y, z) {
     && z >= volume.minZ && z <= volume.maxZ;
 }
 
+const CLAIM_PRIORITY_MIN = -1000000;
+const CLAIM_PRIORITY_MAX = 1000000;
+
+function serverPriority(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.max(CLAIM_PRIORITY_MIN, Math.min(CLAIM_PRIORITY_MAX, Math.trunc(value)));
+}
+
+// Same rule as flagSetter + effectiveFlag('pvp') in server/services/claims.ts.
+// Only an explicit boolean competes. Equal clamped priority keeps the earlier claim.
 function effectivePvp(claims) {
-  const setters = claims.filter((claim) => typeof claim?.flags?.pvp === 'boolean');
+  const setters = [];
+  claims.forEach((claim, index) => {
+    if (typeof claim?.flags?.pvp === 'boolean') {
+      setters.push({ claim, index, priority: serverPriority(claim?.priority) });
+    }
+  });
   if (setters.length === 0) return false;
-  setters.sort((left, right) => (right.priority ?? 0) - (left.priority ?? 0));
-  return setters[0].flags.pvp === true;
+  setters.sort((left, right) => right.priority - left.priority || left.index - right.index);
+  return setters[0].claim.flags.pvp === true;
 }
 
 function describeClaims(claims) {
