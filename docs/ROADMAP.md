@@ -552,7 +552,8 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 - [x] Server-side explosions: Anarchy allowed; Survival and Peaceful cancel the blast before voxels change (TNT, powerful, destructive, TNT minecart, creeper share `enqueueExplosion`).
 - [x] Survival and Peaceful do not prime TNT, light a creeper fuse, or detonate a TNT minecart. A primed TNT entity is placed back as a block.
 - [x] `scripts/clone-world-snapshot.mjs` copies one stopped world into two ids without players, economy, or `.instance.lock`.
-- [ ] PROD `fc-backup` extract cloned onto DEV Survival and DEV Peaceful, with all three DEV processes up. Needs SSH to the VPS.
+- [x] `scripts/fc-backup-anarchy-map.sh` stops only Anarchy and archives the map without players, economy, or a PostgreSQL dump. Survival and Peaceful stay running.
+- [ ] The owner installs and runs `fc-backup-anarchy-map` from the Selectel console, then clones that extract onto DEV Survival and DEV Peaceful. The full `fc-backup` is not the path: it would stop Survival and Peaceful. This branch does not run the backup or deploy.
 - [x] Same builtin plugins. Plugin JSON stays under that world's `plugin-data/`.
 - [x] `/status` includes `mode`. Local scripts `dev:server:anarchy|survival|peaceful`. Client `?server=`.
 - [ ] Owner live QA: three local processes, two browsers, Peaceful sword does no damage, Survival TNT does not break stone, Anarchy still does both.

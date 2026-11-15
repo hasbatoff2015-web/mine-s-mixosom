@@ -2,7 +2,9 @@
 
 VPS только готовит архив. На компьютер владельца он сам не уходит: нет облака, почты, FTP и публичной ссылки. Игровой HTTP и закрытая админка архив не отдают.
 
-Скрипт один: `scripts/fc-backup.sh`. На сервере он ставится в `/usr/local/sbin/fc-backup`. Ручной запуск и таймер вызывают его же. Выкладка игры (`scripts/deploy-release.sh`) этот скрипт не устанавливает и таймер не включает.
+Полный снимок делает `scripts/fc-backup.sh`. На сервере он ставится в `/usr/local/sbin/fc-backup`. Ручной запуск и таймер вызывают его же. Выкладка игры (`scripts/deploy-release.sh`) скрипты резервного копирования не устанавливает и таймер не включает.
+
+Отдельный снимок только карты Anarchy — `scripts/fc-backup-anarchy-map.sh`. Он не заменяет `fc-backup` и таймером не запускается.
 
 ## Что попадает в архив
 
@@ -86,6 +88,47 @@ Env-файлы на VPS могли быть с окончаниями строк
 Проверка `manifest.json` внутри архива больше не использует `grep -q`. С `pipefail` ранний выход `grep -q` давал SIGPIPE у `tar` и ложное «archive is missing manifest.json». Теперь список читается через `grep -x 'manifest.json'`. `pipefail` включён.
 
 На действующем VPS эти две правки уже вносились вручную в `/usr/local/sbin/fc-backup`. Копия в git их не содержала. Этот репозиторий их теперь содержит. Установленный файл при выкладке этой ветки сам не обновляется. На следующем согласованном деплое его нужно заменить из `scripts/fc-backup.sh`, иначе следующий ручной прогон старого установленного скрипта снова разъедется с git. Команда замены — та же `install` ниже. Перед ней нужен согласованный бэкап. Игровые миры этой правкой не меняются.
+
+## Снимок только карты Anarchy
+
+`scripts/fc-backup-anarchy-map.sh` ставится рядом, в `/usr/local/sbin/fc-backup-anarchy-map`. Установленный `/usr/local/sbin/fc-backup` он не переписывает. Survival и Peaceful он не останавливает, не запускает и не копирует.
+
+Останавливается только `frontier-cubes-anarchy.service`, и только если он `active` или `activating`. После копирования карты тот же unit запускается снова. Готовность — `GET /status` на `PORT` из `/etc/frontier-cubes/anarchy.env`: HTTP 200, `ready: true`, `mode: anarchy`, `world: anarchy`. Если Anarchy до запуска скрипта не работал, скрипт его не включает.
+
+Из `anarchy.env` читаются только `PORT`, `SERVER_MODE`, `WORLD` и `WORLD_PATH`. `SERVER_MODE` и `WORLD` должны быть `anarchy`. Каталог Survival или Peaceful скрипт читать отказывается. `FC_DATABASE_URL` не читается и не печатается. Адреса трёх баз скрипт не сравнивает.
+
+В архив входят `meta.json` и `world.json` байт в байт, пустой `players.json`, приваты, арена, голограммы, скупщики без покупок, порталы RTP, автошахты, конфиг мега-зомби, арена дуэлей без статистики и шаблоны world-events. Из `plugin-data/config` остаются только простые поля spawn, rtp и world-events. Экономика, аукцион, дома, кланы, друзья, права, баны, киты, сообщения и статистика дуэлей не копируются. `.instance.lock` не копируется.
+
+PostgreSQL в этот архив не входит. Экономика и учётные записи живут в базе, а Survival и Peaceful в этот момент продолжают работать. Общий дамп при двух пишущих процессах не является тихим снимком и забрал бы их строки. Отдельный дамп только базы Anarchy тоже содержит счета и игроков, которые в снимок карты не кладут. Корректный дамп базы по-прежнему делает полный `fc-backup`: он сначала останавливает все запущенные игровые unit-ы, требует `FC_DATABASE_URL` в каждом env и пишет отдельный `pg_dump -Fc` на каждый различающийся адрес. Этот путь останавливает Survival и Peaceful, поэтому для снимка карты он не используется.
+
+Перед остановкой скрипт смотрит свободное место: нужно три размера каталога мира плюс 64 МиБ. Оба скрипта делят блокировку `.fc-backup.lock`, поэтому полный снимок и снимок карты одновременно не идут. Временный каталог принадлежит только этому запуску и в `trap` удаляется. Если копирование срывается после остановки, `trap` снова запускает Anarchy и проверяет `/status`. Survival и Peaceful при этом не трогает: до остановки он запоминает их `is-active` и после запуска сравнивает. Изменение их состояния даёт ненулевой код. Уже опубликованный архив при этом остаётся, старые архивы не удаляются.
+
+Имя не совпадает с полным снимком, поэтому очистка `fc-backup` его не удаляет:
+
+```text
+frontier-cubes-anarchy-map-YYYY-MM-DD_HHMMSS.tar.gz
+frontier-cubes-anarchy-map-YYYY-MM-DD_HHMMSS.tar.gz.sha256
+```
+
+`FC_KEEP` у этого скрипта старые файлы не удаляет. Проверка пары — `sha256sum -c` и `tar -tzf`. `verify` игру не останавливает.
+
+Установка и запуск — только вручную, отдельной командой. Игровые unit-ы Survival и Peaceful из-за установки не перезапускаются:
+
+```bash
+sudo install -d -m 0750 /var/backups/frontier-cubes
+sudo install -m 0750 scripts/fc-backup-anarchy-map.sh /usr/local/sbin/fc-backup-anarchy-map
+sudo /usr/local/sbin/fc-backup-anarchy-map
+```
+
+Проверка после запуска:
+
+```bash
+sudo /usr/local/sbin/fc-backup-anarchy-map verify /var/backups/frontier-cubes/frontier-cubes-anarchy-map-ДАТА.tar.gz
+curl -fsS http://127.0.0.1:2567/status
+systemctl is-active frontier-cubes-anarchy.service frontier-cubes-survival.service frontier-cubes-peaceful.service
+```
+
+`backup: success` значит, что пара опубликована, Anarchy снова `ready`, а строки `is-active` Survival и Peaceful не изменились. `backup: prepared` значит, что пара записана, но готовность Anarchy или неизменность двух других unit-ов не подтверждена. `backup: failed` значит, что пара не опубликована; если скрипт успел остановить Anarchy, он всё равно пытается его поднять.
 
 ## Установка
 
