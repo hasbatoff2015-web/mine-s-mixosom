@@ -8,6 +8,7 @@ export interface EjectedMinecartTnt {
 }
 
 interface MinecartTntLauncher {
+  allowsExplosions?(): boolean;
   launchMinecartTnt(
     position: Vec3Like,
     velocity: Vec3Like,
@@ -24,6 +25,7 @@ export function igniteMinecartTntFromFireArrow(
   redstone: MinecartTntLauncher,
   cart: MinecartEntity,
 ): boolean {
+  if (redstone.allowsExplosions && !redstone.allowsExplosions()) return false;
   const cargo = minecarts.ejectTntCargo(cart);
   if (!cargo) return false;
   return redstone.launchMinecartTnt(cargo.position, cargo.velocity, cargo.blockId) !== undefined;

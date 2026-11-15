@@ -6,6 +6,7 @@ import {
   DEFAULT_CLAIM_FLAGS,
   clampClaimPriority,
   claimsAt,
+  cellAllowsExplicitPvp,
   effectiveFlag,
   effectiveFlags,
   migrateClaimStore,
@@ -113,6 +114,13 @@ describe('overlapping claims per-flag priority', () => {
     priority: 10,
     volume: arenaVolume,
     flags: { pvp: true },
+  });
+
+  it('opens explicit pvp only inside the arena overlap', () => {
+    expect(cellAllowsExplicitPvp([spawn, arena], 'anarchy', 7, 10, 7)).toBe(true);
+    expect(cellAllowsExplicitPvp([spawn, arena], 'anarchy', 2, 10, 2)).toBe(false);
+    expect(cellAllowsExplicitPvp([spawn, arena], 'anarchy', 40, 10, 40)).toBe(false);
+    expect(cellAllowsExplicitPvp([], 'anarchy', 7, 10, 7)).toBe(false);
   });
 
   it('lets the arena override only pvp inside spawn', () => {

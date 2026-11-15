@@ -55,6 +55,11 @@ export interface RedstoneSystemOptions {
   readonly maxQueuedUpdates?: number;
   readonly buttonPulseSeconds?: number;
   readonly tntFuseSeconds?: number;
+  /**
+   * When this returns false, TNT is not primed and a restored primed entity
+   * is put back as a block. Omitted means explosions stay enabled.
+   */
+  readonly explosionsAllowed?: () => boolean;
   readonly onTntPrimed?: (entity: Readonly<PrimedTnt>) => void;
   readonly onExplosion?: (event: RedstoneExplosionEvent) => void;
   readonly onSourceChanged?: (x: number, y: number, z: number) => void;
@@ -403,6 +408,10 @@ export class RedstoneSystem {
     return Math.max(0, this.maxPrimedTnt - this.primedById.size);
   }
 
+  allowsExplosions(): boolean {
+    return this.options.explosionsAllowed?.() !== false;
+  }
+
   primeTnt(
     x: number,
     y: number,
@@ -411,6 +420,7 @@ export class RedstoneSystem {
     options: { readonly blockAlreadyRemoved?: boolean; readonly blockId?: BlockId } = {},
   ): PrimedTnt | undefined {
     this.assertActive();
+    if (!this.allowsExplosions()) return undefined;
     if (this.primedById.size >= this.maxPrimedTnt) return undefined;
     let blockId = options.blockId;
     if (!options.blockAlreadyRemoved) {
@@ -442,6 +452,7 @@ export class RedstoneSystem {
     blockId: number,
   ): PrimedTnt | undefined {
     this.assertActive();
+    if (!this.allowsExplosions()) return undefined;
     if (this.primedById.size >= this.maxPrimedTnt) return undefined;
     const resolved = isTntBlock(blockId) ? blockId : BlockId.Tnt;
     return this.createPrimedTnt(
@@ -571,6 +582,10 @@ export class RedstoneSystem {
   }
 
   private updatePrimedTnt(deltaSeconds: number): void {
+    if (!this.allowsExplosions()) {
+      for (const entity of [...this.primedById.values()]) this.defusePrimedTnt(entity);
+      return;
+    }
     for (const entity of [...this.primedById.values()]) {
       entity.previousPosition.copy(entity.position);
       entity.fuseSeconds -= deltaSeconds;
@@ -845,6 +860,18 @@ export class RedstoneSystem {
     const drop = tntFallDistance(entity.launchOriginY, entity.position.y);
     if (drop >= entity.maxFallBlocks) return true;
     return landed && falling;
+  }
+
+  /** Puts a primed entity back into its cell when that cell is still air. */
+  private defusePrimedTnt(entity: PrimedTnt): void {
+    if (!this.primedById.delete(entity.id)) return;
+    if (entity.visual) this.host.detach(entity.visual);
+    const x = Math.floor(entity.position.x);
+    const y = Math.floor(entity.position.y);
+    const z = Math.floor(entity.position.z);
+    if (this.world.getBlock(x, y, z) !== BlockId.Air) return;
+    this.world.setBlock(x, y, z, entity.blockId);
+    this.notifyBlockChanged(x, y, z);
   }
 
   private detonate(entity: PrimedTnt): void {

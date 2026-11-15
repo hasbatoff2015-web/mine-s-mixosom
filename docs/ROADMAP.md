@@ -568,7 +568,12 @@ Birch, oak and spruce saplings are normal blocks. Leaves keep their own drop and
 - [x] `SERVER_MODE=anarchy|survival|peaceful` on the existing server process. Default remains Anarchy.
 - [x] One process owns one world directory (`WORLD` defaults to the mode; `.instance.lock` rejects a second opener).
 - [x] Server-side PvP: Anarchy and Survival allowed, Peaceful denied. Mob and environment damage stay.
+- [x] Peaceful arena exception: a player strike, arrow, or owned pet lands only when both feet have effective `pvp=true`. Unclaimed land stays closed. Anarchy and Survival keep the claims plugin.
 - [x] Server-side explosions: Anarchy allowed; Survival and Peaceful cancel the blast before voxels change (TNT, powerful, destructive, TNT minecart, creeper share `enqueueExplosion`).
+- [x] Survival and Peaceful do not prime TNT, light a creeper fuse, or detonate a TNT minecart. A primed TNT entity is placed back as a block.
+- [x] `scripts/clone-world-snapshot.mjs` copies one stopped world into two ids without players, economy, or `.instance.lock`.
+- [x] `scripts/fc-backup-anarchy-map.sh` stops only Anarchy and archives the map without players, economy, or a PostgreSQL dump. Survival and Peaceful stay running.
+- [ ] The owner installs and runs `fc-backup-anarchy-map` from the Selectel console, then clones that extract onto DEV Survival and DEV Peaceful. The full `fc-backup` is not the path: it would stop Survival and Peaceful. This branch does not run the backup or deploy.
 - [x] Same builtin plugins. Plugin JSON stays under that world's `plugin-data/`.
 - [x] `/status` includes `mode`. Local scripts `dev:server:anarchy|survival|peaceful`. Client `?server=`.
 - [ ] Owner live QA: three local processes, two browsers, Peaceful sword does no damage, Survival TNT does not break stone, Anarchy still does both.

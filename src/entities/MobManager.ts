@@ -279,6 +279,8 @@ export interface MobManagerOptions {
    * Existing mobs are never removed by this callback.
    */
   readonly allowSpawn?: (kind: MobKind, x: number, y: number, z: number) => boolean;
+  /** When false, creepers do not light a fuse and do not remove themselves. */
+  readonly explosionsAllowed?: () => boolean;
 }
 
 export interface MobRaycastHit {
@@ -1819,6 +1821,20 @@ export class MobManager {
     context: MobUpdateContext,
   ): void {
     const playerPosition = target.position;
+    if (this.options.explosionsAllowed?.() === false) {
+      mob.fuseSeconds = 0;
+      const direction = new Vec3().subVectors(playerPosition, mob.position);
+      direction.y = 0;
+      if (distance <= 3.2) {
+        this.changeState(mob, 'idle');
+        mob.velocity.x *= 0.2;
+        mob.velocity.z *= 0.2;
+        return;
+      }
+      this.changeState(mob, 'chase');
+      this.steerToward(mob, direction, mob.definition.speed);
+      return;
+    }
     const lineOfSight = hasVoxelLineOfSight(this.world, mob.eyePosition, this.focusEye(target));
     if (distance <= 3.2 && lineOfSight) {
       this.changeState(mob, 'attack');
