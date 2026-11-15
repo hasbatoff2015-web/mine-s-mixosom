@@ -17,6 +17,8 @@ export const DIRECT_MESSAGE_NOT_FRIEND_ERROR = 'Игрок больше не н�
 export const DIRECT_MESSAGE_RATE_LIMIT_ERROR = 'Слишком много сообщений. Подождите немного.';
 export const DIRECT_MESSAGE_EMPTY_ERROR = 'Введите сообщение.';
 export const DIRECT_MESSAGE_EMPTY_HISTORY = 'Сообщений пока нет. Напишите первым.';
+export const DIRECT_MESSAGE_REVIEW_EMPTY = 'Между этими игроками нет личной переписки.';
+export const DIRECT_MESSAGE_REVIEW_UNREADABLE = 'Не удалось прочитать переписку.';
 
 /** Burst, then about one accepted message per second. Not persisted. */
 export const DIRECT_MESSAGE_BURST = 5;
@@ -81,6 +83,14 @@ export function formatDirectMessageClock(createdAt: number): string {
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
   return `${hours}:${minutes}`;
+}
+
+/** Local date and time for a moderation transcript. The server stores `createdAt` only. */
+export function formatDirectMessageStamp(createdAt: number): string {
+  if (!Number.isFinite(createdAt)) return '';
+  const date = new Date(createdAt);
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
 export function chatScrollPinnedToBottom(

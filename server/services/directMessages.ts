@@ -8,6 +8,7 @@ import {
   DIRECT_MESSAGE_PAGE,
   DIRECT_MESSAGE_RATE_LIMIT_ERROR,
   DIRECT_MESSAGE_REFILL_MS,
+  DIRECT_MESSAGE_REVIEW_UNREADABLE,
   DIRECT_MESSAGE_SCHEMA_VERSION,
   DIRECT_MESSAGE_STORAGE_DIR,
   conversationKey,
@@ -34,6 +35,10 @@ export type DirectMessageSendResult =
 
 export type DirectMessageHistoryResult =
   | { readonly ok: true; readonly messages: readonly NetworkDirectMessage[]; readonly hasMore: boolean }
+  | { readonly ok: false; readonly error: string };
+
+export type DirectMessageInspectResult =
+  | { readonly ok: true; readonly messages: readonly NetworkDirectMessage[] }
   | { readonly ok: false; readonly error: string };
 
 interface StoredMessage {
@@ -117,6 +122,24 @@ export class DirectMessageService {
     }
     this.write(conversation);
     return { ok: true, message: toNetwork(message) };
+  }
+
+  /**
+   * Read one pair's saved messages. Does not check friendship, mark anything read,
+   * create a file, or write a repair back to disk.
+   */
+  inspect(a: string, b: string): DirectMessageInspectResult {
+    if (!a || !b || a === b) return { ok: false, error: 'Укажите двух разных игроков.' };
+    const key = conversationKey(a, b);
+    if (this.preservedKeys.has(key)) return { ok: false, error: DIRECT_MESSAGE_REVIEW_UNREADABLE };
+    const cached = this.conversations.get(key);
+    if (cached) return { ok: true, messages: cached.messages.map(toNetwork) };
+    const raw = this.readRaw(key);
+    if (raw === undefined) return { ok: true, messages: [] };
+    const parsed = parseConversation(raw, a, b);
+    if (parsed.kind === 'preserve') return { ok: false, error: DIRECT_MESSAGE_REVIEW_UNREADABLE };
+    if (parsed.kind !== 'ok') return { ok: true, messages: [] };
+    return { ok: true, messages: parsed.conversation.messages.map(toNetwork) };
   }
 
   history(viewerId: string, friendId: string, beforeSeq?: number): DirectMessageHistoryResult {

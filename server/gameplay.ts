@@ -271,6 +271,13 @@ export class ServerGameplay {
   blocksManualItemDrop?: (playerId: string) => boolean;
   /** Loot-window winner is immune to blast damage. */
   suppressIncomingDamage?: (playerId: string) => boolean;
+  /**
+   * Pair check. True only when this attacker or this victim is in post-teleport safety.
+   * A protected player does not disable PvP for everyone else nearby.
+   */
+  blocksPlayerStrike?: (attackerId: string, victimId: string) => boolean;
+  /** Called only after a player melee or projectile hit has actually landed. */
+  notePlayerStrike?: (attackerId: string, victimId: string) => void;
   private pendingUseReject: string | undefined;
   private lastVehicleEnterReject: string | undefined;
   maxTickMs = 0;
@@ -2156,6 +2163,14 @@ export class ServerGameplay {
     } = {},
   ): 'hit' | 'immune' | 'blocked' {
     if (victim.gamemode !== 'survival' || victim.survival.dead) return 'immune';
+    const playerStrike = Boolean(
+      extras.attackerId
+      && extras.attackerId !== victim.id
+      && (cause === 'melee' || cause === 'projectile'),
+    );
+    if (playerStrike && extras.attackerId && this.blocksPlayerStrike?.(extras.attackerId, victim.id)) {
+      return 'blocked';
+    }
     const event = this.events.createPlayerDamage(victim.id, amount, cause, extras.attackerId);
     if (extras.attackerId && !pvpAllowed(this.serverMode)) event.cancel();
     this.events.emit('playerDamage', event);
@@ -2166,6 +2181,7 @@ export class ServerGameplay {
       ...(extras.forceLethal ? { forceLethal: true } : {}),
     });
     if (!result.accepted) return 'immune';
+    if (playerStrike && extras.attackerId) this.notePlayerStrike?.(extras.attackerId, victim.id);
     this.events.emit('playerDamaged', {
       playerId: victim.id,
       amount,

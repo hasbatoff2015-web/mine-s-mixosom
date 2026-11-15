@@ -203,7 +203,7 @@ Inventory cubes are `ItemVisualFactory.blockGeometry`. A face is tinted only whe
 
 Storage is one JSON file per pair at `plugin-data/friends/messages/<key>.json`, next to `friends/friends.json`. `conversationKey` sorts the two player ids and hex-encodes them. The file keeps `version`, `participants`, `nextSeq`, `lastReadSeq`, and at most 200 messages. Trimming drops the oldest message and does not reset `nextSeq`. Unfriend does not delete the file. A later friendship can read the retained messages. Unknown schema versions are left on disk. Invalid records inside version 1 are skipped. A rate limit of 5 tokens, refilled once per second, stays in memory.
 
-`NotificationService` category `friends` is still cleared by opening the friends screen. The root Friends badge shown in the menu snapshot is that stored count plus `totalUnread` for current friends only. `CHAT_CHANNELS` stays `global | nearby | clan`. `PROTOCOL_VERSION` stays 4 because the new packets are additive: an old client never sends the action, and an unknown server packet is ignored by the existing client parser.
+`/chat <nick1> <nick2>` is a builtin operator command. The server resolves both names with `resolvePermissionSubject`, including offline stored players, and rejects a missing, ambiguous, or identical pair before any file is read. `DirectMessageService.inspect` returns that pair's saved messages in `seq` order. It does not check friendship, mark `lastReadSeq`, create a file, or write a repair. The text is the stored body. The operator sees it in menu screen `dm-review`, which has no composer. A client `menu_action` cannot open that screen unless the server already attached the snapshot, and a non-operator flush drops it. `NotificationService` category `friends` is still cleared by opening the friends screen. The root Friends badge shown in the menu snapshot is that stored count plus `totalUnread` for current friends only. `CHAT_CHANNELS` stays `global | nearby | clan`. `PROTOCOL_VERSION` stays 4 because the new packets are additive: an old client never sends the action, and an unknown server packet is ignored by the existing client parser.
 
 ## God Sword — 2026-10-05
 
@@ -580,6 +580,16 @@ All `.mc-stage` overlays share `overlayStageStyle()` (scale + close/back sprite 
 ## Main Menu visual chrome — 2026-09-16
 
 In-game social menu stays on `ServerMenuMessage` / `menu_action` / `gameMenuGui`. The visual pass adds `balance` + `balanceLabel` to the existing snapshot (`WorldInstance.buildMenuMessage` reads `EconomyService.getBalance`). Client chrome is `.mc-menu-stage` + `.mc-menu-panel` with a content-sized dark panel, 4+4 `.mc-menu-tile` grid (Spawn/Homes/Friends/Clans + Claims/Trade/Auction/Рейтинг), and PNG faces from `public/ui/menu/` including `icon_rating.png`. Nested `rating` screen uses `buildRankingSnapshot` (players/clans × money/kills, top 50, 10/page). Close HTML is still `closeButtonHtml()`; menu-stage CSS swaps the face to the close/back sprites. HUD `#hud-corner` uses the same sheet. Auction House and Clan overlays are unchanged systems.
+
+## Chat limits, PvP timer and teleport safety — 2026-11-01
+
+`PlayerRules` on `WorldInstance` stores per-player server timestamps: `chatUntil`, `teleportUntil`, `pvpDeadline`, `protectionUntil`. Nothing in that object is a zone or world flag.
+
+`handleChat` checks the 3-second window only after the line is a non-empty player message with recipients. A rejection is one `style: 'notice'` line to the sender. The accepted text is passed through `censorChatText` and only that string is delivered. Commands return before this path. Clan announcements censor the player-written body before the existing `[ОБЪЯВЛЕНИЕ…]` wrapper. `handleDirectMessage` uses the same cooldown and `censorChatText` before the line is stored. A rejected direct message returns the Russian cooldown text to the sender and does not start the cooldown.
+
+`TeleportService` asks `TeleportRuleGate` immediately before a governed move (`spawn`, `home`, `rtp`, `portal`, `tpa`, `friends`). The shared 5-second cooldown and the 20-second safety window are committed only after `teleport()` returns true. Spawn commits the cooldown and does not read or write the safety deadline. A second call that re-enters `now()` for the same player is rejected before the first commit. PvP is checked first and returns `Нельзя телепортироваться во время PvP.`
+
+`ServerGameplay.hurtPlayerResult` asks `blocksPlayerStrike(attacker, victim)` before damage. Only a melee or projectile hit that `survival.damage` accepts calls `notePlayerStrike`, which sets both players' deadlines to `now + 10s` and sends `pvp_timer` to each of them. Welcome also carries `pvpUntil` for that player. The client converts it with `serverNow` and only replaces the text of `#pvp-badge`.
 
 ## Chat channels — 2026-09-12
 

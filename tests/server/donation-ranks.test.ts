@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Inventory, createItemStack } from '../../src/inventory';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import {
@@ -435,6 +435,8 @@ describe('donation commands on the anarchy world', () => {
     expect(chat(world, ada, '/nickcolor pink').some((line) => line.includes('Неизвестный'))).toBe(true);
     expect(chat(world, ada, '/nickcolor aqua').some((line) => line.includes('aqua'))).toBe(true);
     ada.sink.payloads.length = 0;
+    const chatClock = Date.now();
+    const chatSpy = vi.spyOn(Date, 'now').mockImplementation(() => chatClock + 3_000);
     world.handleChat(ada.player, 'привет');
     const said = ada.sink.payloads.find((payload) => {
       const record = payload as { type?: string; kind?: string };
@@ -446,7 +448,9 @@ describe('donation commands on the anarchy world', () => {
     expect(said.nameStyle?.nameColor).toBe('aqua');
     chat(world, op, '/donate revoke Ada');
     ada.sink.payloads.length = 0;
+    chatSpy.mockImplementation(() => chatClock + 6_000);
     world.handleChat(ada.player, 'после');
+    chatSpy.mockRestore();
     const faded = ada.sink.payloads.find((payload) => {
       const record = payload as { type?: string; kind?: string };
       return record.type === 'chat' && record.kind === 'player';
@@ -467,6 +471,8 @@ describe('donation commands on the anarchy world', () => {
         cause: 'generic',
       });
     };
+    const teleportClock = Date.now();
+    const teleportSpy = vi.spyOn(Date, 'now').mockImplementation(() => teleportClock);
     markDeath();
     ada.player.controller.teleport([start.x + 30, start.y, start.z]);
     expect(chat(world, ada, '/back').some((line) => line.includes('death'))).toBe(true);
@@ -474,21 +480,28 @@ describe('donation commands on the anarchy world', () => {
     ada.player.controller.teleport([start.x + 40, start.y, start.z]);
     markDeath();
     ada.player.controller.teleport([start.x + 50, start.y, start.z]);
+    teleportSpy.mockImplementation(() => teleportClock + 6_000);
     expect(chat(world, ada, '/back').some((line) => line.includes('death'))).toBe(true);
     markDeath();
     ada.player.controller.teleport([start.x + 60, start.y, start.z]);
+    teleportSpy.mockImplementation(() => teleportClock + 12_000);
     expect(chat(world, ada, '/back').some((line) => line.includes('через'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(start.x + 60, 1);
 
     const before = { ...ada.player.controller.position };
+    teleportSpy.mockImplementation(() => teleportClock + 18_000);
     expect(chat(world, ada, '/tp 4 70 4').some((line) => line.includes('Teleported'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(4, 1);
     ada.player.controller.teleport([start.x, start.y, start.z]);
+    teleportSpy.mockImplementation(() => teleportClock + 24_000);
     expect(chat(world, ada, '/tp 9 70 9').some((line) => line.includes('через'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(start.x, 1);
     expect(chat(world, ada, '/tpa not-a-player').some((line) => line.includes('прав'))).toBe(true);
+    teleportSpy.mockImplementation(() => teleportClock + 30_000);
     expect(chat(world, op, '/tp 6 70 6').some((line) => line.includes('Teleported'))).toBe(true);
+    teleportSpy.mockImplementation(() => teleportClock + 36_000);
     expect(chat(world, op, '/tp 7 70 7').some((line) => line.includes('Teleported'))).toBe(true);
+    teleportSpy.mockRestore();
     expect(before.x).toBeTypeOf('number');
   });
 

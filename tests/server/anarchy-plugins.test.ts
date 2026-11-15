@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { PLAYER_NET_REACH } from '../../src/core/constants';
 import { Vec3 } from '../../src/math/vec3';
@@ -60,6 +60,7 @@ describe('Anarchy builtin plugins', () => {
   const worlds: WorldInstance[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const world of worlds.splice(0)) await world.stop();
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -192,11 +193,14 @@ describe('Anarchy builtin plugins', () => {
     op.player.controller.teleport([20.5, 70, 21.5]);
     expect(chat(world, op, '/setspawn').some((line) => line.includes('Spawn set'))).toBe(true);
     ada.player.controller.teleport([8, 70, 8]);
+    let clock = Date.now();
+    const clockSpy = vi.spyOn(Date, 'now').mockImplementation(() => clock);
     expect(chat(world, ada, '/spawn').some((line) => line.includes('Teleporting to spawn'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(20.5, 1);
     chat(world, ada, '/sethome');
     expect(chat(world, ada, '/homes')[0]).toContain('home');
     ada.player.controller.teleport([40, 70, 40]);
+    clock += 6_000;
     chat(world, ada, '/home');
     expect(ada.player.controller.position.x).toBeCloseTo(20.5, 1);
     expect(chat(world, ada, '/home unknown').some((line) => line.includes("Home 'unknown' not found."))).toBe(true);
@@ -205,11 +209,14 @@ describe('Anarchy builtin plugins', () => {
     expect(chat(world, ada, '/sethome extra').some((line) => line.includes('You can only set 3 home'))).toBe(true);
     expect(chat(world, ada, '/sethome overflow').some((line) => line.includes('You can only set 3 home'))).toBe(true);
     ada.player.controller.teleport([50, 70, 50]);
+    clock += 6_000;
     chat(world, ada, '/home');
+    clock += 6_000;
     expect(chat(world, ada, '/back').some((line) => line.includes('BOSS'))).toBe(true);
     world.donation.grant(ada.player.id, 'boss');
     expect(chat(world, ada, '/back').some((line) => line.includes('previous'))).toBe(true);
     expect(ada.player.controller.position.x).toBeCloseTo(50, 1);
+    clockSpy.mockRestore();
 
     await world.save();
     const dir = world.config.dataDir;

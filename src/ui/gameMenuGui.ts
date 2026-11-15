@@ -1,8 +1,11 @@
 import { GAME_MENU_BUTTONS, showsMenuBack } from '../../shared/gameMenu';
+import { isTeleportRestrictionMessage } from '../../shared/playerRules';
 import { MAX_CHAT_LENGTH } from '../../shared/config';
 import {
   DIRECT_MESSAGE_EMPTY_HISTORY,
+  DIRECT_MESSAGE_REVIEW_EMPTY,
   formatDirectMessageClock,
+  formatDirectMessageStamp,
 } from '../../shared/directMessages';
 import { FRIENDS_MAX } from '../../shared/friends';
 import { HOME_MAX_DEFAULT } from '../../shared/homes';
@@ -144,7 +147,7 @@ function menuTileHtml(
 }
 
 export function menuRootHtml(
-  state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel' | 'notifications'>,
+  state?: Pick<ServerMenuMessage, 'balance' | 'balanceLabel' | 'notifications' | 'message'>,
 ): string {
   const rows: string[] = [];
   for (let start = 0; start < GAME_MENU_BUTTONS.length; start += 3) {
@@ -155,6 +158,7 @@ export function menuRootHtml(
   }
   return `<div class="mc-menu-body mc-menu-root" data-menu-screen="root">
     ${menuHeadingHtml('Меню')}
+    ${menuMessage(state?.message, escapeMenu)}
     ${menuBalanceHtml(state)}
     <div class="mc-menu-grid">
       ${rows.join('')}
@@ -276,6 +280,25 @@ export function friendChatMessageHtml(
   return `<div class="mc-dm ${outgoing ? 'is-out' : 'is-in'}" data-dm-id="${escape(message.messageId)}">
     <div class="mc-dm-text">${escape(message.text)}</div>
     <div class="mc-dm-time">${escape(formatDirectMessageClock(message.createdAt))}</div>
+  </div>`;
+}
+
+export function menuDmReviewHtml(state: ServerMenuMessage, escape: (value: string) => string): string {
+  const review = state.dmReview;
+  const title = review?.title ?? 'Личная переписка';
+  const rows = (review?.messages ?? []).map((message) => `<div class="mc-dm-review-line" data-sender-id="${escape(message.senderId)}">
+    <div class="mc-dm-review-meta">
+      <span class="mc-dm-review-name">${escape(message.senderName)}</span>
+      <time datetime="${escape(new Date(message.createdAt).toISOString())}">${escape(formatDirectMessageStamp(message.createdAt))}</time>
+    </div>
+    <div class="mc-dm-text mc-dm-review-text">${escape(message.text)}</div>
+  </div>`).join('');
+  const body = rows || `<p class="mc-friend-chat-empty">${escape(DIRECT_MESSAGE_REVIEW_EMPTY)}</p>`;
+  return `<div class="mc-menu-body mc-friend-chat mc-dm-review" data-menu-screen="dm-review">
+    <div class="mc-friend-chat-head">
+      ${menuHeadingHtml(title)}
+    </div>
+    <div class="mc-friend-chat-log" data-dm-review-log>${body}</div>
   </div>`;
 }
 
@@ -648,6 +671,7 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
   if (state.screen === 'friends-invites') return menuReferralHtml(state, escape);
   if (state.screen === 'friends' || state.screen === 'friend-delete-confirm') return menuFriendsHtml(state, escape);
   if (state.screen === 'friend-chat') return menuFriendChatHtml(state, escape);
+  if (state.screen === 'dm-review') return menuDmReviewHtml(state, escape);
   if (state.screen === 'clans') return menuClansHtml(state);
   if (state.screen === 'claims' || state.screen === 'claim-settings' || state.screen === 'claim-delete-confirm') {
     return menuClaimsHtml(state, escape);
@@ -662,7 +686,8 @@ export function menuBodyHtml(state: ServerMenuMessage, escape: (value: string) =
 }
 
 function menuMessage(message: string | undefined, escape: (value: string) => string): string {
-  return `<div class="mc-ah-message" data-menu-message${message ? '' : ' hidden'}>${escape(message ?? '')}</div>`;
+  const warn = message ? isTeleportRestrictionMessage(message) : false;
+  return `<div class="mc-ah-message${warn ? ' is-warn' : ''}" data-menu-message${message ? '' : ' hidden'}>${escape(message ?? '')}</div>`;
 }
 
 function escapeMenu(value: string): string {

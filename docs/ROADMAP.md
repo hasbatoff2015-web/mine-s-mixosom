@@ -1,5 +1,11 @@
 # Roadmap
 
+## 2026-11-12: Operator transcript `/chat`
+
+- [x] `/chat <nick1> <nick2>` is server-gated to OP and opens a read-only menu of one stored direct-message pair.
+- [x] The view uses the saved censored text, works for offline players, and does not send, edit, or mark the conversation read.
+- [ ] Not merged. Not deployed.
+
 ## 2026-11-09: Referral reliability
 
 - [x] Reward phase writes are serialized per player. A stale snapshot cannot overwrite a newer `revision`.
@@ -45,6 +51,12 @@
 - [x] A later join lease wins. Stale cleanup uses the connection id captured at publish.
 - [x] Server list has «Войти через Яндекс». The pause button «Привязать Яндекс ID» from this pass was removed on 2026-11-04.
 - [ ] Live check inside the Yandex draft is still for the owner. Referral rewards are not included. Not merged.
+
+## 2026-11-01: Chat limits, teleport cooldown, PvP timer, post-teleport safety
+
+- Server timestamps own chat (3s), shared teleport (5s), PvP (10s) and personal safety (20s, not after spawn).
+- Profanity dictionaries live in `server/data/chat-profanity-ru.json` and `server/data/chat-profanity-en.json`.
+- The PvP badge is display-only. Direct messages use the same 3-second cooldown and are censored before they are stored.
 
 ## 2026-10-28: Integrate PR #129 with current main
 
