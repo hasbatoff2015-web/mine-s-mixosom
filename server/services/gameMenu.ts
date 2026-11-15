@@ -25,6 +25,7 @@ import type {
   GameMenuScreenKind,
   NetworkRankingRow,
 } from '../../shared/protocol';
+import type { ReferralMenuState } from '../../shared/referral';
 
 export interface GameMenuSession {
   screen: GameMenuScreen;
@@ -54,7 +55,9 @@ export interface GameMenuSession {
   tradeNameText: string;
   ratingKind: RankingKind;
   ratingPage: number;
+  referralPage: number;
   message?: string;
+  referral?: ReferralMenuState;
 }
 
 export function createMenuSession(): GameMenuSession {
@@ -67,12 +70,13 @@ export function createMenuSession(): GameMenuSession {
     tradeNameText: '',
     ratingKind: 'players-money',
     ratingPage: 1,
+    referralPage: 1,
   };
 }
 
 export function parentMenuScreen(screen: GameMenuScreen): GameMenuScreen {
   if (screen === 'home-delete-confirm') return 'homes';
-  if (screen === 'friend-delete-confirm' || screen === 'friend-chat') return 'friends';
+  if (screen === 'friend-delete-confirm' || screen === 'friend-chat' || screen === 'friends-invites') return 'friends';
   if (screen === 'dm-review') return 'root';
   if (screen === 'auction-history') return 'auction';
   if (
@@ -155,6 +159,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'friend-chat') return 'Чат';
   if (screen === 'dm-review') return 'Личная переписка';
   if (screen === 'friends' || screen === 'friend-delete-confirm') return 'Друзья';
+  if (screen === 'friends-invites') return 'Приглашения';
   if (screen === 'clans') return 'Кланы';
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';
   if (screen === 'trade') return 'Обмен';

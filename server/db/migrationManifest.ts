@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { REFERRAL_MIGRATION_STATEMENTS, REFERRAL_REWARDS_REVISION_STATEMENTS } from './referralMigration';
 
 export interface Migration {
   readonly version: string;
@@ -595,6 +596,16 @@ export const MIGRATIONS: readonly Migration[] = [
       YANDEX_PROOF_RECEIPTS_STATE_CHECK_SQL,
       YANDEX_PROOF_RECEIPTS_DROP_SCOPE_DEFAULTS_SQL,
     ],
+  },
+  {
+    version: '0011',
+    name: 'referral_program',
+    statements: REFERRAL_MIGRATION_STATEMENTS,
+  },
+  {
+    version: '0012',
+    name: 'referral_reward_revision',
+    statements: REFERRAL_REWARDS_REVISION_STATEMENTS,
   },
 ];
 
