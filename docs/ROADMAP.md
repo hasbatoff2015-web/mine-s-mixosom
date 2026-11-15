@@ -1,5 +1,12 @@
 # Roadmap
 
+## 2026-11-15: Referral menu UI
+
+- [x] Friends and `friends-invites` call the referral screen «Бонус за друга». Clan invitations keep «Приглашения».
+- [x] Those two screens use a smaller body padding and tighter groups. The referral list no longer keeps an empty minimum height.
+- [x] The Anarchy note and the Yandex ID warning are not rendered. The copy-link button stays hidden until a real URL exists, including one filled from the Yandex SDK.
+- [ ] Not merged. Not deployed.
+
 ## 2026-11-12: Operator transcript `/chat`
 
 - [x] `/chat <nick1> <nick2>` is server-gated to OP and opens a read-only menu of one stored direct-message pair.

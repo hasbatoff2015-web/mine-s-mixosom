@@ -5651,6 +5651,7 @@ export class GameUI {
     if (!link) return;
     button.dataset.referralValue = link;
     button.disabled = false;
+    button.hidden = false;
   }
 
   private async copyReferralValue(value: string): Promise<void> {

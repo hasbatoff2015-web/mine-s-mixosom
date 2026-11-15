@@ -10,7 +10,7 @@
 
 Кит `referral_starter` читается из `plugin-data/kit/store`. Выдача меняет инвентарь и квитанцию в одном `players.json`. Пока квитанции нет, повтор безопасен. Когда она есть, предметы второй раз не создаются.
 
-Меню: экран `friends-invites` внутри «Друзья». `PROTOCOL_VERSION` не менялся.
+Меню: экран `friends-invites` внутри «Друзья», подпись «Бонус за друга». Клиент не рисует `activityNote` и `guestWarning`; ссылка копирования появляется только вместе с URL, в том числе из Yandex SDK. `PROTOCOL_VERSION` не менялся.
 
 Часы по умолчанию копит только Anarchy (`FC_REFERRAL_ACTIVITY_MODES`). Ручное начисление секунд требует `FC_REFERRAL_DEV=1` и оператора.
 

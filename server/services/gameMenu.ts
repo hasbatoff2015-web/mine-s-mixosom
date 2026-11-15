@@ -159,7 +159,7 @@ export function menuTitle(screen: GameMenuScreenKind): string {
   if (screen === 'friend-chat') return 'Чат';
   if (screen === 'dm-review') return 'Личная переписка';
   if (screen === 'friends' || screen === 'friend-delete-confirm') return 'Друзья';
-  if (screen === 'friends-invites') return 'Приглашения';
+  if (screen === 'friends-invites') return 'Бонус за друга';
   if (screen === 'clans') return 'Кланы';
   if (screen === 'claims' || screen === 'claim-settings' || screen === 'claim-delete-confirm') return 'Приваты';
   if (screen === 'trade') return 'Обмен';
