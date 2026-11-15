@@ -277,14 +277,49 @@ async function copyOptionalJson(sourceRoot, partial, relativePath, fromId, toId,
   return true;
 }
 
-async function copyConfig(source, partial, fromId, toId, copied) {
+const CONFIG_KEYS = {
+  'spawn.json': ['cooldownSeconds', 'warmupSeconds', 'cancelOnMove', 'cancelOnDamage'],
+  'rtp.json': [
+    'minX', 'maxX', 'minZ', 'maxZ', 'cooldownSeconds', 'warmupSeconds',
+    'attemptsPerTick', 'maxAttempts', 'maxChunkGenerates', 'cancelOnMove', 'cancelOnDamage',
+  ],
+  'world-events.json': [
+    'enabled', 'dailyTime', 'timeZone', 'warningMinutes', 'unlockDelayMinutes', 'durationMinutes',
+    'spawnMinDistance', 'spawnMaxDistance', 'worldBorder', 'templateName', 'announceCoordinates',
+    'playerAvoidRadius', 'homeAvoidRadius', 'maxSearchAttempts', 'attemptsPerTick',
+  ],
+};
+
+function filterPluginConfig(fileName, store) {
+  const allowed = CONFIG_KEYS[fileName];
+  if (!allowed) return undefined;
+  const kept = {};
+  for (const key of allowed) {
+    const value = store[key];
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') kept[key] = value;
+  }
+  return kept;
+}
+
+async function copyConfig(source, partial, copied, skipped) {
   const dir = path.join(source, 'plugin-data', 'config');
   if (!existsSync(dir)) return;
   const names = await readdir(dir);
   for (const name of names) {
     if (!name.endsWith('.json')) continue;
     const relativePath = `config/${name}`;
-    if (await copyOptionalJson(source, partial, relativePath, fromId, toId)) copied.push(relativePath);
+    const raw = asRecord(await readJson(path.join(dir, name), relativePath), relativePath);
+    const kept = filterPluginConfig(name, raw);
+    if (!kept) {
+      skipped.push(relativePath);
+      continue;
+    }
+    if (Object.keys(kept).length === 0) {
+      skipped.push(relativePath);
+      continue;
+    }
+    await writeJson(path.join(partial, 'plugin-data', relativePath), kept);
+    copied.push(relativePath);
   }
 }
 
@@ -295,6 +330,7 @@ async function buildPartial(source, partial, worldId, loaded) {
   await writeJson(path.join(partial, 'meta.json'), meta);
   await copyFile(path.join(source, 'world.json'), path.join(partial, 'world.json'));
   await writeJson(path.join(partial, 'players.json'), { players: {} });
+  await writeJson(path.join(partial, 'clone-marker.json'), { role: 'new-copy', worldId });
   const copied = [];
   for (const relativePath of MAP_JSON) {
     const transform = relativePath === 'buyers/buyers.json'
@@ -311,9 +347,10 @@ async function buildPartial(source, partial, worldId, loaded) {
     await cp(originals, path.join(partial, 'plugin-data', 'automine', 'originals'), { recursive: true });
     copied.push('automine/originals/');
   }
-  await copyConfig(source, partial, loaded.meta.worldId, worldId, copied);
+  const skipped = [];
+  await copyConfig(source, partial, copied, skipped);
   copied.sort();
-  return copied;
+  return { copied, skipped };
 }
 
 async function listFiles(root) {
@@ -408,57 +445,169 @@ async function verifyPartial(partial, worldId, loaded) {
   return { modificationCount: keys.length, claimCount: claims.claims.length, worldText };
 }
 
-async function rollbackInstall(journal) {
-  const errors = [];
-  for (const step of [...journal].reverse()) {
-    try {
-      if (step.kind === 'installed' && existsSync(step.target)) {
-        const trash = `${step.target}.failed-${process.pid}`;
-        await rm(trash, { recursive: true, force: true });
-        await rename(step.target, trash);
-        await rm(trash, { recursive: true, force: true });
-      }
-      if (step.kind === 'aside') {
-        if (existsSync(step.target)) {
-          throw new Error(`cannot restore ${step.target}: the path is still occupied`);
-        }
-        await rename(step.aside, step.target);
-      }
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error));
-    }
-  }
-  if (errors.length > 0) {
-    fail(`rollback did not finish cleanly: ${errors.join('; ')}`);
-  }
+function journalPathFor(survivalDir) {
+  return `${survivalDir}.fc-clone-journal.json`;
 }
 
-async function installBoth(steps, force) {
-  const journal = [];
+async function writeJournal(file, data) {
+  const temp = `${file}.tmp`;
+  await writeFile(temp, `${JSON.stringify(data, null, 2)}\n`, 'utf8');
+  await rename(temp, file);
+}
+
+function manualRecovery(journal, reason) {
+  const lines = [
+    reason,
+    'Automatic recovery stopped. Nothing else was moved or deleted.',
+    `Journal: ${journal.file}`,
+    `Source, left untouched: ${journal.source}`,
+  ];
+  for (const step of journal.steps) {
+    lines.push(
+      `${step.id}: state=${step.state} target=${step.target}`
+      + `${step.aside ? ` previous=${step.aside}` : ''}`
+      + ` partial=${step.partial}`,
+    );
+  }
+  lines.push('Restore a previous world by renaming its previous= directory back onto target= only when target= is empty.');
+  lines.push('A directory with clone-marker.json is a new copy. Move it aside before restoring previous=.');
+  lines.push('Do not delete the source directory.');
+  return lines.join('\n');
+}
+
+async function resumeCloneJournal(file) {
+  const journal = asRecord(await readJson(file, 'clone journal'), 'clone journal');
+  journal.file = file;
+  if (!Array.isArray(journal.steps)) fail(`clone journal ${file} has no steps.`);
+  if (journal.phase === 'complete') {
+    await rm(file, { force: true });
+    return { recovered: true, lines: ['Clone journal was already complete. Removed the journal. Worlds were left in place.'] };
+  }
+  const lines = [];
+  for (const step of [...journal.steps].reverse()) {
+    const targetExists = existsSync(step.target);
+    const asideExists = Boolean(step.aside) && existsSync(step.aside);
+    const partialExists = existsSync(step.partial);
+    if (step.state === 'pending') continue;
+    if (step.state === 'moving-aside') {
+      if (!targetExists && asideExists) {
+        step.state = 'aside';
+        await writeJournal(file, journal);
+      } else if (targetExists && !asideExists) {
+        step.state = 'pending';
+        step.aside = null;
+        await writeJournal(file, journal);
+        continue;
+      } else {
+        fail(manualRecovery(journal, `Cannot tell whether ${step.id} finished moving the previous world.`));
+      }
+    }
+    if (step.state === 'moving-install') {
+      if (!partialExists && targetExists) {
+        step.state = 'installed';
+        await writeJournal(file, journal);
+      } else if (partialExists && !targetExists) {
+        step.state = step.aside && existsSync(step.aside) ? 'aside' : 'pending';
+        await writeJournal(file, journal);
+        if (step.state === 'pending') continue;
+      } else {
+        fail(manualRecovery(journal, `Cannot tell whether ${step.id} finished installing the new world.`));
+      }
+    }
+    if (step.state === 'aside') {
+      if (!asideExists && targetExists) {
+        lines.push(`${step.id}: previous world is already back at ${step.target}.`);
+        continue;
+      }
+      if (asideExists && !targetExists) {
+        await rename(step.aside, step.target);
+        lines.push(`${step.id}: restored the previous world to ${step.target}.`);
+        continue;
+      }
+      fail(manualRecovery(journal, `Both the previous and current ${step.id} paths need a manual choice.`));
+    }
+    if (step.state === 'installed') {
+      const abandoned = `${step.target}.abandoned-${Date.now()}-${step.id}`;
+      if (targetExists) {
+        if (existsSync(abandoned)) fail(manualRecovery(journal, `${abandoned} already exists.`));
+        await rename(step.target, abandoned);
+        lines.push(`${step.id}: moved the unfinished new world to ${abandoned}.`);
+      }
+      if (step.aside && asideExists) {
+        if (existsSync(step.target)) fail(manualRecovery(journal, `${step.target} is occupied, so ${step.aside} was not restored.`));
+        await rename(step.aside, step.target);
+        lines.push(`${step.id}: restored the previous world to ${step.target}.`);
+      } else if (step.aside && !asideExists && !targetExists) {
+        fail(manualRecovery(journal, `The previous ${step.id} world ${step.aside} is missing.`));
+      }
+    }
+  }
+  for (const step of journal.steps) {
+    if (step.partial && step.partial.includes('.partial-') && existsSync(step.partial) && !samePath(step.partial, journal.source)) {
+      await rm(step.partial, { recursive: true, force: true });
+      lines.push(`removed temporary copy ${step.partial}`);
+    }
+  }
+  await rm(file, { force: true });
+  return { recovered: true, lines };
+}
+
+async function installBoth(steps, force, journalFile, source) {
+  const journal = {
+    version: 1,
+    phase: 'installing',
+    source,
+    file: journalFile,
+    steps: steps.map((step) => ({
+      id: step.id,
+      target: step.target,
+      partial: step.partial,
+      aside: null,
+      state: 'pending',
+    })),
+  };
+  await writeJournal(journalFile, journal);
   try {
-    for (const step of steps) {
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index];
+      const recorded = journal.steps[index];
       if (await targetOccupied(step.target)) {
-        if (!force) {
-          fail(`${step.target} already has a world. Pass --force to move it aside. Nothing was replaced.`);
-        }
+        if (!force) fail(`${step.target} already has a world. Pass --force to move it aside. Nothing was replaced.`);
         if (existsSync(path.join(step.target, '.instance.lock'))) {
           fail(`${step.target} has .instance.lock. Stop that process before replacing the directory.`);
         }
         const aside = `${step.target}.rollback-${Date.now()}-${process.pid}-${step.id}`;
         if (existsSync(aside)) fail(`refusing to replace ${step.target}: ${aside} already exists.`);
+        recorded.aside = aside;
+        recorded.state = 'moving-aside';
+        await writeJournal(journalFile, journal);
         await rename(step.target, aside);
-        journal.push({ kind: 'aside', target: step.target, aside });
+        recorded.state = 'aside';
+        await writeJournal(journalFile, journal);
       }
       if (process.env.FC_CLONE_FAIL_INSTALL === step.id) {
         throw new CloneWorldError(`injected failure installing ${step.id}`);
       }
       await mkdir(path.dirname(step.target), { recursive: true });
+      recorded.state = 'moving-install';
+      await writeJournal(journalFile, journal);
       await rename(step.partial, step.target);
-      journal.push({ kind: 'installed', target: step.target, partial: step.partial });
+      recorded.state = 'installed';
+      await writeJournal(journalFile, journal);
     }
+    for (const step of steps) {
+      await rm(path.join(step.target, 'clone-marker.json'), { force: true });
+    }
+    journal.phase = 'complete';
+    await writeJournal(journalFile, journal);
+    await rm(journalFile, { force: true });
   } catch (error) {
-    await rollbackInstall(journal);
-    throw error;
+    const recovery = await resumeCloneJournal(journalFile).catch((resumeError) => {
+      const reason = resumeError instanceof Error ? resumeError.message : String(resumeError);
+      fail(`${error instanceof Error ? error.message : String(error)}\n${reason}`);
+    });
+    const wrapped = error instanceof Error ? error.message : String(error);
+    fail(`${wrapped}\n${recovery.lines.join('\n')}`);
   }
 }
 
@@ -495,11 +644,17 @@ export async function cloneWorldSnapshot(options) {
       }
     }
   }
+  const journalFile = journalPathFor(survivalDir);
+  if (existsSync(journalFile)) {
+    fail(`An unfinished clone journal exists at ${journalFile}. Run: node scripts/clone-world-snapshot.mjs --resume ${journalFile}`);
+  }
   const survivalPartial = `${survivalDir}.partial-${process.pid}`;
   const peacefulPartial = `${peacefulDir}.partial-${process.pid}`;
   try {
-    const survivalCopied = await buildPartial(source, survivalPartial, survivalId, loaded);
-    const peacefulCopied = await buildPartial(source, peacefulPartial, peacefulId, loaded);
+    const survivalBuilt = await buildPartial(source, survivalPartial, survivalId, loaded);
+    const peacefulBuilt = await buildPartial(source, peacefulPartial, peacefulId, loaded);
+    const survivalCopied = survivalBuilt.copied;
+    const peacefulCopied = peacefulBuilt.copied;
     const survivalCheck = await verifyPartial(survivalPartial, survivalId, loaded);
     const peacefulCheck = await verifyPartial(peacefulPartial, peacefulId, loaded);
     if (survivalCheck.worldText !== peacefulCheck.worldText) {
@@ -511,7 +666,7 @@ export async function cloneWorldSnapshot(options) {
     await installBoth([
       { id: survivalId, partial: survivalPartial, target: survivalDir },
       { id: peacefulId, partial: peacefulPartial, target: peacefulDir },
-    ], force);
+    ], force, journalFile, source);
     return {
       source,
       seed: loaded.meta.seed,
@@ -523,6 +678,7 @@ export async function cloneWorldSnapshot(options) {
       review: loaded.review,
       warnings: loaded.warnings,
       copiedPluginData: survivalCopied,
+      skippedConfig: survivalBuilt.skipped,
       targets: [
         { id: survivalId, directory: survivalDir, modificationCount: survivalCheck.modificationCount, claimCount: survivalCheck.claimCount },
         { id: peacefulId, directory: peacefulDir, modificationCount: peacefulCheck.modificationCount, claimCount: peacefulCheck.claimCount },
@@ -547,6 +703,15 @@ async function main() {
   const argv = process.argv.slice(2);
   if (argv.includes('--help') || argv.includes('-h')) {
     console.log('Usage: node scripts/clone-world-snapshot.mjs --source DIR --survival DIR --peaceful DIR [--force]');
+    console.log('       node scripts/clone-world-snapshot.mjs --resume JOURNAL');
+    return;
+  }
+  if (argv.includes('--resume')) {
+    const file = optionValue(argv, '--resume');
+    if (!file) fail('Usage: node scripts/clone-world-snapshot.mjs --resume JOURNAL');
+    const result = await resumeCloneJournal(path.resolve(file));
+    for (const line of result.lines) console.error(line);
+    console.log(JSON.stringify(result, null, 2));
     return;
   }
   const source = optionValue(argv, '--source');

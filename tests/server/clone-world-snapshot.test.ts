@@ -167,7 +167,8 @@ async function writeSource(root: string, extra: {
     active: { id: 'live', worldId: 'anarchy', loot: [{ item: 'diamond' }] },
     journal: { phase: 'placing' },
   })}\n`);
-  await writeFile(join(source, 'plugin-data', 'config', 'spawn.json'), '{"cooldownSeconds":5,"worldId":"anarchy"}\n');
+  await writeFile(join(source, 'plugin-data', 'config', 'spawn.json'), '{"cooldownSeconds":5,"sessionToken":"secret-config","worldId":"anarchy"}\n');
+  await writeFile(join(source, 'plugin-data', 'config', 'auction.json'), '{"maxPrice":10,"apiToken":"secret-auction"}\n');
   if (extra.lock) {
     await writeFile(join(source, '.instance.lock'), '{"pid":1,"mode":"anarchy","worldId":"anarchy","port":2567}\n');
   } else {
@@ -203,6 +204,7 @@ describe('clone world snapshot', () => {
       };
       warnings: string[];
       copiedPluginData: string[];
+      skippedConfig: string[];
     };
     expect(summary.seed).toBe('anarchy-spawn-v1');
     expect(summary.worldgenVersion).toBe(3);
@@ -214,6 +216,7 @@ describe('clone world snapshot', () => {
     expect(summary.review.explicitPvpClaims.map((claim) => claim.name)).toEqual(['бойцовская']);
     expect(summary.review.nameHints.some((entry) => entry.normalizedName === 'главный спавн' && entry.hint === 'spawn-like')).toBe(true);
     expect(summary.warnings).toEqual([]);
+    expect(summary.skippedConfig).toEqual(['config/auction.json']);
     expect(run.stderr).toContain('WORLD_SEED=anarchy-spawn-v1');
     expect(summary.copiedPluginData).toEqual([
       'automine/automines.json',
@@ -256,7 +259,8 @@ describe('clone world snapshot', () => {
       const events = JSON.parse(await readFile(join(dir, 'plugin-data', 'world-events', 'state.json'), 'utf8'));
       expect(events).toEqual({ templates: [{ name: 'shrine' }] });
       const config = JSON.parse(await readFile(join(dir, 'plugin-data', 'config', 'spawn.json'), 'utf8'));
-      expect(config.worldId).toBe(worldId);
+      expect(config).toEqual({ cooldownSeconds: 5 });
+      await expect(readFile(join(dir, 'plugin-data', 'config', 'auction.json'), 'utf8')).rejects.toThrow();
       const originals = await readFile(join(dir, 'plugin-data', 'automine', 'originals', 'pit.json'), 'utf8');
       expect(originals).toContain('5000');
       await expect(readFile(join(dir, 'plugin-data', 'economy', 'balances.json'), 'utf8')).rejects.toThrow();
@@ -357,5 +361,57 @@ describe('clone world snapshot', () => {
     await expect(readFile(join(peaceful, 'meta.json'), 'utf8')).rejects.toThrow();
     expect(await readFile(join(root, 'anarchy', 'players.json'), 'utf8')).toContain('secret-token');
     expect(await readFile(join(root, 'anarchy', 'world.json'), 'utf8')).toContain('400,-12');
+    await expect(readFile(`${survival}.fc-clone-journal.json`, 'utf8')).rejects.toThrow();
+  });
+
+  it('restores a previous world from a journal left after Survival was installed', async () => {
+    const root = await tempDir();
+    const survival = join(root, 'survival');
+    const aside = join(root, 'survival.rollback-old');
+    await mkdir(survival, { recursive: true });
+    await writeFile(join(survival, 'meta.json'), '{"worldId":"survival","marker":"new-copy"}\n');
+    await writeFile(join(survival, 'clone-marker.json'), '{"role":"new-copy"}\n');
+    await mkdir(aside, { recursive: true });
+    await writeFile(join(aside, 'meta.json'), '{"worldId":"survival","marker":"old-dev"}\n');
+    const journal = `${survival}.fc-clone-journal.json`;
+    await writeFile(journal, `${JSON.stringify({
+      version: 1,
+      phase: 'installing',
+      source: join(root, 'anarchy'),
+      steps: [
+        { id: 'survival', target: survival, partial: `${survival}.partial-1`, aside, state: 'installed' },
+        { id: 'peaceful', target: join(root, 'peaceful'), partial: `${join(root, 'peaceful')}.partial-1`, aside: null, state: 'pending' },
+      ],
+    })}\n`);
+    const run = await runClone(['--resume', journal]);
+    expect(run.code, run.stderr).toBe(0);
+    expect(await readFile(join(survival, 'meta.json'), 'utf8')).toContain('old-dev');
+    await expect(readFile(journal, 'utf8')).rejects.toThrow();
+    await expect(readFile(join(aside, 'meta.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('stops without deleting either directory when a journal is ambiguous', async () => {
+    const root = await tempDir();
+    const survival = join(root, 'survival');
+    const aside = join(root, 'survival.rollback-old');
+    await mkdir(survival, { recursive: true });
+    await writeFile(join(survival, 'meta.json'), '{"marker":"current"}\n');
+    await mkdir(aside, { recursive: true });
+    await writeFile(join(aside, 'meta.json'), '{"marker":"previous"}\n');
+    const journal = `${survival}.fc-clone-journal.json`;
+    await writeFile(journal, `${JSON.stringify({
+      version: 1,
+      phase: 'installing',
+      source: join(root, 'anarchy'),
+      steps: [
+        { id: 'survival', target: survival, partial: `${survival}.partial-1`, aside, state: 'aside' },
+      ],
+    })}\n`);
+    const run = await runClone(['--resume', journal]);
+    expect(run.code).not.toBe(0);
+    expect(run.stderr).toMatch(/manual choice/);
+    expect(await readFile(join(survival, 'meta.json'), 'utf8')).toContain('current');
+    expect(await readFile(join(aside, 'meta.json'), 'utf8')).toContain('previous');
+    expect(await readFile(journal, 'utf8')).toContain('aside');
   });
 });
