@@ -637,4 +637,221 @@ describe('daily rewards plugin', () => {
     expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09', '2026-11-10']);
     expect(world.calls[1]?.series).toEqual([50, 90]);
   });
+
+  it('does not start the next Moscow day for a player whose previous day is still claiming', async () => {
+    const world = await harness();
+    dirs.push(world.dir);
+    open.push(world.plugins);
+    world.instant = new Date('2026-11-09T12:00:00.000Z');
+    await world.dispatch('/dailyreward set 1 50');
+    await world.dispatch('/dailyreward set 2 75');
+    await world.dispatch('/dailyreward enable');
+    const ada = player('77777777-7777-4777-8777-777777777777', 'Ada');
+    world.players.push(ada);
+    let active = 0;
+    let maxForAda = 0;
+    const adaInFlight = new Map<string, number>();
+    let releaseDay: ((result: DailyRewardPortResult) => void) | undefined;
+    world.setResult(() => new Promise<DailyRewardPortResult>((resolve) => {
+      const claimDate = world.calls[world.calls.length - 1]?.claimDate ?? '';
+      active += 1;
+      adaInFlight.set(ada.id, (adaInFlight.get(ada.id) ?? 0) + 1);
+      maxForAda = Math.max(maxForAda, adaInFlight.get(ada.id) ?? 0);
+      if (claimDate === '2026-11-09') {
+        releaseDay = () => {
+          active -= 1;
+          adaInFlight.set(ada.id, (adaInFlight.get(ada.id) ?? 1) - 1);
+          resolve({
+            ok: true,
+            outcome: 'claimed',
+            amount: 50,
+            streakDay: 1,
+            claimDate,
+            balance: 150,
+          });
+        };
+        return;
+      }
+      active -= 1;
+      adaInFlight.set(ada.id, (adaInFlight.get(ada.id) ?? 1) - 1);
+      resolve({
+        ok: true,
+        outcome: 'claimed',
+        amount: 75,
+        streakDay: 2,
+        claimDate,
+        balance: 225,
+      });
+    }));
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09']);
+    expect(active).toBe(1);
+    world.instant = new Date('2026-11-10T12:00:00.000Z');
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09']);
+    expect(maxForAda).toBe(1);
+    releaseDay?.();
+    await flushMicrotasks();
+    await world.idle();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09', '2026-11-10']);
+    expect(maxForAda).toBe(1);
+    expect(ada.messages).toEqual([
+      '🎁 Награда за ежедневный вход: +50 Мегакоинов.',
+      '🎁 Награда за ежедневный вход: +75 Мегакоинов.',
+    ]);
+  });
+
+  it('keeps serving other players while one player waits for the previous day', async () => {
+    const world = await harness();
+    dirs.push(world.dir);
+    open.push(world.plugins);
+    world.instant = new Date('2026-11-09T12:00:00.000Z');
+    await world.dispatch('/dailyreward set 1 50');
+    await world.dispatch('/dailyreward enable');
+    let active = 0;
+    let maxActive = 0;
+    const gates = new Map<string, () => void>();
+    world.setResult(() => new Promise<DailyRewardPortResult>((resolve) => {
+      const call = world.calls[world.calls.length - 1];
+      const key = `${call?.playerId}:${call?.claimDate}`;
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      gates.set(key, () => {
+        active -= 1;
+        resolve({
+          ok: true,
+          outcome: 'claimed',
+          amount: 50,
+          streakDay: 1,
+          claimDate: call?.claimDate ?? '',
+          balance: 150,
+        });
+      });
+    }));
+    const ada = player('88888888-8888-4888-8888-888888888888', 'Ada');
+    world.players.push(ada);
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    world.instant = new Date('2026-11-10T12:00:00.000Z');
+    for (let repeat = 0; repeat < 5; repeat += 1) {
+      world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    }
+    const others = ['Bea', 'Cid', 'Dee'].map((name, index) => {
+      const joined = player(`88888888-8888-4888-8888-${String(index + 1).padStart(12, '0')}`, name);
+      world.players.push(joined);
+      world.events.emit('playerJoin', { playerId: joined.id, name: joined.name, firstJoin: false });
+      return joined;
+    });
+    await flushMicrotasks();
+    expect(world.calls.filter((call) => call.playerId === ada.id).map((call) => call.claimDate)).toEqual(['2026-11-09']);
+    expect(others.every((joined) => world.calls.some((call) => call.playerId === joined.id))).toBe(true);
+    expect(maxActive).toBe(4);
+    expect(active).toBe(4);
+    gates.get(`${ada.id}:2026-11-09`)?.();
+    await flushMicrotasks();
+    expect(world.calls.filter((call) => call.playerId === ada.id).map((call) => call.claimDate)).toEqual([
+      '2026-11-09',
+      '2026-11-10',
+    ]);
+    expect(world.calls.filter((call) => call.playerId === ada.id && call.claimDate === '2026-11-10')).toHaveLength(1);
+    while (gates.size > 0) {
+      const release = gates.values().next().value as (() => void) | undefined;
+      const key = gates.keys().next().value as string;
+      gates.delete(key);
+      release?.();
+      await flushMicrotasks();
+    }
+    await world.idle();
+    expect(maxActive).toBeLessThanOrEqual(4);
+  });
+
+  it('releases the player after a failed day so the next date can run', async () => {
+    const world = await harness();
+    dirs.push(world.dir);
+    open.push(world.plugins);
+    world.instant = new Date('2026-11-09T12:00:00.000Z');
+    await world.dispatch('/dailyreward set 1 50');
+    await world.dispatch('/dailyreward enable');
+    const ada = player('99999999-9999-4999-8999-999999999999', 'Ada');
+    world.players.push(ada);
+    let releaseDay: (() => void) | undefined;
+    world.setResult(() => new Promise<DailyRewardPortResult>((resolve) => {
+      const claimDate = world.calls[world.calls.length - 1]?.claimDate ?? '';
+      if (claimDate === '2026-11-09') {
+        releaseDay = () => resolve({ ok: false, reason: 'unavailable' });
+        return;
+      }
+      resolve({
+        ok: true,
+        outcome: 'claimed',
+        amount: 50,
+        streakDay: 1,
+        claimDate,
+        balance: 150,
+      });
+    }));
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    world.instant = new Date('2026-11-10T12:00:00.000Z');
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09']);
+    releaseDay?.();
+    await flushMicrotasks();
+    await world.idle();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09', '2026-11-10']);
+    expect(ada.messages).toEqual(['🎁 Награда за ежедневный вход: +50 Мегакоинов.']);
+  });
+
+  it('does not overlap a new day with a claim that outlives plugin disable', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+    const world = await harness('postgres', 10_000);
+    dirs.push(world.dir);
+    open.push(world.plugins);
+    world.instant = new Date('2026-11-09T12:00:00.000Z');
+    await world.dispatch('/dailyreward set 1 50');
+    await world.dispatch('/dailyreward set 2 75');
+    await world.dispatch('/dailyreward enable');
+    const ada = player('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', 'Ada');
+    world.players.push(ada);
+    let releaseDay: ((result: DailyRewardPortResult) => void) | undefined;
+    world.setResult(() => new Promise<DailyRewardPortResult>((resolve) => {
+      const claimDate = world.calls[world.calls.length - 1]?.claimDate ?? '';
+      if (claimDate === '2026-11-09') {
+        releaseDay = resolve;
+        return;
+      }
+      resolve({
+        ok: true,
+        outcome: 'claimed',
+        amount: 75,
+        streakDay: 2,
+        claimDate,
+        balance: 225,
+      });
+    }));
+    world.events.emit('playerJoin', { playerId: ada.id, name: ada.name, firstJoin: false });
+    await flushMicrotasks();
+    await world.plugins.disable('daily-rewards');
+    expect(ada.messages).toEqual([]);
+    world.instant = new Date('2026-11-10T12:00:00.000Z');
+    await world.plugins.enable('daily-rewards');
+    await vi.advanceTimersByTimeAsync(0);
+    await flushMicrotasks();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09']);
+    releaseDay?.({
+      ok: true,
+      outcome: 'claimed',
+      amount: 50,
+      streakDay: 1,
+      claimDate: '2026-11-09',
+      balance: 150,
+    });
+    await flushMicrotasks();
+    await world.idle();
+    expect(world.calls.map((call) => call.claimDate)).toEqual(['2026-11-09', '2026-11-10']);
+    expect(ada.messages).toEqual(['🎁 Награда за ежедневный вход: +75 Мегакоинов.']);
+  });
 });

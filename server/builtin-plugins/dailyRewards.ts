@@ -108,6 +108,8 @@ export function createDailyRewardsPlugin(
   const waiting: ClaimJob[] = [];
   const waitingKeys = new Set<string>();
   const running = new Map<string, object>();
+  /** One in-flight claim per player, including a claim for another Moscow date. */
+  const busyPlayers = new Set<string>();
   const pendingNotices = new Map<string, PendingNotice>();
   const deliveredNotices = new Set<string>();
   const damageNotes = new Set<string>();
@@ -221,20 +223,35 @@ export function createDailyRewardsPlugin(
     pendingNotices.set(key, { playerId, dateKey, amount, streakDay });
   };
 
+  const requeue = (job: ClaimJob): void => {
+    const key = claimKey(job.playerId, job.dateKey);
+    if (waitingKeys.has(key) || running.has(key) || completed.has(key)) return;
+    waiting.push(job);
+    waitingKeys.add(key);
+  };
+
   const pump = (): void => {
     if (!alive) {
       dropWaiting();
       return;
     }
+    const seen = new Set<string>();
     while (running.size < MAX_IN_FLIGHT && waiting.length > 0) {
-      const job = waiting.shift();
+      const job = waiting[0];
       if (!job) break;
       const key = claimKey(job.playerId, job.dateKey);
+      if (seen.has(key)) break;
+      seen.add(key);
+      waiting.shift();
       waitingKeys.delete(key);
       if (completed.has(key) || running.has(key) || !backoffReady(key)) continue;
       if (!payableSeries()) {
         dropWaiting();
         return;
+      }
+      if (busyPlayers.has(job.playerId)) {
+        requeue(job);
+        continue;
       }
       launch(job);
     }
@@ -242,8 +259,13 @@ export function createDailyRewardsPlugin(
 
   const launch = (job: ClaimJob): void => {
     const key = claimKey(job.playerId, job.dateKey);
+    if (busyPlayers.has(job.playerId)) {
+      requeue(job);
+      return;
+    }
     const token = {};
     const epoch = lifecycle;
+    busyPlayers.add(job.playerId);
     running.set(key, token);
     const work = (async () => {
       let called = false;
@@ -282,6 +304,7 @@ export function createDailyRewardsPlugin(
         api?.log(`ежедневная награда не выполнена (${error instanceof Error ? error.name : 'Error'})`);
       } finally {
         if (running.get(key) === token) running.delete(key);
+        busyPlayers.delete(job.playerId);
         pump();
       }
     })();
