@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,8 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
 import type { ConnectedSink } from '../../server/WorldInstance';
 import { FsWorldStore } from '../../server/FsWorldStore';
+import { WorldPersistence } from '../../server/persistence';
+import { PersistenceError } from '../../src/save/PersistenceError';
 
 const dirs: string[] = [];
 
@@ -47,12 +49,21 @@ async function openWorld(dataDir: string, world = 'anarchy'): Promise<WorldInsta
   return instance;
 }
 
-async function durableJoin(world: WorldInstance, name: string, sessionToken?: string, freshGuest = false) {
+async function durableJoin(
+  world: WorldInstance,
+  name: string,
+  sessionToken?: string,
+  freshGuest = false,
+  registrationId?: string,
+  expectedWorldId?: string,
+) {
   const result = await world.join({
     sink: memorySink(),
     name,
     ...(sessionToken ? { sessionToken } : {}),
     ...(freshGuest ? { freshGuest: true } : {}),
+    ...(registrationId ? { registrationId } : {}),
+    ...(expectedWorldId ? { expectedWorldId } : {}),
     durableFresh: true,
   });
   return result;
@@ -379,6 +390,140 @@ describe('guest identity persistence', () => {
       releaseSave();
       await server.stop();
     }
+  });
+
+  it('uses one player id for two concurrent joins with the same registration id', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const registrationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const [first, second] = await Promise.all([
+      durableJoin(world, 'Ada', undefined, true, registrationId),
+      durableJoin(world, 'Ada', undefined, true, registrationId),
+    ]);
+    if ('error' in first || 'error' in second) throw new Error('join failed');
+    expect(first.player.id).toBe(second.player.id);
+    expect(first.player.sessionToken).toBe(second.player.sessionToken);
+    expect(world.players.size).toBe(1);
+    await world.stop();
+    const reopened = await openWorld(dataDir);
+    const resumed = await durableJoin(reopened, 'Ada', undefined, true, registrationId);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(first.player.id);
+    expect(resumed.player.sessionToken).toBe(first.player.sessionToken);
+    await reopened.stop();
+  });
+
+  it('does not replace an unknown token with a new registration', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const before = await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8');
+    const denied = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      sessionToken: '11111111-1111-4111-8111-111111111111',
+      registrationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      durableFresh: true,
+    });
+    expect(denied).toMatchObject({ code: 'unknown_guest' });
+    expect(world.players.size).toBe(0);
+    expect(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')).toBe(before);
+    await world.stop();
+  });
+
+  it('rejects a different expected world before creating a player', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const before = await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8');
+    const denied = await durableJoin(world, 'Ada', undefined, true, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'other-world');
+    expect(denied).toMatchObject({ code: 'world_mismatch' });
+    expect(world.players.size).toBe(0);
+    expect(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')).toBe(before);
+    await world.stop();
+  });
+
+  it('keeps the player id after disconnect and process stop', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const created = await durableJoin(world, 'Ada');
+    if ('error' in created) throw new Error(created.error);
+    world.disconnect(created.player.id);
+    await world.stop();
+    const reopened = await openWorld(dataDir);
+    const resumed = await durableJoin(reopened, 'Renamed', created.player.sessionToken);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(created.player.id);
+    expect(resumed.player.sessionToken).toBe(created.player.sessionToken);
+    await reopened.stop();
+  });
+
+  it('does not give the second player with the same nickname the first inventory or OP', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const first = await durableJoin(world, 'Ada');
+    if ('error' in first) throw new Error(first.error);
+    first.player.inventory.addItem('diamond', 2);
+    expect(world.permissions.op(first.player.id)).toBe(true);
+    const second = await durableJoin(world, 'Ada');
+    if ('error' in second) throw new Error(second.error);
+    expect(second.player.id).not.toBe(first.player.id);
+    expect(second.player.inventory.has('diamond', 2)).toBe(false);
+    expect(world.permissions.isOperator(second.player.id)).toBe(false);
+    expect(world.permissions.isOperator(first.player.id)).toBe(true);
+    await world.stop();
+  });
+});
+
+describe('identity file integrity', () => {
+  it('refuses to start an existing world whose players.json is missing and does not recreate it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    await world.stop();
+    const playersPath = join(dataDir, 'anarchy', 'players.json');
+    await rm(playersPath);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    await expect(readFile(playersPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('does not treat a corrupt players.json as an empty roster', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    await world.stop();
+    const playersPath = join(dataDir, 'anarchy', 'players.json');
+    const broken = '{';
+    await writeFile(playersPath, broken);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    expect(await readFile(playersPath, 'utf8')).toBe(broken);
+    await writeFile(playersPath, '[]\n');
+    await expect(new WorldPersistence(join(dataDir, 'anarchy')).loadRecords()).rejects.toMatchObject({ code: 'corrupt' });
+    expect(await readFile(playersPath, 'utf8')).toBe('[]\n');
+  });
+
+  it('does not replace a missing permissions.json with an empty operator list', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const created = await durableJoin(world, 'Op');
+    if ('error' in created) throw new Error(created.error);
+    expect(world.permissions.op(created.player.id)).toBe(true);
+    await world.stop();
+    const permissionsPath = join(dataDir, 'anarchy', 'plugin-data', 'permissions.json');
+    const saved = await readFile(permissionsPath, 'utf8');
+    expect(saved).toContain(created.player.id);
+    await rm(permissionsPath);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    await expect(readFile(permissionsPath, 'utf8')).rejects.toThrow();
+    await mkdir(join(dataDir, 'anarchy', 'plugin-data'), { recursive: true });
+    await writeFile(permissionsPath, saved);
+    const restored = await openWorld(dataDir);
+    expect(restored.permissions.isOperator(created.player.id)).toBe(true);
+    await restored.stop();
   });
 });
 

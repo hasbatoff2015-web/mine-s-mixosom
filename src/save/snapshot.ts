@@ -83,12 +83,22 @@ function parsePlayer(value: unknown): SerializedPlayerState {
   };
 }
 
-function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPlayer | undefined {
-  if (!isRecord(value)) return undefined;
+function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPlayer {
+  if (!isRecord(value)) {
+    throw new PersistenceError(`players.json entry ${id} is not an object.`, 'corrupt');
+  }
   const x = finiteNumber(value.x, Number.NaN);
   const y = finiteNumber(value.y, Number.NaN);
   const z = finiteNumber(value.z, Number.NaN);
-  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) return undefined;
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    throw new PersistenceError(`players.json entry ${id} has invalid coordinates.`, 'corrupt');
+  }
+  if (value.sessionToken !== undefined && !isStoredSecret(value.sessionToken)) {
+    throw new PersistenceError(`players.json entry ${id} has an invalid session token.`, 'corrupt');
+  }
+  if (value.registrationId !== undefined && !isStoredSecret(value.registrationId, 16)) {
+    throw new PersistenceError(`players.json entry ${id} has an invalid registration id.`, 'corrupt');
+  }
   return {
     id: typeof value.id === 'string' ? value.id : id,
     name: typeof value.name === 'string' ? value.name : id.slice(0, 8),
@@ -102,6 +112,7 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     selectedSlot: Math.max(0, Math.floor(finiteNumber(value.selectedSlot, 0))),
     inventory: value.inventory,
     ...(typeof value.sessionToken === 'string' ? { sessionToken: value.sessionToken } : {}),
+    ...(typeof value.registrationId === 'string' ? { registrationId: value.registrationId } : {}),
     updatedAt: finiteNumber(value.updatedAt, Date.now()),
     ...(value.survival !== undefined ? { survival: value.survival } : {}),
     ...(value.cursor !== undefined ? { cursor: value.cursor } : {}),
@@ -148,12 +159,16 @@ function parseReferralKitGrants(raw: unknown[]): { referralId: string; items: { 
   return grants;
 }
 
+function isStoredSecret(value: unknown, min = 1): value is string {
+  return typeof value === 'string' && value.length >= min && value.length <= 80 && !/\s/.test(value);
+}
+
 function parsePlayers(value: unknown): Record<string, SerializedPersistedPlayer> | undefined {
-  if (!isRecord(value)) return undefined;
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new PersistenceError('players.json table is not an object.', 'corrupt');
   const players: Record<string, SerializedPersistedPlayer> = {};
   for (const [id, row] of Object.entries(value)) {
-    const parsed = parsePersistedPlayer(id, row);
-    if (parsed) players[id] = parsed;
+    players[id] = parsePersistedPlayer(id, row);
   }
   return Object.keys(players).length > 0 ? players : undefined;
 }

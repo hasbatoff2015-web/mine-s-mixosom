@@ -80,11 +80,24 @@ async function writeWorld(root: string, id: string): Promise<void> {
   await writeFile(join(dir, 'players.json'), `${JSON.stringify({
     players: {
       [PLAYER]: {
+        id: PLAYER,
         name: 'Tester',
+        x: 1,
+        y: 64,
+        z: 2,
         inventory: [{ id: 'diamond', count: 3 }],
         sessionToken: SESSION,
       },
     },
+  })}\n`);
+  await writeFile(join(dir, 'plugin-data/permissions.json'), `${JSON.stringify({
+    version: 3,
+    ops: [PLAYER],
+    unreviewedOps: [],
+    roles: {},
+    playerRoles: {},
+    playerPermissions: {},
+    legacy: { ops: [], playerRoles: {}, playerPermissions: {} },
   })}\n`);
   await writeFile(join(dir, '.instance.lock'), '{"pid":1,"mode":"anarchy","worldId":"anarchy","port":1}\n');
   await writeFile(join(dir, 'plugin-data/claims.json'), '{"claims":[{"owner":"p1"}]}\n');
@@ -344,13 +357,48 @@ describe.skipIf(!bashAvailable || process.platform === 'win32')('stage 6 backup'
       expect(files).toContain(`worlds/${world}/meta.json`);
       expect(files).toContain(`worlds/${world}/world.json`);
       expect(files).toContain(`worlds/${world}/players.json`);
+      expect(files).toContain(`worlds/${world}/plugin-data/permissions.json`);
       expect(files).toContain(`worlds/${world}/plugin-data/claims.json`);
       expect(files).toContain(`worlds/${world}/plugin-data/homes.json`);
       expect(files).toContain(`worlds/${world}/plugin-data/auctions.json`);
       expect(files).not.toContain(`worlds/${world}/.instance.lock`);
     }
     expect(files.some((file) => file.endsWith('.env'))).toBe(false);
+    const players = (await run('tar', ['-xOf', join(box.backup, names[0]!), 'worlds/anarchy/players.json'], process.env)).out;
+    const permissions = (await run('tar', ['-xOf', join(box.backup, names[0]!), 'worlds/anarchy/plugin-data/permissions.json'], process.env)).out;
+    expect(players).toContain(PLAYER);
+    expect(players).toContain(SESSION);
+    expect(permissions).toContain(PLAYER);
   });
+
+  it('refuses a backup when permissions.json is missing and rejects a map-only archive', async () => {
+    const box = await layout();
+    const created = await run('bash', [SCRIPT, 'backup'], box.env);
+    expect(created.code, created.err).toBe(0);
+    const source = join(box.backup, 'frontier-cubes-2026-10-13_040000.tar.gz');
+    const tree = join(box.root, 'map-only');
+    await mkdir(tree);
+    expect((await run('tar', ['-xzf', source, '-C', tree], process.env)).code).toBe(0);
+    const manifest = JSON.parse(await readFile(join(tree, 'manifest.json'), 'utf8')) as { identity?: string };
+    manifest.identity = 'map-only';
+    await writeFile(join(tree, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
+    const sums = await run('bash', ['-c', 'cd "$1" && find . -type f ! -name checksums.sha256 -print0 | sort -z | xargs -0 sha256sum > checksums.sha256', 'bash', tree], process.env);
+    expect(sums.code, sums.err).toBe(0);
+    const repacked = join(box.root, 'frontier-cubes-2026-10-13_040100.tar.gz');
+    expect((await run('tar', ['-C', tree, '-czf', repacked, 'manifest.json', 'checksums.sha256', 'worlds'], process.env)).code).toBe(0);
+    const hashed = await run('sha256sum', [repacked], process.env);
+    expect(hashed.code).toBe(0);
+    const hash = hashed.out.split(/\s+/)[0];
+    await writeFile(`${repacked}.sha256`, `${hash}  frontier-cubes-2026-10-13_040100.tar.gz\n`);
+    const verified = await run('bash', [SCRIPT, 'verify', repacked], box.env);
+    expect(verified.code, verified.err).not.toBe(0);
+    expect(verified.err).toContain('verify: identity-incomplete');
+
+    await rm(join(box.worlds, 'anarchy/plugin-data/permissions.json'));
+    const refused = await run('bash', [SCRIPT, 'backup'], { ...box.env, FC_BACKUP_STAMP: '2026-10-13_040200' });
+    expect(refused.code, refused.err).not.toBe(0);
+    expect(refused.err).toContain('permissions.json');
+  }, 30_000);
 
   it('B3 includes a shared custom plugin directory when it has files', async () => {
     const box = await layout();

@@ -1,3 +1,4 @@
+import { PersistenceError } from '../../src/save/PersistenceError';
 import { serverLog } from '../log';
 import type { JsonFileStore } from './jsonStore';
 import { canonicalPlayerId, isPlayerId } from './permissionSubject';
@@ -148,8 +149,50 @@ export class PermissionService {
     this.resetDefaults();
   }
 
-  load(): void {
-    const saved = this.store.load<Partial<PermissionState>>('permissions', {});
+  /**
+   * `createIfAbsent` is the new-world path. An existing world passes false:
+   * a missing or unreadable file is an integrity error and is not replaced
+   * with an empty operator list.
+   */
+  load(options?: { readonly createIfAbsent?: boolean }): void {
+    const createIfAbsent = options?.createIfAbsent !== false;
+    const read = this.store.read('permissions');
+    if (read.missing) {
+      if (!createIfAbsent) {
+        throw new PersistenceError(
+          'permissions.json is missing for an existing world. Refusing to create an empty operator list.',
+          'incomplete',
+        );
+      }
+      this.resetDefaults();
+      this.applyEnvironmentOperators();
+      this.persist();
+      return;
+    }
+    if (!isPlainObject(read.value)) {
+      throw new PersistenceError('permissions.json is not an object. The file was not rewritten.', 'corrupt');
+    }
+    const saved = read.value as Partial<PermissionState>;
+    const version = (read.value as { version?: unknown }).version;
+    if (version !== undefined && version !== 2 && version !== PERMISSION_STATE_VERSION) {
+      throw new PersistenceError(
+        `permissions.json version ${String(version)} is unsupported. The file was not rewritten.`,
+        'unsupported',
+      );
+    }
+    requireStringList(saved.ops, 'permissions.json ops');
+    requireStringList(saved.unreviewedOps, 'permissions.json unreviewedOps');
+    requireStringMap(saved.roles, 'permissions.json roles');
+    requireStringMap(saved.playerRoles, 'permissions.json playerRoles');
+    requireStringMap(saved.playerPermissions, 'permissions.json playerPermissions');
+    if (saved.legacy !== undefined && !isPlainObject(saved.legacy)) {
+      throw new PersistenceError('permissions.json legacy is not an object. The file was not rewritten.', 'corrupt');
+    }
+    if (saved.legacy) {
+      requireStringList(saved.legacy.ops, 'permissions.json legacy.ops');
+      requireStringMap(saved.legacy.playerRoles, 'permissions.json legacy.playerRoles');
+      requireStringMap(saved.legacy.playerPermissions, 'permissions.json legacy.playerPermissions');
+    }
     this.resetDefaults();
     if (saved.roles) {
       for (const [name, nodes] of Object.entries(saved.roles)) {
@@ -200,6 +243,11 @@ export class PermissionService {
       if (name && !isPlayerId(name)) mergeLegacy(legacy.playerPermissions, name, nodes);
     }
     this.legacy = legacy;
+    this.applyEnvironmentOperators();
+    this.persist();
+  }
+
+  private applyEnvironmentOperators(): void {
     this.ignoredEnvOperators = [];
     this.envOps = new Set();
     for (const entry of this.envOperators) {
@@ -212,7 +260,6 @@ export class PermissionService {
         + 'The allowlist accepts player ids only. See docs/PERMISSIONS.md',
       );
     }
-    this.persist();
   }
 
   persist(): void {
@@ -499,6 +546,25 @@ export class PermissionService {
     this.playerRoles = new Map();
     this.playerPermissions = new Map();
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function requireStringList(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) {
+    throw new PersistenceError(`${label} is not a list of strings. The file was not rewritten.`, 'corrupt');
+  }
+}
+
+function requireStringMap(value: unknown, label: string): void {
+  if (value === undefined) return;
+  if (!isPlainObject(value)) {
+    throw new PersistenceError(`${label} is not an object. The file was not rewritten.`, 'corrupt');
+  }
+  for (const entry of Object.values(value)) requireStringList(entry, label);
 }
 
 function emptyLegacy(): LegacyMaps {

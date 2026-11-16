@@ -714,6 +714,57 @@ describe('two AnarchyClient registrations', () => {
     survival.disconnect();
   });
 
+  it('two first joins without Web Locks send one registration id', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const first = new AnarchyClient();
+    const second = new AnarchyClient();
+    const options = clientOptions(durable, statusFetch('anarchy', 'anarchy', []));
+    const pendingA = first.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
+    const pendingB = second.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(FakeSocket.instances).toHaveLength(2);
+    const joinA = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string; expectedWorldId?: string; freshGuest?: boolean };
+    const joinB = JSON.parse(FakeSocket.instances[1]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string; expectedWorldId?: string };
+    expect(joinA.sessionToken).toBeUndefined();
+    expect(joinB.sessionToken).toBeUndefined();
+    expect(joinA.registrationId).toBeTruthy();
+    expect(joinA.registrationId).toBe(joinB.registrationId);
+    expect(joinA.expectedWorldId).toBe('anarchy');
+    expect(joinB.expectedWorldId).toBe('anarchy');
+    expect(joinA.freshGuest).toBeFalsy();
+    FakeSocket.instances[0]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    FakeSocket.instances[1]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    const [welcomeA, welcomeB] = await Promise.all([pendingA, pendingB]);
+    expect(welcomeA.playerId).toBe(welcomeB.playerId);
+    expect(readStored(durable)).toBe('shared-token');
+    first.disconnect();
+    second.disconnect();
+  });
+
+  it('does not report a saved identity when the welcome write fails', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const key = guestScopeStorageKey({ deployment: 'local', mode: 'anarchy', worldId: 'anarchy' });
+    durable.setItem = (name, value) => {
+      if (name === key) {
+        const error = new Error('quota');
+        error.name = 'QuotaExceededError';
+        throw error;
+      }
+      durable.data[name] = value;
+    };
+    const client = new AnarchyClient();
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    FakeSocket.instances[0]!.welcome('anarchy', 'unsaved-token');
+    await expect(pending).resolves.toMatchObject({ sessionToken: 'unsaved-token' });
+    expect(client.identityPersisted).toBe(false);
+    expect(client.identityWarning).toBe('storage');
+    expect(durable.data[key]).toBeUndefined();
+    client.disconnect();
+  });
+
   it('AC still joins when the browser has no Web Locks', async () => {
     installSocket();
     const durable = memoryStore();

@@ -1,5 +1,13 @@
 # Roadmap
 
+## 2026-11-16: Identity and session hardening
+
+- [x] One guest UUID across reconnect, refresh, and process restart when the browser still has the server-issued token or the pending registration id.
+- [x] Two first-join tabs share one registration id. A world mismatch is rejected before a player row is written.
+- [x] An existing world refuses to start when `players.json` or `permissions.json` is missing or unreadable, and does not replace that file with an empty one.
+- [x] Full backups require player and permission files. A `map-only` archive fails `verify` as identity-incomplete.
+- [ ] Manual QA on DEV: reconnect the same browser, open two fresh tabs, and confirm OP survives a restart. This branch does not touch the VPS.
+
 ## 2026-11-15: Referral menu UI
 
 - [x] Friends and `friends-invites` call the referral screen «Бонус за друга». Clan invitations keep «Приглашения».

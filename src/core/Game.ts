@@ -1378,7 +1378,7 @@ export class Game {
 
   private toastGuestIdentity(client: AnarchyClient): void {
     if (client.identityWarning === 'storage') {
-      this.ui.toast('Ключ не записался в браузер. После закрытия вкладки персонаж может не вернуться. Прежние ключи не стёрты.');
+      this.ui.toast('Ключ не записался в браузер. Повторный вход попробует того же персонажа. Прежние ключи не стёрты.');
     }
   }
 

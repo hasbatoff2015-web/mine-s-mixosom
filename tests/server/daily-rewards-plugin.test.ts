@@ -651,7 +651,7 @@ describe('daily rewards plugin', () => {
     let active = 0;
     let maxForAda = 0;
     const adaInFlight = new Map<string, number>();
-    let releaseDay: ((result: DailyRewardPortResult) => void) | undefined;
+    let releaseDay: (() => void) | undefined;
     world.setResult(() => new Promise<DailyRewardPortResult>((resolve) => {
       const claimDate = world.calls[world.calls.length - 1]?.claimDate ?? '';
       active += 1;

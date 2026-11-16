@@ -12,6 +12,7 @@ import { WorldInstance } from '../server/WorldInstance';
 import { loadServerConfig } from '../server/config';
 import { ANARCHY_WORLD_ID, ANARCHY_WORLD_SEED } from '../src/world/import/anarchy';
 import { sampleSnapshot } from './persistFixture';
+import { writeInitialPermissions } from './support/initialPermissions';
 
 const dirs: string[] = [];
 
@@ -211,6 +212,7 @@ describe('FsWorldStore', () => {
       },
     });
     await store.save(snapshot);
+    await writeInitialPermissions(store.directoryFor(ANARCHY_WORLD_ID));
 
     const instance = new WorldInstance(testConfig(dataDir));
     await expect(instance.initialize()).resolves.toBeUndefined();
@@ -250,6 +252,7 @@ describe('FsWorldStore', () => {
       },
     });
     await store.save(snapshot);
+    await writeInitialPermissions(store.directoryFor(ANARCHY_WORLD_ID));
 
     const instance = new WorldInstance(testConfig(dataDir));
     await expect(instance.initialize()).resolves.toBeUndefined();

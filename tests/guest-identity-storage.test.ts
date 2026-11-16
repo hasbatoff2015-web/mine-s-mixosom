@@ -2,9 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { guestEndpointTrusted } from '../src/net/AnarchyClient';
 import {
   GUEST_STORAGE_KEY,
+  claimGuestRegistration,
   collectLegacyTokens,
   confirmGuestWelcome,
   guestDeploymentId,
+  guestRegistrationStorageKey,
   guestScopeKey,
   guestScopeStorageKey,
   importGuestCredential,
@@ -520,5 +522,53 @@ describe('per-scope guest storage', () => {
       legacyKeys: [],
     });
     expect(resumed).toMatchObject({ outcome: 'ready_existing', sendToken: 'token-a' });
+  });
+});
+
+describe('guest registration claim', () => {
+  it('reuses one registration id when two claims both observe an empty record', async () => {
+    const stored = { value: null as string | null };
+    let reads = 0;
+    const storage: GuestStorage = {
+      getItem() {
+        reads += 1;
+        if (reads <= 2) return null;
+        return stored.value;
+      },
+      setItem(_key, value) { stored.value = value; },
+      removeItem() { stored.value = null; },
+      keys() { return stored.value ? ['pending'] : []; },
+    };
+    const [first, second] = await Promise.all([
+      claimGuestRegistration(storage, scope, { waitMs: 20, randomId: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
+      claimGuestRegistration(storage, scope, { waitMs: 20, randomId: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+    ]);
+    expect(first).toBe(second);
+    expect(first === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' || first === 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb').toBe(true);
+  });
+
+  it('does not overwrite a corrupt registration record', async () => {
+    const storage = memoryStore({
+      [guestRegistrationStorageKey(scope)]: '{',
+    });
+    await expect(claimGuestRegistration(storage, scope, { waitMs: 0 })).rejects.toMatchObject({ reason: 'corrupt' });
+    expect(storage.data[guestRegistrationStorageKey(scope)]).toBe('{');
+  });
+
+  it('retries a failed welcome write and keeps the registration id', () => {
+    const storage = memoryStore();
+    const key = guestScopeStorageKey(scope);
+    storage.setItem = (name, value) => {
+      if (name === key) throw new Error('QuotaExceededError');
+      storage.data[name] = value;
+    };
+    storage.setItem(guestRegistrationStorageKey(scope), JSON.stringify({
+      version: 1,
+      registrationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    }));
+    const saved = confirmGuestWelcome(storage, null, scope, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', []);
+    expect(saved).toEqual({ persisted: false, code: 'storage_write_failed' });
+    expect(storage.data[key]).toBeUndefined();
+    expect(storage.data[guestRegistrationStorageKey(scope)]).toContain('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
   });
 });

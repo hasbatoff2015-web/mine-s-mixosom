@@ -12,7 +12,11 @@ VPS только готовит архив. На компьютер владел
 - `/var/lib/frontier-cubes/worlds/survival`
 - `/var/lib/frontier-cubes/worlds/peaceful`
 
-Внутри сохраняются `meta.json`, `world.json`, `players.json`, `plugin-data/` и остальные файлы мира: инвентари, сундуки, печи, мобы, приваты, дома, аукцион, кланы, учёт ресурсов, инциденты уникальных предметов. Файл `.instance.lock` в архив не кладётся: это метка живого процесса, не сохранение мира.
+Внутри сохраняются `meta.json`, `world.json`, `players.json`, `plugin-data/permissions.json` и остальной `plugin-data/`: инвентари, сундуки, печи, мобы, приваты, дома, аукцион, кланы, учёт ресурсов, инциденты уникальных предметов. Файл `.instance.lock` в архив не кладётся: это метка живого процесса, не сохранение мира.
+
+Полный архив пишет в `manifest.json` поле `"identity": "full"`. `fc-backup verify` требует у каждого из трёх миров `players.json` и `plugin-data/permissions.json`. Архив с `"identity": "map-only"` — это клон карты, не сохранение игроков. `verify` отвечает `verify: identity-incomplete` и код выхода ненулевой. Такой архив нельзя распаковывать как полное восстановление мира. Пустой, но присутствующий `players.json` у нового мира — нормальная полная копия: людей ещё не было. Пропавший `players.json` или пропавший `permissions.json` полным архивом не является, и скрипт такой мир даже не упакует.
+
+`scripts/deploy-release.sh` переключает каталог релиза и перезапускает unit-ы. `players.json`, `permissions.json`, `plugin-data` и каталоги миров он не копирует и не удаляет.
 
 Общий каталог `/var/lib/frontier-cubes/plugins` попадает в архив, если в нём есть файлы.
 
@@ -222,7 +226,7 @@ sudo mv /var/lib/frontier-cubes/worlds /var/lib/frontier-cubes/worlds.before-res
 sudo -u postgres pg_dump -Fc -f /var/backups/frontier-cubes/before-restore.dump ИМЯ_РАБОЧЕЙ_БАЗЫ
 ```
 
-4. Проверить сумму выбранного архива: `sudo /usr/local/sbin/fc-backup verify АРХИВ`.
+4. Проверить сумму выбранного архива: `sudo /usr/local/sbin/fc-backup verify АРХИВ`. Строка `verify: identity-incomplete` значит, что это не полная копия игроков. Её не подкладывают вместо `worlds/`.
 5. Распаковать во временный каталог и посмотреть состав:
 
 ```bash

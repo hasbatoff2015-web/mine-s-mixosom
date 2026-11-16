@@ -328,6 +328,16 @@ export interface ClientJoinMessage {
   readonly sessionToken?: string;
   /** Explicit new-guest request. Does not reuse or erase a stored credential by itself. */
   readonly freshGuest?: boolean;
+  /**
+   * World id from the client's `/status` check. When it does not match the
+   * socket's world, the server rejects the join before creating a player.
+   */
+  readonly expectedWorldId?: string;
+  /**
+   * Idempotent first-join key for one deployment, mode and world.
+   * A repeat of the same id returns the same player. It is not a nickname.
+   */
+  readonly registrationId?: string;
   readonly appearance?: PlayerAppearance;
   /**
    * `resume_yandex` opens an already linked character.
@@ -2372,6 +2382,14 @@ function parseIntentFields(raw: Record<string, unknown>): ClientBlockIntentField
   };
 }
 
+function isJoinWorldId(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 64 && !/\s/.test(value);
+}
+
+function isRegistrationId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 16 && value.length <= 80 && !/\s/.test(value);
+}
+
 export function parseClientMessage(raw: unknown): ClientMessage | { readonly error: string } {
   if (!isRecord(raw) || typeof raw.type !== 'string') {
     return { error: 'message must be an object with a type' };
@@ -2384,6 +2402,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
       const name = sanitizeName(raw.name);
       const sessionToken = typeof raw.sessionToken === 'string' ? raw.sessionToken.slice(0, 80) : undefined;
       const freshGuest = raw.freshGuest === true;
+      if (raw.expectedWorldId !== undefined && !isJoinWorldId(raw.expectedWorldId)) {
+        return { error: 'join.expectedWorldId invalid' };
+      }
+      if (raw.registrationId !== undefined && !isRegistrationId(raw.registrationId)) {
+        return { error: 'join.registrationId invalid' };
+      }
+      const expectedWorldId = isJoinWorldId(raw.expectedWorldId) ? raw.expectedWorldId : undefined;
+      const registrationId = isRegistrationId(raw.registrationId) ? raw.registrationId : undefined;
       const appearance = raw.appearance === undefined ? undefined : parseNetworkAppearance(raw.appearance);
       if (raw.appearance !== undefined && !appearance) return { error: 'join.appearance invalid' };
       const authMode = raw.authMode === 'resume_yandex' || raw.authMode === 'yandex_auto'
@@ -2399,6 +2425,8 @@ export function parseClientMessage(raw: unknown): ClientMessage | { readonly err
         ...(name ? { name } : {}),
         ...(sessionToken ? { sessionToken } : {}),
         ...(freshGuest ? { freshGuest } : {}),
+        ...(expectedWorldId ? { expectedWorldId } : {}),
+        ...(registrationId ? { registrationId } : {}),
         ...(appearance ? { appearance } : {}),
         ...(authMode ? { authMode, yandexProof, ...(confirmYandexResume ? { confirmYandexResume } : {}) } : {}),
       };
