@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /**
@@ -16,23 +16,41 @@ export class JsonFileStore {
     return join(this.directory, safe.endsWith('.json') ? safe : `${safe}.json`);
   }
 
-  load<T>(name: string, fallback: T): T {
+  /** Missing file is distinct from corrupt JSON. Corrupt JSON throws and is not a fallback. */
+  read(name: string): { missing: true } | { missing: false; value: unknown } {
     this.readCount += 1;
     try {
       const raw = readFileSync(this.pathFor(name), 'utf8');
-      return JSON.parse(raw) as T;
+      try {
+        return { missing: false, value: JSON.parse(raw) as unknown };
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        throw Object.assign(new Error(`Invalid JSON in ${name}: ${reason}`), { code: 'EJSON' });
+      }
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') return fallback;
+      if (code === 'ENOENT') return { missing: true };
       throw error;
     }
+  }
+
+  load<T>(name: string, fallback: T): T {
+    const read = this.read(name);
+    if (read.missing) return fallback;
+    return read.value as T;
   }
 
   save(name: string, value: unknown): void {
     const path = this.pathFor(name);
     mkdirSync(dirname(path), { recursive: true });
-    const temp = `${path}.tmp`;
-    writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    const temp = `${path}.${process.pid}.tmp`;
+    const fd = openSync(temp, 'w');
+    try {
+      writeSync(fd, `${JSON.stringify(value, null, 2)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     renameSync(temp, path);
   }
 }

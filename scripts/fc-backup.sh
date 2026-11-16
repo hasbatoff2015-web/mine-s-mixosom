@@ -29,6 +29,23 @@ umask 027
 WORLDS=(anarchy survival peaceful)
 ENV_NAMES=(anarchy survival peaceful)
 
+# A full archive keeps player identity. A map-only clone (identity "map-only",
+# or a tree missing players.json / plugin-data/permissions.json) is not one.
+identity_files_present() {
+  local root=$1 world
+  [[ -f "$root/manifest.json" ]] || return 1
+  if grep -E -q '"identity"[[:space:]]*:[[:space:]]*"map-only"' "$root/manifest.json"; then
+    return 1
+  fi
+  for world in "${WORLDS[@]}"; do
+    [[ -f "$root/worlds/$world/meta.json" ]] || return 1
+    [[ -f "$root/worlds/$world/world.json" ]] || return 1
+    [[ -f "$root/worlds/$world/players.json" ]] || return 1
+    [[ -f "$root/worlds/$world/plugin-data/permissions.json" ]] || return 1
+  done
+  return 0
+}
+
 need_restart=0
 services_restarted=0
 recovery_attempted=0
@@ -457,6 +474,8 @@ require_worlds() {
     [[ -d "$path" ]] || die "missing world directory: $world"
     [[ -f "$path/meta.json" && -f "$path/world.json" && -f "$path/players.json" ]] \
       || die "world $world is missing meta.json, world.json, or players.json"
+    [[ -f "$path/plugin-data/permissions.json" ]] \
+      || die "world $world is missing plugin-data/permissions.json"
   done
 }
 
@@ -508,6 +527,8 @@ copy_worlds() {
     rm -f -- "$dest/.instance.lock"
     [[ -f "$dest/meta.json" && -f "$dest/world.json" && -f "$dest/players.json" ]] \
       || die "copied world $world is incomplete"
+    [[ -f "$dest/plugin-data/permissions.json" ]] \
+      || die "copied world $world is missing permissions.json"
   done
 }
 
@@ -643,6 +664,7 @@ write_manifest() {
   "deploymentId": $(json_string_or_null "$deployment_id"),
   "releaseId": $(json_string_or_null "$release_id"),
   "worlds": ["anarchy", "survival", "peaceful"],
+  "identity": "full",
   "directories": $dirs_json,
   "postgresql": {
     "included": $([[ "$postgres_mode" == configured ]] && printf 'true' || printf 'false'),
@@ -912,6 +934,11 @@ cmd_verify() {
   if ! (cd "$tmp" && sha256sum -c checksums.sha256 >/dev/null); then
     rm -rf -- "$tmp"
     echo "verify: failed" >&2
+    exit 1
+  fi
+  if ! identity_files_present "$tmp"; then
+    rm -rf -- "$tmp"
+    echo "verify: identity-incomplete" >&2
     exit 1
   fi
   if grep -q '"included": true' "$tmp/manifest.json"; then

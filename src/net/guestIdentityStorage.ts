@@ -23,6 +23,8 @@ export interface GuestCredentialRecord {
 
 export const GUEST_STORAGE_KEY = 'fc.guest.v1';
 export const GUEST_SCOPE_KEY_PREFIX = 'fc.guest.v2/';
+/** Pending first-join id. Separate from the credential so a failed welcome cannot erase it. */
+export const GUEST_REGISTRATION_KEY_PREFIX = 'fc.guest.reg.v1/';
 export const LEGACY_ANARCHY_SESSION_KEY = 'fc.anarchy.sessionToken';
 
 const TOKEN_MAX = 80;
@@ -42,6 +44,11 @@ export function guestScopeKey(scope: GuestIdentityScope): string {
 /** One localStorage key per deployment, mode and world. Components are escaped so values cannot collide. */
 export function guestScopeStorageKey(scope: GuestIdentityScope): string {
   return `${GUEST_SCOPE_KEY_PREFIX}${encodeURIComponent(scope.deployment)}/${encodeURIComponent(scope.mode)}/${encodeURIComponent(scope.worldId)}`;
+}
+
+/** One pending registration per deployment, mode and world. Not a session token. */
+export function guestRegistrationStorageKey(scope: GuestIdentityScope): string {
+  return `${GUEST_REGISTRATION_KEY_PREFIX}${encodeURIComponent(scope.deployment)}/${encodeURIComponent(scope.mode)}/${encodeURIComponent(scope.worldId)}`;
 }
 
 export function parseGuestScopeStorageKey(key: string): GuestIdentityScope | null {
@@ -85,7 +92,7 @@ export type GuestStoreRead =
   | { readonly kind: 'unavailable' };
 
 export class GuestStorageError extends Error {
-  constructor(readonly reason: 'unavailable' | 'quota' | 'corrupt' | 'unsupported' | 'invalid' | 'exists') {
+  constructor(readonly reason: 'unavailable' | 'quota' | 'corrupt' | 'unsupported' | 'invalid' | 'exists' | 'unreliable') {
     super(reason);
     this.name = 'GuestStorageError';
   }
@@ -319,6 +326,8 @@ export type GuestJoinPlan =
   | {
     readonly outcome: 'ready_existing' | 'ready_new';
     readonly sendToken?: string;
+    /** Shared by every tab that is still creating this slot. The server dedupes it. */
+    readonly registrationId?: string;
     readonly freshGuest?: boolean;
     readonly ephemeral?: boolean;
     readonly scope: GuestIdentityScope;
@@ -512,13 +521,199 @@ export function confirmGuestWelcome(
   legacyKeys: readonly string[],
 ): { persisted: boolean; code?: 'storage_write_failed' } {
   if (!scope || !durable || !isGuestToken(sessionToken)) return { persisted: false, code: 'storage_write_failed' };
-  try {
-    writeGuestCredential(durable, scope, sessionToken, true);
-  } catch {
-    return { persisted: false, code: 'storage_write_failed' };
+  let saved = false;
+  for (let attempt = 0; attempt < 3 && !saved; attempt += 1) {
+    try {
+      writeGuestCredential(durable, scope, sessionToken, true);
+      saved = true;
+    } catch {
+      saved = false;
+    }
   }
+  if (!saved) return { persisted: false, code: 'storage_write_failed' };
+  clearGuestRegistration(durable, scope);
   if (legacy && legacyKeys.length > 0) forgetLegacyKeys(legacy, legacyKeys);
   return { persisted: true };
+}
+
+type RegistrationRead =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'valid'; readonly registrationId: string }
+  | { readonly kind: 'corrupt' }
+  | { readonly kind: 'unsupported' }
+  | { readonly kind: 'unavailable' };
+
+function isRegistrationId(value: unknown): value is string {
+  return typeof value === 'string' && value.length >= 16 && value.length <= TOKEN_MAX && !/\s/.test(value);
+}
+
+export function readGuestRegistration(storage: GuestStorage, scope: GuestIdentityScope): RegistrationRead {
+  let raw: string | null;
+  try {
+    raw = storage.getItem(guestRegistrationStorageKey(scope));
+  } catch {
+    return { kind: 'unavailable' };
+  }
+  if (raw == null || raw === '') return { kind: 'absent' };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { kind: 'corrupt' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { kind: 'corrupt' };
+  const root = parsed as Record<string, unknown>;
+  if (root.version !== 1) return { kind: 'unsupported' };
+  if (!isRegistrationId(root.registrationId)) return { kind: 'corrupt' };
+  return { kind: 'valid', registrationId: root.registrationId };
+}
+
+function writeGuestRegistration(storage: GuestStorage, scope: GuestIdentityScope, registrationId: string): void {
+  if (!isRegistrationId(registrationId)) throw new GuestStorageError('invalid');
+  try {
+    storage.setItem(guestRegistrationStorageKey(scope), JSON.stringify({ version: 1, registrationId }));
+  } catch (error) {
+    if (error instanceof GuestStorageError) throw error;
+    const name = error instanceof Error ? error.name : '';
+    if (name === 'QuotaExceededError') throw new GuestStorageError('quota');
+    throw new GuestStorageError('unavailable');
+  }
+}
+
+/** Removes the pending id after the credential is stored. A failure leaves the retry key in place. */
+export function clearGuestRegistration(storage: GuestStorage, scope: GuestIdentityScope): void {
+  try {
+    storage.removeItem(guestRegistrationStorageKey(scope));
+  } catch {
+    // The saved credential is the source of truth. The pending key is only a retry.
+  }
+}
+
+function registrationFailure(read: RegistrationRead): GuestStorageError | null {
+  if (read.kind === 'corrupt') return new GuestStorageError('corrupt');
+  if (read.kind === 'unsupported') return new GuestStorageError('unsupported');
+  if (read.kind === 'unavailable') return new GuestStorageError('unavailable');
+  return null;
+}
+
+const REGISTRATION_DB = 'fc-guest-reg';
+const REGISTRATION_STORE = 'registrations';
+
+/**
+ * IndexedDB readwrite transactions on one store are serialized across tabs.
+ * `absent` means there is no factory. `failed` means open or the transaction
+ * actually failed. A failed open is not treated as a successful lock.
+ */
+function claimRegistrationIndexedDb(
+  scope: GuestIdentityScope,
+  storage: GuestStorage,
+  replace: boolean,
+  randomId: () => string,
+  factory: IDBFactory | undefined,
+): Promise<string | 'absent' | 'failed'> {
+  if (!factory) return Promise.resolve('absent');
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value: string | 'failed'): void => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    let request: IDBOpenDBRequest;
+    try {
+      request = factory.open(REGISTRATION_DB, 1);
+    } catch {
+      finish('failed');
+      return;
+    }
+    request.onerror = () => finish('failed');
+    request.onblocked = () => finish('failed');
+    request.onupgradeneeded = () => {
+      try {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(REGISTRATION_STORE)) db.createObjectStore(REGISTRATION_STORE);
+      } catch {
+        finish('failed');
+      }
+    };
+    request.onsuccess = () => {
+      let tx: IDBTransaction;
+      try {
+        tx = request.result.transaction(REGISTRATION_STORE, 'readwrite');
+      } catch {
+        finish('failed');
+        return;
+      }
+      tx.onerror = () => finish('failed');
+      tx.onabort = () => finish('failed');
+      const store = tx.objectStore(REGISTRATION_STORE);
+      const key = guestScopeKey(scope);
+      const get = store.get(key);
+      get.onerror = () => finish('failed');
+      get.onsuccess = () => {
+        const existing = get.result as { registrationId?: unknown } | undefined;
+        if (!replace && isRegistrationId(existing?.registrationId)) {
+          try {
+            writeGuestRegistration(storage, scope, existing.registrationId);
+          } catch {
+            // The IndexedDB row is still the shared id. A local mirror failure
+            // must not mint a second registration.
+          }
+          finish(existing.registrationId);
+          return;
+        }
+        const id = randomId();
+        const put = store.put({ registrationId: id }, key);
+        put.onerror = () => finish('failed');
+        put.onsuccess = () => {
+          try {
+            writeGuestRegistration(storage, scope, id);
+          } catch {
+            // Same as above: the transaction already stored the id.
+          }
+          finish(id);
+        };
+      };
+    };
+  });
+}
+
+/**
+ * One registration id for every tab creating this slot.
+ * A valid pending record is reused and is not a new character.
+ * A damaged record is not treated as empty and is not overwritten.
+ * A new id is written only inside a Web Lock (`lockHeld`) or a successful
+ * IndexedDB transaction. localStorage alone is not treated as that lock.
+ */
+export async function claimGuestRegistration(
+  storage: GuestStorage,
+  scope: GuestIdentityScope,
+  options?: {
+    readonly randomId?: () => string;
+    readonly replace?: boolean;
+    readonly lockHeld?: boolean;
+    readonly indexedDb?: IDBFactory;
+  },
+): Promise<string> {
+  const replace = options?.replace === true;
+  const randomId = options?.randomId ?? (() => crypto.randomUUID());
+  const current = readGuestRegistration(storage, scope);
+  const blocked = registrationFailure(current);
+  if (blocked) throw blocked;
+  if (!replace && current.kind === 'valid') return current.registrationId;
+  const factory = options?.indexedDb ?? (typeof indexedDB === 'undefined' ? undefined : indexedDB);
+  const indexed = await claimRegistrationIndexedDb(scope, storage, replace, randomId, factory);
+  if (indexed !== 'absent' && indexed !== 'failed') return indexed;
+  if (options?.lockHeld) {
+    const id = randomId();
+    writeGuestRegistration(storage, scope, id);
+    const again = readGuestRegistration(storage, scope);
+    const againBlocked = registrationFailure(again);
+    if (againBlocked) throw againBlocked;
+    if (again.kind === 'valid') return again.registrationId;
+    throw new GuestStorageError('unavailable');
+  }
+  throw new GuestStorageError('unreliable');
 }
 
 export interface GuestScopeLock {

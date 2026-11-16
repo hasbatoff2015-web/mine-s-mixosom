@@ -80,7 +80,7 @@ class TestClient {
       type: 'join',
       protocol: PROTOCOL_VERSION,
       ...(extra?.name ? { name: extra.name } : {}),
-      ...(extra?.sessionToken ? { sessionToken: extra.sessionToken } : {}),
+      ...(extra?.sessionToken ? { sessionToken: extra.sessionToken } : { expectedWorldId: 'anarchy' }),
       ...(extra?.appearance ? { appearance: extra.appearance } : {}),
     });
     return this.waitFor('welcome');

@@ -309,7 +309,7 @@ function play(server: AnarchyServer, name: string): Promise<{ socket: WebSocket;
       }
     };
     socket.on('open', () => {
-      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name }));
+      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name, expectedWorldId: 'anarchy' }));
     });
     socket.on('message', onMessage);
   });

@@ -528,7 +528,7 @@ describe('Anarchy server gameplay authority', () => {
         messages,
         async join() {
           await ready;
-          socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name }));
+          socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name, expectedWorldId: 'anarchy' }));
           await new Promise((resolve) => setTimeout(resolve, 80));
         },
         send(payload: unknown) {

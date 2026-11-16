@@ -8,6 +8,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import { BlockId } from '../../src/blocks';
 import { FsWorldStore } from '../../server/FsWorldStore';
 import { inventoryWithDiamond, sampleSnapshot } from '../persistFixture';
+import { writeInitialPermissions } from '../support/initialPermissions';
 
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const ENTRY = join(ROOT, 'dist/server/index.mjs');
@@ -75,6 +76,7 @@ async function seedAuthoritativeWorld(worldPath: string, worldId: string): Promi
       },
     },
   }));
+  await writeInitialPermissions(join(worldPath, worldId));
 }
 
 function startServer(env: NodeJS.ProcessEnv): Session {

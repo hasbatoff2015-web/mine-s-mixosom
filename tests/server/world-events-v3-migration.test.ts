@@ -15,6 +15,7 @@ import {
 } from '../../server/services/worldEvents';
 import { emptyValidationContext } from '../../server/services/spawnValidation';
 import { sampleSnapshot } from '../persistFixture';
+import { writeInitialPermissions } from '../support/initialPermissions';
 
 function memoryHost(world: VoxelWorld, extra: Partial<WorldEventsHost> = {}): WorldEventsHost & {
   saved: unknown;
@@ -215,6 +216,7 @@ describe('worldgenVersion persistence after V2 load', { timeout: 30_000 }, () =>
       },
     }));
     expect((await store.load(ANARCHY_WORLD_ID))?.worldgenVersion).toBe(2);
+    await writeInitialPermissions(store.directoryFor(ANARCHY_WORLD_ID));
     const world = new WorldInstance({
       ...loadServerConfig({
         HOST: '127.0.0.1', PORT: '0', WORLD: ANARCHY_WORLD_ID, WORLD_SEED: ANARCHY_WORLD_SEED,

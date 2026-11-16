@@ -1,9 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { PermissionService, permissionMatches } from '../../server/services/permissions';
+import { PersistenceError } from '../../src/save/PersistenceError';
 import { clampRtpBounds, randomRtpColumn, RTP_MAX, RTP_MIN } from '../../server/services/rtp';
 
 const ROOT = '11111111-1111-4111-8111-111111111111';
@@ -157,6 +158,34 @@ describe('PermissionService', () => {
     expect(ambiguous.snapshot().unreviewedOps).toContain(envOnly);
     expect(ambiguous.op(envOnly)).toBe(true);
     expect(ambiguous.isOperator(envOnly)).toBe(true);
+  });
+
+  it('keeps a version 3 uuid operator and does not rewrite an unsupported file', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fc-perm-'));
+    dirs.push(dir);
+    const store = new JsonFileStore(dir);
+    store.save('permissions', {
+      version: 3,
+      ops: [ADA],
+      unreviewedOps: [],
+      roles: {},
+      playerRoles: {},
+      playerPermissions: {},
+      legacy: { ops: [], playerRoles: {}, playerPermissions: {} },
+    });
+    const current = new PermissionService(new JsonFileStore(dir));
+    current.load({ createIfAbsent: false });
+    expect(current.isOperator(ADA)).toBe(true);
+    expect(current.snapshot().unreviewedOps).not.toContain(ADA);
+
+    store.save('permissions', { version: 99, ops: [ADA] });
+    const before = await readFile(join(dir, 'permissions.json'), 'utf8');
+    expect(() => new PermissionService(new JsonFileStore(dir)).load({ createIfAbsent: false })).toThrow(PersistenceError);
+    expect(await readFile(join(dir, 'permissions.json'), 'utf8')).toBe(before);
+
+    await rm(join(dir, 'permissions.json'));
+    expect(() => new PermissionService(new JsonFileStore(dir)).load({ createIfAbsent: false })).toThrow(PersistenceError);
+    await expect(readFile(join(dir, 'permissions.json'), 'utf8')).rejects.toThrow();
   });
 });
 

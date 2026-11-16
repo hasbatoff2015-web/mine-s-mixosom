@@ -62,7 +62,7 @@ class TestClient {
       type: 'join',
       protocol: PROTOCOL_VERSION,
       ...(extra?.name ? { name: extra.name } : {}),
-      ...(extra?.sessionToken ? { sessionToken: extra.sessionToken } : {}),
+      ...(extra?.sessionToken ? { sessionToken: extra.sessionToken } : { expectedWorldId: 'anarchy' }),
     });
     return this.waitFor('welcome');
   }

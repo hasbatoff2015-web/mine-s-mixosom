@@ -54,6 +54,11 @@ export interface SerializedPersistedPlayer {
   readonly selectedSlot: number;
   readonly inventory: unknown;
   readonly sessionToken?: string;
+  /**
+   * Idempotent first-join key. Present only for guests created with a
+   * registration id. Missing on older saves. Not a display name.
+   */
+  readonly registrationId?: string;
   readonly updatedAt: number;
   readonly survival?: unknown;
   readonly cursor?: unknown;

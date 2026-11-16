@@ -376,6 +376,8 @@ export class AnarchyServer {
         appearance: message.appearance,
         proof: message.yandexProof ?? '',
         guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
+        expectedWorldId: message.expectedWorldId,
+        requireExpectedWorld: true,
         confirmOtherCharacter: message.confirmYandexResume === true,
         subjectRate,
       })
@@ -387,6 +389,9 @@ export class AnarchyServer {
           proof: message.yandexProof ?? '',
           guestToken: message.confirmYandexResume ? undefined : message.sessionToken,
           freshGuest: message.freshGuest,
+          expectedWorldId: message.expectedWorldId,
+          registrationId: message.registrationId,
+          requireExpectedWorld: true,
           confirmOtherCharacter: message.confirmYandexResume === true,
           subjectRate,
         })
@@ -396,6 +401,9 @@ export class AnarchyServer {
         sessionToken: message.sessionToken,
         appearance: message.appearance,
         freshGuest: message.freshGuest,
+        expectedWorldId: message.expectedWorldId,
+        registrationId: message.registrationId,
+        requireExpectedWorld: true,
         durableFresh: true,
       });
     const settle = (

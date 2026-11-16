@@ -225,9 +225,28 @@ describe.skipIf(databaseUrl === '')('stage 6 restore rehearsal', () => {
       })}\n`);
       await writeFile(join(dir, 'world.json'), '{"timeOfDay":1000,"chests":{},"furnaces":{},"mobs":[]}\n');
       await writeFile(join(dir, 'players.json'), `${JSON.stringify({
-        players: { [PLAYER]: { name: 'Tester', inventory: [{ id: 'diamond', count: 3 }] } },
+        players: {
+          [PLAYER]: {
+            id: PLAYER,
+            name: 'Tester',
+            x: 1,
+            y: 64,
+            z: 2,
+            inventory: [{ id: 'diamond', count: 3 }],
+            sessionToken: 'stage6-session-token',
+          },
+        },
       })}\n`);
       await writeFile(join(dir, 'plugin-data/claims.json'), '{"claims":[{"owner":"p1"}]}\n');
+      await writeFile(join(dir, 'plugin-data/permissions.json'), `${JSON.stringify({
+        version: 3,
+        ops: [PLAYER],
+        unreviewedOps: [],
+        roles: {},
+        playerRoles: {},
+        playerPermissions: {},
+        legacy: { ops: [], playerRoles: {}, playerPermissions: {} },
+      })}\n`);
     }
     const sourcePlayers = await readFile(join(worlds, 'anarchy/players.json'), 'utf8');
     for (const name of ['anarchy', 'survival', 'peaceful']) {
@@ -286,6 +305,9 @@ esac
     const loaded = await new WorldPersistence(join(restored, 'worlds/anarchy')).loadRecords();
     expect(loaded?.meta.worldId).toBe('anarchy');
     expect(loaded?.players.players[PLAYER]?.name).toBe('Tester');
+    expect(loaded?.players.players[PLAYER]?.sessionToken).toBe('stage6-session-token');
+    const restoredPermissions = await readFile(join(restored, 'worlds/anarchy/plugin-data/permissions.json'), 'utf8');
+    expect(restoredPermissions).toContain(PLAYER);
     expect(await readFile(join(restored, 'worlds/anarchy/plugin-data/claims.json'), 'utf8')).toContain('p1');
     expect(await readFile(join(restored, 'plugins/example.js'), 'utf8')).toBe('plugin\n');
     expect(await readFile(join(worlds, 'anarchy/players.json'), 'utf8')).toBe(sourcePlayers);

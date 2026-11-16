@@ -82,4 +82,44 @@ describe('yandex proof endpoint trust', () => {
     expect(messages.join('\n')).not.toContain('automatic-proof-value');
     expect(storage.keys()).toEqual([]);
   });
+
+  it('does not open the linked character when the guest store cannot be read', async () => {
+    const sent: string[] = [];
+    const Original = globalThis.WebSocket;
+    class RecordingSocket {
+      static readonly OPEN = 1;
+      readyState = 1;
+      constructor(readonly url: string) {
+        queueMicrotask(() => this.listeners.get('open')?.forEach((fn) => fn()));
+      }
+      private listeners = new Map<string, Array<() => void>>();
+      addEventListener(type: string, fn: () => void): void {
+        const list = this.listeners.get(type) ?? [];
+        list.push(fn);
+        this.listeners.set(type, list);
+      }
+      send(data: string): void { sent.push(data); }
+      close(): void { this.readyState = 3; }
+    }
+    globalThis.WebSocket = RecordingSocket as unknown as typeof WebSocket;
+    const storage = memoryStorage();
+    storage.getItem = () => { throw new Error('blocked'); };
+    const client = new AnarchyClient();
+    try {
+      await expect(client.connect('ws://127.0.0.1:2567', 'Ada', undefined, {
+        targetServer: 'anarchy',
+        hostname: 'localhost',
+        search: '',
+        durable: storage,
+        legacy: storage,
+        yandexResume: { proof: 'signed-proof-value', mode: 'yandex_auto' },
+        fetchStatus: async () => ({ ok: true, ready: true, mode: 'anarchy', world: 'anarchy' }),
+      })).rejects.toMatchObject({ code: 'storage_unavailable' });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(sent.join('\n')).not.toContain('signed-proof-value');
+    } finally {
+      globalThis.WebSocket = Original;
+      client.disconnect();
+    }
+  });
 });

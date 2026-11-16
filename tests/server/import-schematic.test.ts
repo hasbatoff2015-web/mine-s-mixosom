@@ -19,6 +19,7 @@ import {
   schematicIndex,
 } from '../../src/world/import';
 import { sampleSnapshot } from '../persistFixture';
+import { writeInitialPermissions } from '../support/initialPermissions';
 
 const dirs: string[] = [];
 
@@ -175,6 +176,7 @@ describe('Anarchy schematic filesystem import', () => {
       bytes: await fixtureBytes(),
     });
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('schematic must not load at startup'));
+    await writeInitialPermissions(store.directoryFor(ANARCHY_WORLD_ID));
 
     const first = new WorldInstance(testConfig(dataDir));
     await first.initialize();

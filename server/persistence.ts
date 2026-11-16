@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { mkdir, open, readFile, rename } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { PersistenceError } from '../src/save/PersistenceError';
 import {
@@ -30,9 +30,45 @@ async function readJson(path: string): Promise<{ missing: true } | { missing: fa
 
 async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
-  const temp = `${path}.tmp`;
-  await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const temp = `${path}.${process.pid}.tmp`;
+  const handle = await open(temp, 'w');
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    await handle.sync();
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+  await handle.close();
   await rename(temp, path);
+}
+
+/**
+ * Canonical file is `{ players: { [id]: row } }`.
+ * A bare map of player rows is the older layout and is still accepted.
+ * A missing file, a non-object, or a row that is not an object is not an empty roster.
+ */
+export function parsePlayersTable(value: unknown): Record<string, SerializedPersistedPlayer> {
+  if (!isRecord(value)) {
+    throw new PersistenceError('players.json is not an object.', 'corrupt');
+  }
+  const hasPlayersKey = Object.prototype.hasOwnProperty.call(value, 'players');
+  if (hasPlayersKey) {
+    if (!isRecord(value.players)) {
+      throw new PersistenceError('players.json players table is not an object.', 'corrupt');
+    }
+    return assertPlayerRows(value.players);
+  }
+  return assertPlayerRows(value);
+}
+
+function assertPlayerRows(table: Record<string, unknown>): Record<string, SerializedPersistedPlayer> {
+  for (const [id, row] of Object.entries(table)) {
+    if (!isRecord(row)) {
+      throw new PersistenceError(`players.json entry ${id} is not an object.`, 'corrupt');
+    }
+  }
+  return table as Record<string, SerializedPersistedPlayer>;
 }
 
 /**
@@ -55,16 +91,29 @@ export class WorldPersistence {
 
   async exists(): Promise<boolean> {
     const meta = await readJson(this.metaPath);
-    return !meta.missing;
+    if (!meta.missing) return true;
+    const world = await readJson(this.worldPath);
+    if (!world.missing) return true;
+    const players = await readJson(this.playersPath);
+    return !players.missing;
   }
 
   /**
-   * `null` = directory has no meta (empty world, safe to create).
-   * Corrupt / incomplete existing files throw `PersistenceError` — never a silent reset.
+   * `null` only when meta.json, world.json and players.json are all absent.
+   * Any one of those files without the full trio is an incomplete save.
+   * Corrupt files throw `PersistenceError` and are not rewritten.
    */
   async loadRecords(): Promise<FsWorldRecords | null> {
     const metaRaw = await readJson(this.metaPath);
-    if (metaRaw.missing) return null;
+    const worldRaw = await readJson(this.worldPath);
+    const playersRaw = await readJson(this.playersPath);
+    if (metaRaw.missing && worldRaw.missing && playersRaw.missing) return null;
+    if (metaRaw.missing) {
+      throw new PersistenceError(
+        `Incomplete world save in ${this.directory}: world.json or players.json exists but meta.json is missing.`,
+        'incomplete',
+      );
+    }
     let meta: FsWorldMeta;
     try {
       meta = parseFsMeta(metaRaw.value);
@@ -73,7 +122,6 @@ export class WorldPersistence {
       throw new PersistenceError('meta.json is corrupt.', 'corrupt');
     }
 
-    const worldRaw = await readJson(this.worldPath);
     if (worldRaw.missing) {
       throw new PersistenceError(
         `Incomplete world save in ${this.directory}: meta.json exists but world.json is missing.`,
@@ -100,15 +148,13 @@ export class WorldPersistence {
       ...(worldFile.redstone !== undefined ? { redstone: worldFile.redstone } : {}),
     };
 
-    const playersRaw = await readJson(this.playersPath);
-    let players: Record<string, SerializedPersistedPlayer> = {};
-    if (!playersRaw.missing) {
-      if (!isRecord(playersRaw.value)) {
-        throw new PersistenceError('players.json is not an object.', 'corrupt');
-      }
-      const table = isRecord(playersRaw.value.players) ? playersRaw.value.players : playersRaw.value;
-      players = table as Record<string, SerializedPersistedPlayer>;
+    if (playersRaw.missing) {
+      throw new PersistenceError(
+        `Incomplete world save in ${this.directory}: meta.json exists but players.json is missing.`,
+        'incomplete',
+      );
     }
+    const players = parsePlayersTable(playersRaw.value);
 
     const playersFile: FsPlayersFile = { players };
     return { meta, world, players: playersFile };

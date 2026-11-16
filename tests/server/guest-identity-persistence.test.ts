@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +12,8 @@ import { loadServerConfig } from '../../server/config';
 import { WorldInstance } from '../../server/WorldInstance';
 import type { ConnectedSink } from '../../server/WorldInstance';
 import { FsWorldStore } from '../../server/FsWorldStore';
+import { WorldPersistence } from '../../server/persistence';
+import { PersistenceError } from '../../src/save/PersistenceError';
 
 const dirs: string[] = [];
 
@@ -47,12 +49,21 @@ async function openWorld(dataDir: string, world = 'anarchy'): Promise<WorldInsta
   return instance;
 }
 
-async function durableJoin(world: WorldInstance, name: string, sessionToken?: string, freshGuest = false) {
+async function durableJoin(
+  world: WorldInstance,
+  name: string,
+  sessionToken?: string,
+  freshGuest = false,
+  registrationId?: string,
+  expectedWorldId?: string,
+) {
   const result = await world.join({
     sink: memorySink(),
     name,
     ...(sessionToken ? { sessionToken } : {}),
     ...(freshGuest ? { freshGuest: true } : {}),
+    ...(registrationId ? { registrationId } : {}),
+    ...(expectedWorldId ? { expectedWorldId } : {}),
     durableFresh: true,
   });
   return result;
@@ -189,7 +200,7 @@ describe('guest identity persistence', () => {
       const socket = new WebSocket(server.wsUrl());
       const messages: ServerMessage[] = [];
       socket.on('open', () => {
-        socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Early' }));
+        socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Early', expectedWorldId: 'anarchy' }));
       });
       socket.on('message', (data) => {
         const message = JSON.parse(String(data)) as ServerMessage;
@@ -277,7 +288,7 @@ describe('guest identity persistence', () => {
       socket.on('message', (data) => {
         messages.push(JSON.parse(String(data)) as ServerMessage);
       });
-      const joinPayload = JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Twice' });
+      const joinPayload = JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Twice', expectedWorldId: 'anarchy' });
       socket.send(joinPayload);
       const started = Date.now();
       while (blocked < 1 && Date.now() - started < 3000) await delay(10);
@@ -332,7 +343,7 @@ describe('guest identity persistence', () => {
         socket.once('open', () => resolve());
         socket.once('error', reject);
       });
-      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Gone' }));
+      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: 'Gone', expectedWorldId: 'anarchy' }));
       const started = Date.now();
       while (blocked < 1 && Date.now() - started < 3000) await delay(10);
       expect(blocked).toBe(1);
@@ -379,6 +390,285 @@ describe('guest identity persistence', () => {
       releaseSave();
       await server.stop();
     }
+  });
+
+  it('uses one player id for two concurrent joins with the same registration id', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const registrationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const [first, second] = await Promise.all([
+      durableJoin(world, 'Ada', undefined, true, registrationId),
+      durableJoin(world, 'Ada', undefined, true, registrationId),
+    ]);
+    if ('error' in first || 'error' in second) throw new Error('join failed');
+    expect(first.player.id).toBe(second.player.id);
+    expect(first.player.sessionToken).toBe(second.player.sessionToken);
+    expect(world.players.size).toBe(1);
+    await world.stop();
+    const reopened = await openWorld(dataDir);
+    const resumed = await durableJoin(reopened, 'Ada', undefined, true, registrationId);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(first.player.id);
+    expect(resumed.player.sessionToken).toBe(first.player.sessionToken);
+    await reopened.stop();
+  });
+
+  it('does not replace an unknown token with a new registration', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const before = await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8');
+    const denied = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      sessionToken: '11111111-1111-4111-8111-111111111111',
+      registrationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+      durableFresh: true,
+    });
+    expect(denied).toMatchObject({ code: 'unknown_guest' });
+    expect(world.players.size).toBe(0);
+    expect(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')).toBe(before);
+    await world.stop();
+  });
+
+  it('rejects a different expected world before creating a player', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const before = await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8');
+    const denied = await durableJoin(world, 'Ada', undefined, true, 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'other-world');
+    expect(denied).toMatchObject({ code: 'world_mismatch' });
+    expect(world.players.size).toBe(0);
+    expect(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')).toBe(before);
+    await world.stop();
+  });
+
+  it('keeps the player id after disconnect and process stop', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const created = await durableJoin(world, 'Ada');
+    if ('error' in created) throw new Error(created.error);
+    world.disconnect(created.player.id);
+    await world.stop();
+    const reopened = await openWorld(dataDir);
+    const resumed = await durableJoin(reopened, 'Renamed', created.player.sessionToken);
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(created.player.id);
+    expect(resumed.player.sessionToken).toBe(created.player.sessionToken);
+    await reopened.stop();
+  });
+
+  it('does not give the second player with the same nickname the first inventory or OP', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const first = await durableJoin(world, 'Ada');
+    if ('error' in first) throw new Error(first.error);
+    first.player.inventory.addItem('diamond', 2);
+    expect(world.permissions.op(first.player.id)).toBe(true);
+    const second = await durableJoin(world, 'Ada');
+    if ('error' in second) throw new Error(second.error);
+    expect(second.player.id).not.toBe(first.player.id);
+    expect(second.player.inventory.has('diamond', 2)).toBe(false);
+    expect(world.permissions.isOperator(second.player.id)).toBe(false);
+    expect(world.permissions.isOperator(first.player.id)).toBe(true);
+    await world.stop();
+  });
+});
+
+describe('identity file integrity', () => {
+  it('returns null only when the world directory has no canonical files', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const empty = join(dataDir, 'empty');
+    await mkdir(empty, { recursive: true });
+    expect(await new WorldPersistence(empty).loadRecords()).toBeNull();
+
+    const partial = join(dataDir, 'partial');
+    await mkdir(partial, { recursive: true });
+    await writeFile(join(partial, 'world.json'), '{"timeOfDay":1}\n');
+    await expect(new WorldPersistence(partial).loadRecords()).rejects.toMatchObject({ code: 'incomplete' });
+    await expect(readFile(join(partial, 'meta.json'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(partial, 'world.json'), 'utf8')).toContain('timeOfDay');
+
+    await writeFile(join(partial, 'players.json'), '{"players":{}}\n');
+    await rm(join(partial, 'world.json'));
+    await expect(new WorldPersistence(partial).loadRecords()).rejects.toMatchObject({ code: 'incomplete' });
+    expect(await readFile(join(partial, 'players.json'), 'utf8')).toContain('players');
+    await expect(readFile(join(partial, 'meta.json'), 'utf8')).rejects.toThrow();
+  });
+
+  it('does not start a world whose players.json exists without meta.json', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const worldDir = join(dataDir, 'anarchy');
+    await mkdir(worldDir, { recursive: true });
+    await writeFile(join(worldDir, 'players.json'), '{"players":{}}\n');
+    await expect(openWorld(dataDir)).rejects.toMatchObject({ code: 'incomplete' });
+    await expect(readFile(join(worldDir, 'meta.json'), 'utf8')).rejects.toThrow();
+    expect(await readFile(join(worldDir, 'players.json'), 'utf8')).toContain('players');
+  });
+
+  it('creates one player on the retry after the first registration save fails', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const registrationId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+    const store = (world as unknown as { worldStore: FsWorldStore }).worldStore;
+    const original = store.savePlayers.bind(store);
+    let failed = false;
+    store.savePlayers = async (worldId, players) => {
+      if (!failed) {
+        failed = true;
+        throw new Error('disk full');
+      }
+      return original(worldId, players);
+    };
+    const first = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      freshGuest: true,
+      registrationId,
+      expectedWorldId: world.worldId,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    expect(first).toMatchObject({ code: 'identity_unavailable' });
+    expect(world.registrations.has(registrationId)).toBe(false);
+    expect(world.players.size).toBe(0);
+    const second = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      freshGuest: true,
+      registrationId,
+      expectedWorldId: world.worldId,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    if ('error' in second) throw new Error(second.error);
+    expect(world.registrations.get(registrationId)).toBe(second.player.id);
+    expect(world.players.size).toBe(1);
+    const third = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      freshGuest: true,
+      registrationId,
+      expectedWorldId: world.worldId,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    if ('error' in third) throw new Error(third.error);
+    expect(third.player.id).toBe(second.player.id);
+    expect(third.player.sessionToken).toBe(second.player.sessionToken);
+    const disk = JSON.parse(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')) as {
+      players: Record<string, { registrationId?: string }>;
+    };
+    expect(Object.keys(disk.players)).toEqual([second.player.id]);
+    expect(disk.players[second.player.id]?.registrationId).toBe(registrationId);
+    await world.stop();
+  });
+
+  it('requires a checked world id to create a guest and still resumes a known token', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const before = await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8');
+    const denied = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      freshGuest: true,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    expect(denied).toMatchObject({ code: 'world_mismatch' });
+    expect(world.players.size).toBe(0);
+    expect(await readFile(join(dataDir, 'anarchy', 'players.json'), 'utf8')).toBe(before);
+    const created = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      freshGuest: true,
+      expectedWorldId: world.worldId,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    if ('error' in created) throw new Error(created.error);
+    const resumed = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      sessionToken: created.player.sessionToken,
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    if ('error' in resumed) throw new Error(resumed.error);
+    expect(resumed.player.id).toBe(created.player.id);
+    const wrongWorld = await world.join({
+      sink: memorySink(),
+      name: 'Ada',
+      sessionToken: created.player.sessionToken,
+      expectedWorldId: 'other-world',
+      requireExpectedWorld: true,
+      durableFresh: true,
+    });
+    expect(wrongWorld).toMatchObject({ code: 'world_mismatch' });
+    const unbound = await world.autoYandexJoin({
+      sink: memorySink(),
+      proof: 'not-a-proof',
+      confirmOtherCharacter: false,
+      freshGuest: true,
+      requireExpectedWorld: true,
+    });
+    expect(unbound).toMatchObject({ code: 'world_mismatch' });
+    expect(world.players.size).toBe(1);
+    await world.stop();
+  });
+
+  it('refuses to start an existing world whose players.json is missing and does not recreate it', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    await world.stop();
+    const playersPath = join(dataDir, 'anarchy', 'players.json');
+    await rm(playersPath);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    await expect(readFile(playersPath, 'utf8')).rejects.toThrow();
+  });
+
+  it('does not treat a corrupt players.json as an empty roster', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    await world.stop();
+    const playersPath = join(dataDir, 'anarchy', 'players.json');
+    const broken = '{';
+    await writeFile(playersPath, broken);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    expect(await readFile(playersPath, 'utf8')).toBe(broken);
+    await writeFile(playersPath, '[]\n');
+    await expect(new WorldPersistence(join(dataDir, 'anarchy')).loadRecords()).rejects.toMatchObject({ code: 'corrupt' });
+    expect(await readFile(playersPath, 'utf8')).toBe('[]\n');
+  });
+
+  it('does not replace a missing permissions.json with an empty operator list', async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), 'fc-guest-'));
+    dirs.push(dataDir);
+    const world = await openWorld(dataDir);
+    const created = await durableJoin(world, 'Op');
+    if ('error' in created) throw new Error(created.error);
+    expect(world.permissions.op(created.player.id)).toBe(true);
+    await world.stop();
+    const permissionsPath = join(dataDir, 'anarchy', 'plugin-data', 'permissions.json');
+    const saved = await readFile(permissionsPath, 'utf8');
+    expect(saved).toContain(created.player.id);
+    await rm(permissionsPath);
+    await expect(openWorld(dataDir)).rejects.toBeInstanceOf(PersistenceError);
+    await expect(readFile(permissionsPath, 'utf8')).rejects.toThrow();
+    await mkdir(join(dataDir, 'anarchy', 'plugin-data'), { recursive: true });
+    await writeFile(permissionsPath, saved);
+    const restored = await openWorld(dataDir);
+    expect(restored.permissions.isOperator(created.player.id)).toBe(true);
+    await restored.stop();
   });
 });
 

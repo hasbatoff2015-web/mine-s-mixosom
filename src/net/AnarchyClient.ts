@@ -20,7 +20,9 @@ import {
 } from '../../shared/protocol';
 import { sanitizePlayerName } from '../../shared/playerName';
 import {
+  claimGuestRegistration,
   confirmGuestWelcome,
+  GuestStorageError,
   guestDeploymentId,
   readGuestCredential,
   legacySessionStorageKey,
@@ -545,8 +547,10 @@ export class AnarchyClient {
     };
     if (plan.outcome === 'ready_new' && plan.scope && !plan.ephemeral) {
       const scope = plan.scope;
+      const nativeLocks = browserLocks();
+      const lockHeld = Boolean(options?.scopeLock) || Boolean(nativeLocks?.request);
       const lock = options?.scopeLock
-        ?? ((locked, lockSignal, body) => withGuestScopeLock(locked, body, browserLocks(), lockSignal));
+        ?? ((locked, lockSignal, body) => withGuestScopeLock(locked, body, nativeLocks, lockSignal));
       await lock(scope, signal, async () => {
         if (attempt.settled || this.generation !== attempt.generation || signal.aborted) throw cancelledJoin();
         const again = planGuestJoin({
@@ -569,7 +573,21 @@ export class AnarchyClient {
           if (again.scope.deployment !== scope.deployment || again.scope.mode !== scope.mode || again.scope.worldId !== scope.worldId) {
             throw Object.assign(new Error('Подтверждение было для другого мира. Новый персонаж не создавался.'), { code: 'consent_mismatch' });
           }
-          await this.openAndHold(attempt, () => open(again));
+          let claimed: GuestJoinPlan;
+          try {
+            claimed = await this.withRegistration(
+              durable,
+              again,
+              options?.freshConsent?.reason === 'unknown_guest',
+              lockHeld,
+            );
+          } catch (error) {
+            throw this.registrationError(error);
+          }
+          if (claimed.outcome !== 'ready_new' && claimed.outcome !== 'ready_existing' && claimed.outcome !== 'untrusted') {
+            throw Object.assign(new Error('Подключение остановлено'), { code: claimed.outcome });
+          }
+          await this.openAndHold(attempt, () => open(claimed));
           return;
         }
         const message = 'message' in again ? again.message : 'Подключение остановлено';
@@ -636,6 +654,11 @@ export class AnarchyClient {
         && !resume.confirmOtherCharacter
         && plan.outcome === 'ready_new'
         && plan.freshGuest === true;
+      const trustedPlan = plan.outcome !== 'untrusted';
+      const identity = trustedPlan ? {
+        expectedWorldId: plan.scope?.worldId,
+        registrationId: guestToken ? undefined : plan.registrationId,
+      } : undefined;
       this.send(resume
         ? buildAnarchyJoinMessage(
           name,
@@ -643,8 +666,16 @@ export class AnarchyClient {
           appearance,
           autoFresh,
           resume,
+          identity,
         )
-        : buildAnarchyJoinMessage(name, plan.outcome === 'untrusted' ? undefined : guestToken, appearance, plan.outcome === 'ready_new' && plan.freshGuest));
+        : buildAnarchyJoinMessage(
+          name,
+          plan.outcome === 'untrusted' ? undefined : guestToken,
+          appearance,
+          plan.outcome === 'ready_new' && plan.freshGuest,
+          undefined,
+          identity,
+        ));
     });
     socket.addEventListener('message', (event) => {
       if (this.generation !== generation || this.socket !== socket) return;
@@ -793,19 +824,63 @@ export class AnarchyClient {
       mode: target,
       worldId: status.world,
     };
+    if (!durable) {
+      this.failAttempt(attempt, Object.assign(
+        new Error('Браузер не смог прочитать сохранённую личность. Новый персонаж не создавался.'),
+        { code: 'storage_unavailable' },
+      ));
+      return;
+    }
     let sendToken: string | undefined;
-    if (!resume.confirmOtherCharacter && durable) {
+    try {
+      const stored = readGuestCredential(durable, scope)?.sessionToken;
+      if (!resume.confirmOtherCharacter) sendToken = stored;
+    } catch (error) {
+      const reason = error instanceof GuestStorageError ? error.reason : 'unavailable';
+      const code = reason === 'corrupt'
+        ? 'storage_corrupt'
+        : reason === 'unsupported'
+          ? 'storage_unsupported'
+          : 'storage_unavailable';
+      const message = code === 'storage_corrupt'
+        ? 'Сохранённые гостевые ключи повреждены. Они не перезаписаны и персонаж Яндекса не открывался.'
+        : code === 'storage_unsupported'
+          ? 'Формат сохранённых гостевых ключей не поддерживается. Запись не изменена.'
+          : 'Браузер не смог прочитать сохранённую личность. Персонаж Яндекса не открывался.';
+      this.failAttempt(attempt, Object.assign(new Error(message), { code }));
+      return;
+    }
+    let registrationId: string | undefined;
+    if (!sendToken && !resume.confirmOtherCharacter && resume.mode !== 'resume_yandex') {
       try {
-        sendToken = readGuestCredential(durable, scope)?.sessionToken;
-      } catch {
-        sendToken = undefined;
+        const nativeLocks = browserLocks();
+        const lockHeld = Boolean(nativeLocks?.request);
+        const claim = () => claimGuestRegistration(durable, scope, { lockHeld });
+        registrationId = lockHeld
+          ? await withGuestScopeLock(scope, claim, nativeLocks, signal)
+          : await claim();
+      } catch (error) {
+        const reason = error instanceof GuestStorageError ? error.reason : 'unavailable';
+        const code = reason === 'corrupt'
+          ? 'storage_corrupt'
+          : reason === 'unsupported'
+            ? 'storage_unsupported'
+            : reason === 'unreliable'
+              ? 'registration_unavailable'
+              : 'storage_unavailable';
+        this.failAttempt(attempt, Object.assign(
+          new Error('Браузер не смог безопасно зарегистрировать нового гостя. Новый персонаж не создавался.'),
+          { code },
+        ));
+        return;
       }
     }
     const plan: GuestJoinPlan = {
-      outcome: 'ready_existing',
+      outcome: sendToken ? 'ready_existing' : 'ready_new',
       scope,
       legacyKeys: [],
       ...(sendToken ? { sendToken } : {}),
+      ...(registrationId ? { registrationId, freshGuest: true } : {}),
     };
     this.openSocket(attempt, url, name, appearance, plan, durable, legacy, resume);
   }
@@ -927,6 +1002,38 @@ export class AnarchyClient {
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = undefined;
   }
+
+  private registrationError(error: unknown): Error {
+    if (error instanceof GuestStorageError) {
+      const code = error.reason === 'corrupt'
+        ? 'storage_corrupt'
+        : error.reason === 'unsupported'
+          ? 'storage_unsupported'
+          : error.reason === 'unreliable'
+            ? 'registration_unavailable'
+            : 'storage_unavailable';
+      const message = code === 'storage_corrupt'
+        ? 'Сохранённая регистрация гостя повреждена. Она не перезаписана и новый персонаж не создавался.'
+        : code === 'storage_unsupported'
+          ? 'Формат регистрации гостя не поддерживается. Запись не изменена.'
+          : code === 'registration_unavailable'
+            ? 'Браузер не смог безопасно зарегистрировать нового гостя. Новый персонаж не создавался.'
+            : 'Браузер не смог записать регистрацию гостя. Новый персонаж не создавался.';
+      return Object.assign(new Error(message), { code });
+    }
+    return error instanceof Error ? error : new Error('Подключение остановлено');
+  }
+
+  private async withRegistration(
+    durable: GuestStorage | null,
+    plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' }>,
+    replace: boolean,
+    lockHeld: boolean,
+  ): Promise<Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' }>> {
+    if (!durable || plan.ephemeral || !plan.scope || plan.outcome !== 'ready_new') return plan;
+    const registrationId = await claimGuestRegistration(durable, plan.scope, { replace, lockHeld });
+    return { ...plan, registrationId };
+  }
 }
 
 export function buildAnarchyJoinMessage(
@@ -935,14 +1042,18 @@ export function buildAnarchyJoinMessage(
   appearance?: PlayerAppearance,
   freshGuest?: boolean,
   yandexResume?: { readonly proof: string; readonly confirmOtherCharacter?: boolean; readonly mode?: 'resume_yandex' | 'yandex_auto' },
+  identity?: { readonly expectedWorldId?: string; readonly registrationId?: string },
 ): ClientJoinMessage {
   const sanitized = sanitizePlayerName(name);
+  const registrationId = !sessionToken || freshGuest ? identity?.registrationId : undefined;
   return {
     type: 'join',
     protocol: PROTOCOL_VERSION,
     ...(sanitized ? { name: sanitized } : {}),
     ...(freshGuest ? { freshGuest: true } : {}),
     ...(!freshGuest && sessionToken ? { sessionToken } : {}),
+    ...(identity?.expectedWorldId ? { expectedWorldId: identity.expectedWorldId } : {}),
+    ...(registrationId ? { registrationId } : {}),
     ...(appearance ? {
       appearance: {
         skinId: appearance.skinId,

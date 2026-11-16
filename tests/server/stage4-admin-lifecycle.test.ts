@@ -142,7 +142,7 @@ describe('stage 4 admin lifecycle', () => {
           clearTimeout(timer);
           resolve({ playerId: message.playerId, sessionToken: message.sessionToken, name: message.name ?? '' });
         });
-        socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: ownerId }));
+        socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, name: ownerId, expectedWorldId: 'stage4' }));
       });
       expect(welcome.name).toBe(ownerId);
       const player = server.world.players.get(welcome.playerId);
