@@ -91,16 +91,29 @@ export class WorldPersistence {
 
   async exists(): Promise<boolean> {
     const meta = await readJson(this.metaPath);
-    return !meta.missing;
+    if (!meta.missing) return true;
+    const world = await readJson(this.worldPath);
+    if (!world.missing) return true;
+    const players = await readJson(this.playersPath);
+    return !players.missing;
   }
 
   /**
-   * `null` = directory has no meta (empty world, safe to create).
-   * Corrupt / incomplete existing files throw `PersistenceError` — never a silent reset.
+   * `null` only when meta.json, world.json and players.json are all absent.
+   * Any one of those files without the full trio is an incomplete save.
+   * Corrupt files throw `PersistenceError` and are not rewritten.
    */
   async loadRecords(): Promise<FsWorldRecords | null> {
     const metaRaw = await readJson(this.metaPath);
-    if (metaRaw.missing) return null;
+    const worldRaw = await readJson(this.worldPath);
+    const playersRaw = await readJson(this.playersPath);
+    if (metaRaw.missing && worldRaw.missing && playersRaw.missing) return null;
+    if (metaRaw.missing) {
+      throw new PersistenceError(
+        `Incomplete world save in ${this.directory}: world.json or players.json exists but meta.json is missing.`,
+        'incomplete',
+      );
+    }
     let meta: FsWorldMeta;
     try {
       meta = parseFsMeta(metaRaw.value);
@@ -109,7 +122,6 @@ export class WorldPersistence {
       throw new PersistenceError('meta.json is corrupt.', 'corrupt');
     }
 
-    const worldRaw = await readJson(this.worldPath);
     if (worldRaw.missing) {
       throw new PersistenceError(
         `Incomplete world save in ${this.directory}: meta.json exists but world.json is missing.`,
@@ -136,7 +148,6 @@ export class WorldPersistence {
       ...(worldFile.redstone !== undefined ? { redstone: worldFile.redstone } : {}),
     };
 
-    const playersRaw = await readJson(this.playersPath);
     if (playersRaw.missing) {
       throw new PersistenceError(
         `Incomplete world save in ${this.directory}: meta.json exists but players.json is missing.`,

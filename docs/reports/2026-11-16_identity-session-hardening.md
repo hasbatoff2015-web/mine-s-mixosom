@@ -57,18 +57,31 @@
 - `tests/support/initialPermissions.ts`
 - `docs/PLAYER_IDENTITY.md`, `docs/PERMISSIONS.md`, `docs/BACKUPS.md`, `docs/ARCHITECTURE.md`, `docs/PROJECT_STATE.md`, `docs/ROADMAP.md`
 
+## Follow-up on the same branch
+
+Четыре замечания закрыты в этой же ветке, без нового PR и без merge.
+
+- `loadRecords` возвращает `null` только когда нет `meta.json`, `world.json` и `players.json`. Любой из файлов мира или игроков без `meta.json` — `incomplete`, запуск не создаёт недостающий файл.
+- `registrationId` записывается в Map только после успешного `savePlayers`. Падение первой записи снимает id. Повтор с тем же id без перезапуска создаёт одного игрока.
+- Новый гость без Web Lock и без успешной транзакции IndexedDB получает `registration_unavailable` и сокет не открывает. Наличие объекта `indexedDB` само по себе не считается блокировкой: ошибка `open` тоже отказ. `localStorage` без этой блокировки новый id не пишет. Уже сохранённый `sessionToken` в этом состоянии по-прежнему уходит на сервер.
+- Сетевой `join` нового гостя и первичная привязка Яндекса без `expectedWorldId` отвечают `world_mismatch` до создания персонажа. Действительный `sessionToken` может прийти без поля.
+
+Атомарность первой регистрации доказана тестом двух клиентов через сериализующую транзакцию IndexedDB, без подставного Web Lock. Тест без IndexedDB и без Web Lock доказывает отказ, а не общий UUID. Сравнение `localStorage` атомарным не называется.
+
 ## Tests
 
-PostgreSQL production не использовался. `FC_TEST_DATABASE_URL` в этом прогоне пустой, поэтому `tests/server/stage6-backup-restore.integration.test.ts` пропущен своим `skipIf`. Состав архива и отказ `map-only` проверены в `tests/server/stage6-backup.test.ts`.
+PostgreSQL production не использовался. `FC_TEST_DATABASE_URL` пустой, поэтому `tests/server/stage6-backup-restore.integration.test.ts` пропущен своим `skipIf`. 81 пропущенный тест — это тесты, которым нужна отдельная база.
 
-- `npm run typecheck:client` — успешно.
-- `npm run typecheck:server` — успешно.
-- `npm run check:boundaries` — успешно.
-- `npm run build` — успешно. Корневой `tsc` до правки не собирался: в `tests/server/daily-rewards-plugin.test.ts` вызов `releaseDay?.()` не совпадал с аннотацией `(result) => void`, хотя функция аргумент не принимает. Аннотация приведена к `() => void`. Поведение награды не менялось.
+После замечаний к PR повторно:
+
+- `npm run build` (`tsc --noEmit` и клиентская сборка) — успешно.
 - `npm run build:server` — успешно.
+- `npm run typecheck:client` и `npm run typecheck:server` — успешно до последней правки типов; корневой `tsc` в `npm run build` после неё тоже успешен.
+- `npm run check:boundaries` — успешно.
 - `git diff --check` — без замечаний.
-- Целевые тесты личности, прав, Яндекса, снимка и файлового мира: 105 тестов, 0 падений.
-- `npx vitest run tests/server tests/fs-world-store.test.ts tests/guest-identity-storage.test.ts tests/guest-identity-connect.test.ts tests/yandex-endpoint.test.ts tests/yandex-auto-client.test.ts tests/world-snapshot.test.ts`: 150 файлов прошли, 13 пропущены, 1395 тестов прошли, 81 пропущен. Один файл `tick-load-flight.test.ts` трижды упёрся в порог среднего времени 50 мс (50.4–53.8 мс) во время общего прогона. Отдельный запуск того же файла: 3 теста, 0 падений. Это тайминг загрузки чанков, не идентичность.
+- `npx vitest run tests/server tests/fs-world-store.test.ts tests/guest-identity-storage.test.ts tests/guest-identity-connect.test.ts tests/yandex-endpoint.test.ts tests/yandex-auto-client.test.ts tests/world-snapshot.test.ts`: 151 файл прошёл, 13 пропущены, 1403 теста прошли, 81 пропущен, 0 падений.
+
+Отдельно зелёные: две вкладки без Web Lock и без IndexedDB не открывают сокет; две вкладки через сериализующую транзакцию IndexedDB получают один `registrationId`; ошибка `indexedDB.open` не создаёт регистрацию; существующий `sessionToken` входит без блокировки; повтор после упавшего `savePlayers` создаёт одного игрока без перезапуска; каталог без `meta.json`, но с `players.json` или `world.json`, не стартует.
 
 ## Guest-model limits
 

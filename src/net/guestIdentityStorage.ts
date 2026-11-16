@@ -92,7 +92,7 @@ export type GuestStoreRead =
   | { readonly kind: 'unavailable' };
 
 export class GuestStorageError extends Error {
-  constructor(readonly reason: 'unavailable' | 'quota' | 'corrupt' | 'unsupported' | 'invalid' | 'exists') {
+  constructor(readonly reason: 'unavailable' | 'quota' | 'corrupt' | 'unsupported' | 'invalid' | 'exists' | 'unreliable') {
     super(reason);
     this.name = 'GuestStorageError';
   }
@@ -599,75 +599,77 @@ function registrationFailure(read: RegistrationRead): GuestStorageError | null {
 const REGISTRATION_DB = 'fc-guest-reg';
 const REGISTRATION_STORE = 'registrations';
 
-function delay(ms: number): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 /**
  * IndexedDB readwrite transactions on one store are serialized across tabs.
- * Returns null when IndexedDB cannot be used; the caller keeps the localStorage claim.
+ * `absent` means there is no factory. `failed` means open or the transaction
+ * actually failed. A failed open is not treated as a successful lock.
  */
 function claimRegistrationIndexedDb(
   scope: GuestIdentityScope,
   storage: GuestStorage,
   replace: boolean,
   randomId: () => string,
-): Promise<string | null> {
-  if (typeof indexedDB === 'undefined') return Promise.resolve(null);
+  factory: IDBFactory | undefined,
+): Promise<string | 'absent' | 'failed'> {
+  if (!factory) return Promise.resolve('absent');
   return new Promise((resolve) => {
     let settled = false;
-    const finish = (value: string | null): void => {
+    const finish = (value: string | 'failed'): void => {
       if (settled) return;
       settled = true;
       resolve(value);
     };
     let request: IDBOpenDBRequest;
     try {
-      request = indexedDB.open(REGISTRATION_DB, 1);
+      request = factory.open(REGISTRATION_DB, 1);
     } catch {
-      finish(null);
+      finish('failed');
       return;
     }
+    request.onerror = () => finish('failed');
+    request.onblocked = () => finish('failed');
     request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(REGISTRATION_STORE)) db.createObjectStore(REGISTRATION_STORE);
+      try {
+        const db = request.result;
+        if (!db.objectStoreNames.contains(REGISTRATION_STORE)) db.createObjectStore(REGISTRATION_STORE);
+      } catch {
+        finish('failed');
+      }
     };
-    request.onerror = () => finish(null);
     request.onsuccess = () => {
-      const db = request.result;
       let tx: IDBTransaction;
       try {
-        tx = db.transaction(REGISTRATION_STORE, 'readwrite');
+        tx = request.result.transaction(REGISTRATION_STORE, 'readwrite');
       } catch {
-        finish(null);
+        finish('failed');
         return;
       }
+      tx.onerror = () => finish('failed');
+      tx.onabort = () => finish('failed');
       const store = tx.objectStore(REGISTRATION_STORE);
       const key = guestScopeKey(scope);
       const get = store.get(key);
-      get.onerror = () => finish(null);
+      get.onerror = () => finish('failed');
       get.onsuccess = () => {
         const existing = get.result as { registrationId?: unknown } | undefined;
         if (!replace && isRegistrationId(existing?.registrationId)) {
           try {
             writeGuestRegistration(storage, scope, existing.registrationId);
           } catch {
-            finish(null);
-            return;
+            // The IndexedDB row is still the shared id. A local mirror failure
+            // must not mint a second registration.
           }
           finish(existing.registrationId);
           return;
         }
         const id = randomId();
         const put = store.put({ registrationId: id }, key);
-        put.onerror = () => finish(null);
+        put.onerror = () => finish('failed');
         put.onsuccess = () => {
           try {
             writeGuestRegistration(storage, scope, id);
           } catch {
-            finish(null);
-            return;
+            // Same as above: the transaction already stored the id.
           }
           finish(id);
         };
@@ -678,35 +680,40 @@ function claimRegistrationIndexedDb(
 
 /**
  * One registration id for every tab creating this slot.
- * A valid pending record is reused. A damaged record is not treated as empty and is not overwritten.
- * `replace` is only the explicit new-guest confirmation, and it still refuses to erase a damaged record.
+ * A valid pending record is reused and is not a new character.
+ * A damaged record is not treated as empty and is not overwritten.
+ * A new id is written only inside a Web Lock (`lockHeld`) or a successful
+ * IndexedDB transaction. localStorage alone is not treated as that lock.
  */
 export async function claimGuestRegistration(
   storage: GuestStorage,
   scope: GuestIdentityScope,
-  options?: { readonly waitMs?: number; readonly randomId?: () => string; readonly replace?: boolean },
+  options?: {
+    readonly randomId?: () => string;
+    readonly replace?: boolean;
+    readonly lockHeld?: boolean;
+    readonly indexedDb?: IDBFactory;
+  },
 ): Promise<string> {
   const replace = options?.replace === true;
   const randomId = options?.randomId ?? (() => crypto.randomUUID());
-  const waitMs = options?.waitMs ?? 0;
   const current = readGuestRegistration(storage, scope);
   const blocked = registrationFailure(current);
   if (blocked) throw blocked;
   if (!replace && current.kind === 'valid') return current.registrationId;
-  // IndexedDB serializes the claim across tabs. Skip it when it is absent so the
-  // localStorage write happens before this function yields.
-  if (typeof indexedDB !== 'undefined') {
-    const indexed = await claimRegistrationIndexedDb(scope, storage, replace, randomId);
-    if (indexed) return indexed;
+  const factory = options?.indexedDb ?? (typeof indexedDB === 'undefined' ? undefined : indexedDB);
+  const indexed = await claimRegistrationIndexedDb(scope, storage, replace, randomId, factory);
+  if (indexed !== 'absent' && indexed !== 'failed') return indexed;
+  if (options?.lockHeld) {
+    const id = randomId();
+    writeGuestRegistration(storage, scope, id);
+    const again = readGuestRegistration(storage, scope);
+    const againBlocked = registrationFailure(again);
+    if (againBlocked) throw againBlocked;
+    if (again.kind === 'valid') return again.registrationId;
+    throw new GuestStorageError('unavailable');
   }
-  const id = randomId();
-  writeGuestRegistration(storage, scope, id);
-  if (waitMs > 0) await delay(waitMs);
-  const again = readGuestRegistration(storage, scope);
-  const againBlocked = registrationFailure(again);
-  if (againBlocked) throw againBlocked;
-  if (again.kind === 'valid') return again.registrationId;
-  throw new GuestStorageError('unavailable');
+  throw new GuestStorageError('unreliable');
 }
 
 export interface GuestScopeLock {

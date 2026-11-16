@@ -2207,6 +2207,41 @@ export class WorldInstance {
     };
   }
 
+  private knownSession(token?: string): boolean {
+    if (!token) return false;
+    return this.tokens.has(token) || Boolean(this.storedPlayerByToken(token));
+  }
+
+  /**
+   * A network join that would create a player must name the world it checked.
+   * A valid session token may omit that field: older clients already have a character.
+   */
+  private rejectUnscopedCreate(options: {
+    expectedWorldId?: string;
+    sessionToken?: string;
+    freshGuest?: boolean;
+    requireExpectedWorld?: boolean;
+  }): { error: string; code: string } | undefined {
+    const mismatch = this.worldMismatch(options.expectedWorldId);
+    if (mismatch) return mismatch;
+    if (options.requireExpectedWorld && !options.expectedWorldId && !this.knownSession(options.sessionToken)) {
+      // An unknown token must stay unknown_guest. It does not create a character.
+      if (options.sessionToken && !options.freshGuest) return undefined;
+      return {
+        error: 'Сервер не подтвердил мир. Персонаж не создавался.',
+        code: 'world_mismatch',
+      };
+    }
+    return undefined;
+  }
+
+  private forgetRegistration(player: ServerPlayer): void {
+    if (!player.registrationId) return;
+    if (this.registrations.get(player.registrationId) === player.id) {
+      this.registrations.delete(player.registrationId);
+    }
+  }
+
   private rememberRegistration(registrationId: string | undefined, playerId: string): void {
     if (!registrationId) return;
     const owner = this.registrations.get(registrationId);
@@ -2292,6 +2327,7 @@ export class WorldInstance {
     proof: string;
     guestToken?: string;
     expectedWorldId?: string;
+    requireExpectedWorld?: boolean;
     confirmOtherCharacter: boolean;
     subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string }> {
@@ -2366,6 +2402,7 @@ export class WorldInstance {
         appearance: options.appearance,
         sessionToken: token,
         expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
         durableFresh: true,
         publishGate: async (owns) => {
           if (!owns()) {
@@ -2421,11 +2458,18 @@ export class WorldInstance {
     freshGuest?: boolean;
     expectedWorldId?: string;
     registrationId?: string;
+    requireExpectedWorld?: boolean;
     confirmOtherCharacter: boolean;
     subjectRate?: (identity: { providerUserId: string; proofHash: string }) => boolean;
   }): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
-    const mismatch = this.worldMismatch(options.expectedWorldId);
-    if (mismatch) return mismatch;
+    const unscoped = options.confirmOtherCharacter
+      ? this.worldMismatch(options.expectedWorldId)
+      : this.rejectUnscopedCreate({
+        expectedWorldId: options.expectedWorldId,
+        sessionToken: options.guestToken,
+        requireExpectedWorld: options.requireExpectedWorld,
+      });
+    if (unscoped) return unscoped;
     const auth = this.config.yandexAuth;
     const knownGuestId = options.confirmOtherCharacter ? undefined : this.guestPlayerId(options.guestToken);
     if (!auth.enabled) {
@@ -2438,6 +2482,7 @@ export class WorldInstance {
         appearance: options.appearance,
         sessionToken: options.guestToken,
         expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
         registrationId: options.registrationId,
         durableFresh: true,
       });
@@ -2476,6 +2521,7 @@ export class WorldInstance {
           appearance: options.appearance,
           sessionToken: options.guestToken,
           expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
           registrationId: options.registrationId,
           durableFresh: true,
         });
@@ -2488,6 +2534,7 @@ export class WorldInstance {
         appearance: options.appearance,
         proof: options.proof,
         expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
         confirmOtherCharacter: true,
         subjectRate: options.subjectRate,
       });
@@ -2525,6 +2572,7 @@ export class WorldInstance {
       sessionToken: options.guestToken,
       freshGuest: Boolean(options.freshGuest) && !options.guestToken,
       expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
       registrationId: options.guestToken ? undefined : options.registrationId,
       durableFresh: true,
       publishGate: async (owns, player) => {
@@ -2593,6 +2641,7 @@ export class WorldInstance {
           appearance: options.appearance,
           proof: options.proof,
           expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
           confirmOtherCharacter: true,
           subjectRate: options.subjectRate,
         });
@@ -2653,6 +2702,7 @@ export class WorldInstance {
       freshGuest?: boolean;
       expectedWorldId?: string;
       registrationId?: string;
+      requireExpectedWorld?: boolean;
     },
     sync: YandexSyncState,
   ): Promise<{ player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string; yandexSync?: YandexSyncState } | { error: string; code?: string }> {
@@ -2666,6 +2716,7 @@ export class WorldInstance {
       sessionToken: options.guestToken,
       freshGuest: Boolean(options.freshGuest) && !options.guestToken,
       expectedWorldId: options.expectedWorldId,
+      requireExpectedWorld: options.requireExpectedWorld,
       registrationId: options.guestToken ? undefined : options.registrationId,
       durableFresh: true,
     });
@@ -2762,6 +2813,8 @@ export class WorldInstance {
     freshGuest?: boolean;
     expectedWorldId?: string;
     registrationId?: string;
+    /** Network joins require a checked world id before a new character is created. */
+    requireExpectedWorld?: boolean;
     durableFresh?: false;
   }): { player: ServerPlayer; resumed: boolean; previousConnectionId?: string; connectionId: string } | { error: string; code?: string };
   join(options: {
@@ -2772,6 +2825,7 @@ export class WorldInstance {
     freshGuest?: boolean;
     expectedWorldId?: string;
     registrationId?: string;
+    requireExpectedWorld?: boolean;
     registrationLocked?: boolean;
     durableFresh: true;
     publishGate?: (owns: () => boolean, player: ServerPlayer) => Promise<{ error: string; code?: string } | undefined>;
@@ -2784,6 +2838,7 @@ export class WorldInstance {
     freshGuest?: boolean;
     expectedWorldId?: string;
     registrationId?: string;
+    requireExpectedWorld?: boolean;
     registrationLocked?: boolean;
     durableFresh?: boolean;
     publishGate?: (owns: () => boolean, player: ServerPlayer) => Promise<{ error: string; code?: string } | undefined>;
@@ -2792,7 +2847,7 @@ export class WorldInstance {
     const fail = (error: { error: string; code?: string }) => (
       options.durableFresh ? Promise.resolve(error) : error
     );
-    const mismatch = this.worldMismatch(options.expectedWorldId);
+    const mismatch = this.rejectUnscopedCreate(options);
     if (mismatch) return fail(mismatch);
     if (options.registrationId && options.durableFresh && !options.registrationLocked) {
       return this.withRegistrationLock(options.registrationId, () => this.join({
@@ -2845,6 +2900,7 @@ export class WorldInstance {
           try {
             await this.persistCandidate(player.player);
           } catch {
+            this.forgetRegistration(player.player);
             serverLog('guest identity save failed', 'error');
             return { error: 'Не удалось сохранить персонажа.', code: 'identity_unavailable' };
           }
@@ -3009,6 +3065,7 @@ export class WorldInstance {
           registrationId: undefined,
         });
       }
+      if (existingId) this.registrations.delete(options.registrationId);
     }
 
     const id = crypto.randomUUID();
@@ -3028,10 +3085,7 @@ export class WorldInstance {
       sanitizeRegisteredAppearance(options.appearance) ?? DEFAULT_PLAYER_APPEARANCE,
     );
     this.bindNameStyle(player);
-    if (options.registrationId) {
-      player.registrationId = options.registrationId;
-      this.rememberRegistration(options.registrationId, id);
-    }
+    if (options.registrationId) player.registrationId = options.registrationId;
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = options.sink;
     player.lastInputConnectionId = player.connectionId;
@@ -8177,6 +8231,7 @@ export class WorldInstance {
       await this.worldStore.savePlayers(this.worldId, players);
       this.storedPlayers = players;
       this.tokens.set(player.sessionToken, player.id);
+      this.rememberRegistration(player.registrationId, player.id);
     });
     this.saveQueue = run.then(() => undefined, () => undefined);
     await run;

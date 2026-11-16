@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AnarchyClient, statusUrlForServer } from '../src/net/AnarchyClient';
+import { AnarchyClient, statusUrlForServer, type GuestConnectOptions } from '../src/net/AnarchyClient';
 import { GUEST_STORAGE_KEY, guestScopeKey, guestScopeStorageKey, readGuestCredential, withGuestScopeLock, writeGuestCredential, type FreshGuestConsent, type GuestScopeLock, type GuestStorage } from '../src/net/guestIdentityStorage';
 import { PROTOCOL_VERSION } from '../shared/config';
 
@@ -203,21 +203,15 @@ describe('guest connect routing', () => {
     const gate = new Promise<{ ok: boolean; ready: boolean; mode: string; world: string }>((resolve) => {
       release = resolve;
     });
+    const durable = memoryStore();
     const client = new AnarchyClient();
+    const locked = clientOptions(durable, async () => ({ ok: true, ready: true, mode: 'anarchy', world: 'anarchy' }));
     const first = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, {
-      targetServer: 'anarchy',
-      search: '',
-      hostname: '127.0.0.1',
-      durable: memoryStore(),
-      legacy: memoryStore(),
+      ...locked,
       fetchStatus: () => gate,
     });
     const second = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, {
-      targetServer: 'anarchy',
-      search: '',
-      hostname: '127.0.0.1',
-      durable: memoryStore(),
-      legacy: memoryStore(),
+      ...locked,
       fetchStatus: async () => ({ ok: true, ready: true, mode: 'anarchy', world: 'anarchy' }),
     });
     release({ ok: true, ready: true, mode: 'anarchy', world: 'anarchy' });
@@ -328,6 +322,78 @@ function readStored(store: GuestStorage & { data: Record<string, string> }): str
   return parsed.sessionToken;
 }
 
+function failingIndexedDb(): IDBFactory {
+  return {
+    open() {
+      const request = {} as IDBOpenDBRequest;
+      queueMicrotask(() => request.onerror?.(new Event('error')));
+      return request;
+    },
+  } as unknown as IDBFactory;
+}
+
+function memoryRegistrationDb(): { factory: IDBFactory; ids(): string[] } {
+  const rows = new Map<string, { registrationId?: string }>();
+  let tail: Promise<void> = Promise.resolve();
+  const factory = {
+    open() {
+      const request = {} as {
+        result?: IDBDatabase;
+        onsuccess?: ((event: Event) => void) | null;
+      };
+      const database = {
+        objectStoreNames: { contains: () => true },
+        transaction() {
+          const previous = tail;
+          let release!: () => void;
+          const gate = new Promise<void>((resolve) => { release = resolve; });
+          tail = previous.then(() => gate, () => gate);
+          let released = false;
+          const finish = (): void => {
+            if (released) return;
+            released = true;
+            release();
+          };
+          return {
+            onerror: null,
+            onabort: null,
+            objectStore() {
+              return {
+                get(key: string) {
+                  const getRequest = {} as { result?: unknown; onsuccess?: ((event: Event) => void) | null };
+                  previous.then(() => {
+                    getRequest.result = rows.get(key);
+                    getRequest.onsuccess?.(new Event('success'));
+                  }).catch(() => undefined);
+                  return getRequest as IDBRequest;
+                },
+                put(value: { registrationId?: string }, key: string) {
+                  const putRequest = {} as { onsuccess?: ((event: Event) => void) | null; onerror?: ((event: Event) => void) | null };
+                  previous.then(() => {
+                    rows.set(key, value);
+                    putRequest.onsuccess?.(new Event('success'));
+                    finish();
+                  }).catch(() => undefined);
+                  return putRequest as IDBRequest;
+                },
+              };
+            },
+          };
+        },
+      };
+      queueMicrotask(() => {
+        request.result = database as unknown as IDBDatabase;
+        request.onsuccess?.(new Event('success'));
+      });
+      return request as IDBOpenDBRequest;
+    },
+  } as unknown as IDBFactory;
+  return {
+    factory,
+    ids: () => [...rows.values()].map((row) => row.registrationId ?? ''),
+  };
+}
+
 class ScopeLocks implements GuestScopeLock {
   private tails = new Map<string, Promise<void>>();
 
@@ -370,6 +436,14 @@ function clientOptions(
   fetchStatus: GuestConnectOptionsFetch,
   extra: Record<string, unknown> = {},
 ) {
+  const passed = extra.scopeLock;
+  const rest = { ...extra };
+  delete rest.scopeLock;
+  const locks = new ScopeLocks();
+  const scopeLock: GuestConnectOptions['scopeLock'] | undefined = passed === null
+    ? undefined
+    : (passed as GuestConnectOptions['scopeLock'] | undefined)
+      ?? ((scope, signal, body) => withGuestScopeLock(scope, body, locks, signal));
   return {
     targetServer: 'anarchy' as const,
     search: '',
@@ -377,7 +451,8 @@ function clientOptions(
     durable,
     legacy: memoryStore(),
     fetchStatus,
-    ...extra,
+    scopeLock,
+    ...rest,
   };
 }
 
@@ -714,32 +789,73 @@ describe('two AnarchyClient registrations', () => {
     survival.disconnect();
   });
 
-  it('two first joins without Web Locks send one registration id', async () => {
+  it('refuses two first joins when Web Locks and IndexedDB are both unavailable', async () => {
     installSocket();
     const durable = memoryStore();
     const first = new AnarchyClient();
     const second = new AnarchyClient();
-    const options = clientOptions(durable, statusFetch('anarchy', 'anarchy', []));
+    const options = clientOptions(durable, statusFetch('anarchy', 'anarchy', []), { scopeLock: null });
     const pendingA = first.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
     const pendingB = second.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(FakeSocket.instances).toHaveLength(2);
-    const joinA = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string; expectedWorldId?: string; freshGuest?: boolean };
-    const joinB = JSON.parse(FakeSocket.instances[1]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string; expectedWorldId?: string };
-    expect(joinA.sessionToken).toBeUndefined();
-    expect(joinB.sessionToken).toBeUndefined();
-    expect(joinA.registrationId).toBeTruthy();
-    expect(joinA.registrationId).toBe(joinB.registrationId);
-    expect(joinA.expectedWorldId).toBe('anarchy');
-    expect(joinB.expectedWorldId).toBe('anarchy');
-    expect(joinA.freshGuest).toBeFalsy();
-    FakeSocket.instances[0]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-    FakeSocket.instances[1]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
-    const [welcomeA, welcomeB] = await Promise.all([pendingA, pendingB]);
-    expect(welcomeA.playerId).toBe(welcomeB.playerId);
-    expect(readStored(durable)).toBe('shared-token');
+    await expect(pendingA).rejects.toMatchObject({ code: 'registration_unavailable' });
+    await expect(pendingB).rejects.toMatchObject({ code: 'registration_unavailable' });
+    expect(FakeSocket.instances).toHaveLength(0);
+    expect(Object.keys(durable.data).some((key) => key.startsWith('fc.guest.reg.'))).toBe(false);
     first.disconnect();
     second.disconnect();
+  });
+
+  it('shares one registration id through a real IndexedDB transaction without Web Locks', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const database = memoryRegistrationDb();
+    const previous = globalThis.indexedDB;
+    globalThis.indexedDB = database.factory;
+    const first = new AnarchyClient();
+    const second = new AnarchyClient();
+    const options = clientOptions(durable, statusFetch('anarchy', 'anarchy', []), { scopeLock: null });
+    try {
+      const pendingA = first.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
+      const pendingB = second.connect('ws://127.0.0.1:2567', 'Ada', undefined, options);
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(FakeSocket.instances).toHaveLength(2);
+      const joinA = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string };
+      const joinB = JSON.parse(FakeSocket.instances[1]!.sent[0] ?? '{}') as { registrationId?: string; sessionToken?: string };
+      expect(joinA.sessionToken).toBeUndefined();
+      expect(joinB.sessionToken).toBeUndefined();
+      expect(joinA.registrationId).toBeTruthy();
+      expect(joinA.registrationId).toBe(joinB.registrationId);
+      expect(database.ids()).toEqual([joinA.registrationId]);
+      FakeSocket.instances[0]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      FakeSocket.instances[1]!.welcome('anarchy', 'shared-token', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+      const [welcomeA, welcomeB] = await Promise.all([pendingA, pendingB]);
+      expect(welcomeA.playerId).toBe(welcomeB.playerId);
+      expect(readStored(durable)).toBe('shared-token');
+    } finally {
+      globalThis.indexedDB = previous;
+      first.disconnect();
+      second.disconnect();
+    }
+  });
+
+  it('does not open a socket when indexedDB.open fails and there is no Web Lock', async () => {
+    installSocket();
+    const durable = memoryStore();
+    const previous = globalThis.indexedDB;
+    globalThis.indexedDB = failingIndexedDb();
+    const client = new AnarchyClient();
+    try {
+      await expect(client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+        durable,
+        statusFetch('anarchy', 'anarchy', []),
+        { scopeLock: null },
+      ))).rejects.toMatchObject({ code: 'registration_unavailable' });
+      expect(FakeSocket.instances).toHaveLength(0);
+      expect(Object.keys(durable.data)).toHaveLength(0);
+    } finally {
+      globalThis.indexedDB = previous;
+      client.disconnect();
+    }
   });
 
   it('does not report a saved identity when the welcome write fails', async () => {
@@ -765,15 +881,23 @@ describe('two AnarchyClient registrations', () => {
     client.disconnect();
   });
 
-  it('AC still joins when the browser has no Web Locks', async () => {
+  it('AC keeps an existing session token when Web Locks and IndexedDB are unavailable', async () => {
     installSocket();
     const durable = memoryStore();
+    writeGuestCredential(durable, { deployment: 'local', mode: 'anarchy', worldId: 'anarchy' }, 'kept-token');
     const client = new AnarchyClient();
-    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(durable, statusFetch('anarchy', 'anarchy', [])));
+    const pending = client.connect('ws://127.0.0.1:2567', 'Ada', undefined, clientOptions(
+      durable,
+      statusFetch('anarchy', 'anarchy', []),
+      { scopeLock: null },
+    ));
     await new Promise((resolve) => setTimeout(resolve, 0));
-    FakeSocket.instances[0]!.welcome('anarchy', 'solo-token');
-    await expect(pending).resolves.toMatchObject({ sessionToken: 'solo-token' });
-    expect(readStored(durable)).toBe('solo-token');
+    const join = JSON.parse(FakeSocket.instances[0]!.sent[0] ?? '{}') as { sessionToken?: string; registrationId?: string };
+    expect(join.sessionToken).toBe('kept-token');
+    expect(join.registrationId).toBeUndefined();
+    FakeSocket.instances[0]!.welcome('anarchy', 'kept-token');
+    await expect(pending).resolves.toMatchObject({ sessionToken: 'kept-token' });
+    expect(readStored(durable)).toBe('kept-token');
     client.disconnect();
   });
 });

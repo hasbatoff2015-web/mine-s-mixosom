@@ -310,8 +310,6 @@ export interface GuestConnectOptions {
   readonly durable?: GuestStorage | null;
   readonly legacy?: GuestStorage | null;
   readonly scopeLock?: <T>(scope: GuestIdentityScope, signal: AbortSignal, body: () => Promise<T>) => Promise<T>;
-  /** Test hook. Browsers without Web Locks and IndexedDB wait briefly; Node does not. */
-  readonly registrationWaitMs?: number;
   readonly yandexResume?: {
     readonly proof: string;
     readonly confirmOtherCharacter?: boolean;
@@ -549,8 +547,10 @@ export class AnarchyClient {
     };
     if (plan.outcome === 'ready_new' && plan.scope && !plan.ephemeral) {
       const scope = plan.scope;
+      const nativeLocks = browserLocks();
+      const lockHeld = Boolean(options?.scopeLock) || Boolean(nativeLocks?.request);
       const lock = options?.scopeLock
-        ?? ((locked, lockSignal, body) => withGuestScopeLock(locked, body, browserLocks(), lockSignal));
+        ?? ((locked, lockSignal, body) => withGuestScopeLock(locked, body, nativeLocks, lockSignal));
       await lock(scope, signal, async () => {
         if (attempt.settled || this.generation !== attempt.generation || signal.aborted) throw cancelledJoin();
         const again = planGuestJoin({
@@ -575,7 +575,12 @@ export class AnarchyClient {
           }
           let claimed: GuestJoinPlan;
           try {
-            claimed = await this.withRegistration(durable, again, options?.freshConsent?.reason === 'unknown_guest', options?.registrationWaitMs);
+            claimed = await this.withRegistration(
+              durable,
+              again,
+              options?.freshConsent?.reason === 'unknown_guest',
+              lockHeld,
+            );
           } catch (error) {
             throw this.registrationError(error);
           }
@@ -848,14 +853,24 @@ export class AnarchyClient {
     let registrationId: string | undefined;
     if (!sendToken && !resume.confirmOtherCharacter && resume.mode !== 'resume_yandex') {
       try {
-        registrationId = await claimGuestRegistration(durable, scope, {
-          waitMs: this.registrationWait(options.registrationWaitMs),
-        });
+        const nativeLocks = browserLocks();
+        const lockHeld = Boolean(nativeLocks?.request);
+        const claim = () => claimGuestRegistration(durable, scope, { lockHeld });
+        registrationId = lockHeld
+          ? await withGuestScopeLock(scope, claim, nativeLocks, signal)
+          : await claim();
       } catch (error) {
         const reason = error instanceof GuestStorageError ? error.reason : 'unavailable';
+        const code = reason === 'corrupt'
+          ? 'storage_corrupt'
+          : reason === 'unsupported'
+            ? 'storage_unsupported'
+            : reason === 'unreliable'
+              ? 'registration_unavailable'
+              : 'storage_unavailable';
         this.failAttempt(attempt, Object.assign(
-          new Error('Браузер не смог сохранить регистрацию гостя. Новый персонаж не создавался.'),
-          { code: reason === 'corrupt' ? 'storage_corrupt' : reason === 'unsupported' ? 'storage_unsupported' : 'storage_unavailable' },
+          new Error('Браузер не смог безопасно зарегистрировать нового гостя. Новый персонаж не создавался.'),
+          { code },
         ));
         return;
       }
@@ -988,28 +1003,22 @@ export class AnarchyClient {
     this.pingTimer = undefined;
   }
 
-  private registrationWait(explicit: number | undefined): number {
-    if (explicit !== undefined) return explicit;
-    if (typeof window === 'undefined') return 0;
-    if (typeof navigator !== 'undefined' && 'locks' in navigator && navigator.locks) return 0;
-    if (typeof indexedDB !== 'undefined') return 0;
-    return 50;
-  }
-
   private registrationError(error: unknown): Error {
     if (error instanceof GuestStorageError) {
       const code = error.reason === 'corrupt'
         ? 'storage_corrupt'
         : error.reason === 'unsupported'
           ? 'storage_unsupported'
-          : error.reason === 'quota'
-            ? 'storage_unavailable'
+          : error.reason === 'unreliable'
+            ? 'registration_unavailable'
             : 'storage_unavailable';
       const message = code === 'storage_corrupt'
         ? 'Сохранённая регистрация гостя повреждена. Она не перезаписана и новый персонаж не создавался.'
         : code === 'storage_unsupported'
           ? 'Формат регистрации гостя не поддерживается. Запись не изменена.'
-          : 'Браузер не смог записать регистрацию гостя. Новый персонаж не создавался.';
+          : code === 'registration_unavailable'
+            ? 'Браузер не смог безопасно зарегистрировать нового гостя. Новый персонаж не создавался.'
+            : 'Браузер не смог записать регистрацию гостя. Новый персонаж не создавался.';
       return Object.assign(new Error(message), { code });
     }
     return error instanceof Error ? error : new Error('Подключение остановлено');
@@ -1019,13 +1028,10 @@ export class AnarchyClient {
     durable: GuestStorage | null,
     plan: Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' }>,
     replace: boolean,
-    waitMs: number | undefined,
+    lockHeld: boolean,
   ): Promise<Extract<GuestJoinPlan, { outcome: 'ready_existing' | 'ready_new' }>> {
     if (!durable || plan.ephemeral || !plan.scope || plan.outcome !== 'ready_new') return plan;
-    const registrationId = await claimGuestRegistration(durable, plan.scope, {
-      replace,
-      waitMs: this.registrationWait(waitMs),
-    });
+    const registrationId = await claimGuestRegistration(durable, plan.scope, { replace, lockHeld });
     return { ...plan, registrationId };
   }
 }

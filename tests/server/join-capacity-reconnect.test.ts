@@ -128,7 +128,12 @@ function connect(url: string, join: Record<string, unknown>): Promise<{ socket: 
     socket.on('error', reject);
     socket.on('message', (data) => messages.push(JSON.parse(String(data)) as ServerMessage));
     socket.on('open', () => {
-      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, ...join }));
+      socket.send(JSON.stringify({
+        type: 'join',
+        protocol: PROTOCOL_VERSION,
+        ...join,
+        ...(!join.sessionToken && join.expectedWorldId === undefined ? { expectedWorldId: 'anarchy' } : {}),
+      }));
       resolve({ socket, messages });
     });
   });

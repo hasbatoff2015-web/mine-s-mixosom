@@ -195,7 +195,16 @@ function connect(url: string, join: Record<string, unknown>): Promise<{ socket: 
       messages.push(JSON.parse(String(data)) as ServerMessage);
     });
     socket.on('open', () => {
-      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, ...join }));
+      const skipExpectedWorld = join.skipExpectedWorld === true;
+      const { skipExpectedWorld: _skip, ...rest } = join;
+      socket.send(JSON.stringify({
+        type: 'join',
+        protocol: PROTOCOL_VERSION,
+        ...rest,
+        ...(!skipExpectedWorld && !rest.sessionToken && rest.expectedWorldId === undefined
+          ? { expectedWorldId: 'anarchy' }
+          : {}),
+      }));
       resolve({ socket, messages });
     });
   });
@@ -477,12 +486,13 @@ describe('automatic yandex join', () => {
       const refused = await connect(survival.wsUrl(), {
         name: 'Ada',
         freshGuest: true,
+        expectedWorldId: 'survival',
         authMode: 'yandex_auto',
         yandexProof: proof('mode-user'),
       });
       await expect(welcome(refused.messages)).rejects.toMatchObject({ code: 'auth_disabled' });
       refused.socket.close();
-      const guest = await connect(survival.wsUrl(), { name: 'Ada', freshGuest: true });
+      const guest = await connect(survival.wsUrl(), { name: 'Ada', freshGuest: true, expectedWorldId: 'survival' });
       const other = await welcome(guest.messages);
       expect(other.yandexSync).toBeUndefined();
       expect(other.playerId).not.toBe(hello.playerId);

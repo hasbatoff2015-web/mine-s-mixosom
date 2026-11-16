@@ -526,32 +526,33 @@ describe('per-scope guest storage', () => {
 });
 
 describe('guest registration claim', () => {
-  it('reuses one registration id when two claims both observe an empty record', async () => {
-    const stored = { value: null as string | null };
-    let reads = 0;
-    const storage: GuestStorage = {
-      getItem() {
-        reads += 1;
-        if (reads <= 2) return null;
-        return stored.value;
-      },
-      setItem(_key, value) { stored.value = value; },
-      removeItem() { stored.value = null; },
-      keys() { return stored.value ? ['pending'] : []; },
-    };
+  it('refuses a new registration when neither a lock nor IndexedDB can serialize it', async () => {
+    const storage = memoryStore();
+    await expect(claimGuestRegistration(storage, scope, {
+      randomId: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    })).rejects.toMatchObject({ reason: 'unreliable' });
+    expect(Object.keys(storage.data)).toHaveLength(0);
+  });
+
+  it('reuses a registration id that was already stored without creating another', async () => {
+    const storage = memoryStore();
+    storage.data[guestRegistrationStorageKey(scope)] = JSON.stringify({
+      version: 1,
+      registrationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    });
     const [first, second] = await Promise.all([
-      claimGuestRegistration(storage, scope, { waitMs: 20, randomId: () => 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' }),
-      claimGuestRegistration(storage, scope, { waitMs: 20, randomId: () => 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' }),
+      claimGuestRegistration(storage, scope),
+      claimGuestRegistration(storage, scope),
     ]);
-    expect(first).toBe(second);
-    expect(first === 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' || first === 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb').toBe(true);
+    expect(first).toBe('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa');
+    expect(second).toBe(first);
   });
 
   it('does not overwrite a corrupt registration record', async () => {
     const storage = memoryStore({
       [guestRegistrationStorageKey(scope)]: '{',
     });
-    await expect(claimGuestRegistration(storage, scope, { waitMs: 0 })).rejects.toMatchObject({ reason: 'corrupt' });
+    await expect(claimGuestRegistration(storage, scope)).rejects.toMatchObject({ reason: 'corrupt' });
     expect(storage.data[guestRegistrationStorageKey(scope)]).toBe('{');
   });
 

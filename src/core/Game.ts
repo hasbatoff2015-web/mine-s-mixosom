@@ -1354,7 +1354,7 @@ export class Game {
         await this.showOnlineServerList();
         return;
       }
-      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'status_timeout' || code === 'mode_mismatch' || code === 'world_mismatch' || code === 'consent_mismatch') {
+      if (code === 'storage_corrupt' || code === 'storage_unsupported' || code === 'ambiguous_legacy' || code === 'status_unavailable' || code === 'status_timeout' || code === 'mode_mismatch' || code === 'world_mismatch' || code === 'consent_mismatch' || code === 'registration_unavailable') {
         this.ui.toast(error instanceof Error ? error.message : 'Подключение остановлено');
         await this.showOnlineServerList();
         return;

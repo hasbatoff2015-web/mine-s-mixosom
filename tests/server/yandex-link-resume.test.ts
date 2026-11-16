@@ -140,7 +140,16 @@ function connect(url: string, join: Record<string, unknown>): Promise<{ socket: 
       messages.push(JSON.parse(String(data)) as ServerMessage);
     });
     socket.on('open', () => {
-      socket.send(JSON.stringify({ type: 'join', protocol: PROTOCOL_VERSION, ...join }));
+      const skipExpectedWorld = join.skipExpectedWorld === true;
+      const { skipExpectedWorld: _skip, ...rest } = join;
+      socket.send(JSON.stringify({
+        type: 'join',
+        protocol: PROTOCOL_VERSION,
+        ...rest,
+        ...(!skipExpectedWorld && !rest.sessionToken && rest.expectedWorldId === undefined
+          ? { expectedWorldId: 'anarchy' }
+          : {}),
+      }));
       resolve({ socket, messages });
     });
   });
