@@ -19,6 +19,7 @@ import type { PluginManager } from '../PluginManager';
 import type { VoxelWorld } from '../../src/world/World';
 import type { HologramNetwork } from '../services/holograms';
 import type { ClaimBoundaryNetwork } from '../services/claimBoundaries';
+import type { ServerMode } from '../config';
 
 export interface PlayerIdentity {
   readonly id: string;
@@ -28,6 +29,8 @@ export interface PlayerIdentity {
 
 export interface BuiltinPluginContext {
   readonly permissions: PermissionService;
+  /** This process's gameplay mode. Daily rewards do not cross it. */
+  readonly serverMode: ServerMode;
   readonly donation: DonationRankService;
   /** Server config `FC_RANK_TEST`. False on production. */
   readonly rankTestEnabled: boolean;

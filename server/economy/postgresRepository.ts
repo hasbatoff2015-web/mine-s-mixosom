@@ -2,6 +2,15 @@ import { randomUUID } from 'node:crypto';
 import type { Queryable } from '../db/types';
 import { ECONOMY_INITIAL_BALANCE, ECONOMY_MAX_BALANCE } from '../services/economy';
 import {
+  DAILY_REWARD_REASON,
+  DAILY_REWARD_SOURCE_TYPE,
+  amountForStreakDay,
+  dailyRewardSourceId,
+  nextStreakDay,
+  readStreakDay,
+} from './dailyReward';
+import { previousMoscowDateKey } from './moscowCalendar';
+import {
   EconomyAccountNotFoundError,
   EconomyInsufficientError,
   EconomyLimitError,
@@ -29,6 +38,8 @@ import {
   type EconomyTransferInput,
   type EconomyWriteInput,
   type EnsureAccountInput,
+  type DailyRewardClaimInput,
+  type DailyRewardClaimResult,
 } from './types';
 
 const INSERT_ACCOUNT_SQL = `INSERT INTO economy_accounts (
@@ -194,6 +205,54 @@ export class PostgresEconomyRepository implements EconomyRepository {
 
   async credit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation> {
     return this.postSingle(tx, input, 'SOURCE', 1);
+  }
+
+  /**
+   * Same source identity as other rewards, with different conflict behavior:
+   * an existing DAILY_REWARD for this date is already claimed. Its ledger delta
+   * and stored streak are returned even when the caller now passes another amount.
+   * `assertSame` stays on credit, debit, transfer, and adjustment.
+   */
+  async claimDailyReward(tx: Queryable, input: DailyRewardClaimInput): Promise<DailyRewardClaimResult> {
+    const previousDate = previousMoscowDateKey(input.claimDate);
+    const sourceId = dailyRewardSourceId(input.playerId, input.claimDate);
+    const account = await this.lockAccount(tx, input.playerId, nameFor(input.playerId, input.displayName));
+    const existing = await this.findBySource(tx, DAILY_REWARD_SOURCE_TYPE, sourceId);
+    if (existing) return alreadyClaimed(account, existing, input.claimDate);
+    const previous = await this.findBySource(
+      tx,
+      DAILY_REWARD_SOURCE_TYPE,
+      dailyRewardSourceId(input.playerId, previousDate),
+    );
+    const streak = nextStreakDay(previous, previousDate);
+    const amount = amountForStreakDay(input.series, streak.streakDay);
+    const next = account.balance + amount;
+    if (next > ECONOMY_MAX_BALANCE) throw new EconomyLimitError();
+    const operationId = randomUUID();
+    const inserted = await this.insertOperation(tx, {
+      operationId,
+      kind: 'SOURCE',
+      actorId: null,
+      source: { type: DAILY_REWARD_SOURCE_TYPE, id: sourceId },
+      requestId: null,
+      metadata: { claimDate: input.claimDate, streakDay: streak.streakDay },
+    });
+    if (!inserted) {
+      const raced = await this.requireSource(tx, { type: DAILY_REWARD_SOURCE_TYPE, id: sourceId });
+      return alreadyClaimed(await this.mustAccount(tx, input.playerId), raced, input.claimDate);
+    }
+    const updated = await this.updateBalance(tx, input.playerId, next);
+    await this.insertLeg(tx, operationId, 0, input.playerId, amount, account.balance, DAILY_REWARD_REASON, null);
+    return {
+      outcome: 'claimed',
+      playerId: input.playerId,
+      amount,
+      streakDay: streak.streakDay,
+      claimDate: input.claimDate,
+      balance: updated.balance,
+      operationId,
+      streakRestarted: streak.restarted,
+    };
   }
 
   async debit(tx: Queryable, input: EconomyWriteInput): Promise<EconomyMutation> {
@@ -662,6 +721,24 @@ export class PostgresEconomyRepository implements EconomyRepository {
     const legs = await tx.query<LegRow>(READ_LEGS_SQL, [this.deploymentId, this.economyScope, row.operation_id]);
     return mapOperation(row, legs.rows.map(mapLeg));
   }
+}
+
+function alreadyClaimed(
+  account: EconomyAccount,
+  operation: EconomyOperationView,
+  claimDate: string,
+): DailyRewardClaimResult {
+  const leg = operation.legs.find((entry) => entry.playerId === account.playerId && entry.delta > 0);
+  return {
+    outcome: 'already_claimed',
+    playerId: account.playerId,
+    amount: leg?.delta ?? null,
+    streakDay: readStreakDay(operation.metadata, claimDate),
+    claimDate,
+    balance: account.balance,
+    operationId: operation.operationId,
+    streakRestarted: false,
+  };
 }
 
 function fractionAmount(operation: EconomyOperationView): number {
