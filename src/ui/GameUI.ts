@@ -9,6 +9,7 @@ import {
 import { creativeCatalogItems, getItemDefinition, tryGetItemDefinition, readBookContent, sanitizeBookDraft, MAX_BOOK_PAGES, type BookContent } from '../items';
 import { applyInventoryUiAction, type InventoryUiState } from '../inventory/inventoryUiAction';
 import { stampInventoryIntent } from '../net/inventoryIntent';
+import { referralIntentCode, referralLinkFromApp, settleReferralIntent } from '../yandex/referralIntent';
 import { itemMergeIdentity, itemStackSignature, quickMoveMatchingSourceKeys, splitDestinationIndex } from '../inventory/inventoryActions';
 import { parseSlotKey, slotCapability, isDroppableSlot, isMutableSwapSlot, isPlayerAmountSlot } from '../inventory/slotKey';
 import { cloneStack } from '../inventory/stack';
@@ -107,6 +108,7 @@ import {
   formatPlayerChatLine,
   type ChatChannel,
 } from '../../shared/chat';
+import { CHAT_COOLDOWN_MESSAGE, isTeleportRestrictionMessage, pvpBadgeText } from '../../shared/playerRules';
 import type { PotionHudEntry } from './effectHud';
 import {
   buyerPriceEachLabel,
@@ -536,6 +538,9 @@ export class GameUI {
   private hotbarHtml = '';
   private offhandHtml = '';
   private selectedItemText = '';
+  private pvpBadge: HTMLElement;
+  private pvpDeadlineMs: number | null = null;
+  private pvpShownSeconds = -1;
   private heartsHtml = '';
   private bossBar?: HTMLElement;
   private bossFill?: HTMLElement;
@@ -587,6 +592,7 @@ export class GameUI {
           </div>
         </div>
         <div id="selected-item"></div>
+        <div id="pvp-badge" hidden></div>
         <div id="hotbar"></div>
         <div id="play-info" aria-live="polite"></div>
         <div id="offhand-hud" aria-label="Вторая рука"></div>
@@ -656,6 +662,7 @@ export class GameUI {
     this.playInfo = this.root.querySelector('#play-info')!;
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
+    this.pvpBadge = this.root.querySelector('#pvp-badge')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.bossBar = this.root.querySelector('#boss-bar') ?? undefined;
     this.bossFill = this.root.querySelector('#boss-bar .boss-bar-track > span') ?? undefined;
@@ -1717,6 +1724,47 @@ export class GameUI {
     this.chatDraft = '';
   }
 
+  chatDraftValue(): string {
+    return this.chatInput.value;
+  }
+
+  setChatDraft(text: string): void {
+    this.chatInput.value = text;
+    this.chatDraft = text;
+    this.chatHistoryIndex = -1;
+    if (!this.chatOpen) return;
+    const caret = text.length;
+    this.chatInput.setSelectionRange(caret, caret);
+  }
+
+  /**
+   * `deadlineMs` is a local `Date.now()` instant. Null hides the existing badge
+   * without rebuilding it.
+   */
+  setPvpDeadline(deadlineMs: number | null): void {
+    this.pvpDeadlineMs = deadlineMs;
+    this.pvpShownSeconds = -1;
+    this.syncPvpBadge(Date.now());
+  }
+
+  syncPvpBadge(now: number): void {
+    const deadline = this.pvpDeadlineMs;
+    if (deadline === null || deadline <= now) {
+      this.pvpDeadlineMs = null;
+      this.pvpShownSeconds = -1;
+      if (!this.pvpBadge.hidden) {
+        this.pvpBadge.hidden = true;
+        this.pvpBadge.textContent = '';
+      }
+      return;
+    }
+    const seconds = Math.max(1, Math.ceil((deadline - now) / 1000));
+    if (this.pvpBadge.hidden) this.pvpBadge.hidden = false;
+    if (this.pvpShownSeconds === seconds) return;
+    this.pvpShownSeconds = seconds;
+    this.pvpBadge.textContent = pvpBadgeText(seconds);
+  }
+
   getChatChannel(): ChatChannel {
     return this.chatTab;
   }
@@ -2016,7 +2064,8 @@ export class GameUI {
     line.className = `chat-line kind-${message.kind}`;
     if (message.channel === 'nearby') line.classList.add('channel-nearby');
     if (message.channel === 'clan') line.classList.add('channel-clan');
-    if (message.style === 'announcement') line.classList.add('style-announcement');
+      if (message.style === 'announcement') line.classList.add('style-announcement');
+      if (message.style === 'notice') line.classList.add('style-notice');
     line.dataset.at = String(message.createdAtMs);
     line.dataset.id = message.id;
     if (message.channel) line.dataset.channel = message.channel;
@@ -5552,7 +5601,7 @@ export class GameUI {
     const scale = this.menuScale(logicalWidth, logicalHeight);
     this.itemTooltip?.dispose();
     this.itemTooltip = undefined;
-    const panelClass = state.screen === 'friend-chat'
+    const panelClass = state.screen === 'friend-chat' || state.screen === 'dm-review'
       ? 'mc-panel mc-menu-panel mc-menu-panel-chat'
       : 'mc-panel mc-menu-panel';
     const modal = this.resetOverlayModal();
@@ -5564,13 +5613,68 @@ export class GameUI {
         </div>
       </div>`;
     this.bindGameMenuChrome();
+    this.pinDirectMessageReview();
     this.applyFriendChatPanelHeight();
+    this.prefillReferralCode();
+    this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     this.reconcileDonateLocalState();
     this.resetFieldEcho(this.modal!);
     this.restoreFriendChatDraft();
     this.restoreMenuInputFocus(keep);
     if (sameChat && this.friendChat && this.friendChat.messages.length > 0) {
       this.paintFriendChatLog('restore', preservedScroll);
+    }
+  }
+
+  private pinDirectMessageReview(): void {
+    if (this.menuState?.screen !== 'dm-review') return;
+    const log = this.modal?.querySelector<HTMLElement>('[data-dm-review-log]');
+    if (!log) return;
+    log.scrollTop = log.scrollHeight;
+  }
+
+  private prefillReferralCode(): void {
+    if (this.menuState?.screen !== 'friends-invites') return;
+    const input = this.modal?.querySelector<HTMLInputElement>('[data-referral-code-input]');
+    if (!input || input.value.trim()) return;
+    const code = referralIntentCode();
+    if (code) input.value = code;
+  }
+
+  private applyLocalReferralLink(): void {
+    if (this.menuState?.screen !== 'friends-invites') return;
+    const button = this.modal?.querySelector<HTMLButtonElement>('[data-referral-copy="link"]');
+    if (!button || button.dataset.referralValue) return;
+    const code = this.menuState.referral?.code;
+    const link = referralLinkFromApp(code);
+    if (!link) return;
+    button.dataset.referralValue = link;
+    button.disabled = false;
+    button.hidden = false;
+  }
+
+  private async copyReferralValue(value: string): Promise<void> {
+    const note = this.modal?.querySelector<HTMLElement>('[data-referral-copy-note]');
+    if (!value) {
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Ссылка недоступна. Передайте код вручную.';
+      }
+      return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(value);
+      else throw new Error('clipboard');
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Скопировано.';
+      }
+    } catch {
+      if (note) {
+        note.hidden = false;
+        note.textContent = 'Не удалось скопировать. Выделите код вручную.';
+      }
     }
   }
 
@@ -5744,6 +5848,7 @@ export class GameUI {
     }
     line.hidden = false;
     line.textContent = text;
+    line.classList.toggle('is-warn', text === CHAT_COOLDOWN_MESSAGE || isTeleportRestrictionMessage(text));
   }
 
   private clearSettledFriendChatInput(friendId: string): void {
@@ -5757,7 +5862,7 @@ export class GameUI {
    * A different screen, or another claim, rebuilds so the old draft cannot leak.
    */
   private tryPatchMenuBody(state: ServerMenuMessage): boolean {
-    if (state.screen === 'friend-chat') return false;
+    if (state.screen === 'friend-chat' || state.screen === 'dm-review') return false;
     const live = this.modal?.querySelector<HTMLElement>('.mc-menu-body');
     if (!live) return false;
     const fresh = parseMarkup(menuBodyHtml(state, (value) => this.escape(value)));
@@ -5769,6 +5874,9 @@ export class GameUI {
       this.syncEchoField(current, incoming, false);
     });
     this.reconcileDonateLocalState();
+    this.prefillReferralCode();
+    this.applyLocalReferralLink();
+    settleReferralIntent(state.referral);
     return true;
   }
 
@@ -5947,6 +6055,14 @@ export class GameUI {
         actions.close();
         return;
       }
+      const copy = target.closest<HTMLElement>('[data-referral-copy]');
+      if (copy?.dataset.referralCopy) {
+        if (copy instanceof HTMLButtonElement && copy.disabled) return;
+        event.preventDefault();
+        const value = copy.dataset.referralValue ?? '';
+        void this.copyReferralValue(value);
+        return;
+      }
       const open = target.closest<HTMLElement>('[data-menu-open]');
       if (open?.dataset.menuOpen) {
         if (open instanceof HTMLButtonElement && open.disabled) return;
@@ -5955,7 +6071,8 @@ export class GameUI {
         if (id === 'spawn') actions.send({ type: 'menu_action', action: 'spawn' });
         else if (id === 'rating') actions.send({ type: 'menu_action', action: 'open', screen: 'rating' });
         else if (isGameMenuScreenKind(id) && id !== 'closed') {
-          actions.send({ type: 'menu_action', action: 'open', screen: id });
+          const code = id === 'friends-invites' ? referralIntentCode() : undefined;
+          actions.send({ type: 'menu_action', action: 'open', screen: id, ...(code ? { name: code } : {}) });
         }
         return;
       }
@@ -6087,6 +6204,20 @@ export class GameUI {
       if (kind === 'friends_request') {
         const name = this.modal?.querySelector<HTMLInputElement>('[data-menu-friend-name]')?.value ?? current.friendNameText;
         actions.send({ type: 'menu_action', action: 'friends_request', name });
+        return;
+      }
+      if (kind === 'referral_accept') {
+        const name = this.modal?.querySelector<HTMLInputElement>('[data-referral-code-input]')?.value ?? current.referral?.codeDraft ?? '';
+        actions.send({ type: 'menu_action', action: 'referral_accept', name });
+        return;
+      }
+      if (kind === 'referral_refresh' || kind === 'referral_claim') {
+        const page = Number(button?.dataset.referralPage);
+        actions.send({
+          type: 'menu_action',
+          action: kind,
+          ...(Number.isInteger(page) && page > 0 ? { page } : {}),
+        });
         return;
       }
       if (kind === 'claim_rename') {

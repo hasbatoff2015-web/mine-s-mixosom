@@ -477,6 +477,7 @@ export class AnarchyServer {
       buyers: this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
       inClan: Boolean(this.world.clan.playerClan(player.id)),
+      pvpUntil: this.world.playerRules.pvpUntil(player.id, Date.now()),
       ...(yandexSync ? { yandexSync } : {}),
     };
     const encoded = encodeMessage(welcome);

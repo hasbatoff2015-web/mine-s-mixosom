@@ -10,6 +10,7 @@ import { HOME_LIMIT_ERROR, HOME_MAX_DEFAULT, HOME_NAME_TAKEN_ERROR } from '../..
 import { ECONOMY_INITIAL_BALANCE } from '../../server/services/economy';
 import { CLAN_ALREADY_MEMBER_ERROR } from '../../server/services/clan';
 import { GAME_MENU_BUTTONS } from '../../shared/gameMenu';
+import { menuTitle } from '../../server/services/gameMenu';
 import { createItemStack } from '../../src/inventory';
 import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
@@ -56,6 +57,13 @@ function lastOf<T extends { type?: string }>(sink: MemorySink, type: string): T 
 }
 
 describe('game menu plugin', () => {
+  it('names the referral screen without renaming clan or friend menus', () => {
+    expect(menuTitle('friends-invites')).toBe('Бонус за друга');
+    expect(menuTitle('friends')).toBe('Друзья');
+    expect(menuTitle('friend-delete-confirm')).toBe('Друзья');
+    expect(menuTitle('clans')).toBe('Кланы');
+  });
+
   const dirs: string[] = [];
   const worlds: WorldInstance[] = [];
 

@@ -1,13 +1,14 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as pathJoin } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ANARCHY_WORLD_SEED } from '../../src/world/import/anarchy';
 import { loadServerConfig } from '../../server/config';
 import { DirectMessageService } from '../../server/services/directMessages';
 import { JsonFileStore } from '../../server/services/jsonStore';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
 import { CHAT_TOO_LONG_ERROR } from '../../shared/chat';
+import { CHAT_COOLDOWN_MESSAGE } from '../../shared/playerRules';
 import {
   DIRECT_MESSAGE_EMPTY_ERROR,
   DIRECT_MESSAGE_LIMIT,
@@ -245,6 +246,33 @@ describe('DirectMessageService', () => {
     };
     expect(restored.messages.map((message) => message.text)).toEqual(['back']);
   });
+
+  it('reads one saved pair without writing, friendship, or another conversation', async () => {
+    const env = await setup();
+    expect(env.service.send('ada', 'bob', 'one').ok).toBe(true);
+    env.advance(DIRECT_MESSAGE_REFILL_MS);
+    expect(env.service.send('bob', 'ada', 'two').ok).toBe(true);
+    env.advance(DIRECT_MESSAGE_REFILL_MS);
+    expect(env.service.send('ada', 'cara', 'other').ok).toBe(true);
+    const path = pathFor(env.files, 'ada', 'bob');
+    const before = await readFile(path);
+    const beforeStat = await stat(path);
+    env.friends.delete('ada|bob');
+    env.friends.delete('bob|ada');
+    expect(env.service.history('ada', 'bob').ok).toBe(false);
+    const seen = env.service.inspect('ada', 'bob');
+    expect(seen.ok).toBe(true);
+    if (!seen.ok) return;
+    expect(seen.messages.map((message) => message.text)).toEqual(['one', 'two']);
+    expect(seen.messages.map((message) => message.senderId)).toEqual(['ada', 'bob']);
+    const other = env.service.inspect('ada', 'cara');
+    expect(other.ok).toBe(true);
+    if (other.ok) expect(other.messages.map((message) => message.text)).toEqual(['other']);
+    expect(env.service.inspect('bob', 'cara')).toEqual({ ok: true, messages: [] });
+    expect(env.service.inspect('ada', 'ada').ok).toBe(false);
+    expect((await readFile(path)).equals(before)).toBe(true);
+    expect((await stat(path)).mtimeMs).toBe(beforeStat.mtimeMs);
+  });
 });
 
 class MemorySink implements ConnectedSink {
@@ -294,6 +322,7 @@ describe('direct messages on the authoritative server', () => {
   const worlds: WorldInstance[] = [];
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     for (const world of worlds.splice(0)) await world.stop();
     await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
@@ -343,6 +372,8 @@ describe('direct messages on the authoritative server', () => {
     expect(lastOf<ServerMenuMessage>(bob.sink, 'menu')?.notifications?.friends).toBe(1);
 
     const secret = 'secret-dm-alpha';
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     for (const text of [`${secret}-1`, `${secret}-2`, `${secret}-3`]) {
       world.handleDirectMessage(ada.player, {
         type: 'direct_message_action',
@@ -351,6 +382,7 @@ describe('direct messages on the authoritative server', () => {
         text,
         senderId: eve.player.id,
       } as never);
+      now += 3_000;
     }
     for (const text of ['cara-1', 'cara-2']) {
       world.handleDirectMessage(cara.player, {
@@ -359,6 +391,7 @@ describe('direct messages on the authoritative server', () => {
         friendId: bob.player.id,
         text,
       });
+      now += 3_000;
     }
 
     const adaEcho = ofType<ServerDirectMessage>(ada.sink, 'direct_message');
@@ -458,6 +491,8 @@ describe('direct messages on the authoritative server', () => {
     const bobToken = bob.player.sessionToken;
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'friends_chat', playerId: ada.player.id });
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -473,6 +508,7 @@ describe('direct messages on the authoritative server', () => {
     })).toBe(false);
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'back' });
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -484,6 +520,7 @@ describe('direct messages on the authoritative server', () => {
     expect(ofType<ServerDirectMessage>(bob.sink, 'direct_message').some((message) => message.messages?.some((row) => row.text === 'later'))).toBe(false);
 
     const longText = 'я'.repeat(128);
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -508,6 +545,7 @@ describe('direct messages on the authoritative server', () => {
 
     world.handleMenuAction(bob.player, { type: 'menu_action', action: 'close' });
     world.disconnect(bob.player.id);
+    now += 3_000;
     world.handleDirectMessage(ada.player, {
       type: 'direct_message_action',
       action: 'send',
@@ -618,7 +656,7 @@ describe('direct messages on the authoritative server', () => {
     }
     const limited = lastOf<ServerDirectMessage>(ada.sink, 'direct_message');
     expect(limited?.event).toBe('error');
-    expect(limited?.error).toBe(DIRECT_MESSAGE_RATE_LIMIT_ERROR);
+    expect(limited?.error).toBe(CHAT_COOLDOWN_MESSAGE);
     expect(limited?.clientRequestId).toBe('burst-3');
     expect(bob.sink.payloads.filter((payload) => {
       const message = payload as ServerDirectMessage;
@@ -637,5 +675,69 @@ describe('direct messages on the authoritative server', () => {
     expect(rejected?.clientRequestId).toBe('req-forged');
     expect(rejected?.error).toBe(DIRECT_MESSAGE_NOT_FRIEND_ERROR);
     expect(ofType<ServerDirectMessage>(ada.sink, 'direct_message').some((message) => message.messages?.some((row) => row.text === 'чужое'))).toBe(false);
+  });
+
+  it('lets an operator open one saved transcript and leaves the history unchanged', async () => {
+    const { world } = await boot();
+    const op = join(world, 'Op');
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const cara = join(world, 'Cara');
+    befriend(world, ada, bob);
+    befriend(world, ada, cara);
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => now);
+    const send = (from: ReturnType<typeof join>, to: ReturnType<typeof join>, text: string) => {
+      world.handleDirectMessage(from.player, {
+        type: 'direct_message_action',
+        action: 'send',
+        friendId: to.player.id,
+        text,
+      });
+      now += 3_000;
+    };
+    send(ada, bob, 'привет');
+    send(bob, ada, 'дебил');
+    send(ada, cara, 'другая пара');
+    world.disconnect(bob.player.id);
+    expect(bob.player.connected).toBe(false);
+
+    const storedPath = pathJoin(
+      world.config.dataDir,
+      world.worldId,
+      'plugin-data',
+      `${DIRECT_MESSAGE_STORAGE_DIR}/${conversationKey(ada.player.id, bob.player.id)}.json`,
+    );
+    const before = await readFile(storedPath);
+    const unread = world.directMessages.unreadCount(bob.player.id, ada.player.id);
+
+    world.handleChat(ada.player, '/chat Ada Bob');
+    expect(ada.sink.payloads.some((payload) => (payload as ServerMenuMessage).screen === 'dm-review')).toBe(false);
+    expect(lastOf<{ type: string; ok: boolean; lines: string[] }>(ada.sink, 'command_result')?.lines.join(' '))
+      .toContain('Недостаточно прав');
+
+    world.handleChat(op.player, '/chat Nobody Bob');
+    expect(lastOf<{ type?: string; lines: string[] }>(op.sink, 'command_result')?.lines.join(' ')).toContain('не найден');
+    world.handleChat(op.player, '/chat Ada Ada');
+    expect(lastOf<{ type?: string; lines: string[] }>(op.sink, 'command_result')?.lines.join(' ')).toContain('двух разных');
+    world.handleChat(op.player, '/chat Ada');
+    expect(lastOf<{ type?: string; lines: string[] }>(op.sink, 'command_result')?.lines.join(' ')).toContain('Использование');
+
+    world.handleChat(op.player, '/chat Ada Bob');
+    const opened = lastOf<ServerMenuMessage>(op.sink, 'menu');
+    expect(opened?.screen).toBe('dm-review');
+    expect(opened?.dmReview?.title).toBe('Личная переписка: Ada ↔ Bob');
+    expect(opened?.dmReview?.messages.map((message) => message.senderName)).toEqual(['Ada', 'Bob']);
+    expect(opened?.dmReview?.messages.map((message) => message.text)).toEqual(['привет', '*****']);
+    expect(opened?.dmReview?.messages.every((message) => message.createdAt > 0)).toBe(true);
+    expect(opened?.dmReview?.messages.some((message) => message.text.includes('другая'))).toBe(false);
+    expect(JSON.stringify(opened)).not.toContain('data-friend-chat-send');
+    expect(world.directMessages.unreadCount(bob.player.id, ada.player.id)).toBe(unread);
+    expect((await readFile(storedPath)).equals(before)).toBe(true);
+
+    world.handleMenuAction(ada.player, { type: 'menu_action', action: 'open', screen: 'dm-review' });
+    expect(lastOf<ServerMenuMessage>(ada.sink, 'menu')?.screen).not.toBe('dm-review');
+    world.handleMenuAction(op.player, { type: 'menu_action', action: 'close' });
+    expect(lastOf<ServerMenuMessage>(op.sink, 'menu')?.screen).toBe('closed');
   });
 });

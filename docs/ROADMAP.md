@@ -1,11 +1,44 @@
 # Roadmap
 
+## 2026-11-15: Referral menu UI
+
+- [x] Friends and `friends-invites` call the referral screen «Бонус за друга». Clan invitations keep «Приглашения».
+- [x] Those two screens use a smaller body padding and tighter groups. The referral list no longer keeps an empty minimum height.
+- [x] The Anarchy note and the Yandex ID warning are not rendered. The copy-link button stays hidden until a real URL exists, including one filled from the Yandex SDK.
+- [ ] Not merged. Not deployed.
+
+## 2026-11-12: Operator transcript `/chat`
+
+- [x] `/chat <nick1> <nick2>` is server-gated to OP and opens a read-only menu of one stored direct-message pair.
+- [x] The view uses the saved censored text, works for offline players, and does not send, edit, or mark the conversation read.
+- [ ] Not merged. Not deployed.
+
 ## 2026-11-10: Daily login rewards
 
 - [x] One `DAILY_REWARD` source per player, Moscow date, economy scope, and deployment. The ledger insert and the balance update commit together.
 - [x] Streaks reset after a missed Moscow day and stay on the last configured amount. Online players are checked about every 10 seconds.
 - [x] `/dailyreward` edits the per-mode series without a restart. The feature ships disabled. JSON mode does not pay.
 - [ ] The owner enables it on DEV and checks Anarchy, Survival, and Peaceful. This branch does not change production.
+
+## 2026-11-09: Referral reliability
+
+- [x] Reward phase writes are serialized per player. A stale snapshot cannot overwrite a newer `revision`.
+- [x] One starter-kit delivery runs at a time. PostgreSQL is marked claimed only after the inventory save succeeds.
+- [x] Two accepts of the same invitee return one `accepted` and one `already`.
+- [x] A failed join reloads the activity tracker without a reconnect. The outage gap is not credited.
+- [x] Monitored kit items are credited once in the resource ledger and replayed after restart. Their keys are not evicted by the ordinary 500-key window.
+- [x] A stale reward read cannot replace a newer in-memory phase. Shutdown saves a reward created by the final activity flush.
+- [ ] Yandex draft and the production migration remain for the owner. This branch does not deploy.
+
+## 2026-11-08: Referral program
+
+- [x] Server-owned referral code, Yandex `payload=ref_CODE`, and an explicit accept.
+- [x] Three hours of active play qualify one invitee once. AFK, a held key, and a camera turn do not.
+- [x] Three qualified friends grant VIP for 7 days. Five grant PREMIUM for 7 days. Each milestone once.
+- [x] Paid ranks stay stored. The effective rank is the higher of the paid grant and the active referral grant.
+- [x] `referral_starter` uses the existing kit store. A missing or empty kit stays pending. The receipt is saved with the inventory.
+- [x] Friends menu keeps requests, chat, and teleport, and adds «Приглашения».
+- [ ] The owner checks the Yandex draft, `FC_YANDEX_GAME_URL`, and the production migration `0011`. This branch does not deploy.
 
 ## 2026-11-04: Automatic Yandex identity
 
@@ -32,6 +65,12 @@
 - [x] A later join lease wins. Stale cleanup uses the connection id captured at publish.
 - [x] Server list has «Войти через Яндекс». The pause button «Привязать Яндекс ID» from this pass was removed on 2026-11-04.
 - [ ] Live check inside the Yandex draft is still for the owner. Referral rewards are not included. Not merged.
+
+## 2026-11-01: Chat limits, teleport cooldown, PvP timer, post-teleport safety
+
+- Server timestamps own chat (3s), shared teleport (5s), PvP (10s) and personal safety (20s, not after spawn).
+- Profanity dictionaries live in `server/data/chat-profanity-ru.json` and `server/data/chat-profanity-en.json`.
+- The PvP badge is display-only. Direct messages use the same 3-second cooldown and are censored before they are stored.
 
 ## 2026-10-28: Integrate PR #129 with current main
 

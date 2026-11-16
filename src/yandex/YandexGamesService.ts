@@ -11,7 +11,11 @@ interface YandexPlayer {
 }
 
 interface YandexSdk {
-  environment?: { i18n?: { lang?: string } };
+  environment?: {
+    i18n?: { lang?: string };
+    payload?: string;
+    app?: { id?: string };
+  };
   features?: {
     LoadingAPI?: { ready(): Promise<void> | void };
     GameplayAPI?: YandexGameplayApi;
@@ -41,6 +45,8 @@ declare global {
 
 export class YandexGamesService {
   private sdk?: YandexSdk;
+  private launchPayload?: string;
+  private launchAppId?: string;
   private readySent = false;
   private playing = false;
   private pauseCallback?: () => void;
@@ -72,6 +78,10 @@ export class YandexGamesService {
     }
     try {
       this.sdk = await window.YaGames.init();
+      const payload = this.sdk.environment?.payload;
+      const appId = this.sdk.environment?.app?.id;
+      this.launchPayload = typeof payload === 'string' ? payload.slice(0, 64) : undefined;
+      this.launchAppId = typeof appId === 'string' && /^\d{1,20}$/.test(appId) ? appId : undefined;
       this.pauseCallback = onPause;
       this.resumeCallback = onResume;
       this.sdk.on?.('game_api_pause', onPause);
@@ -265,6 +275,16 @@ export class YandexGamesService {
     } catch {
       return { ok: false, reason: 'error' };
     }
+  }
+
+  /** Launch payload from the existing SDK. Empty when the game was not opened by a referral link. */
+  referralPayload(): string | undefined {
+    return this.launchPayload;
+  }
+
+  /** Official app id from the SDK, when Yandex provided one. */
+  referralAppId(): string | undefined {
+    return this.launchAppId;
   }
 
   language(): 'ru' | 'en' {

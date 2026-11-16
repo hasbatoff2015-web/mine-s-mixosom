@@ -202,11 +202,17 @@ export class DonationRankService {
   private state: DonationStore = emptyStore();
   private readFailed = false;
   private readonly busy = new Set<string>();
+  private referralRank: (playerId: string, now: number) => { rank: EffectiveRank; expiresAt?: number } = () => ({ rank: 'default' });
+  private paidListener?: (playerId: string) => void;
 
   constructor(
     private readonly store: JsonFileStore,
     private readonly resolveKey: (playerIdOrName: string) => string = (value) => value.trim().toLowerCase(),
   ) {}
+
+  loadFailed(): boolean {
+    return this.readFailed;
+  }
 
   load(): void {
     try {
@@ -228,10 +234,35 @@ export class DonationRankService {
     return this.resolveKey(playerIdOrName).trim().toLowerCase();
   }
 
+  /**
+   * Paid rank from the donation file, or a higher active referral rank.
+   * Referral state is an in-memory view. This method does not query PostgreSQL.
+   * A paid grant is never replaced here.
+   */
+  setReferralRank(provider: (playerId: string, now: number) => { rank: EffectiveRank; expiresAt?: number }): void {
+    this.referralRank = provider;
+  }
+
+  /** Fired after a paid grant, extension, or revoke is stored. */
+  setPaidRankListener(listener: (playerId: string) => void): void {
+    this.paidListener = listener;
+  }
+
   /** Active rank, or default when missing or expired. */
   effectiveRank(playerIdOrName: string, now = Date.now()): EffectiveRank {
+    return this.rankParts(playerIdOrName, now).rank;
+  }
+
+  private rankParts(playerIdOrName: string, now: number): { rank: EffectiveRank; expiresAt?: number } {
+    if (this.readFailed) return { rank: 'default' };
     const grant = this.activeGrant(playerIdOrName, now);
-    return grant?.rank ?? 'default';
+    const paid = grant?.rank ?? 'default';
+    const key = this.keyFor(playerIdOrName);
+    const extra = key ? this.referralRank(key, now) : { rank: 'default' as EffectiveRank };
+    if (RANK_ORDER[extra.rank] > RANK_ORDER[paid]) {
+      return { rank: extra.rank, ...(extra.expiresAt !== undefined ? { expiresAt: extra.expiresAt } : {}) };
+    }
+    return { rank: paid, ...(grant ? { expiresAt: grant.expiresAt } : {}) };
   }
 
   activeGrant(playerIdOrName: string, now = Date.now()): RankGrant | undefined {
@@ -304,7 +335,9 @@ export class DonationRankService {
       ...(options.source ? { source: options.source } : {}),
       history,
     };
-    return this.commit(previous, { ok: true, rank, expiresAt: now + durationMs });
+    const result = this.commit(previous, { ok: true, rank, expiresAt: now + durationMs });
+    if (result.ok) this.paidListener?.(key);
+    return result;
   }
 
   /**
@@ -339,7 +372,9 @@ export class DonationRankService {
       ...(options.source ? { source: options.source } : {}),
       history,
     };
-    return this.commit(previous, { ok: true, rank: current.rank, expiresAt });
+    const result = this.commit(previous, { ok: true, rank: current.rank, expiresAt });
+    if (result.ok) this.paidListener?.(key);
+    return result;
   }
 
   revoke(playerIdOrName: string, options: { readonly now?: number; readonly source?: string } = {}): RankMutation {
@@ -356,7 +391,9 @@ export class DonationRankService {
       ...(options.source ? { source: options.source } : {}),
     }].slice(-HISTORY_LIMIT);
     this.state.grants[key] = { ...current, expiresAt: now, history };
-    return this.commit(previous, { ok: true, rank: 'default', expiresAt: now });
+    const result = this.commit(previous, { ok: true, rank: 'default', expiresAt: now });
+    if (result.ok) this.paidListener?.(key);
+    return result;
   }
 
   peekCooldown(playerIdOrName: string, channel: CooldownChannel, limit: number, now = Date.now()): ReturnType<typeof slidingUse> {
@@ -459,7 +496,8 @@ export class DonationRankService {
         loadError: 'Не удалось прочитать данные привилегий.',
       };
     }
-    const rank = this.effectiveRank(playerIdOrName, now);
+    const parts = this.rankParts(playerIdOrName, now);
+    const rank = parts.rank;
     const grant = this.activeGrant(playerIdOrName, now);
     const limits = RANK_LIMITS[rank];
     const nodes = new Set(permissionNodesForRank(rank));
@@ -468,8 +506,8 @@ export class DonationRankService {
     const canColor = nodes.has('nick.color') || Boolean(options.operator);
     return {
       rank,
-      ...(grant ? { expiresAt: grant.expiresAt } : {}),
-      remainingMs: grant ? Math.max(0, grant.expiresAt - now) : 0,
+      ...(parts.expiresAt !== undefined ? { expiresAt: parts.expiresAt } : {}),
+      remainingMs: parts.expiresAt !== undefined ? Math.max(0, parts.expiresAt - now) : 0,
       limits: {
         homes: { max: limits.homes, ...(options.homes !== undefined ? { current: options.homes } : {}) },
         claims: { max: limits.claims, ...(options.claims !== undefined ? { current: options.claims } : {}) },

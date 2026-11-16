@@ -3,6 +3,10 @@ import {
   WORLD_BORDER_TELEPORT_ERROR,
   isPlayerCenterInsidePlayableWorld,
 } from '../../src/world/worldBorder';
+import {
+  TELEPORT_COOLDOWN_MESSAGE,
+  isGovernedTeleportReason,
+} from '../../shared/playerRules';
 import type { EventBus } from '../events';
 
 export type TeleportReason =
@@ -64,6 +68,14 @@ export interface TeleportActor {
   position(): TeleportTarget;
   teleport(x: number, y: number, z: number, look?: { readonly yaw?: number; readonly pitch?: number }): boolean;
   sendMessage(text: string): void;
+}
+
+/** Shared cooldown, PvP lock and post-teleport safety. Absent in unit tests that only check coordinates. */
+export interface TeleportRuleGate {
+  block(playerId: string, reason: TeleportReason, now: number): string | undefined;
+  begin(playerId: string): boolean;
+  finish(playerId: string): void;
+  commit(playerId: string, reason: TeleportReason, now: number): void;
 }
 
 export class TeleportHistoryService {
@@ -142,7 +154,13 @@ export class TeleportService {
     private readonly worldId: string,
     private readonly history: TeleportHistoryService,
     private readonly getActor: (playerId: string) => TeleportActor | undefined,
+    private readonly rules?: TeleportRuleGate,
   ) {}
+
+  private governedBlock(playerId: string, reason: TeleportReason, now = Date.now()): string | undefined {
+    if (!this.rules || !isGovernedTeleportReason(reason)) return undefined;
+    return this.rules.block(playerId, reason, now);
+  }
 
   attach(events: EventBus): void {
     events.on('playerMove', (event) => {
@@ -195,16 +213,27 @@ export class TeleportService {
       const denied = this.externalDeny?.(playerId, reason);
       if (denied) return { ok: false, error: denied };
     }
-    const from = actor.position();
-    if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {
-      return { ok: false, error: 'Teleport failed.' };
+    const blocked = this.governedBlock(playerId, reason);
+    if (blocked) return { ok: false, error: blocked };
+    const governed = Boolean(this.rules && isGovernedTeleportReason(reason));
+    if (governed && !this.rules!.begin(playerId)) {
+      return { ok: false, error: TELEPORT_COOLDOWN_MESSAGE };
     }
-    this.history.record(playerId, { worldId: this.worldId, ...from }, reason);
-    this.pending.delete(playerId);
-    if (!options.silent) {
-      actor.sendMessage(`Teleported to ${dest.x.toFixed(1)}, ${dest.y.toFixed(1)}, ${dest.z.toFixed(1)}.`);
+    try {
+      const from = actor.position();
+      if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {
+        return { ok: false, error: 'Teleport failed.' };
+      }
+      this.history.record(playerId, { worldId: this.worldId, ...from }, reason);
+      this.pending.delete(playerId);
+      if (governed) this.rules!.commit(playerId, reason, Date.now());
+      if (!options.silent) {
+        actor.sendMessage(`Teleported to ${dest.x.toFixed(1)}, ${dest.y.toFixed(1)}, ${dest.z.toFixed(1)}.`);
+      }
+      return { ok: true };
+    } finally {
+      if (governed) this.rules!.finish(playerId);
     }
-    return { ok: true };
   }
 
   schedule(
@@ -217,9 +246,17 @@ export class TeleportService {
       const denied = this.externalDeny?.(playerId, reason);
       if (denied) return { ok: false, error: denied };
     }
+    const blocked = this.governedBlock(playerId, reason);
+    if (blocked) return { ok: false, error: blocked };
+    if (this.rules && isGovernedTeleportReason(reason) && this.pending.has(playerId)) {
+      return { ok: false, error: TELEPORT_COOLDOWN_MESSAGE };
+    }
     const remaining = this.cooldownRemaining(playerId, reason);
     if (remaining > 0) {
-      return { ok: false, error: `Please wait ${(remaining / 1000).toFixed(1)}s before using this again.` };
+      const error = isGovernedTeleportReason(reason)
+        ? TELEPORT_COOLDOWN_MESSAGE
+        : `Please wait ${(remaining / 1000).toFixed(1)}s before using this again.`;
+      return { ok: false, error };
     }
     const warmupMs = Math.max(0, options.warmupMs ?? 0);
     if (warmupMs <= 0) {

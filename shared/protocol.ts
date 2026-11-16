@@ -3,6 +3,7 @@ import { isCollectiblePaintingItemId } from '../src/items/collectiblePaintings';
 import { MAX_CHAT_LENGTH, PROTOCOL_VERSION } from './config';
 import { isChatChannel, type ChatChannel, type ChatMessageStyle } from './chat';
 import type { PlayerNameStyle } from './donationRanks';
+import type { ReferralMenuState } from './referral';
 import { DIRECT_MESSAGE_PAGE } from './directMessages';
 import type { DuelIncomingRow, DuelMenuStats, DuelNearbyRow, DuelOutgoingRow } from './duels';
 export type { ChatChannel } from './chat';
@@ -733,6 +734,9 @@ export type MenuActionKind =
   | 'friends_cancel_delete'
   | 'friends_chat'
   | 'set_friend_name'
+  | 'referral_refresh'
+  | 'referral_accept'
+  | 'referral_claim'
   | 'clans_mine'
   | 'clans_list'
   | 'clans_create'
@@ -778,8 +782,10 @@ export type GameMenuScreenKind =
   | 'homes'
   | 'home-delete-confirm'
   | 'friends'
+  | 'friends-invites'
   | 'friend-delete-confirm'
   | 'friend-chat'
+  | 'dm-review'
   | 'clans'
   | 'claims'
   | 'claim-settings'
@@ -912,6 +918,11 @@ export interface ServerWelcomeMessage {
   readonly serverNow?: number;
   /** Live ClanService membership at join. Not a chat-owned copy. */
   readonly inClan?: boolean;
+  /**
+   * Absolute server timestamp when this player's PvP timer ends.
+   * Omitted or 0 means the player is not in PvP. The client only displays it.
+   */
+  readonly pvpUntil?: number;
   /**
    * Furnaces burning at join. Position and lit bit only — no slots.
    * Missing on older servers. An empty array means nothing is burning.
@@ -1075,6 +1086,13 @@ export interface ServerUnloadChunkMessage {
   readonly cz: number;
 }
 
+export interface ServerPvpTimerMessage {
+  readonly type: 'pvp_timer';
+  /** Absolute server ms. 0 clears the badge. */
+  readonly until: number;
+  readonly serverNow: number;
+}
+
 export interface ServerChatMessage {
   readonly type: 'chat';
   readonly from: string;
@@ -1153,6 +1171,8 @@ export interface ServerHealthMessage {
   readonly armor: number;
   readonly fire: boolean;
   readonly dead: boolean;
+  /** Absolute server ms. 0 means this player is not in PvP. Omitted by older servers. */
+  readonly pvpUntil?: number;
 }
 
 export interface ServerEffectsMessage {
@@ -1565,6 +1585,21 @@ export interface NetworkDirectMessage {
   readonly createdAt: number;
 }
 
+/** One stored direct message as shown to an operator. Text is the saved body, not a new copy. */
+export interface NetworkDmReviewMessage {
+  readonly senderId: string;
+  readonly senderName: string;
+  readonly text: string;
+  readonly createdAt: number;
+}
+
+export interface NetworkDmReview {
+  readonly leftName: string;
+  readonly rightName: string;
+  readonly title: string;
+  readonly messages: readonly NetworkDmReviewMessage[];
+}
+
 export interface NetworkMenuClaim {
   readonly claimId: string;
   readonly name: string;
@@ -1615,6 +1650,7 @@ export interface ServerMenuMessage {
   readonly activeFriendId?: string;
   readonly activeFriendName?: string;
   readonly activeFriendOnline?: boolean;
+  readonly dmReview?: NetworkDmReview;
   readonly claims?: readonly NetworkMenuClaim[];
   readonly claimCount?: number;
   readonly claimMax?: number;
@@ -1644,6 +1680,7 @@ export interface ServerMenuMessage {
   readonly duelArenaConfigured?: boolean;
   readonly duelAvailable?: boolean;
   readonly donate?: NetworkDonateMenu;
+  readonly referral?: ReferralMenuState;
 }
 
 export interface NetworkDonateAction {
@@ -1821,6 +1858,7 @@ export type ServerMessage =
   | ServerSignEditorMessage
   | ServerUnloadChunkMessage
   | ServerChatMessage
+  | ServerPvpTimerMessage
   | ServerErrorMessage
   | ServerPongMessage
   | ServerStatusMessage
@@ -1897,6 +1935,7 @@ export const SERVER_MESSAGE_TYPES = [
   'sign_editor',
   'unload_chunk',
   'chat',
+  'pvp_timer',
   'error',
   'pong',
   'status',
@@ -2008,6 +2047,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
   'home_create', 'home_teleport', 'home_delete', 'home_confirm_delete', 'home_cancel_delete', 'set_home_name',
   'friends_set_tp', 'friends_request', 'friends_accept', 'friends_reject', 'friends_teleport',
   'friends_delete', 'friends_confirm_delete', 'friends_cancel_delete', 'friends_chat', 'set_friend_name',
+  'referral_refresh', 'referral_accept', 'referral_claim',
   'clans_mine', 'clans_list', 'clans_create', 'clans_invitations',
   'claim_open', 'claim_rename', 'claim_set_pvp', 'claim_add_member', 'claim_remove_member',
   'claim_delete', 'claim_confirm_delete', 'claim_cancel_delete', 'set_claim_name', 'set_claim_member',
@@ -2020,7 +2060,7 @@ export const MENU_ACTIONS: readonly MenuActionKind[] = [
 ];
 
 export const MENU_SCREENS: readonly GameMenuScreenKind[] = [
-  'root', 'homes', 'home-delete-confirm', 'friends', 'friend-delete-confirm', 'friend-chat',
+  'root', 'homes', 'home-delete-confirm', 'friends', 'friends-invites', 'friend-delete-confirm', 'friend-chat', 'dm-review',
   'clans', 'claims', 'claim-settings', 'claim-delete-confirm', 'trade', 'auction', 'auction-history', 'rating', 'duels',
   'donate', 'donate-color', 'donate-announce', 'donate-invsee', 'donate-invsee-op', 'donate-tp', 'donate-back', 'donate-kits', 'donate-pets', 'closed',
 ];
@@ -3111,6 +3151,15 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         });
       }
       return { type: 'world_sound', sounds };
+    }
+    case 'pvp_timer': {
+      if (typeof raw.until !== 'number' || !Number.isFinite(raw.until)) return { error: 'pvp_timer.until invalid' };
+      if (typeof raw.serverNow !== 'number' || !Number.isFinite(raw.serverNow)) return { error: 'pvp_timer.serverNow invalid' };
+      return {
+        type: 'pvp_timer',
+        until: raw.until > 0 ? raw.until : 0,
+        serverNow: raw.serverNow,
+      };
     }
     case 'health': {
       if (!finite(raw.health) || !finite(raw.hunger) || !bool(raw.dead) || !bool(raw.fire)) {

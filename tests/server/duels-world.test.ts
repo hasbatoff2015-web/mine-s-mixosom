@@ -301,7 +301,7 @@ describe('authoritative 1v1 duels', { timeout: 180_000 }, () => {
     expect(world.homes.set(ada.player.id, 'base', {
       worldId: world.worldId, x: 4.5, y: 80, z: 4.5,
     }, 3).ok).toBe(true);
-    expect(world.teleports.now(ada.player.id, { x: 6.5, y: 80, z: 6.5 }, 'command').ok).toBe(true);
+    expect(world.teleports.now(ada.player.id, { x: 6.5, y: 80, z: 6.5 }, 'duel').ok).toBe(true);
     fight(world, clock, ada.player, bob.player);
     const stayed = ada.player.controller.position.clone();
     for (const reason of ['spawn', 'home', 'back', 'tpa', 'rtp', 'portal', 'command', 'friends', 'clan'] as const) {

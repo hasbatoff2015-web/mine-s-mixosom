@@ -436,6 +436,33 @@ describe('main menu HUD and chrome', () => {
     const clansTab = menuBodyHtml(menu({ screen: 'clans' }), (value) => value);
     expect(clansTab).toContain('clans_invitations');
     expect(clansTab).toContain('Приглашения');
+    expect(clansTab).not.toContain('Бонус за друга');
+    const friendsScreen = menuBodyHtml(menu({ screen: 'friends' }), (value) => value);
+    expect(friendsScreen).toContain('data-menu-open="friends-invites">Бонус за друга');
+    expect(friendsScreen).toContain('mc-social-menu-body');
+    expect(friendsScreen).not.toContain('>Приглашения<');
+  });
+
+  it('raises only the friends and referral headings and drops the empty invitee slot', () => {
+    const body = cssRule('.mc-menu-panel > .mc-menu-body');
+    expect(body).toContain('padding-top: max(48px, calc(26px * var(--mc-ui-scale, 3)));');
+    const social = cssRule('.mc-menu-panel > .mc-menu-body.mc-social-menu-body');
+    expect(social).toContain('padding-top: max(48px, calc(20px * var(--mc-ui-scale, 3)));');
+    expect(social).toContain('gap: calc(4px * var(--mc-ui-scale, 3));');
+    const grouped = cssRule('.mc-referral-code-block,\n.mc-referral-section,\n.mc-referral-kit,\n.mc-referral-progress');
+    expect(grouped).toContain('gap: calc(2px * var(--mc-ui-scale, 3));');
+    const list = cssRule('.mc-referral-list');
+    expect(list).toContain('min-height: 0;');
+    expect(list).toContain('max-height: calc(120px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-referral-reward.mc-player-row,\n.mc-referral-invitee.mc-player-row,\n.mc-referral-list > .mc-player-row')).toContain('flex: none;');
+    expect(css.indexOf('.mc-menu-list {')).toBeLessThan(css.indexOf('.mc-referral-list {'));
+    expect(cssRule('.mc-menu-list')).toContain('min-height: calc(42px * var(--mc-ui-scale, 3));');
+    expect(cssRule('.mc-menu-panel .mc-ah-btn[hidden]')).toContain('display: none !important;');
+    const homes = menuBodyHtml(menu({ screen: 'homes' }), (value) => value);
+    expect(homes).not.toContain('mc-social-menu-body');
+    expect(menuLogicalHeight('friends-invites')).toBe(340);
+    expect(MC_MENU_WIDTH).toBe(248);
+    expect(MC_MENU_MAX_SCALE).toBe(3);
   });
 
   it('renders yellow square unread badges on menu tiles without shifting layout', () => {

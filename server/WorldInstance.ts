@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupVerifiedProviderIdentity } from './identity/providerLinks';
+import { bindVerifiedProviderIdentity, identityScopeFromServer, lookupPlayerLinks, lookupVerifiedProviderIdentity } from './identity/providerLinks';
 import {
   consumeReservedProof,
   purgeExpiredReceipts,
@@ -151,6 +151,14 @@ import { JsonFileStore } from './services/jsonStore';
 import { IdentityIncidentLog } from './identity/incidents';
 import { countMonitoredResources, ResourceLedger } from './resources/accounting';
 import { isMonitoredResource } from './resources/monitored';
+import { AdminAuditService } from './db/audit';
+import { parseUuid } from './db/uuid';
+import { parseKitStore, type KitStack } from './services/kit';
+import { applyKit } from './referral/kitFit';
+import { PostgresReferralRepository } from './referral/repository';
+import { ReferralService } from './referral/service';
+import type { ReferralRepository } from './referral/types';
+import { REFERRAL_KIT_NAME } from '../shared/referral';
 import {
   IDENTITY_TRANSFER_BLOCKED,
   scanIdentity,
@@ -192,7 +200,7 @@ import {
   type GameMenuSession,
 } from './services/gameMenu';
 import { FRIENDS_MAX, friendJoinChatText, friendLeaveChatText } from '../shared/friends';
-import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount } from '../shared/directMessages';
+import { DIRECT_MESSAGE_NOT_FRIEND_ERROR, friendsMenuBadgeCount, normalizeDirectMessageText } from '../shared/directMessages';
 import { HOME_MAX_DEFAULT, HOME_MISSING_ERROR, resolveHomeLimit } from '../shared/homes';
 import { CLAN_CREATE_COST, CLAN_DONATE_CREATE_COST } from '../shared/clans';
 import { formatDurationMs, sanitizePlayerNameStyle, type PlayerNameStyle } from '../shared/donationRanks';
@@ -205,6 +213,12 @@ import {
 } from './services/gameMenuActions';
 import { RtpService, RtpSessionManager } from './services/rtp';
 import { TeleportHistoryService, TeleportService } from './services/teleport';
+import { PlayerRules } from './services/playerRules';
+import { censorChatText } from './services/chatCensor';
+import {
+  CHAT_COOLDOWN_MESSAGE,
+  isTeleportRestrictionMessage,
+} from '../shared/playerRules';
 import { HologramNetwork, createHologramRecord, toNetworkHologram } from './services/holograms';
 import { DuelService, type DuelActor, type DuelRuntime } from './services/duels';
 import { MegaZombieService, bossLootStacks } from './services/megaZombie';
@@ -349,6 +363,10 @@ export class ServerPlayer implements GameplayPlayer {
   connected = true;
   disconnectedAt = 0;
   readonly settlementReceipts = new Set<string>();
+  /** One referral starter-kit receipt per accepted invite. Saved with the inventory. */
+  readonly referralKitReceipts = new Set<string>();
+  /** Monitored items saved with the referral kit receipt. One record per referral. */
+  referralKitGrants: { referralId: string; items: { itemId: string; count: number }[] }[] = [];
   /** Stacks removed from a trade or buyer window that did not fit back into inventory. */
   heldReturns: ItemStack[] = [];
   lastInput: ClientInputMessage = { ...IDLE_INPUT };
@@ -680,6 +698,8 @@ function inputFromCommand(command: PlayerCommand): ClientInputMessage {
 export interface WorldInstanceOptions {
   /** Tests inject a fake. Production builds one from `config.database`. */
   readonly database?: Database;
+  /** Tests inject the referral store. Production uses PostgreSQL when it is enabled. */
+  readonly referralRepository?: ReferralRepository;
 }
 
 export class WorldInstance {
@@ -697,8 +717,10 @@ export class WorldInstance {
   readonly pluginStore: JsonFileStore;
   readonly permissions: PermissionService;
   readonly donation: DonationRankService;
+  readonly referral: ReferralService;
   private readonly inventoryEditLocks = new Set<string>();
   readonly teleports: TeleportService;
+  readonly playerRules = new PlayerRules();
   readonly teleportHistory: TeleportHistoryService;
   readonly pluginConfig: PluginConfigService;
   readonly rtp: RtpService;
@@ -775,6 +797,8 @@ export class WorldInstance {
   private identityLogLoaded = false;
   /** A failed incident write stays pending until the next allowed checkpoint. */
   private identityPersistPending = false;
+  /** One referral kit delivery at a time for a player. The next claim waits for the save. */
+  private readonly kitClaimFlights = new Map<string, Promise<unknown>>();
   private unresolvedIdentitySources = 0;
   private readonly resources = new ResourceLedger();
   private resourceLogLoaded = false;
@@ -942,6 +966,12 @@ export class WorldInstance {
           ...(extra?.style ? { style: extra.style } : {}),
         });
       },
+      acceptPlayerChat: (playerId) => {
+        const now = Date.now();
+        if (this.playerRules.chatBlocked(playerId, now)) return CHAT_COOLDOWN_MESSAGE;
+        this.playerRules.acceptChat(playerId, now);
+        return undefined;
+      },
       lookupPlayer: (idOrName) => this.findPlayerIdentity(idOrName),
       friendRelation: (viewerId, targetId) => this.friends.relation(viewerId, targetId),
       requestFriend: (fromId, targetId) => this.friends.request(fromId, targetId),
@@ -1015,6 +1045,12 @@ export class WorldInstance {
     this.permissions = new PermissionService(this.pluginStore, config.operators);
     this.donation = new DonationRankService(this.pluginStore, (idOrName) => this.permissions.keyFor(idOrName));
     this.permissions.setExtraNodes((key) => this.donation.permissionNodes(key));
+    this.referral = this.createReferralService(options?.referralRepository);
+    this.donation.setReferralRank((playerId, now) => this.referral.rankView(playerId, now));
+    this.donation.setPaidRankListener((playerId) => {
+      void this.referral.reconcilePaid(playerId);
+    });
+    this.bindReferralActivity();
     this.clan.setCreateCost((playerId) => (
       this.donation.effectiveRank(playerId) === 'default' ? CLAN_CREATE_COST : CLAN_DONATE_CREATE_COST
     ));
@@ -1037,15 +1073,14 @@ export class WorldInstance {
         }),
         teleport: (x, y, z, look) => this.hardRelocatePlayer(player, x, y, z, look),
         sendMessage: (text) => {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text,
-            kind: 'system',
-          });
+          this.sendPlayerNotice(player, text, 'system');
         },
       };
+    }, {
+      block: (playerId, _reason, now) => this.playerRules.teleportBlockReason(playerId, now),
+      begin: (playerId) => this.playerRules.beginTeleport(playerId),
+      finish: (playerId) => this.playerRules.finishTeleport(playerId),
+      commit: (playerId, reason, now) => this.playerRules.acceptTeleport(playerId, reason, now),
     });
     this.teleports.attach(this.events);
     this.pluginConfig = new PluginConfigService(this.pluginStore);
@@ -1204,6 +1239,15 @@ export class WorldInstance {
     });
     this.gameplay.blocksManualItemDrop = (playerId) => this.duels.blocksManualDrop(playerId);
     this.gameplay.suppressIncomingDamage = (playerId) => this.duels.suppressesIncomingDamage(playerId);
+    this.gameplay.blocksPlayerStrike = (attackerId, victimId) => (
+      this.playerRules.blocksPvp(attackerId, victimId, Date.now())
+    );
+    this.gameplay.notePlayerStrike = (attackerId, victimId) => {
+      if (!this.players.has(attackerId) || !this.players.has(victimId)) return;
+      const until = this.playerRules.acceptPvp(attackerId, victimId, Date.now());
+      this.syncPvpTimer(attackerId, until);
+      this.syncPvpTimer(victimId, until);
+    };
     this.gameplay.onDeathLoot = (player, ids) => {
       this.duels.finalizeDeath(player.id, ids);
       this.teleportHistory.recordDeath(player.id, {
@@ -1216,7 +1260,9 @@ export class WorldInstance {
     this.teleports.setExternalDeny((playerId, reason) => (
       reason === 'duel' ? undefined : this.duels.externalTeleportError(playerId)
     ));
-    this.rtpSessions.setExternalDeny((playerId) => this.duels.externalTeleportError(playerId));
+    this.rtpSessions.setExternalDeny((playerId) => (
+      this.duels.externalTeleportError(playerId) ?? this.playerRules.teleportBlockReason(playerId, Date.now())
+    ));
     this.events.on('playerDamage', (event) => {
       if (this.duels.shouldCancelPlayerDamage(event.playerId, event.attackerId, event.cause)) event.cancel();
     });
@@ -1721,6 +1767,7 @@ export class WorldInstance {
       this.canonicalWorldLoaded = true;
       this.ensureResourceLog();
       await this.recoverSettlements();
+      this.replayReferralResourceGrants();
       this.observeIdentity('startup');
       this.observeResources('startup');
       await this.loadBanAuthority();
@@ -1748,6 +1795,7 @@ export class WorldInstance {
     // The in-memory create is complete. This write commits it. The flag stays
     // false until the write resolves, so a failed create is not saved again from stop().
     await this.writeCanonicalSnapshot();
+    this.replayReferralResourceGrants();
     this.observeIdentity('startup');
     this.observeResources('startup');
     this.readyState = 'READY';
@@ -1898,6 +1946,11 @@ export class WorldInstance {
       if (this.canonicalWorldLoaded) await this.save();
     } catch (error) {
       failure = error;
+    }
+    try {
+      await this.referral.shutdown();
+    } catch (error) {
+      if (!failure) failure = error;
     }
     try {
       await this.money.shutdown?.();
@@ -3593,6 +3646,10 @@ export class WorldInstance {
     const session = this.menuSessions.get(player.id) ?? createMenuSession();
     this.menuSessions.set(player.id, session);
     session.message = undefined;
+    if (this.isReferralMenuAction(message)) {
+      void this.handleReferralMenu(player, session, message);
+      return;
+    }
     this.applyMenuOutcome(player, session, applyGameMenuAction(this.menuHost(), this.menuPlayer(player), session, message));
   }
 
@@ -3943,6 +4000,30 @@ export class WorldInstance {
         ...(session.pendingHomeName ? { pendingHomeName: session.pendingHomeName } : {}),
       };
     }
+    if (session.screen === 'dm-review') {
+      if (!session.dmReview || !this.isOperator(player)) {
+        session.screen = 'root';
+        session.dmReview = undefined;
+        return this.buildMenuMessage(player);
+      }
+      const review = session.dmReview;
+      return {
+        ...base,
+        screen: 'dm-review',
+        title: review.title,
+        dmReview: {
+          leftName: review.leftName,
+          rightName: review.rightName,
+          title: review.title,
+          messages: review.messages.map((message) => ({
+            senderId: message.senderId,
+            senderName: message.senderName,
+            text: message.text,
+            createdAt: message.createdAt,
+          })),
+        },
+      };
+    }
     if (session.screen === 'friend-chat') {
       const friendId = session.activeFriendId;
       if (!friendId || !this.friends.isFriend(player.id, friendId)) {
@@ -3960,6 +4041,12 @@ export class WorldInstance {
           activeFriendOnline: this.players.get(friendId)?.connected === true,
         };
       }
+    }
+    if (session.screen === 'friends-invites') {
+      return {
+        ...base,
+        ...(session.referral ? { referral: session.referral } : {}),
+      };
     }
     if (session.screen === 'friends' || session.screen === 'friend-delete-confirm') {
       const state = this.friends.state(player.id);
@@ -4100,10 +4187,34 @@ export class WorldInstance {
     }
     const text = message.text ?? '';
     const clientRequestId = message.clientRequestId;
+    const normalized = normalizeDirectMessageText(text);
+    if (!normalized.ok) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId: message.friendId,
+        error: normalized.error,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      });
+      return;
+    }
+    const now = Date.now();
+    if (this.playerRules.chatBlocked(player.id, now)) {
+      this.sendTo(player, {
+        type: 'direct_message',
+        event: 'error',
+        friendId: message.friendId,
+        error: CHAT_COOLDOWN_MESSAGE,
+        ...(clientRequestId ? { clientRequestId } : {}),
+      });
+      return;
+    }
+    const censored = censorChatText(normalized.text);
     const viewing = this.isViewingFriendChat(message.friendId, player.id);
-    const result = this.directMessages.send(player.id, message.friendId, text, viewing
+    const result = this.directMessages.send(player.id, message.friendId, censored, viewing
       ? { markReadFor: message.friendId }
       : undefined);
+    if (result.ok) this.playerRules.acceptChat(player.id, now);
     if (!result.ok) {
       this.sendTo(player, {
         type: 'direct_message',
@@ -5629,13 +5740,7 @@ export class WorldInstance {
       this.events.emit('playerCommandExecuted', { playerId: player.id, command: text, ok: okResult });
       const name = dispatched.parsed.kind === 'command' ? dispatched.parsed.name : text.slice(1);
       this.sendTo(player, { type: 'command_result', ok: okResult, name, lines });
-      this.sendTo(player, {
-        type: 'chat',
-        from: 'server',
-        playerId: 'server',
-        text: lines.join('\n'),
-        kind: okResult ? 'command' : 'error',
-      });
+      this.sendPlayerNotice(player, lines.join('\n'), okResult ? 'command' : 'error');
       return { ok: okResult, lines };
     };
     if (isPromise(dispatched.result)) {
@@ -5681,21 +5786,9 @@ export class WorldInstance {
           name,
           lines: result?.lines ?? [],
         });
-        this.sendTo(player, {
-          type: 'chat',
-          from: 'server',
-          playerId: 'server',
-          text,
-          kind,
-        });
+        this.sendPlayerNotice(player, text, kind);
         for (const line of result?.lines ?? []) {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text: line,
-            kind,
-          });
+          this.sendPlayerNotice(player, line, kind);
         }
         this.flushPlayerInventory(player);
         this.flushBlockChanges();
@@ -5719,7 +5812,43 @@ export class WorldInstance {
     }
     const recipients = this.chatRecipients(player, channel);
     if (!recipients) return;
-    this.deliverPlayerChat(player, trimmed, channel, recipients);
+    const now = Date.now();
+    if (this.playerRules.chatBlocked(player.id, now)) {
+      this.sendPlayerNotice(player, CHAT_COOLDOWN_MESSAGE, 'system', channel);
+      return;
+    }
+    const censored = censorChatText(trimmed);
+    this.playerRules.acceptChat(player.id, now);
+    this.deliverPlayerChat(player, censored, channel, recipients);
+  }
+
+  /** Yellow for rate-limit and PvP teleport notices. Other server lines keep their kind. */
+  sendPlayerNotice(
+    player: ServerPlayer,
+    text: string,
+    kind: 'system' | 'command' | 'error' = 'system',
+    channel?: ChatChannel,
+  ): void {
+    const notice = text === CHAT_COOLDOWN_MESSAGE || isTeleportRestrictionMessage(text);
+    this.sendTo(player, {
+      type: 'chat',
+      from: 'server',
+      playerId: 'server',
+      text,
+      kind: notice ? 'system' : kind,
+      ...(notice ? { style: 'notice' as const, channel: channel ?? 'global' } : {}),
+      ...(!notice && channel ? { channel } : {}),
+    });
+  }
+
+  syncPvpTimer(playerId: string, until: number, now = Date.now()): void {
+    const player = this.players.get(playerId);
+    if (!player?.connected) return;
+    this.sendTo(player, {
+      type: 'pvp_timer',
+      until: until > now ? until : 0,
+      serverNow: now,
+    });
   }
 
   sendChatError(player: ServerPlayer, text: string): void {
@@ -5958,6 +6087,7 @@ export class WorldInstance {
       );
     }
     this.lastTickMetrics = metrics;
+    this.sampleReferralActivity();
     this.finishRtpSearches();
     this.teleports.tick(dt * 1000);
     if (this.tickNumber % 20 === 0) this.refreshOpenDonateMenus();
@@ -5984,13 +6114,7 @@ export class WorldInstance {
           cancelOnDamage: result.request.cancelOnDamage,
         });
         if (!teleported.ok && player) {
-          this.sendTo(player, {
-            type: 'chat',
-            from: 'server',
-            playerId: 'server',
-            text: teleported.error ?? 'RTP failed.',
-            kind: 'error',
-          });
+          this.sendPlayerNotice(player, teleported.error ?? 'RTP failed.', 'error');
         } else if (player) {
           this.sendTo(player, {
             type: 'chat',
@@ -6561,6 +6685,7 @@ export class WorldInstance {
       if (now - player.disconnectedAt < 5 * 60_000) continue;
       this.tokens.delete(player.sessionToken);
       this.storedPlayers[player.id] = this.toStored(player);
+      this.playerRules.forget(player.id);
       this.players.delete(player.id);
     }
   }
@@ -7181,6 +7306,7 @@ export class WorldInstance {
       armor: getArmorPoints(player.inventory),
       fire: player.survival.isOnFire,
       dead: player.survival.dead,
+      pvpUntil: this.playerRules.pvpUntil(player.id, Date.now()),
     };
     const signature = JSON.stringify(health);
     if (signature !== player.healthSignature) {
@@ -7482,6 +7608,16 @@ export class WorldInstance {
         player.settlementReceipts.add(receipt);
       }
     }
+    for (const receipt of stored.referralKitReceipts ?? []) {
+      const parsed = typeof receipt === 'string' ? parseUuid(receipt) : undefined;
+      if (parsed) player.referralKitReceipts.add(parsed);
+    }
+    for (const grant of stored.referralKitGrants ?? []) {
+      player.referralKitGrants.push({
+        referralId: grant.referralId,
+        items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+      });
+    }
     this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
     this.assignMissingItemIdentities(player);
     player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
@@ -7529,6 +7665,11 @@ export class WorldInstance {
       appearance: toNetworkAppearance(player.appearance),
       ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
       ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
+      ...(player.referralKitReceipts.size > 0 ? { referralKitReceipts: [...player.referralKitReceipts] } : {}),
+      ...(player.referralKitGrants.length > 0 ? { referralKitGrants: player.referralKitGrants.map((grant) => ({
+        referralId: grant.referralId,
+        items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+      })) } : {}),
       ...(player.heldReturns.length > 0
         ? { heldReturns: player.heldReturns.map((stack) => cloneStack(stack)!) }
         : {}),
@@ -8263,7 +8404,351 @@ export class WorldInstance {
     return ok(selection === 'bee' ? 'Рядом появилась пчела.' : 'Рядом появился мини-крипер.');
   }
 
+  private createReferralService(repository: ReferralRepository | undefined): ReferralService {
+    if (!this.config.referralActivityEnabled) {
+      return ReferralService.unavailable('Активная игра засчитывается на Анархии. Этот режим часы не копит.');
+    }
+    const databaseReady = this.database.enabled && this.config.database.enabled;
+    if (!databaseReady && !repository) {
+      return ReferralService.unavailable('Реферальная программа временно недоступна. Нужна PostgreSQL.');
+    }
+    const scope = identityScopeFromServer(this.config) ?? {
+      deploymentId: databaseReady ? this.config.database.deploymentId : 'local',
+      serverMode: this.config.serverMode,
+      worldId: this.config.worldId,
+    };
+    const repo = repository ?? new PostgresReferralRepository(this.database, scope);
+    const audit = databaseReady
+      ? new AdminAuditService(this.database, this.config.database.deploymentId)
+      : undefined;
+    return ReferralService.create({
+      repository: repo,
+      activityEnabled: true,
+      devTools: this.config.referralDevTools,
+      publicGameUrl: this.config.referralPublicGameUrl,
+      now: () => Date.now(),
+      paidRank: (playerId, now) => this.donation.activeGrant(playerId, now)?.rank ?? 'default',
+      paidRankUnreadable: () => this.donation.loadFailed(),
+      displayName: (playerId) => this.players.get(playerId)?.name
+        ?? this.storedPlayers[playerId]?.name
+        ?? playerId.slice(0, 8),
+      yandexLink: async (playerId) => {
+        const linkScope = identityScopeFromServer(this.config);
+        if (!linkScope || !this.database.enabled) return 'unknown';
+        const result = await lookupPlayerLinks(this.database, linkScope, playerId);
+        if (result.status === 'found') return 'linked';
+        if (result.status === 'absent') return 'guest';
+        return 'unknown';
+      },
+      kitItems: () => {
+        const store = parseKitStore(this.pluginStore.load('kit/store', undefined));
+        const kit = store.kits.find((entry) => entry.name === REFERRAL_KIT_NAME);
+        return kit && kit.items.length > 0 ? kit.items : null;
+      },
+      kitDelivery: (playerId) => {
+        const player = this.players.get(playerId);
+        if (!player?.connected) return null;
+        return {
+          hasReceipt: (referralId) => player.referralKitReceipts.has(referralId),
+          deliver: (referralId, items) => this.deliverReferralKit(player, referralId, items),
+        };
+      },
+      notify: (playerId, text) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        this.sendTo(target, {
+          type: 'chat',
+          from: 'server',
+          playerId: 'server',
+          text,
+          kind: 'system',
+        });
+      },
+      onBenefitsChanged: (playerId) => {
+        const target = this.players.get(playerId);
+        if (!target?.connected) return;
+        const session = this.menuSessions.get(playerId);
+        if (session?.screen === 'donate' || session?.screen.startsWith('donate-')) this.flushMenu(target);
+      },
+      connectionLive: (playerId) => {
+        const live = this.players.get(playerId);
+        return live?.connected ? live.connectionId : null;
+      },
+      auditDev: async (actorId, action, targetId, detail) => {
+        serverLog(`referral ${action} actor=${actorId} target=${targetId} ${detail}`);
+        if (!audit) return;
+        await audit.append({
+          requestId: crypto.randomUUID(),
+          adminId: actorId,
+          action,
+          targetType: 'player',
+          targetId,
+          reason: detail.slice(0, 200),
+          serverMode: this.config.serverMode,
+          worldId: this.config.worldId,
+          success: true,
+        });
+      },
+    });
+  }
+
+  private bindReferralActivity(): void {
+    this.events.on('blockBroken', (event) => {
+      if (event.playerId) this.referral.noteAction(event.playerId);
+    });
+    this.events.on('blockPlaced', (event) => {
+      this.referral.noteAction(event.playerId);
+    });
+    this.events.on('craft', (event) => {
+      this.referral.noteAction(event.playerId);
+    });
+    this.events.on('playerDamaged', (event) => {
+      if (event.attackerId) this.referral.noteAction(event.attackerId);
+    });
+    this.events.on('entityDeath', (event) => {
+      if (event.attackerId) this.referral.noteAction(event.attackerId);
+    });
+    this.events.on('projectileHit', (event) => {
+      if (event.playerId) this.referral.noteAction(event.playerId);
+    });
+    this.events.on('playerJoin', (event) => {
+      const joined = this.players.get(event.playerId);
+      if (!joined) return;
+      void this.referral.onJoin(joined.id, joined.connectionId);
+    });
+    this.events.on('playerQuit', (event) => {
+      const quitting = this.players.get(event.playerId);
+      void this.referral.onQuit(event.playerId, quitting?.connectionId);
+    });
+  }
+
+  private sampleReferralActivity(): void {
+    if (!this.referral.tracking()) return;
+    const now = Date.now();
+    for (const player of this.players.values()) {
+      if (!player.connected) continue;
+      const input = player.lastInput;
+      this.referral.sample({
+        playerId: player.id,
+        connectionId: player.connectionId,
+        now,
+        x: player.controller.position.x,
+        y: player.controller.position.y,
+        z: player.controller.position.z,
+        onGround: player.controller.onGround,
+        steered: Math.abs(input.forward) > 0.05
+          || Math.abs(input.right) > 0.05
+          || Math.abs(player.vehicleForward) > 0.05
+          || Math.abs(input.vehicleForward ?? 0) > 0.05,
+        dead: player.survival.dead,
+        connected: true,
+        epoch: player.movementEpoch,
+        miningProgress: player.miningProgress,
+      });
+    }
+  }
+
+  private isReferralMenuAction(message: { action: string; screen?: string }): boolean {
+    return message.action === 'referral_refresh'
+      || message.action === 'referral_accept'
+      || message.action === 'referral_claim'
+      || (message.action === 'open' && message.screen === 'friends-invites');
+  }
+
+  private async handleReferralMenu(
+    player: ServerPlayer,
+    session: ReturnType<typeof createMenuSession>,
+    message: { action: string; name?: string; page?: number },
+  ): Promise<void> {
+    const connectionId = player.connectionId;
+    session.screen = 'friends-invites';
+    if (message.action === 'referral_refresh') {
+      if (!this.referral.allowRefresh(player.id)) {
+        session.message = 'Подождите немного перед обновлением.';
+      } else if (message.page) session.referralPage = message.page;
+    }
+    if (message.action === 'referral_accept') {
+      session.message = await this.referral.accept(player.id, message.name);
+      this.referral.bindConnection(player.id, connectionId);
+    }
+    if (message.action === 'referral_claim') {
+      session.message = await this.referral.claim(player.id);
+    }
+    if (message.action === 'open') {
+      session.referralPage = 1;
+      const preview = await this.referral.previewMessage(player.id, message.name);
+      if (preview) session.message = preview;
+    }
+    const state = await this.referral.view(
+      player.id,
+      session.referralPage,
+      message.action === 'open' ? message.name : undefined,
+    );
+    if (!player.connected || player.connectionId !== connectionId) return;
+    session.referral = state;
+    if (!state.available && state.unavailableReason) session.message = state.unavailableReason;
+    this.flushMenu(player);
+    if (message.action === 'referral_claim') this.flushPlayerInventory(player);
+  }
+
+  private deliverReferralKit(
+    player: ServerPlayer,
+    referralId: string,
+    items: readonly KitStack[],
+  ): Promise<'delivered' | 'full' | 'missing' | 'already' | 'failed'> {
+    const previous = this.kitClaimFlights.get(player.id) ?? Promise.resolve();
+    const run = previous.then(() => this.deliverReferralKitNow(player, referralId, items), () => this.deliverReferralKitNow(player, referralId, items));
+    this.kitClaimFlights.set(player.id, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
+  private async deliverReferralKitNow(
+    player: ServerPlayer,
+    referralId: string,
+    items: readonly KitStack[],
+  ): Promise<'delivered' | 'full' | 'missing' | 'already' | 'failed'> {
+    const id = parseUuid(referralId);
+    if (!id || !player.connected) return 'missing';
+    if (player.referralKitReceipts.has(id)) return 'already';
+    const before = player.inventory.serialize();
+    if (!applyKit(player.inventory, items)) return 'full';
+    ensureInventoryInstanceIds(player.inventory, () => crypto.randomUUID());
+    const monitored = items
+      .filter((item) => isMonitoredResource(item.itemId))
+      .map((item) => ({ itemId: item.itemId, count: item.count }));
+    player.referralKitReceipts.add(id);
+    player.referralKitGrants.push({ referralId: id, items: monitored });
+    player.inventoryDirty = true;
+    try {
+      await this.savePlayersCritical();
+    } catch (error) {
+      player.inventory.restore(before);
+      player.referralKitReceipts.delete(id);
+      player.referralKitGrants = player.referralKitGrants.filter((grant) => grant.referralId !== id);
+      const detail = error instanceof Error ? error.message : String(error);
+      serverLog(`referral kit save failed: ${detail}`, 'warn');
+      return 'failed';
+    }
+    for (const item of monitored) {
+      this.resources.noteGrant(item.itemId, item.count, `referral:${id}`);
+    }
+    if (monitored.length > 0) this.persistResources();
+    this.flushPlayerInventory(player);
+    return 'delivered';
+  }
+
+  /** One credit per saved referral grant. A crash before the ledger file is repaired on the next boot. */
+  private replayReferralResourceGrants(): void {
+    this.ensureResourceLog();
+    const grants: { referralId: string; items: { itemId: string; count: number }[] }[] = [];
+    for (const stored of Object.values(this.storedPlayers)) {
+      for (const grant of stored.referralKitGrants ?? []) {
+        grants.push({
+          referralId: grant.referralId,
+          items: grant.items.map((item) => ({ itemId: item.itemId, count: item.count })),
+        });
+      }
+    }
+    for (const player of this.players.values()) grants.push(...player.referralKitGrants);
+    for (const grant of grants) {
+      for (const item of grant.items) {
+        if (!isMonitoredResource(item.itemId)) continue;
+        this.resources.noteGrant(item.itemId, item.count, `referral:${grant.referralId}`);
+      }
+    }
+    if (this.resources.isDirty()) this.persistResources();
+  }
+
+  private referralTarget(token: string | undefined, senderId: string): string | undefined {
+    if (!token || token === 'me') return parseUuid(senderId);
+    const parsed = parseUuid(token);
+    if (parsed) return parsed;
+    const lowered = token.toLowerCase();
+    const online = [...this.players.values()].find((player) => player.name.toLowerCase() === lowered);
+    if (online) return online.id;
+    const stored = Object.values(this.storedPlayers).find((player) => player.name.toLowerCase() === lowered);
+    return stored ? parseUuid(stored.id) : undefined;
+  }
+
+  private openDirectMessageReview(args: readonly string[], sender: CommandSender): CommandResult {
+    if (isConsoleSender(sender)) return fail('Эту команду может использовать только игрок.');
+    const player = this.players.get(sender.playerId);
+    if (!player?.connected || !this.isOperator(player)) {
+      return fail('Недостаточно прав для выполнения этой команды.');
+    }
+    const leftLabel = args[0]?.trim() ?? '';
+    const rightLabel = args[1]?.trim() ?? '';
+    if (!leftLabel || !rightLabel || args.length !== 2) return fail('Использование: /chat <ник1> <ник2>');
+    const left = this.resolvePermissionSubject(leftLabel);
+    if (!left.ok) return fail(this.directMessageReviewLookupError(leftLabel, left.error));
+    const right = this.resolvePermissionSubject(rightLabel);
+    if (!right.ok) return fail(this.directMessageReviewLookupError(rightLabel, right.error));
+    if (left.playerId === right.playerId) return fail('Укажите двух разных игроков.');
+    const transcript = this.directMessages.inspect(left.playerId, right.playerId);
+    if (!transcript.ok) return fail(transcript.error);
+    const title = `Личная переписка: ${left.name} ↔ ${right.name}`;
+    const session = this.menuSessions.get(player.id) ?? createMenuSession();
+    session.screen = 'dm-review';
+    session.message = undefined;
+    session.activeFriendId = undefined;
+    session.dmReview = {
+      leftId: left.playerId,
+      rightId: right.playerId,
+      leftName: left.name,
+      rightName: right.name,
+      title,
+      messages: transcript.messages.map((message) => ({
+        senderId: message.senderId,
+        senderName: message.senderId === left.playerId
+          ? left.name
+          : message.senderId === right.playerId
+            ? right.name
+            : message.senderId,
+        text: message.text,
+        createdAt: message.createdAt,
+      })),
+    };
+    this.menuSessions.set(player.id, session);
+    this.flushMenu(player);
+    return ok(`Открыта личная переписка ${left.name} и ${right.name}.`);
+  }
+
+  private directMessageReviewLookupError(label: string, error: string): string {
+    if (error.startsWith('Ambiguous')) return `Ник «${label}» неоднозначен. Укажите id игрока.`;
+    return `Игрок «${label}» не найден.`;
+  }
+
   private registerBuiltinCommands(): void {
+    this.commands.register({
+      name: 'referral',
+      usage: '/referral | /referral status [player] | /referral dev addtime <player> <seconds>',
+      description: 'Реферальный код, прогресс и DEV-проверка',
+      permission: 'player',
+      execute: async (args, sender) => {
+        const operator = sender.operator === true || sender.kind === 'console';
+        if (args[0] === 'dev') {
+          if (!operator) return fail('Недостаточно прав.');
+          const target = this.referralTarget(args[2], sender.playerId);
+          if (!target) return fail('Игрок не найден.');
+          if (args[1] === 'addtime') {
+            const text = await this.referral.devAddTime(sender.playerId || 'console', target, Number(args[3]));
+            return text.startsWith('Записано') ? ok(text) : fail(text);
+          }
+          if (args[1] === 'qualify') {
+            const text = await this.referral.devAddTime(sender.playerId || 'console', target, 10_800);
+            return text.startsWith('Записано') ? ok(text) : fail(text);
+          }
+          return fail('Использование: /referral dev addtime <игрок> <секунды> или /referral dev qualify <игрок>');
+        }
+        const target = args[0] === 'status'
+          ? this.referralTarget(args[1] ?? sender.playerId, sender.playerId)
+          : this.referralTarget(sender.playerId, sender.playerId);
+        if (args[0] === 'status' && args[1] && !operator) return fail('Недостаточно прав.');
+        if (!target) return fail('Игрок не найден.');
+        const text = await this.referral.devStatus(sender.playerId || 'console', target);
+        return text.includes('недоступ') || text.includes('Недоступ') ? fail(text) : ok(text);
+      },
+    });
     this.commands.register({
       name: 'help',
       usage: '/help [command]',
@@ -8276,6 +8761,13 @@ export class WorldInstance {
         }
         return ok(this.commands.list().map((command) => `${command.usage} — ${command.description}`));
       },
+    });
+    this.commands.register({
+      name: 'chat',
+      usage: '/chat <ник1> <ник2>',
+      description: 'Просмотр личной переписки двух игроков',
+      permission: 'operator',
+      execute: (args, sender) => this.openDirectMessageReview(args, sender),
     });
     this.commands.register({
       name: 'gamemode',
