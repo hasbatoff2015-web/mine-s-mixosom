@@ -106,6 +106,10 @@ export function applyEntitySnapshots(
       case 'mob': {
         if (!isMobKind(snap.mobKind)) break;
         let mob = session.mobs.get(snap.id);
+        if (mob && mob.kind !== snap.mobKind) {
+          session.mobs.remove(mob.id);
+          mob = undefined;
+        }
         if (!mob) {
           mob = session.mobs.spawn(snap.mobKind, new THREE.Vector3(snap.x, snap.y, snap.z), {
             id: snap.id,

@@ -68,6 +68,24 @@ describe('network visual events', () => {
     expect(eventsForEntity(parsed.events, 'mob-a')).toEqual([{ entityId: 'mob-a', kind: 'hurt' }]);
   });
 
+  it('replaces a mob when the same id arrives as a different kind', () => {
+    const world = new VoxelWorld('net-kind');
+    platform(world);
+    const session = sessionOf(world);
+    session.mobs.spawn('nether_skeleton', new THREE.Vector3(5.5, 41, 5.5), { force: true, id: 'mob-1' });
+    applyEntitySnapshots(session, [{
+      id: 'mob-1',
+      kind: 'mob',
+      mobKind: 'zombie',
+      x: 6.5,
+      y: 41,
+      z: 5.5,
+    }]);
+    const mobs = session.mobs.entities.filter((mob) => mob.id === 'mob-1');
+    expect(mobs).toHaveLength(1);
+    expect(mobs[0]?.kind).toBe('zombie');
+  });
+
   it('hurt events flash only the targeted entity', () => {
     const world = new VoxelWorld('net-hurt');
     platform(world);
