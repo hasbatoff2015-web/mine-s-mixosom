@@ -533,6 +533,10 @@ export class RedstoneSystem {
     return restored;
   }
 
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
   clear(): void {
     this.sources.clear();
     this.wirePower.clear();

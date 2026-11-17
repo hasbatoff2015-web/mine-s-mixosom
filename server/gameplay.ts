@@ -254,6 +254,8 @@ export class ServerGameplay {
   readonly random = systemRandomFn;
   /** Authoritative rules for this process. Default keeps existing Anarchy behavior. */
   serverMode: ServerMode = 'anarchy';
+  /** This gameplay instance is bound to one world. Spatial events carry that world. */
+  readonly dimension: DimensionId;
   /** Regular /claim volumes; block-claims are filtered by TNT profile instead. */
   loadRegularClaimVolumes?: () => readonly SelectionVolume[];
   /** Extra per-voxel explosion deny (active world-event area). */
@@ -299,6 +301,7 @@ export class ServerGameplay {
     private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
     options?: { readonly maxTamedPets?: number; readonly spawnProfile?: 'overworld' | 'nether' },
   ) {
+    this.dimension = options?.spawnProfile === 'nether' ? 'nether' : 'overworld';
     this.fireworks = new FireworkManager(world);
     world.deferredLighting = false;
     world.onCommittedBlocks = (changes) => {
@@ -335,7 +338,7 @@ export class ServerGameplay {
       onProjectileRemove: (id) => this.pushEntityEvent(id, 'projectile_hit'),
       onPersistentStateChanged: () => this.onPersistentStateChanged?.(),
       allowSpawn: (kind, x, y, z) => {
-        const event = this.events.createMobSpawn(kind, x, y, z);
+        const event = this.events.createMobSpawn(kind, x, y, z, this.dimension);
         this.events.emit('mobSpawn', event);
         return !event.cancelled;
       },
@@ -1922,7 +1925,7 @@ export class ServerGameplay {
   private enqueueExplosion(
     x: number, y: number, z: number, radius: number, power: number, blockId?: number,
   ): void {
-    const event = this.events.createExplosion(x, y, z, radius, power);
+    const event = this.events.createExplosion(x, y, z, radius, power, this.dimension);
     if (!explosionsAllowed(this.serverMode)) event.cancel();
     this.events.emit('explosion', event);
     if (event.cancelled) return;

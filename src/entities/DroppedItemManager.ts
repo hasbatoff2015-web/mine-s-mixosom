@@ -375,6 +375,10 @@ export class DroppedItemManager {
     return restored;
   }
 
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
   clear(): void {
     for (const entity of [...this.itemsById.values()]) this.removeEntity(entity, 'cleared');
   }

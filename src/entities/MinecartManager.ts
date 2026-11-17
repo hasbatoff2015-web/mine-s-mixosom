@@ -641,6 +641,10 @@ export class MinecartManager {
     }
   }
 
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
   clear(): void {
     for (const cart of this.carts.values()) {
       if (cart.visual) this.host.detach(cart.visual);

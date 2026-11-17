@@ -61,16 +61,17 @@ import { Vec3 } from '../src/math/vec3';
 import { VoxelWorld } from '../src/world/World';
 import {
   NETHER_BED_MESSAGE,
-  NETHER_PORTAL_CHANNEL_MS,
   NETHER_UNSAFE_MESSAGE,
+  stepPortalChannel,
   dimensionFromStoredWorldId,
   dimensionWorldId,
   parseDimension,
   sameServerWorld,
   type DimensionId,
 } from '../src/world/dimension';
-import { findSafeTeleport } from '../src/world/safeStand';
-import { sweepInvalidPortals } from '../src/world/netherPortal';
+import { findSafeTeleport, isSafeStand } from '../src/world/safeStand';
+import { isLiveFire } from '../src/blocks/fireBlocks';
+import { bodyOverlapsPortal, sweepInvalidPortals } from '../src/world/netherPortal';
 import { isPetKind } from '../src/entities/petTypes';
 import { WorldPersistence } from './persistence';
 import { fsRecordsToSnapshot, snapshotToFsRecords } from '../src/save/fsRecords';
@@ -1047,16 +1048,25 @@ export class WorldInstance {
       worldId: () => this.worldId,
       getBlock: (x, y, z) => this.world.getBlock(x, y, z),
       setBlock: (x, y, z, blockId) => this.worldView.setBlock(x, y, z, blockId),
+      getBlockIn: (dimension, x, y, z) => this.worldForDimension(dimension).getBlock(x, y, z),
+      setBlockIn: (dimension, x, y, z, blockId) => this.setBlockInDimension(dimension, x, y, z, blockId),
       loadClaims: () => this.loadClaimStore(),
       saveClaims: (store) => this.saveClaimStore(store),
       extraClaims: () => {
         const claim = this.worldEvents.systemClaim();
         return claim ? [claim] : [];
       },
-      teleportNow: (playerId, dest) => this.teleports.now(playerId, {
-        ...dest,
-        dimension: 'overworld',
-      }, 'clan', { silent: true }),
+      teleportNow: (playerId, dest) => {
+        const dimension = dest.dimension ?? 'overworld';
+        const safe = this.clanBaseArrival(dimension, dest);
+        if (!safe) return { ok: false, error: 'Не удалось найти безопасное место у базы клана.' };
+        return this.teleports.now(playerId, {
+          x: safe.x,
+          y: safe.y,
+          z: safe.z,
+          dimension,
+        }, 'clan', { silent: true });
+      },
       showClaim: (playerId, claim) => this.claimBoundaries.show(playerId, claim),
     });
     this.friends.setRuntime({
@@ -1104,6 +1114,13 @@ export class WorldInstance {
       const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
       return store.claims
         .filter((claim) => !claim.anchor && claim.worldId === this.worldId)
+        .map((claim) => claim.volume);
+    };
+    this.netherGameplay.loadRegularClaimVolumes = () => {
+      const store = migrateClaimStore(this.pluginStore.load('claims/claims', { claims: [] }));
+      const netherId = dimensionWorldId(this.worldId, 'nether');
+      return store.claims
+        .filter((claim) => !claim.anchor && claim.worldId === netherId)
         .map((claim) => claim.volume);
     };
     this.permissions = new PermissionService(this.pluginStore, config.operators);
@@ -7037,8 +7054,8 @@ export class WorldInstance {
     const pets = source.mobs.entities.filter((mob) => mob.alive && mob.ownerId === player.id && isPetKind(mob.kind));
     pets.forEach((mob, index) => {
       const angle = index * 1.2;
-      source.mobs.remove(mob.id);
-      target.mobs.spawn(mob.kind, new Vec3(x + Math.cos(angle), y, z + Math.sin(angle)), {
+      if (target.mobs.entities.some((entry) => entry.id === mob.id)) target.mobs.remove(mob.id);
+      const spawned = target.mobs.spawn(mob.kind, new Vec3(x + Math.cos(angle), y, z + Math.sin(angle)), {
         id: mob.id,
         health: mob.health,
         ownerId: player.id,
@@ -7048,6 +7065,7 @@ export class WorldInstance {
         economyInstanceId: mob.economyInstanceId,
         catVariant: mob.catVariant,
       });
+      if (spawned) source.mobs.remove(mob.id);
     });
   }
 
@@ -7107,36 +7125,20 @@ export class WorldInstance {
 
   private playerInsidePortal(player: ServerPlayer): boolean {
     if (player.dimension !== 'overworld') return false;
-    const box = player.controller.aabb;
-    for (let y = Math.floor(box.minY); y <= Math.floor(box.maxY); y += 1) {
-      for (let z = Math.floor(box.minZ); z <= Math.floor(box.maxZ); z += 1) {
-        for (let x = Math.floor(box.minX); x <= Math.floor(box.maxX); x += 1) {
-          if (this.world.getBlock(x, y, z, false) === BlockId.NetherPortal) return true;
-        }
-      }
-    }
-    return false;
+    return bodyOverlapsPortal(this.world, player.controller.aabb);
   }
 
   private tickPortalChannels(): void {
     const now = Date.now();
     for (const player of this.connectedPlayers()) {
-      if (player.survival.dead || player.dimension !== 'overworld' || this.teleports.isPending(player.id)) {
-        player.portalChannelStartedAt = undefined;
-        player.portalCountdown = null;
-        continue;
-      }
-      if (!this.playerInsidePortal(player)) {
-        player.portalChannelStartedAt = undefined;
-        player.portalCountdown = null;
-        continue;
-      }
-      if (player.portalChannelStartedAt === undefined) player.portalChannelStartedAt = now;
-      const left = NETHER_PORTAL_CHANNEL_MS - (now - player.portalChannelStartedAt);
-      player.portalCountdown = Math.max(1, Math.ceil(left / 1000));
-      if (left > 0) continue;
-      player.portalChannelStartedAt = undefined;
-      player.portalCountdown = null;
+      const inside = !player.survival.dead
+        && player.dimension === 'overworld'
+        && !this.teleports.isPending(player.id)
+        && this.playerInsidePortal(player);
+      const step = stepPortalChannel(player.portalChannelStartedAt, now, inside);
+      player.portalChannelStartedAt = step.startedAt;
+      player.portalCountdown = step.seconds;
+      if (!step.commit) continue;
       const position = player.controller.position;
       const safe = findSafeTeleport(this.netherWorld, position.x, position.y, position.z, 10);
       if (!safe) {
@@ -7739,6 +7741,50 @@ export class WorldInstance {
       if (!Number.isInteger(cx) || !Number.isInteger(cz)) continue;
       this.sendTo(player, { type: 'unload_chunk', cx, cz });
     }
+  }
+
+  /**
+   * Stand on the diamond when that cell is not lava or fire.
+   * A solid body block keeps the historical exact point. Lava, fire and missing ground search nearby.
+   */
+  private clanBaseArrival(
+    dimension: DimensionId,
+    dest: { x: number; y: number; z: number },
+  ): { x: number; y: number; z: number } | undefined {
+    const world = this.worldForDimension(dimension);
+    const x = Math.floor(dest.x);
+    const z = Math.floor(dest.z);
+    const feet = Math.floor(dest.y);
+    if (isSafeStand(world, x, feet, z)) return { x: dest.x, y: feet, z: dest.z };
+    const ground = world.getBlock(x, feet - 1, z, false);
+    const body = world.getBlock(x, feet, z, false);
+    const hazard = (block: BlockId) => block === BlockId.Lava || block === BlockId.Cactus || isLiveFire(block);
+    const groundSolid = getBlockDefinition(ground).solid && !hazard(ground);
+    const bodyBlocked = getBlockDefinition(body).liquid === true || hazard(body);
+    if (groundSolid && !bodyBlocked) return { x: dest.x, y: feet, z: dest.z };
+    return findSafeTeleport(world, dest.x, dest.y, dest.z, 10);
+  }
+
+  private worldForDimension(dimension: DimensionId): VoxelWorld {
+    return dimension === 'nether' ? this.netherWorld : this.world;
+  }
+
+  private setBlockInDimension(
+    dimension: DimensionId,
+    x: number,
+    y: number,
+    z: number,
+    blockId: number,
+  ): boolean {
+    if (!isKnownBlockId(blockId) || !isValidWorldY(y) || !Number.isInteger(x) || !Number.isInteger(z)) {
+      return false;
+    }
+    if (!gameplayMayMutateBlock(x, z)) return false;
+    const world = this.worldForDimension(dimension);
+    if (!world.setBlock(x, y, z, blockId)) return false;
+    this.dirty = true;
+    this.flushBlockChanges();
+    return true;
   }
 
   private createWorldView(): WorldView {

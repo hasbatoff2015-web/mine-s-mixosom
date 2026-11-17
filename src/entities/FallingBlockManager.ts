@@ -160,6 +160,10 @@ export class FallingBlockManager {
     return restored;
   }
 
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
   clear(): void {
     for (const entity of this.entities.values()) {
       if (entity.visual) this.host.detach(entity.visual);

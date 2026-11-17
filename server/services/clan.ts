@@ -70,6 +70,12 @@ import { MAX_CHAT_LENGTH } from '../../shared/config';
 import { formatCompactMegacoins } from '../../shared/megacoins';
 import { formatKillsLabel, isClanMemberSort, type ClanMemberSort } from '../../shared/ranking';
 import { BlockId } from '../../src/blocks';
+import {
+  dimensionFromStoredWorldId,
+  dimensionWorldId,
+  sameServerWorld,
+  type DimensionId,
+} from '../../src/world/dimension';
 import { isPromise, thenResult, type CurrencyPort, type EconomyCommandRequest } from '../economy/currencyPort';
 import { clientMoneyRequest, isClientMoneyRequestId, MONEY_REQUEST_REQUIRED } from '../economy/moneyRequest';
 import type { SettlementService } from '../settlements/service';
@@ -158,6 +164,8 @@ export interface ClanBase {
   y: number;
   z: number;
   claimId: string;
+  /** Absent on bases saved before the Nether. Those stay in the overworld. */
+  dimension?: DimensionId;
 }
 
 export interface ClanRecord {
@@ -211,15 +219,20 @@ export interface ClanRuntime {
   cancelFriendRequest?(fromId: string, targetId: string): { ok: boolean; error?: string };
   notifyUnread?(playerId: string, category: 'clans'): void;
   playerPosition?(playerId: string): { x: number; y: number; z: number } | undefined;
-  playerDimension?(playerId: string): 'overworld' | 'nether';
+  playerDimension?(playerId: string): DimensionId;
   worldId?(): string;
   getBlock?(x: number, y: number, z: number): number;
   setBlock?(x: number, y: number, z: number, blockId: number): boolean;
+  getBlockIn?(dimension: DimensionId, x: number, y: number, z: number): number;
+  setBlockIn?(dimension: DimensionId, x: number, y: number, z: number, blockId: number): boolean;
   loadClaims?(): ClaimStore;
   saveClaims?(store: ClaimStore): void;
   /** Virtual claims (active world-event column) that must not be stored in claims.json. */
   extraClaims?(): readonly Claim[];
-  teleportNow?(playerId: string, dest: { x: number; y: number; z: number }): { ok: boolean; error?: string };
+  teleportNow?(
+    playerId: string,
+    dest: { x: number; y: number; z: number; dimension?: DimensionId },
+  ): { ok: boolean; error?: string };
   showClaim?(playerId: string, claim: Claim): void;
 }
 
@@ -313,7 +326,17 @@ function parseClanBase(value: unknown): ClanBase | undefined {
   const y = Number(value.y);
   const z = Number(value.z);
   if (!Number.isInteger(x) || !Number.isInteger(y) || !Number.isInteger(z)) return undefined;
-  return { worldId: value.worldId, x, y, z, claimId: value.claimId };
+  const dimension = value.dimension === 'nether' || dimensionFromStoredWorldId(value.worldId) === 'nether'
+    ? 'nether'
+    : undefined;
+  return {
+    worldId: value.worldId,
+    x,
+    y,
+    z,
+    claimId: value.claimId,
+    ...(dimension ? { dimension } : {}),
+  };
 }
 
 function parseInvitation(value: unknown): ClanInvitation | undefined {
@@ -1136,21 +1159,28 @@ export class ClanService {
         session.message = clanBaseCooldownLabel(remaining);
         return { ok: false, error: session.message, clan };
       }
-      if (this.runtime.playerDimension?.(playerId) === 'nether') {
-        session.message = 'Базу клана нельзя установить в Аду.';
-        return { ok: false, error: session.message, clan };
-      }
       const pos = this.runtime.playerPosition?.(playerId);
-      if (!pos || !this.runtime.getBlock || !this.runtime.setBlock || !this.runtime.loadClaims || !this.runtime.saveClaims) {
+      const dimension = this.runtime.playerDimension?.(playerId) ?? 'overworld';
+      const readBlock = (x: number, y: number, z: number): number => (
+        this.runtime.getBlockIn?.(dimension, x, y, z) ?? this.runtime.getBlock?.(x, y, z) ?? BlockId.Air
+      );
+      const writeBlock = (target: DimensionId, x: number, y: number, z: number, blockId: number): boolean => {
+        if (this.runtime.setBlockIn) return this.runtime.setBlockIn(target, x, y, z, blockId);
+        if (target !== dimension || !this.runtime.setBlock) return false;
+        return this.runtime.setBlock(x, y, z, blockId);
+      };
+      if (!pos || (!this.runtime.getBlock && !this.runtime.getBlockIn) || (!this.runtime.setBlock && !this.runtime.setBlockIn)
+        || !this.runtime.loadClaims || !this.runtime.saveClaims) {
         session.message = CLAN_BASE_POSITION_ERROR;
         return { ok: false, error: CLAN_BASE_POSITION_ERROR, clan };
       }
-      const worldId = this.runtime.worldId?.() ?? '';
-      if (!worldId) {
+      const serverId = this.runtime.worldId?.() ?? '';
+      if (!serverId) {
         session.message = CLAN_BASE_POSITION_ERROR;
         return { ok: false, error: CLAN_BASE_POSITION_ERROR, clan };
       }
-      const resolved = resolveClanBaseAnchor(pos, this.runtime.getBlock);
+      const worldId = dimensionWorldId(serverId, dimension);
+      const resolved = resolveClanBaseAnchor(pos, readBlock);
       if (!resolved.ok) {
         session.message = resolved.error;
         return { ok: false, error: resolved.error, clan };
@@ -1180,12 +1210,12 @@ export class ClanService {
         session.message = CLAN_BASE_OVERLAP_ERROR;
         return { ok: false, error: CLAN_BASE_OVERLAP_ERROR, clan };
       }
-      if (this.runtime.getBlock(anchor.x, anchor.y, anchor.z) === BlockId.Bedrock) {
+      if (readBlock(anchor.x, anchor.y, anchor.z) === BlockId.Bedrock) {
         session.message = CLAN_BASE_ANCHOR_ERROR;
         return { ok: false, error: CLAN_BASE_ANCHOR_ERROR, clan };
       }
       const previous = clan.base;
-      if (!this.runtime.setBlock(anchor.x, anchor.y, anchor.z, BlockId.DiamondBlock)) {
+      if (!writeBlock(dimension, anchor.x, anchor.y, anchor.z, BlockId.DiamondBlock)) {
         session.message = CLAN_BASE_ANCHOR_ERROR;
         return { ok: false, error: CLAN_BASE_ANCHOR_ERROR, clan };
       }
@@ -1194,7 +1224,8 @@ export class ClanService {
       store.claims.push(created);
       this.runtime.saveClaims(store);
       if (previous && (previous.x !== anchor.x || previous.y !== anchor.y || previous.z !== anchor.z || previous.worldId !== worldId)) {
-        this.runtime.setBlock(previous.x, previous.y, previous.z, BlockId.Air);
+        const previousDimension = previous.dimension ?? dimensionFromStoredWorldId(previous.worldId);
+        writeBlock(previousDimension, previous.x, previous.y, previous.z, BlockId.Air);
       }
       clan.base = {
         worldId,
@@ -1202,6 +1233,7 @@ export class ClanService {
         y: anchor.y,
         z: anchor.z,
         claimId: created.id,
+        ...(dimension === 'nether' ? { dimension: 'nether' as const } : {}),
       };
       clan.baseCooldownUntil = this.now() + CLAN_BASE_COOLDOWN_MS;
       this.persist();
@@ -1227,7 +1259,7 @@ export class ClanService {
         return { ok: false, error: CLAN_BASE_MISSING_ERROR, clan };
       }
       const worldId = this.runtime.worldId?.();
-      if (worldId && clan.base.worldId !== worldId) {
+      if (worldId && !sameServerWorld(clan.base.worldId, worldId)) {
         session.message = CLAN_BASE_WORLD_ERROR;
         return { ok: false, error: CLAN_BASE_WORLD_ERROR, clan };
       }
@@ -1235,12 +1267,13 @@ export class ClanService {
         session.message = CLAN_BASE_MISSING_ERROR;
         return { ok: false, error: CLAN_BASE_MISSING_ERROR, clan };
       }
+      const baseDimension = clan.base.dimension ?? dimensionFromStoredWorldId(clan.base.worldId);
       const dest = clanBaseTeleportDest(clan.base);
       if (!isPlayerCenterInsidePlayableWorld(dest.x, dest.z)) {
         session.message = WORLD_BORDER_CLAN_BASE_ERROR;
         return { ok: false, error: WORLD_BORDER_CLAN_BASE_ERROR, clan };
       }
-      const result = this.runtime.teleportNow(playerId, dest);
+      const result = this.runtime.teleportNow(playerId, { ...dest, dimension: baseDimension });
       if (!result.ok) {
         session.message = result.error ?? CLAN_BASE_POSITION_ERROR;
         return { ok: false, error: session.message, clan };
@@ -1259,8 +1292,10 @@ export class ClanService {
         this.runtime.saveClaims?.(store);
       }
     }
-    if (clan.base && this.runtime.setBlock) {
-      this.runtime.setBlock(clan.base.x, clan.base.y, clan.base.z, BlockId.Air);
+    if (clan.base) {
+      const dimension = clan.base.dimension ?? dimensionFromStoredWorldId(clan.base.worldId);
+      if (this.runtime.setBlockIn) this.runtime.setBlockIn(dimension, clan.base.x, clan.base.y, clan.base.z, BlockId.Air);
+      else this.runtime.setBlock?.(clan.base.x, clan.base.y, clan.base.z, BlockId.Air);
     }
     delete clan.base;
   }

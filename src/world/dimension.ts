@@ -16,6 +16,25 @@ export const NETHER_UNSAFE_MESSAGE =
 
 export const NETHER_BED_MESSAGE = 'В Аду нельзя использовать кровать.';
 
+export interface PortalChannelStep {
+  readonly startedAt?: number;
+  readonly seconds: number | null;
+  readonly commit: boolean;
+}
+
+/** Shared 3s portal countdown for the server and singleplayer. Leaving the frame resets it. */
+export function stepPortalChannel(
+  startedAt: number | undefined,
+  now: number,
+  inside: boolean,
+): PortalChannelStep {
+  if (!inside) return { seconds: null, commit: false };
+  const started = startedAt ?? now;
+  const left = NETHER_PORTAL_CHANNEL_MS - (now - started);
+  if (left <= 0) return { seconds: null, commit: true };
+  return { startedAt: started, seconds: Math.max(1, Math.ceil(left / 1000)), commit: false };
+}
+
 export function parseDimension(value: unknown): DimensionId {
   return value === 'nether' ? 'nether' : 'overworld';
 }

@@ -345,6 +345,7 @@ export interface PauseActions {
   resume(): void;
   settings(): void;
   saveAndQuit(): void;
+  spawn?(): void;
 }
 
 export type YandexPanelMode = 'pending' | 'unavailable' | 'anonymous' | 'authorized' | 'error';
@@ -1315,12 +1316,14 @@ export class GameUI {
           <div class="menu-stack pause-actions">
             <button class="game-button primary" data-action="resume">Продолжить</button>
             <button class="game-button" data-action="settings">Настройки</button>
+            ${actions.spawn ? '<button class="game-button" data-action="spawn">Телепорт на спавн</button>' : ''}
             <button class="game-button danger" data-action="quit">Сохранить и выйти</button>
           </div>
         </div>
       </section>`);
     this.bindAction('resume', actions.resume);
     this.bindAction('settings', actions.settings);
+    if (actions.spawn) this.bindAction('spawn', actions.spawn);
     this.bindAction('quit', actions.saveAndQuit);
   }
 

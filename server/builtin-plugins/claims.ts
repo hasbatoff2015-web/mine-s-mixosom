@@ -277,8 +277,17 @@ const ownerKey = ownerId(player.id);
         const mobCause = event.cause === 'melee' || event.cause === 'arrow' || event.cause === 'projectile';
         if (victimClaims.length > 0 && !effectiveFlag(victimClaims, 'mob-damage') && mobCause) event.cancel();
       });
+      const claimsInDimension = (dimension: 'overworld' | 'nether' | undefined, x: number, y: number, z: number) => (
+        claimsAt(
+          load().claims,
+          dimensionWorldId(api.getWorld().worldId, dimension === 'nether' ? 'nether' : 'overworld'),
+          x,
+          y,
+          z,
+        )
+      );
       api.registerEvent('explosion', (event) => {
-        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        const claims = claimsInDimension(event.dimension, Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
         if (claims.length > 0 && !effectiveFlag(claims, 'explosions')) event.cancel();
       });
       api.registerEvent('itemDrop', (event) => {
@@ -300,7 +309,7 @@ const ownerKey = ownerId(player.id);
         event.cancel();
       });
       api.registerEvent('mobSpawn', (event) => {
-        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        const claims = claimsInDimension(event.dimension, Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
         if (claims.length > 0 && !effectiveFlag(claims, 'mob-spawn')) event.cancel();
       });
 

@@ -244,6 +244,38 @@ describe('Clan base point', () => {
     world.clan.load();
     expect(world.clan.playerClan(ada.player.id)?.baseCooldownUntil).toBe(until);
     expect(world.clan.playerClan(ada.player.id)?.base).toMatchObject({ x: 16, y: 64, z: 16 });
+    expect(world.clan.playerClan(ada.player.id)?.base?.dimension).toBeUndefined();
+    expect(world.clan.playerClan(ada.player.id)?.base?.worldId).toBe(world.worldId);
+  });
+
+  it('sets a nether clan base and teleports the leader into that dimension', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    createClan(world, ada, 'Embers');
+    const x = 24;
+    const z = 24;
+    const y = world.netherWorld.surfaceY(x, z);
+    world.netherWorld.setBlock(x, y, z, BlockId.Netherrack);
+    world.netherWorld.setBlock(x, y + 1, z, BlockId.Air);
+    world.netherWorld.setBlock(x, y + 2, z, BlockId.Air);
+    world.enterDimension(ada.player, 'nether', x + 0.5, y + 1, z + 0.5);
+    confirmSetBase(world, ada);
+    const base = world.clan.playerClan(ada.player.id)?.base;
+    expect(base).toMatchObject({
+      x,
+      y,
+      z,
+      dimension: 'nether',
+      worldId: `${world.worldId}:nether`,
+    });
+    expect(world.netherWorld.getBlock(x, y, z)).toBe(BlockId.DiamondBlock);
+    expect(world.world.getBlock(x, y, z)).not.toBe(BlockId.DiamondBlock);
+    world.enterDimension(ada.player, 'overworld', 4.5, 80, 4.5);
+    expect(ada.player.dimension).toBe('overworld');
+    world.handleClanAction(ada.player, { type: 'clan_action', action: 'teleport_to_base' });
+    expect(ada.player.dimension).toBe('nether');
+    expect(ada.player.controller.position.x).toBeCloseTo(x + 0.5, 5);
+    expect(ada.player.controller.position.z).toBeCloseTo(z + 0.5, 5);
   });
 
   it('registers protocol actions and shows the set button only for leaders', async () => {

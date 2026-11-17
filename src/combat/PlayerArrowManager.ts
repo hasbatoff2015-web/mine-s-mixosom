@@ -431,6 +431,14 @@ export class PlayerArrowManager {
     return collected;
   }
 
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
+  clear(): void {
+    while (this.arrows.length) this.remove(this.arrows.length - 1);
+  }
+
   dispose(): void {
     while (this.arrows.length) this.remove(this.arrows.length - 1);
     if (this.ownsHost) this.host.dispose();

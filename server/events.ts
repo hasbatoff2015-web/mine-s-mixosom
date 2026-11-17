@@ -193,6 +193,8 @@ export interface ExplosionEvent extends Cancellable {
   readonly z: number;
   readonly radius: number;
   readonly power: number;
+  /** World the blast belongs to. Missing values from older callers are the overworld. */
+  readonly dimension?: 'overworld' | 'nether';
 }
 
 export interface FluidUpdateEvent {
@@ -228,6 +230,8 @@ export interface MobSpawnEvent extends Cancellable {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+  /** World the spawn belongs to. Missing values from older callers are the overworld. */
+  readonly dimension?: 'overworld' | 'nether';
 }
 
 export interface ServerEvents {
@@ -354,8 +358,15 @@ export class EventBus {
     return cancellable({ playerId, x, y, z, blockId });
   }
 
-  createExplosion(x: number, y: number, z: number, radius: number, power: number): ExplosionEvent {
-    return cancellable({ x, y, z, radius, power });
+  createExplosion(
+    x: number,
+    y: number,
+    z: number,
+    radius: number,
+    power: number,
+    dimension: 'overworld' | 'nether' = 'overworld',
+  ): ExplosionEvent {
+    return cancellable({ x, y, z, radius, power, dimension });
   }
 
   createPlayerCommand(playerId: string, command: string): PlayerCommandEvent {
@@ -370,7 +381,13 @@ export class EventBus {
     return cancellable({ playerId, entityId });
   }
 
-  createMobSpawn(kind: string, x: number, y: number, z: number): MobSpawnEvent {
-    return cancellable({ kind, x, y, z });
+  createMobSpawn(
+    kind: string,
+    x: number,
+    y: number,
+    z: number,
+    dimension: 'overworld' | 'nether' = 'overworld',
+  ): MobSpawnEvent {
+    return cancellable({ kind, x, y, z, dimension });
   }
 }

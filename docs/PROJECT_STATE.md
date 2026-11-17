@@ -5,7 +5,9 @@
 - Один `WorldInstance` держит обычный `VoxelWorld`/`ServerGameplay` и второй такой же набор для Ада. Чанки, дельты, сундуки, мобы и дроп не делят карты.
 - Снимок Ада пишется в `dataDir/<worldId>/nether/`. `world.json` обычного мира не содержит адских дельт. `WORLD_SCHEMA_VERSION` остаётся 1. У игрока необязательное поле `dimension`; нет поля — обычный мир.
 - Пространственные пакеты (`player_state`, блоки, сущности, звуки, печи, ближний чат) фильтруются по измерению. Глобальный чат общий.
-- Портал: рамка 2×3 из обсидиана без углов, огниво, 3 секунды, безопасная точка в радиусе 10. Спавн и смерть в Аду возвращают на обычный спавн. Дома и приваты различают `worldId` и `worldId:nether`. Прирученные питомцы переходят вместе с владельцем.
+- Портал: рамка 2×3 из обсидиана без углов, огниво, 3 секунды, безопасная точка в радиусе 10. Тот же отсчёт работает в одиночной игре: мир, рендер и сущности переключаются, второй мир остаётся в памяти и пишется в необязательное поле `nether` снимка. Спавн и смерть в Аду возвращают на обычный спавн. Дома и приваты различают `worldId` и `worldId:nether`.
+- Взрыв и спавн моба несут измерение своего `ServerGameplay`. Приват и объёмы взрыва читают это измерение, а не измерение игрока. База клана хранит измерение; старые базы без поля остаются в обычном мире. Телепорт к базе переключает измерение.
+- Прирученные волк и кот переходят вместе с владельцем и не остаются во втором менеджере. Косметические пчела и мини-крипер создаются заново рядом с владельцем. Других приручаемых видов нет.
 - Подробности: `docs/reports/2026-11-18_nether-dimension.md`.
 
 ## Меню «Бонус за друга» — 2026-11-15
@@ -2697,4 +2699,4 @@ Codex UI (menu family, online mock, read-only controls) and Cursor PR #6 (fluids
 
 ## За пределами текущей alpha
 
-Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, advanced farming/breeding, enchantments, brewing stand, Nether/End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails, minecart и Farming V1 в этой alpha есть как practical approximation, без brewing/powered rails/Farming V2. Это осознанно не подменяется заглушками в P0.
+Не реализованы accounts/cloud worlds, public VPS deploy, Survival PvP matchmaking, weather, advanced farming/breeding, enchantments, brewing stand, End, villagers/trading, experience progression, advanced redstone, pistons/hoppers, bosses и моддинг API. **Local Anarchy** (`npm run dev:server`) уже есть: server-authoritative world on one PC. Drinkable potions, rails, minecart и Farming V1 в этой alpha есть как practical approximation, без brewing/powered rails/Farming V2. Это осознанно не подменяется заглушками в P0.

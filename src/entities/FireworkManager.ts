@@ -27,7 +27,11 @@ export class FireworkManager {
   private nextId = 0;
   readonly cap = 32;
 
-  constructor(private readonly world?: VoxelWorld) {}
+  constructor(private world?: VoxelWorld) {}
+
+  bindWorld(world: VoxelWorld): void {
+    this.world = world;
+  }
 
   get entities(): readonly FireworkEntity[] { return this.active; }
 

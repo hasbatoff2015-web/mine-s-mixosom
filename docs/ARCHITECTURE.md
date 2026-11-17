@@ -4,7 +4,7 @@
 
 Один `AnarchyServer` и один `WorldInstance`. Обычный мир остаётся `this.world` и `this.gameplay`. Ад — второй `VoxelWorld` (`kind: 'nether'`, `NetherGenerator`) и второй `ServerGameplay` со `spawnProfile: 'nether'`. Игрок выбирается через `gp(player)` и `worldFor(player)`.
 
-Сохранение Ада — `dataDir/<worldId>/nether/{meta,world}.json` тем же `WorldSnapshot`, без игроков. Игроки остаются в `players.json` обычного мира, поле `dimension` необязательное.
+Сохранение Ада — `dataDir/<worldId>/nether/{meta,world}.json` тем же `WorldSnapshot`, без игроков. Игроки остаются в `players.json` обычного мира, поле `dimension` необязательное. Одиночная игра держит второй `VoxelWorld` в `session.parked` и пишет его в `WorldSnapshot.nether`, не поднимая `WORLD_SCHEMA_VERSION`. `createExplosion` и `createMobSpawn` получают измерение того `ServerGameplay`, который их создал.
 
 Клиент после пакета `dimension` выбрасывает меши и собирает новый `VoxelWorld` с тем же seed и генератором Ада. Дельты этого измерения приходят в пакете целиком, как при welcome.
 

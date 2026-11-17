@@ -35,6 +35,23 @@ export interface SerializedPlayerState {
   portalChest?: unknown;
   /** Local player skin metadata. Missing on old saves uses the default explorer. */
   appearance?: unknown;
+  /** Absent on saves from before the Nether. Those players are in the overworld. */
+  dimension?: 'overworld' | 'nether';
+}
+
+/** Blocks and entities of one dimension. Singleplayer stores the Nether beside the overworld. */
+export interface DimensionPocket {
+  modifications: Record<string, Record<string, number>>;
+  chests: Record<string, unknown>;
+  furnaces: Record<string, unknown>;
+  signs?: Record<string, readonly string[]>;
+  droppedItems: unknown[];
+  mobs?: unknown[];
+  redstone?: unknown;
+  blockStates?: Record<string, unknown>;
+  minecarts?: unknown[];
+  fallingBlocks?: unknown[];
+  timeOfDay?: number;
 }
 
 /**
@@ -126,6 +143,8 @@ export interface WorldSnapshot {
   minecarts?: unknown[];
   fallingBlocks?: unknown[];
   serverWorld?: SerializedServerWorld;
+  /** Nether pocket. Absent means the player has not opened the Nether in this save. */
+  nether?: DimensionPocket;
 }
 
 /** Historical name of the IndexedDB record. Same object as `WorldSnapshot`. */

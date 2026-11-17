@@ -36,13 +36,24 @@ export class FarmingSystem {
   private readonly scannedChunks = new Set<string>();
   private readonly waterByChunk = new Map<string, Map<string, FarmingPosition>>();
   private readonly scannedWaterChunks = new Set<string>();
-  private readonly stopObserving: () => void;
+  private stopObserving: () => void;
   private readonly random: RandomFn;
   private indexedCount = 0;
   lastTickStats: FarmingTickStats = { indexed: 0, visited: 0, stateWrites: 0, fruitWrites: 0 };
 
   constructor(private readonly world: VoxelWorld, options: { random?: RandomFn } = {}) {
     this.random = options.random ?? systemRandomFn;
+    this.stopObserving = world.observeCommittedBlocks((changes) => this.onBlocksChanged(changes));
+  }
+
+  bindWorld(world: VoxelWorld): void {
+    this.stopObserving();
+    (this as unknown as { world: VoxelWorld }).world = world;
+    this.positionsByChunk.clear();
+    this.scannedChunks.clear();
+    this.waterByChunk.clear();
+    this.scannedWaterChunks.clear();
+    this.indexedCount = 0;
     this.stopObserving = world.observeCommittedBlocks((changes) => this.onBlocksChanged(changes));
   }
 

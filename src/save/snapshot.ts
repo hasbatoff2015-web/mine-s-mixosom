@@ -80,6 +80,7 @@ function parsePlayer(value: unknown): SerializedPlayerState {
     inventory: value.inventory ?? emptyInventoryBlob(),
     ...(value.portalChest !== undefined ? { portalChest: value.portalChest } : {}),
     ...(value.appearance !== undefined ? { appearance: value.appearance } : {}),
+    ...(value.dimension === 'nether' ? { dimension: 'nether' as const } : {}),
   };
 }
 
@@ -159,6 +160,25 @@ function parsePlayers(value: unknown): Record<string, SerializedPersistedPlayer>
   return Object.keys(players).length > 0 ? players : undefined;
 }
 
+function parseDimensionPocket(value: unknown): WorldSnapshot['nether'] {
+  if (!isRecord(value) || !isRecord(value.modifications)) return undefined;
+  return {
+    modifications: value.modifications as WorldSnapshot['modifications'],
+    chests: asRecord(value.chests),
+    furnaces: asRecord(value.furnaces),
+    signs: asRecord(value.signs) as WorldSnapshot['signs'],
+    droppedItems: asArray(value.droppedItems),
+    mobs: asArray(value.mobs),
+    minecarts: asArray(value.minecarts),
+    fallingBlocks: asArray(value.fallingBlocks),
+    blockStates: asRecord(value.blockStates),
+    ...(value.redstone !== undefined ? { redstone: value.redstone } : {}),
+    ...(typeof value.timeOfDay === 'number' && Number.isFinite(value.timeOfDay)
+      ? { timeOfDay: value.timeOfDay }
+      : {}),
+  };
+}
+
 function parseServerWorld(value: unknown): SerializedServerWorld | undefined {
   if (!isRecord(value)) return undefined;
   const spawn = parseVec3(value.spawn);
@@ -236,6 +256,8 @@ export function parseWorldSnapshot(raw: unknown): WorldSnapshot {
   };
   if (players) snapshot.players = players;
   if (raw.redstone !== undefined) snapshot.redstone = raw.redstone;
+  const nether = parseDimensionPocket(raw.nether);
+  if (nether) snapshot.nether = nether;
   const serverWorld = parseServerWorld(raw.serverWorld);
   if (serverWorld) snapshot.serverWorld = serverWorld;
   return snapshot;

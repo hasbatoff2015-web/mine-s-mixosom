@@ -120,3 +120,31 @@ export function sweepInvalidPortals(world: VoxelWorld, x: number, y: number, z: 
   }
   return removed;
 }
+
+/** True when any block of the body overlaps a lit portal. */
+export function bodyOverlapsPortal(
+  world: VoxelWorld,
+  box: {
+    readonly minX: number;
+    readonly minY: number;
+    readonly minZ: number;
+    readonly maxX: number;
+    readonly maxY: number;
+    readonly maxZ: number;
+  },
+): boolean {
+  const y0 = Math.floor(box.minY);
+  const y1 = Math.floor(box.maxY);
+  const z0 = Math.floor(box.minZ);
+  const z1 = Math.floor(box.maxZ);
+  const x0 = Math.floor(box.minX);
+  const x1 = Math.floor(box.maxX);
+  for (let y = y0; y <= y1; y += 1) {
+    for (let z = z0; z <= z1; z += 1) {
+      for (let x = x0; x <= x1; x += 1) {
+        if (world.getBlock(x, y, z, false) === BlockId.NetherPortal) return true;
+      }
+    }
+  }
+  return false;
+}

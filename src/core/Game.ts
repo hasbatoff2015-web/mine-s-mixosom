@@ -134,7 +134,15 @@ import {
   sunlightPosition,
 } from '../rendering/SkyDome';
 import { netherSkySample, skySample, sunDirection } from '../rendering/skyPalette';
-import { NETHER_DAYLIGHT } from '../world/dimension';
+import {
+  NETHER_DAYLIGHT,
+  NETHER_TIME_OF_DAY,
+  NETHER_UNSAFE_MESSAGE,
+  parseDimension,
+  stepPortalChannel,
+} from '../world/dimension';
+import { bodyOverlapsPortal } from '../world/netherPortal';
+import { findSafeTeleport } from '../world/safeStand';
 import { shouldSuppressContextMenu } from '../input/contextMenu';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
@@ -250,7 +258,7 @@ import { LongTaskMonitor } from '../debug/longTaskMonitor';
 import { PageVisibilityProbe } from '../debug/pageVisibilityProbe';
 import { isQuietWorldQueryEnabled, quietWorldRenderDistance } from '../debug/quietWorld';
 import { IdbWorldStore } from '../save/IdbWorldStore';
-import { WORLD_SCHEMA_VERSION, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
+import { WORLD_SCHEMA_VERSION, type DimensionPocket, type GameMode, type SerializedServerWorld, type SerializedWorldState, type WorldSummary } from '../save/types';
 import { SurvivalSystem, getArmorPoints, type DamageResult, type DamageSource } from '../survival';
 import { GameUI } from '../ui/GameUI';
 import {
@@ -503,6 +511,26 @@ export interface GameSession {
   leafBreaksTowardApple: number;
   serverWorld?: SerializedServerWorld;
   online?: OnlineAnarchySession;
+  /** The dimension the player is not standing in. Its voxel world stays alive. */
+  parked?: ParkedDimension;
+}
+
+interface SpatialSave {
+  droppedItems?: unknown[];
+  mobs?: unknown[];
+  minecarts?: unknown[];
+  fallingBlocks?: unknown[];
+  redstone?: unknown;
+}
+
+interface ParkedDimension {
+  dimension: 'overworld' | 'nether';
+  world: VoxelWorld;
+  mobs: SerializedMob[];
+  drops: SerializedDroppedItem[];
+  falling: SerializedFallingBlock[];
+  minecarts: SerializedMinecart[];
+  redstone?: SerializedRedstoneState;
 }
 
 export interface OnlineAnarchySession {
@@ -776,6 +804,7 @@ export class Game {
   private screenBeforeSettings: 'main' | 'pause' = 'main';
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
+  private localPortalStartedAt?: number;
   private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
@@ -3554,9 +3583,7 @@ export class Game {
 
     if (startup.action === 'restore') {
       const state = startup.state;
-      const world = new VoxelWorld(state.summary.seed);
-      world.deferredLighting = true;
-      world.restore(state);
+      const assembled = this.assembleSavedWorld(state);
       let inventory: Inventory;
       let bucketOverflow: ItemStack[] = [];
       try {
@@ -3567,9 +3594,12 @@ export class Game {
         console.warn('Anarchy inventory save was invalid; starting empty.', error);
         inventory = new Inventory();
       }
-      await this.startSession(state.summary, world, inventory, state, {
+      await this.startSession(state.summary, assembled.world, inventory, state, {
         snapSpawn: false,
         serverWorld: createCanonicalAnarchyServerWorld(startup.spawn, state.serverWorld),
+        spawnWorld: assembled.spawnWorld,
+        parked: assembled.parked,
+        entitySource: assembled.entitySource,
       });
       for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
       return;
@@ -3624,9 +3654,7 @@ export class Game {
       await this.showWorldList();
       return;
     }
-    const world = new VoxelWorld(state.summary.seed);
-    world.deferredLighting = true;
-    world.restore(state);
+    const assembled = this.assembleSavedWorld(state);
     let inventory: Inventory;
     let bucketOverflow: ItemStack[] = [];
     try {
@@ -3637,8 +3665,77 @@ export class Game {
       console.warn('Inventory save was invalid; starting with an empty inventory.', error);
       inventory = new Inventory();
     }
-    await this.startSession(state.summary, world, inventory, state);
+    await this.startSession(state.summary, assembled.world, inventory, state, {
+      spawnWorld: assembled.spawnWorld,
+      parked: assembled.parked,
+      entitySource: assembled.entitySource,
+    });
     for (const stack of bucketOverflow) this.spawnDroppedStack(stack);
+  }
+
+  private assembleSavedWorld(state: SerializedWorldState): {
+    world: VoxelWorld;
+    spawnWorld: VoxelWorld;
+    parked?: ParkedDimension;
+    entitySource?: SpatialSave;
+  } {
+    const dimension = parseDimension(state.player.dimension);
+    const overworld = new VoxelWorld(state.summary.seed, 'overworld');
+    overworld.deferredLighting = true;
+    overworld.restore(state);
+    const netherState = state.nether;
+    const needsNether = dimension === 'nether' || netherState !== undefined;
+    const nether = needsNether ? new VoxelWorld(state.summary.seed, 'nether') : undefined;
+    if (nether) {
+      nether.deferredLighting = true;
+      if (netherState) {
+        nether.restore({
+          timeOfDay: netherState.timeOfDay ?? NETHER_TIME_OF_DAY,
+          modifications: netherState.modifications,
+          chests: netherState.chests,
+          furnaces: netherState.furnaces,
+          signs: netherState.signs,
+          blockStates: netherState.blockStates,
+        });
+      }
+    }
+    if (dimension === 'nether' && nether) {
+      return {
+        world: nether,
+        spawnWorld: overworld,
+        parked: {
+          dimension: 'overworld',
+          world: overworld,
+          mobs: (state.mobs ?? []) as SerializedMob[],
+          drops: (state.droppedItems ?? []) as SerializedDroppedItem[],
+          falling: (state.fallingBlocks ?? []) as SerializedFallingBlock[],
+          minecarts: (state.minecarts ?? []) as SerializedMinecart[],
+          redstone: state.redstone as SerializedRedstoneState | undefined,
+        },
+        entitySource: netherState ?? {
+          modifications: {},
+          chests: {},
+          furnaces: {},
+          droppedItems: [],
+          mobs: [],
+          minecarts: [],
+          fallingBlocks: [],
+        },
+      };
+    }
+    return {
+      world: overworld,
+      spawnWorld: overworld,
+      parked: nether ? {
+        dimension: 'nether',
+        world: nether,
+        mobs: (netherState?.mobs ?? []) as SerializedMob[],
+        drops: (netherState?.droppedItems ?? []) as SerializedDroppedItem[],
+        falling: (netherState?.fallingBlocks ?? []) as SerializedFallingBlock[],
+        minecarts: (netherState?.minecarts ?? []) as SerializedMinecart[],
+        redstone: netherState?.redstone as SerializedRedstoneState | undefined,
+      } : undefined,
+    };
   }
 
   private async startSession(
@@ -3651,8 +3748,12 @@ export class Game {
       snapSpawn?: boolean;
       serverWorld?: SerializedServerWorld;
       online?: OnlineAnarchySession;
+      spawnWorld?: VoxelWorld;
+      parked?: ParkedDimension;
+      entitySource?: SpatialSave;
     },
   ): Promise<void> {
+    const spatial = options?.entitySource ?? restored;
     this.disposeSession();
     this.ui.showLoading(restored ? 'Восстанавливаем чанки…' : 'Генерируем новый мир…');
     const atlas = this.atlas;
@@ -3703,7 +3804,8 @@ export class Game {
     const spawnSource = isFiniteSpawn(savedServerSpawn)
       ? [savedServerSpawn[0], savedServerSpawn[1], savedServerSpawn[2]] as const
       : restored?.player.spawnPoint ?? [safeSpawn.x, safeSpawn.y, safeSpawn.z] as const;
-    const safePoint = relocateStandingPoseInsidePlayableWorld(world, spawnSource[0], spawnSource[1], spawnSource[2]);
+    const spawnWorld = options?.spawnWorld ?? world;
+    const safePoint = relocateStandingPoseInsidePlayableWorld(spawnWorld, spawnSource[0], spawnSource[1], spawnSource[2]);
     survival.setSpawnPoint([safePoint.x, safePoint.y, safePoint.z]);
     if (restored && (restored.player.absorption !== undefined || restored.player.absorptionTicks !== undefined)) {
       survival.restore({
@@ -3731,9 +3833,9 @@ export class Game {
     });
     const farming = new FarmingSystem(world, { random: this.simRandom });
     const activePressurePlates = new Set<string>();
-    if (restored?.redstone) {
+    if (spatial?.redstone) {
       try {
-        const redstoneState = restored.redstone as SerializedRedstoneState;
+        const redstoneState = spatial.redstone as SerializedRedstoneState;
         redstone.restore(redstoneState);
         for (const source of redstoneState.sources) {
           if (source.kind === 'pressure_plate' && source.active) {
@@ -3770,10 +3872,10 @@ export class Game {
         return accepted;
       },
     });
-    if (restored?.droppedItems) drops.restore(restored.droppedItems as SerializedDroppedItem[]);
+    if (spatial?.droppedItems) drops.restore(spatial.droppedItems as SerializedDroppedItem[]);
     const falling = new FallingBlockManager(entityHost, world);
-    if (restored?.fallingBlocks) {
-      falling.restore(restored.fallingBlocks as SerializedFallingBlock[]);
+    if (spatial?.fallingBlocks) {
+      falling.restore(spatial.fallingBlocks as SerializedFallingBlock[]);
     }
 
     const selectedSlot = clamp(restored?.player.selectedSlot ?? 0, 0, 8);
@@ -3803,13 +3905,14 @@ export class Game {
       onArrowBlockHit: (x, y, z) => this.playWorld('arrow.hit', x + 0.5, y + 0.5, z + 0.5),
       onPersistentStateChanged: () => { void this.saveSession(); },
     });
-    if (restored?.mobs) mobs.restore(restored.mobs as SerializedMob[]);
+    if (world.kind === 'nether') mobs.setSpawnProfile('nether');
+    if (spatial?.mobs) mobs.restore(spatial.mobs as SerializedMob[]);
     const combat = new CombatSystem({
       heldItemId: inventory.getSlot(selectedSlot)?.itemId,
       offhandItemId: inventory.offhand?.itemId,
     });
     const minecarts = new MinecartManager(entityHost, world);
-    if (restored?.minecarts) minecarts.restore(restored.minecarts as SerializedMinecart[]);
+    if (spatial?.minecarts) minecarts.restore(spatial.minecarts as SerializedMinecart[]);
     const arrows = new PlayerArrowManager(entityHost, world, mobs, {
       minecarts,
       random: this.simRandom,
@@ -3886,6 +3989,7 @@ export class Game {
       leafBreaksTowardApple: 0,
       serverWorld: restored?.serverWorld ?? options?.serverWorld,
       online: options?.online,
+      parked: options?.parked,
     };
     this.canvas.dataset.hotbar = String(this.session.selectedSlot);
     this.firstPerson?.setHeldItems(
@@ -4640,6 +4744,13 @@ export class Game {
         this.showSettings();
       },
       saveAndQuit: () => void this.saveAndQuit(),
+      ...(!session?.online ? {
+        spawn: () => {
+          if (!this.session) return;
+          const loading = this.returnLocalToSpawn(this.session, false);
+          if (!loading) this.resumeFromPause();
+        },
+      } : {}),
     });
   }
 
@@ -4877,9 +4988,231 @@ export class Game {
     this.showMainMenu();
   }
 
+  private spatialBlob(session: GameSession): {
+    mobs: SerializedMob[];
+    drops: SerializedDroppedItem[];
+    falling: SerializedFallingBlock[];
+    minecarts: SerializedMinecart[];
+    redstone: SerializedRedstoneState;
+  } {
+    return {
+      mobs: session.mobs.serialize(),
+      drops: session.drops.serialize(),
+      falling: session.falling.serialize(),
+      minecarts: session.minecarts.serialize(),
+      redstone: session.redstone.serialize(),
+    };
+  }
+
+  private parkedBlob(parked: ParkedDimension | undefined): {
+    mobs: SerializedMob[];
+    drops: SerializedDroppedItem[];
+    falling: SerializedFallingBlock[];
+    minecarts: SerializedMinecart[];
+    redstone?: SerializedRedstoneState;
+  } {
+    return {
+      mobs: parked?.mobs ?? [],
+      drops: parked?.drops ?? [],
+      falling: parked?.falling ?? [],
+      minecarts: parked?.minecarts ?? [],
+      redstone: parked?.redstone,
+    };
+  }
+
+  private dimensionPocket(
+    world: VoxelWorld,
+    spatial: {
+      mobs: SerializedMob[];
+      drops: SerializedDroppedItem[];
+      falling: SerializedFallingBlock[];
+      minecarts: SerializedMinecart[];
+      redstone?: SerializedRedstoneState;
+    },
+  ): DimensionPocket {
+    return {
+      modifications: world.serializeModifications(),
+      chests: Object.fromEntries(world.chests),
+      furnaces: Object.fromEntries(world.furnaces),
+      signs: world.serializeSigns(),
+      droppedItems: spatial.drops,
+      fallingBlocks: spatial.falling,
+      minecarts: spatial.minecarts,
+      blockStates: world.serializeBlockStates(),
+      mobs: spatial.mobs,
+      redstone: spatial.redstone,
+      timeOfDay: world.timeOfDay,
+    };
+  }
+
+  private tickLocalPortal(session: GameSession): void {
+    if (session.dimension !== 'overworld' || session.survival.dead) {
+      this.localPortalStartedAt = undefined;
+      this.ui.setPortalCountdown(null);
+      return;
+    }
+    const inside = bodyOverlapsPortal(session.world, session.player.aabb);
+    const step = stepPortalChannel(this.localPortalStartedAt, Date.now(), inside);
+    this.localPortalStartedAt = step.startedAt;
+    this.ui.setPortalCountdown(step.seconds);
+    if (!step.commit) return;
+    const nether = session.parked?.dimension === 'nether'
+      ? session.parked.world
+      : new VoxelWorld(session.summary.seed, 'nether');
+    nether.deferredLighting = true;
+    const position = session.player.position;
+    const safe = findSafeTeleport(nether, position.x, position.y, position.z, 10);
+    if (!safe) {
+      this.ui.toast(NETHER_UNSAFE_MESSAGE);
+      return;
+    }
+    this.swapLocalDimension(session, 'nether', safe.x, safe.y, safe.z, nether);
+  }
+
+  /** Returns true when the destination world starts the loading screen. */
+  private returnLocalToSpawn(session: GameSession, revive: boolean): boolean {
+    const [sx, sy, sz] = session.survival.spawnPoint;
+    if (session.dimension === 'nether') {
+      let overworld = session.parked?.dimension === 'overworld' ? session.parked.world : undefined;
+      if (!overworld) {
+        overworld = new VoxelWorld(session.summary.seed, 'overworld');
+        overworld.deferredLighting = true;
+      }
+      const safe = findSafeTeleport(overworld, sx, sy, sz, 10) ?? { x: sx, y: sy, z: sz };
+      this.swapLocalDimension(session, 'overworld', safe.x, safe.y, safe.z, overworld);
+      if (revive) session.survival.respawn(session.player, session.survival.spawnPoint);
+      return true;
+    }
+    const safe = findSafeTeleport(session.world, sx, sy, sz, 10) ?? { x: sx, y: sy, z: sz };
+    session.player.teleport([safe.x, safe.y, safe.z]);
+    session.player.velocity.set(0, 0, 0);
+    if (revive) session.survival.respawn(session.player, session.survival.spawnPoint);
+    this.syncLocalRenderFromPlayer();
+    return false;
+  }
+
+  private swapLocalDimension(
+    session: GameSession,
+    destination: 'overworld' | 'nether',
+    x: number,
+    y: number,
+    z: number,
+    prepared?: VoxelWorld,
+  ): void {
+    if (session.online || session.dimension === destination) {
+      session.player.teleport([x, y, z]);
+      session.player.velocity.set(0, 0, 0);
+      this.syncLocalRenderFromPlayer();
+      return;
+    }
+    const atlas = this.atlas;
+    if (!atlas) return;
+    this.clearMinecartRide(session);
+    session.restingBed = undefined;
+    session.miningProgress = 0;
+    session.miningTarget = undefined;
+    const active = this.spatialBlob(session);
+    const split = this.splitTravelingPets(active.mobs, x, y, z);
+    const leaving: ParkedDimension = {
+      dimension: session.dimension,
+      world: session.world,
+      mobs: split.stay,
+      drops: active.drops,
+      falling: active.falling,
+      minecarts: active.minecarts,
+      redstone: active.redstone,
+    };
+    const arriving = session.parked?.dimension === destination
+      ? session.parked
+      : {
+        dimension: destination,
+        world: prepared ?? new VoxelWorld(session.summary.seed, destination),
+        mobs: [] as SerializedMob[],
+        drops: [] as SerializedDroppedItem[],
+        falling: [] as SerializedFallingBlock[],
+        minecarts: [] as SerializedMinecart[],
+        redstone: undefined,
+      };
+    arriving.world.deferredLighting = true;
+    const travelIds = new Set(split.travel.map((mob) => mob.id));
+    const arrivingMobs = [
+      ...arriving.mobs.filter((mob) => !travelIds.has(mob.id)),
+      ...split.travel,
+    ];
+    session.parked = leaving;
+    session.world = arriving.world;
+    session.dimension = destination;
+    session.mobs.bindWorld(arriving.world);
+    session.mobs.setSpawnProfile(destination === 'nether' ? 'nether' : undefined);
+    session.drops.bindWorld(arriving.world);
+    session.falling.bindWorld(arriving.world);
+    session.minecarts.bindWorld(arriving.world);
+    session.arrows.bindWorld(arriving.world);
+    session.arrows.clear();
+    session.fireworks.bindWorld(arriving.world);
+    session.fireworks.clear();
+    session.farming.bindWorld(arriving.world);
+    session.redstone.bindWorld(arriving.world);
+    session.mobs.restore(arrivingMobs);
+    session.drops.restore(arriving.drops);
+    session.falling.restore(arriving.falling);
+    session.minecarts.restore(arriving.minecarts);
+    if (arriving.redstone) session.redstone.restore(arriving.redstone);
+    else session.redstone.clear();
+    session.activePressurePlates.clear();
+    this.scene.remove(session.worldRenderer.group);
+    session.worldRenderer.dispose();
+    const world = arriving.world;
+    const worldRenderer = new WorldRenderer(world, atlas, (bx, by, bz) => {
+      const worldState = world.getBlockState(bx, by, bz);
+      const redstoneState = session.redstone.getBlockRenderState(bx, by, bz);
+      if (!worldState && !redstoneState) return undefined;
+      return { ...worldState, ...redstoneState };
+    });
+    this.scene.add(worldRenderer.group);
+    session.worldRenderer = worldRenderer;
+    session.cameraCollision = worldCameraCollisionSource(world);
+    session.player.teleport([x, y, z]);
+    session.player.velocity.set(0, 0, 0);
+    this.localPortalStartedAt = undefined;
+    this.ui.setPortalCountdown(null);
+    this.syncLocalRenderFromPlayer();
+    this.beginWorldLoading(false);
+  }
+
+  private splitTravelingPets(
+    mobs: readonly SerializedMob[],
+    x: number,
+    y: number,
+    z: number,
+  ): { stay: SerializedMob[]; travel: SerializedMob[] } {
+    const stay: SerializedMob[] = [];
+    const travel: SerializedMob[] = [];
+    mobs.forEach((mob, index) => {
+      if (mob.ownerId && isPetKind(mob.kind)) {
+        const angle = index * 1.2;
+        travel.push({
+          ...mob,
+          position: [x + Math.cos(angle), y, z + Math.sin(angle)],
+          velocity: [0, 0, 0],
+        });
+        return;
+      }
+      stay.push(mob);
+    });
+    return { stay, travel };
+  }
+
   private async saveSession(): Promise<void> {
     const session = this.session;
     if (!session || session.online) return;
+    const active = this.spatialBlob(session);
+    const overworldWorld = session.dimension === 'overworld' ? session.world : session.parked?.world ?? session.world;
+    const overworldSpatial = session.dimension === 'overworld' ? active : this.parkedBlob(session.parked);
+    const netherWorld = session.dimension === 'nether' ? session.world : session.parked?.dimension === 'nether' ? session.parked.world : undefined;
+    const netherSpatial = session.dimension === 'nether'
+      ? active
+      : session.parked?.dimension === 'nether' ? this.parkedBlob(session.parked) : undefined;
     const state: SerializedWorldState = {
       schemaVersion: WORLD_SCHEMA_VERSION,
       worldgenVersion: WORLDGEN_VERSION,
@@ -4888,7 +5221,7 @@ export class Game {
         playTimeSeconds: session.playTicks / TICK_RATE,
         updatedAt: Date.now(),
       },
-      timeOfDay: session.world.timeOfDay,
+      timeOfDay: overworldWorld.timeOfDay,
       weather: 'clear',
       player: {
         position: session.player.position.toArray() as [number, number, number],
@@ -4904,17 +5237,19 @@ export class Game {
         spawnPoint: [...session.survival.spawnPoint],
         inventory: session.inventory.serialize(),
         portalChest: session.portalChest.slots,
+        ...(session.dimension === 'nether' ? { dimension: 'nether' as const } : {}),
       },
-      modifications: session.world.serializeModifications(),
-      chests: Object.fromEntries(session.world.chests),
-      furnaces: Object.fromEntries(session.world.furnaces),
-      signs: session.world.serializeSigns(),
-      droppedItems: session.drops.serialize(),
-      fallingBlocks: session.falling.serialize(),
-      minecarts: session.minecarts.serialize(),
-      blockStates: session.world.serializeBlockStates(),
-      mobs: session.mobs.serialize(),
-      redstone: session.redstone.serialize(),
+      modifications: overworldWorld.serializeModifications(),
+      chests: Object.fromEntries(overworldWorld.chests),
+      furnaces: Object.fromEntries(overworldWorld.furnaces),
+      signs: overworldWorld.serializeSigns(),
+      droppedItems: overworldSpatial.drops,
+      fallingBlocks: overworldSpatial.falling,
+      minecarts: overworldSpatial.minecarts,
+      blockStates: overworldWorld.serializeBlockStates(),
+      mobs: overworldSpatial.mobs,
+      redstone: overworldSpatial.redstone,
+      ...(netherWorld && netherSpatial ? { nether: this.dimensionPocket(netherWorld, netherSpatial) } : {}),
       ...(session.serverWorld ? { serverWorld: session.serverWorld } : {}),
     };
     session.summary = state.summary;
@@ -5483,6 +5818,7 @@ export class Game {
     }, this.debugTickOrder ? this.kernelTrace : undefined);
 
     if (aborted) return;
+    if (!session.online) this.tickLocalPortal(session);
 
     if (session.playTicks - session.lastAutosaveTick >= AUTOSAVE_INTERVAL_SECONDS * TICK_RATE) {
       session.lastAutosaveTick = session.playTicks;
@@ -6862,10 +7198,12 @@ export class Game {
     void this.saveSession();
     this.ui.showDeath(
       () => {
-        session.survival.respawn(session.player, session.survival.spawnPoint);
-        this.syncLocalRenderFromPlayer();
+        const loading = this.returnLocalToSpawn(session, true);
         this.deathShown = false;
-        this.enterPlaying();
+        if (!loading) {
+          this.syncLocalRenderFromPlayer();
+          this.enterPlaying();
+        }
       },
       () => void this.saveAndQuit(),
     );

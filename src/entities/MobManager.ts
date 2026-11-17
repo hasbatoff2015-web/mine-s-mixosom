@@ -519,6 +519,7 @@ export class MobManager {
   teleportCandidateChecks = 0;
   teleportSearches = 0;
   lastSeparationPairChecks = 0;
+  private spawnProfile: 'overworld' | 'nether' | undefined;
 
   constructor(
     sceneOrHost: EntityHost | object,
@@ -551,6 +552,16 @@ export class MobManager {
       options.caveHostileDensityRadius ?? CAVE_HOSTILE_DENSITY_RADIUS,
     );
     this.random = options.random ?? systemRandomFn;
+    this.spawnProfile = options.spawnProfile;
+  }
+
+  /** Singleplayer swaps the voxel world without rebuilding the manager. */
+  bindWorld(world: VoxelWorld): void {
+    (this as unknown as { world: VoxelWorld }).world = world;
+  }
+
+  setSpawnProfile(profile: 'overworld' | 'nether' | undefined): void {
+    this.spawnProfile = profile;
   }
 
   get count(): number {
@@ -1951,7 +1962,7 @@ export class MobManager {
       const skyX = Math.floor(mob.position.x);
       const skyY = Math.floor(mob.position.y + mob.definition.height * 0.9);
       const skyZ = Math.floor(mob.position.z);
-      mob.sunlightBurning = this.options.spawnProfile !== 'nether'
+      mob.sunlightBurning = this.spawnProfile !== 'nether'
         && mob.kind !== 'mega_zombie'
         && mob.kind !== 'nether_skeleton'
         && isHostileMob(mob.kind)
@@ -2098,7 +2109,7 @@ export class MobManager {
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
   ): void {
-    if (this.options.spawnProfile === 'nether') {
+    if (this.spawnProfile === 'nether') {
       this.tryNetherSkeletonSpawn(playerPosition);
       return;
     }

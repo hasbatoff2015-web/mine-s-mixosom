@@ -18,6 +18,8 @@ describe('WorldSnapshot', () => {
     expect(restored.summary.seed).toBe('seed-1');
     expect(restored.timeOfDay).toBe(6000);
     expect(restored.player.position).toEqual([8.5, 64, 8.5]);
+    expect(restored.player.dimension).toBeUndefined();
+    expect(restored.nether).toBeUndefined();
     expect(restored.player.health).toBe(18);
     expect(restored.player.hunger).toBe(16);
     expect(restored.player.absorption).toBe(4);
@@ -31,6 +33,28 @@ describe('WorldSnapshot', () => {
     const inv = Inventory.deserialize(restored.player.inventory);
     expect(inv.has('diamond', 3)).toBe(true);
     expect(inv.getSlot({ section: 'armor', slot: 'chest' })?.itemId).toBe('iron_chestplate');
+  });
+
+  it('keeps a nether pocket and treats a missing dimension as the overworld', () => {
+    const snapshot = sampleSnapshot();
+    snapshot.player.dimension = 'nether';
+    snapshot.nether = {
+      modifications: { '1,1': { '4': BlockId.Netherrack } },
+      chests: {},
+      furnaces: {},
+      droppedItems: [{ id: 'drop-nether' }],
+      mobs: [{ id: 'mob-wolf', kind: 'wolf', ownerId: 'local' }],
+      timeOfDay: 12800,
+    };
+    const restored = parseWorldSnapshot(JSON.parse(JSON.stringify(snapshot)));
+    expect(restored.player.dimension).toBe('nether');
+    expect(restored.nether?.modifications['1,1']?.['4']).toBe(BlockId.Netherrack);
+    expect(restored.nether?.mobs).toEqual([{ id: 'mob-wolf', kind: 'wolf', ownerId: 'local' }]);
+    const old = sampleSnapshot();
+    delete old.player.dimension;
+    const legacy = parseWorldSnapshot(JSON.parse(JSON.stringify(old)));
+    expect(legacy.player.dimension).toBeUndefined();
+    expect(legacy.nether).toBeUndefined();
   });
 
   it('preserves effects inside a server player survival blob', () => {

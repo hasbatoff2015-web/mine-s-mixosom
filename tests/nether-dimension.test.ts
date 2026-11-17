@@ -4,9 +4,15 @@ import { ItemId } from '../src/items';
 import { Chunk } from '../src/world/Chunk';
 import { VoxelWorld } from '../src/world/World';
 import { NetherGenerator } from '../src/world/NetherGenerator';
-import { findNetherPortalFrame, lightNetherPortal, sweepInvalidPortals } from '../src/world/netherPortal';
+import { bodyOverlapsPortal, findNetherPortalFrame, lightNetherPortal, sweepInvalidPortals } from '../src/world/netherPortal';
 import { enchantmentFlowerDrops, ENCHANTMENT_FLOWER_GROW_MS } from '../src/world/enchantmentFlower';
-import { dimensionFromStoredWorldId, dimensionWorldId, parseDimension } from '../src/world/dimension';
+import {
+  dimensionFromStoredWorldId,
+  dimensionWorldId,
+  parseDimension,
+  stepPortalChannel,
+  NETHER_PORTAL_CHANNEL_MS,
+} from '../src/world/dimension';
 import { isLiveFire } from '../src/blocks/fireBlocks';
 import { HOSTILE_KINDS } from '../src/entities/MobManager';
 
@@ -16,9 +22,10 @@ function columnSolid(world: VoxelWorld, x: number, z: number): { bedrock: boolea
   let seenSolid = false;
   for (let y = 255; y >= 0; y -= 1) {
     const block = world.getBlock(x, y, z);
-    if (block === BlockId.Air || block === BlockId.EnchantmentFlower || block === BlockId.SoulFire
-      || block === BlockId.NetherMushroomCap || block === BlockId.NetherMushroomStem) continue;
+    const decoration = block === BlockId.Air || block === BlockId.EnchantmentFlower || block === BlockId.SoulFire
+      || block === BlockId.NetherMushroomCap || block === BlockId.NetherMushroomStem;
     if (!seenSolid) {
+      if (decoration) continue;
       surface = y;
       seenSolid = true;
       continue;
@@ -109,6 +116,21 @@ describe('nether dimension', () => {
     place(8, base + 4, 1);
     place(8, base + 4, 2);
     expect(findNetherPortalFrame(world, 8, base + 2, 1)?.axis).toBe('x');
+    expect(bodyOverlapsPortal(world, {
+      minX: 1.2, minY: base + 1.1, minZ: 0.2, maxX: 1.8, maxY: base + 2.2, maxZ: 0.8,
+    })).toBe(false);
+    lightNetherPortal(world, 8, base + 2, 1);
+    expect(bodyOverlapsPortal(world, {
+      minX: 7.2, minY: base + 1.1, minZ: 1.2, maxX: 8.2, maxY: base + 2.2, maxZ: 1.8,
+    })).toBe(true);
+    expect(stepPortalChannel(undefined, 1_000, false)).toEqual({ seconds: null, commit: false });
+    const started = stepPortalChannel(undefined, 1_000, true);
+    expect(started.startedAt).toBe(1_000);
+    expect(started.seconds).toBe(3);
+    expect(started.commit).toBe(false);
+    const done = stepPortalChannel(1_000, 1_000 + NETHER_PORTAL_CHANNEL_MS, true);
+    expect(done.commit).toBe(true);
+    expect(done.seconds).toBeNull();
   });
 
   it('mines mythril only with a titanium pickaxe and rolls flower loot', () => {
