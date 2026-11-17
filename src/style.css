@@ -793,6 +793,29 @@ textarea,
   background: #67d960;
 }
 
+#portal-countdown {
+  position: absolute;
+  left: 50%;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + var(--hud-slot-size) + var(--hud-status-icon-size) + 8px);
+  transform: translateX(-50%);
+  z-index: 8;
+  color: #f4e2ff;
+  font: 700 14px/1.2 "Minecraft", "Segoe UI", sans-serif;
+  text-shadow: 0 2px 0 #140814;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+#portal-countdown[hidden] {
+  display: none;
+}
+
+.mc-home-nether {
+  margin-left: 6px;
+  color: #ff5555;
+  font-size: 12px;
+}
+
 #pvp-badge {
   position: absolute;
   left: 50%;

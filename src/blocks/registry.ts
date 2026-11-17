@@ -537,6 +537,41 @@ export const BLOCKS: readonly BlockDefinition[] = Object.freeze([
     drop: { item: key, count: 1 },
     textures: { all: `block/${key}` },
   })),
+  block(BlockId.Netherrack, 'netherrack', {
+    category: 'terrain', hardness: 1.5, tool: 'pickaxe', tier: 'wood',
+    drop: { item: 'netherrack', count: 1, requiresCorrectTool: true },
+  }),
+  block(BlockId.SoulSand, 'soul_sand', {
+    category: 'terrain', hardness: 0.5, tool: 'shovel', tier: 'hand',
+    soundGroup: 'sand',
+  }),
+  block(BlockId.SoulFire, 'soul_fire', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'fire', lightingMode: 'standard',
+    replaceable: true, breakable: true, hasItem: false, drop: false, emission: 14,
+    textures: { all: 'block/soul_fire' },
+  }),
+  ore(BlockId.MythrilOre, 'mythril_ore', 'titanium', 3),
+  block(BlockId.NetherMushroomCap, 'nether_mushroom_cap', {
+    category: 'decoration', hardness: 0, tool: 'axe', tier: 'hand',
+  }),
+  block(BlockId.NetherMushroomStem, 'nether_mushroom_stem', {
+    category: 'decoration', hardness: 0, tool: 'axe', tier: 'hand',
+  }),
+  block(BlockId.EnchantmentFlower, 'enchantment_flower', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'cutout', renderShape: 'cross', emission: 7, hasItem: false, drop: false,
+    textures: {
+      all: 'block/enchantment_flower',
+      stage0: 'block/enchantment_flower_root',
+      stage1: 'block/enchantment_flower',
+    },
+  }),
+  block(BlockId.NetherPortal, 'nether_portal', {
+    category: 'decoration', hardness: 0, solid: false, opaque: false, occludesFaces: false,
+    renderLayer: 'translucent', renderShape: 'portal', hasItem: false, drop: false,
+    textures: { all: 'block/nether_portal' }, emission: 11,
+  }),
   block(BlockId.CollectiblePainting, 'collectible_painting', {
     category: 'decoration',
     hardness: 0,

@@ -31,7 +31,8 @@ export type BlockRenderShape =
   | 'farmland'
   | 'bed'
   | 'sign'
-  | 'painting';
+  | 'painting'
+  | 'portal';
 
 export type RailShape =
   | 'north_south'
@@ -324,4 +325,12 @@ export enum BlockId {
   BirchSapling = 168,
   SpruceSapling = 169,
   CollectiblePainting = 170,
+  Netherrack = 171,
+  SoulSand = 172,
+  SoulFire = 173,
+  MythrilOre = 174,
+  NetherMushroomCap = 175,
+  NetherMushroomStem = 176,
+  EnchantmentFlower = 177,
+  NetherPortal = 178,
 }

@@ -21,6 +21,7 @@ export type MobKind =
   | 'cat'
   | 'zombie'
   | 'skeleton'
+  | 'nether_skeleton'
   | 'creeper'
   | 'spider'
   | 'mega_zombie'
@@ -114,6 +115,15 @@ export const MOB_DEFINITIONS: Readonly<Record<MobKind, MobDefinition>> = Object.
       { itemId: ItemId.Arrow, min: 0, max: 2 },
       { itemId: ItemId.Bone, min: 0, max: 2 },
       { itemId: ItemId.Bow, min: 1, max: 1, chance: 0.04 },
+    ]),
+  }),
+  nether_skeleton: Object.freeze({
+    kind: 'nether_skeleton', disposition: 'hostile', maxHealth: 20, width: 0.6, height: 1.8,
+    eyeHeight: 1.62, speed: 2.35, detectionRange: 18, attackRange: 1.45,
+    attackDamage: 3, attackCooldownSeconds: 1.5,
+    loot: Object.freeze([
+      { itemId: ItemId.FireArrow, min: 1, max: 1, chance: 0.2 },
+      { itemId: ItemId.EnchantmentShard, min: 1, max: 1, chance: 1 },
     ]),
   }),
   creeper: Object.freeze({

@@ -129,6 +129,8 @@ export const ItemId = Object.freeze({
   WHArrow: 'wh_arrow',
   TotemOfUndying: 'totem_of_undying',
   FlintAndSteel: 'flint_and_steel',
+  EnchantmentFlower: 'enchantment_flower',
+  EnchantmentShard: 'enchantment_shard',
   GoldenApple: 'golden_apple',
   GlassBottle: 'glass_bottle',
   PotionInvisibility: 'potion_invisibility',

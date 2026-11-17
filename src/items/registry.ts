@@ -269,6 +269,8 @@ const resources: readonly ItemDefinition[] = [
   resource(ItemId.WHArrow, { tags: ['arrow'] }),
   resource(ItemId.TotemOfUndying, { maxStack: 1 }),
   resource(ItemId.FlintAndSteel, { durability: 64 }),
+  resource(ItemId.EnchantmentFlower),
+  resource(ItemId.EnchantmentShard),
   resource(ItemId.GlassBottle),
   resource(ItemId.Bucket, { maxStack: 16 }),
   resource(ItemId.WaterBucket, { placesBlockId: BlockId.Water, maxStack: 1 }),

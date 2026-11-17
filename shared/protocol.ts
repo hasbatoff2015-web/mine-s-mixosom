@@ -108,6 +108,13 @@ export interface PlayerSnapshot {
   readonly armor?: number;
   readonly ridingEntityId?: string;
   readonly dead?: boolean;
+  /** Current dimension. Missing on older servers means the overworld. */
+  readonly dimension?: 'overworld' | 'nether';
+  /**
+   * Seconds left before a nether portal commits. Omitted when the player is not channeling.
+   * Only the local player's copy is displayed.
+   */
+  readonly portalCountdown?: number;
   /** Command applied on the last physics tick of this snapshot. */
   readonly inputSeq?: number;
   /** Same as inputSeq; named so ACK mapping is not mistaken for a tick id. */
@@ -935,6 +942,24 @@ export interface ServerWelcomeMessage {
    * Absent on a normal guest join and on older servers.
    */
   readonly yandexSync?: YandexSyncState;
+  /** Missing on older servers. The client treats that as the overworld. */
+  readonly dimension?: 'overworld' | 'nether';
+}
+
+export interface ServerDimensionMessage {
+  readonly type: 'dimension';
+  readonly dimension: 'overworld' | 'nether';
+  readonly seed: string;
+  readonly timeOfDay: number;
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  readonly yaw: number;
+  readonly pitch: number;
+  readonly movementEpoch: number;
+  readonly modifications: WorldModifications;
+  readonly blockStates: WorldBlockStates;
+  readonly furnacesLit?: readonly FurnaceLitState[];
 }
 
 export interface ServerPlayerJoinedMessage {
@@ -1564,6 +1589,8 @@ export interface NetworkMenuHome {
   readonly x: number;
   readonly y: number;
   readonly z: number;
+  /** Present for homes saved in the Nether. Older menus omit it. */
+  readonly nether?: boolean;
 }
 
 export interface NetworkMenuFriend {
@@ -1844,6 +1871,7 @@ export interface ServerTradeMessage {
 
 export type ServerMessage =
   | ServerWelcomeMessage
+  | ServerDimensionMessage
   | ServerPlayerJoinedMessage
   | ServerPlayerAppearanceMessage
   | ServerPlayerLeftMessage

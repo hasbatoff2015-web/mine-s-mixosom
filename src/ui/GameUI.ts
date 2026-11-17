@@ -539,6 +539,7 @@ export class GameUI {
   private offhandHtml = '';
   private selectedItemText = '';
   private pvpBadge: HTMLElement;
+  private portalCountdown: HTMLElement;
   private pvpDeadlineMs: number | null = null;
   private pvpShownSeconds = -1;
   private heartsHtml = '';
@@ -581,6 +582,7 @@ export class GameUI {
           <div class="boss-bar-percent">100%</div>
         </div>
         <div id="mining-progress" class="hidden"><span></span></div>
+        <div id="portal-countdown" hidden></div>
         <div id="status-bars">
           <div class="status-left">
             <div class="armor hidden"></div>
@@ -663,6 +665,7 @@ export class GameUI {
     this.offhandHud = this.root.querySelector('#offhand-hud')!;
     this.selectedItem = this.root.querySelector('#selected-item')!;
     this.pvpBadge = this.root.querySelector('#pvp-badge')!;
+    this.portalCountdown = this.root.querySelector('#portal-countdown')!;
     this.hearts = this.root.querySelector('.hearts')!;
     this.bossBar = this.root.querySelector('#boss-bar') ?? undefined;
     this.bossFill = this.root.querySelector('#boss-bar .boss-bar-track > span') ?? undefined;
@@ -1741,6 +1744,20 @@ export class GameUI {
    * `deadlineMs` is a local `Date.now()` instant. Null hides the existing badge
    * without rebuilding it.
    */
+  setPortalCountdown(seconds: number | null): void {
+    if (seconds === null || seconds <= 0) {
+      if (!this.portalCountdown.hidden) {
+        this.portalCountdown.hidden = true;
+        this.portalCountdown.textContent = '';
+      }
+      return;
+    }
+    const word = seconds === 1 ? 'секунда' : seconds >= 2 && seconds <= 4 ? 'секунды' : 'секунд';
+    const text = `Телепортируемся в ад — ${seconds} ${word}`;
+    this.portalCountdown.hidden = false;
+    if (this.portalCountdown.textContent !== text) this.portalCountdown.textContent = text;
+  }
+
   setPvpDeadline(deadlineMs: number | null): void {
     this.pvpDeadlineMs = deadlineMs;
     this.pvpShownSeconds = -1;

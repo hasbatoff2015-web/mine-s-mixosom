@@ -57,7 +57,24 @@ import {
   listenerHearsWorldSound,
   worldSoundMaxDistance,
 } from '../src/audio/worldSoundPlayback';
+import { Vec3 } from '../src/math/vec3';
 import { VoxelWorld } from '../src/world/World';
+import {
+  NETHER_BED_MESSAGE,
+  NETHER_PORTAL_CHANNEL_MS,
+  NETHER_UNSAFE_MESSAGE,
+  dimensionFromStoredWorldId,
+  dimensionWorldId,
+  parseDimension,
+  sameServerWorld,
+  type DimensionId,
+} from '../src/world/dimension';
+import { findSafeTeleport } from '../src/world/safeStand';
+import { sweepInvalidPortals } from '../src/world/netherPortal';
+import { isPetKind } from '../src/entities/petTypes';
+import { WorldPersistence } from './persistence';
+import { fsRecordsToSnapshot, snapshotToFsRecords } from '../src/save/fsRecords';
+import { parseWorldSnapshot } from '../src/save/snapshot';
 import { bedExitPosition, isBedRestValid, type BedRestState } from '../src/world/bed';
 import { collectMinecartPassengers } from '../src/entities/minecartOccupancy';
 import {
@@ -457,6 +474,10 @@ export class ServerPlayer implements GameplayPlayer {
   nameStyleProvider?: () => PlayerNameStyle | undefined;
   /** Decorative pet for this world. Null means the player has none. */
   cosmeticPet: CosmeticPetSelection | null = null;
+  dimension: DimensionId = 'overworld';
+  /** Wall-clock start of a nether portal channel. Absent when the player is not inside one. */
+  portalChannelStartedAt?: number;
+  portalCountdown: number | null = null;
   /**
    * Interact/use can advertise a newer hotbar slot than the command snapshot
    * captured before the 1–9 key. Keep that slot when the matching command applies.
@@ -557,6 +578,8 @@ export class ServerPlayer implements GameplayPlayer {
       armor: getArmorPoints(this.inventory),
       ridingEntityId: this.ridingCartId,
       dead: this.survival.dead,
+      dimension: this.dimension,
+      ...(this.portalCountdown !== null ? { portalCountdown: this.portalCountdown } : {}),
       ...(nameStyle ? { nameStyle } : {}),
       inputSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
       ackCommandSeq: this.appliedCommandSeq >= 0 ? this.appliedCommandSeq : this.lastInputSeq,
@@ -711,6 +734,7 @@ export class WorldInstance {
    */
   private canonicalWorldLoaded = false;
   readonly world: VoxelWorld;
+  readonly netherWorld: VoxelWorld;
   readonly events = new EventBus();
   readonly commands = new CommandRegistry();
   readonly plugins = new PluginManager(this.events, this.commands);
@@ -773,6 +797,7 @@ export class WorldInstance {
   /** Player ids whose provider link is committed or whose commit outcome is unknown. */
   private readonly retainedIdentityPlayers = new Set<string>();
   readonly gameplay: ServerGameplay;
+  readonly netherGameplay: ServerGameplay;
   readonly database: Database;
   readonly adminIdentity: AdminIdentityPolicy;
   private readonly adminInspection: AdminInspectionService;
@@ -809,6 +834,8 @@ export class WorldInstance {
   private createdAt = Date.now();
   private loadedWorldgenVersion?: number;
   private readonly generatedChunks = new Set<string>();
+  private readonly netherGeneratedChunks = new Set<string>();
+  private portalSweeping = false;
   private persistTimer: ReturnType<typeof setInterval> | undefined;
   private saveGeneration = 0;
   private saveQueue: Promise<void> = Promise.resolve();
@@ -856,7 +883,7 @@ export class WorldInstance {
   private readonly debugSnap = process.env.FC_DEBUG_SNAP === '1';
   private readonly kernelTrace: string[] = [];
   /** Lit edges since the previous flush. Not a per-tick furnace snapshot. */
-  private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean }> = [];
+  private pendingFurnaceLit: Array<{ x: number; y: number; z: number; burning: boolean; dimension: DimensionId }> = [];
 
   constructor(readonly config: ServerConfig, options?: WorldInstanceOptions) {
     this.database = options?.database ?? createDatabase(config);
@@ -901,7 +928,7 @@ export class WorldInstance {
     this.worldStore = new FsWorldStore(config.dataDir);
     this.world = new VoxelWorld(config.worldSeed);
     this.world.onFurnaceLitChanged = (change) => {
-      this.pendingFurnaceLit.push(change);
+      this.pendingFurnaceLit.push({ ...change, dimension: 'overworld' });
     };
     this.gameplay = new ServerGameplay(this.world, this.events, (player) => {
       this.flushHealth(player as ServerPlayer);
@@ -922,7 +949,40 @@ export class WorldInstance {
     this.world.onFurnaceCompleted = (inputItemId, outputItemId, outputCount) => {
       this.resources.noteSmelt(inputItemId, outputItemId, outputCount);
     };
-    this.gameplay.listPlayers = () => this.players.values();
+    this.gameplay.listPlayers = () => {
+      const players: ServerPlayer[] = [];
+      for (const player of this.players.values()) if (player.dimension !== 'nether') players.push(player);
+      return players;
+    };
+    this.netherWorld = new VoxelWorld(config.worldSeed, 'nether');
+    this.netherWorld.onFurnaceLitChanged = (change) => {
+      this.pendingFurnaceLit.push({ ...change, dimension: 'nether' });
+    };
+    this.netherGameplay = new ServerGameplay(this.netherWorld, this.events, (player) => {
+      this.flushHealth(player as ServerPlayer);
+    }, () => this.spawn, (x, y, z) => {
+      for (const player of this.players.values()) {
+        if (player.dimension !== 'nether') continue;
+        const target = player.miningTarget;
+        if (target?.x === x && target.y === y && target.z === z) this.abortMining(player);
+      }
+    }, {
+      maxTamedPets: resolveMaxTamedPets(config.maxPlayers),
+      spawnProfile: 'nether',
+    });
+    this.netherGameplay.serverMode = config.serverMode;
+    this.netherGameplay.onPersistentStateChanged = () => { this.dirty = true; };
+    this.netherGameplay.onAcceptedBlockDrop = (itemId, count, sourceId) => this.resources.noteMine(itemId, count, sourceId);
+    this.netherGameplay.onProducedResource = (itemId, count) => this.resources.noteReward(itemId, count);
+    this.netherGameplay.onCraftedResource = (commit) => this.resources.noteCraft(commit);
+    this.netherGameplay.onCreativeResource = (previous, next) => this.resources.noteCreative(previous, next);
+    this.netherGameplay.listPlayers = () => {
+      const players: ServerPlayer[] = [];
+      for (const player of this.players.values()) if (player.dimension === 'nether') players.push(player);
+      return players;
+    };
+    this.watchPortals(this.world);
+    this.watchPortals(this.netherWorld);
     this.spawn = [0.5, 70, 0.5];
     this.dt = 1 / config.tickRate;
     this.worldView = this.createWorldView();
@@ -983,6 +1043,7 @@ export class WorldInstance {
         const pos = live.controller.position;
         return { x: pos.x, y: pos.y, z: pos.z };
       },
+      playerDimension: (playerId) => this.players.get(playerId)?.dimension ?? 'overworld',
       worldId: () => this.worldId,
       getBlock: (x, y, z) => this.world.getBlock(x, y, z),
       setBlock: (x, y, z, blockId) => this.worldView.setBlock(x, y, z, blockId),
@@ -992,7 +1053,10 @@ export class WorldInstance {
         const claim = this.worldEvents.systemClaim();
         return claim ? [claim] : [];
       },
-      teleportNow: (playerId, dest) => this.teleports.now(playerId, dest, 'clan', { silent: true }),
+      teleportNow: (playerId, dest) => this.teleports.now(playerId, {
+        ...dest,
+        dimension: 'overworld',
+      }, 'clan', { silent: true }),
       showClaim: (playerId, claim) => this.claimBoundaries.show(playerId, claim),
     });
     this.friends.setRuntime({
@@ -1071,7 +1135,12 @@ export class WorldInstance {
           yaw: player.controller.yaw,
           pitch: player.controller.pitch,
         }),
-        teleport: (x, y, z, look) => this.hardRelocatePlayer(player, x, y, z, look),
+        teleport: (x, y, z, look) => {
+          if (look?.dimension && look.dimension !== player.dimension) {
+            return this.enterDimension(player, look.dimension, x, y, z, look);
+          }
+          return this.hardRelocatePlayer(player, x, y, z, look);
+        },
         sendMessage: (text) => {
           this.sendPlayerNotice(player, text, 'system');
         },
@@ -1083,9 +1152,13 @@ export class WorldInstance {
       commit: (playerId, reason, now) => this.playerRules.acceptTeleport(playerId, reason, now),
     });
     this.teleports.attach(this.events);
+    this.teleports.setLocationWorldId((playerId) => dimensionWorldId(
+      this.worldId,
+      this.players.get(playerId)?.dimension ?? 'overworld',
+    ));
     this.pluginConfig = new PluginConfigService(this.pluginStore);
-    this.rtp = new RtpService(this.world);
-    this.rtpSessions = new RtpSessionManager(this.rtp);
+    this.rtp = new RtpService(this.world, this.netherWorld);
+    this.rtpSessions = new RtpSessionManager(this.rtp, (playerId) => this.players.get(playerId)?.dimension ?? 'overworld');
     this.autoMine = new AutoMineManager({
       world: this.world,
       worldId: () => this.worldId,
@@ -1753,6 +1826,7 @@ export class WorldInstance {
         if (stored.sessionToken) this.tokens.set(stored.sessionToken, stored.id);
       }
       this.gameplay.restoreEntities(existing);
+      await this.loadNether();
       this.permissions.load();
       this.donation.load();
       this.money.load();
@@ -1777,6 +1851,7 @@ export class WorldInstance {
       return;
     }
     this.spawn = this.relocatePose(...estimateWorldSpawn(this.world));
+    await this.loadNether();
     this.createdAt = Date.now();
     this.permissions.load();
     this.donation.load();
@@ -2021,6 +2096,7 @@ export class WorldInstance {
       },
     };
     await this.worldStore.save(snapshot);
+    await this.saveNether();
     if (generation === this.saveGeneration) this.worldEvents.acknowledgeWorldSaved();
     this.donation.persist();
     this.money.persist();
@@ -3695,6 +3771,7 @@ export class WorldInstance {
       z: player.controller.position.z,
       yaw: player.controller.yaw,
       pitch: player.controller.pitch,
+      dimension: player.dimension,
     };
   }
 
@@ -3727,6 +3804,7 @@ export class WorldInstance {
         return { x: last.x, y: last.y, z: last.z };
       },
       liveCosmeticPet: (entry) => this.liveCosmeticPet(entry.id),
+      dimensionOf: (playerId) => this.players.get(playerId)?.dimension ?? 'overworld',
     };
   }
 
@@ -3746,7 +3824,9 @@ export class WorldInstance {
     }
     if (outcome.kind === 'spawn') {
       const spawn = this.worldView.spawn();
-      const result = this.teleports.schedule(player.id, { x: spawn[0], y: spawn[1], z: spawn[2] }, 'spawn', {
+      const result = this.teleports.schedule(player.id, {
+        x: spawn[0], y: spawn[1], z: spawn[2], dimension: 'overworld',
+      }, 'spawn', {
         warmupMs: Number(this.pluginConfig.get('spawn', 'warmupSeconds', 0)) * 1000,
         cooldownMs: Number(this.pluginConfig.get('spawn', 'cooldownSeconds', 5)) * 1000,
         cancelOnMove: Boolean(this.pluginConfig.get('spawn', 'cancelOnMove', true)),
@@ -3770,6 +3850,7 @@ export class WorldInstance {
       }
       const result = this.teleports.schedule(player.id, {
         x: dest.x, y: dest.y, z: dest.z, yaw: dest.yaw, pitch: dest.pitch,
+        dimension: dimensionFromStoredWorldId(dest.worldId),
       }, 'home', {
         warmupMs: Number(this.pluginConfig.get('home', 'warmupSeconds', 0)) * 1000,
         cooldownMs: Number(this.pluginConfig.get('home', 'cooldownSeconds', 5)) * 1000,
@@ -3798,6 +3879,7 @@ export class WorldInstance {
         z: target.controller.position.z,
         yaw: target.controller.yaw,
         pitch: target.controller.pitch,
+        dimension: target.dimension,
       }, 'friends', { warmupMs: 0, cooldownMs: 0, cancelOnMove: false, cancelOnDamage: false });
       if (!result.ok) {
         session.message = result.error ?? 'Teleport failed.';
@@ -3994,7 +4076,13 @@ export class WorldInstance {
       return {
         ...base,
         homeNameText: session.homeNameText,
-        homes: homes.map((home) => ({ name: home.name, x: home.x, y: home.y, z: home.z })),
+        homes: homes.map((home) => ({
+          name: home.name,
+          x: home.x,
+          y: home.y,
+          z: home.z,
+          ...(dimensionFromStoredWorldId(home.worldId) === 'nether' ? { nether: true } : {}),
+        })),
         homeCount: homes.length,
         homeMax: this.maxHomesFor(player),
         ...(session.pendingHomeName ? { pendingHomeName: session.pendingHomeName } : {}),
@@ -4297,9 +4385,9 @@ export class WorldInstance {
     this.noteReconnectReservation(player.id);
     this.removeCosmeticPetRuntime(player.id);
     this.clearPlayerEmote(player);
-    this.gameplay.forceReleaseVehicle(player, false);
+    this.gp(player).forceReleaseVehicle(player, false);
     player.restingBed = undefined;
-    this.gameplay.whMarks.clearPlayer(player.id);
+    this.gp(player).whMarks.clearPlayer(player.id);
     player.disconnectedAt = Date.now();
     player.sink = null;
     player.activeSocketCount = 0;
@@ -4441,13 +4529,13 @@ export class WorldInstance {
         if (before === BlockId.Air) return fail('tryBreak.lockedEmpty', 'empty');
         if (before !== intent.targetBlockId) return fail('tryBreak.lockedStale', 'stale');
       } else {
-        const validated = this.gameplay.validatePlayerIntent(player, intent, commandSeq, {
+        const validated = this.gp(player).validatePlayerIntent(player, intent, commandSeq, {
           requireMatchingFace: false,
         });
         if (!validated.ok) return fail('tryBreak.intent', validated.reason);
       }
     }
-    const result = this.gameplay.breakBlock(player, x, y, z);
+    const result = this.gp(player).breakBlock(player, x, y, z);
     const after = this.world.getBlock(x, y, z);
     this.noteBreakAttempt(player, x, y, z, commandSeq, 'tryBreak.breakBlock', result, before, {
       eventCancelled: result.ok === false && result.reason === 'cancelled',
@@ -4505,7 +4593,7 @@ export class WorldInstance {
     intent?: BlockTargetIntent,
     commandSeq?: number,
   ): { ok: true } | { ok: false; reason: string } {
-    const result = this.gameplay.placeBlock(player, x, y, z, requestedBlock, intent, commandSeq);
+    const result = this.gp(player).placeBlock(player, x, y, z, requestedBlock, intent, commandSeq);
     if (result.ok) {
       this.dirty = true;
       this.flushBlockChanges();
@@ -4529,7 +4617,7 @@ export class WorldInstance {
       );
       return { ok: false, reason: 'duplicate' };
     }
-    const result = this.gameplay.beginMining(player, intent, commandSeq);
+    const result = this.gp(player).beginMining(player, intent, commandSeq);
     this.noteBreakAttempt(
       player, intent.targetX, intent.targetY, intent.targetZ, commandSeq,
       'beginMining', result, before, { mutated: false },
@@ -4547,7 +4635,7 @@ export class WorldInstance {
     if (!this.acceptActionSeq(player, action.actionSeq)) return { ok: false, reason: 'duplicate' };
     if (action.actionSeq <= player.lastBowReleaseSeq) return { ok: false, reason: 'duplicate' };
     player.lastBowReleaseSeq = action.actionSeq;
-    const result = this.gameplay.releaseBowWithAim(player, action.yaw, action.pitch);
+    const result = this.gp(player).releaseBowWithAim(player, action.yaw, action.pitch);
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     return result;
@@ -4632,7 +4720,7 @@ export class WorldInstance {
       );
     }
     const pendingTicks = Math.max(0, this.tickNumber - pending.receivedServerTick);
-    const fired = this.gameplay.releaseBowAtBoundary(
+    const fired = this.gp(player).releaseBowAtBoundary(
       player,
       {
         eyeX: pose.eyeX,
@@ -4749,7 +4837,7 @@ export class WorldInstance {
     const furnace = this.openFurnace(player);
     const chestBefore = chest ? this.slotSignature(chest.slots) : '';
     const furnaceBefore = furnace ? this.slotSignature(furnace.slots) : '';
-    this.gameplay.applyInventory(player, action);
+    this.gp(player).applyInventory(player, action);
     if (this.slotSignature(player.portalChest.slots) !== portalBefore) player.portalChestRevision += 1;
     const window = player.window;
     if (chest && window.x !== undefined && window.y !== undefined && window.z !== undefined
@@ -4922,7 +5010,7 @@ export class WorldInstance {
         this.flushPlayerInventory(player, true);
         return;
       }
-      this.gameplay.applyInventory(player, action);
+      this.gp(player).applyInventory(player, action);
       if (action.action === 'close') player.window = { kind: 'inventory' };
       this.flushPlayerInventory(player, true);
       return;
@@ -4962,7 +5050,7 @@ export class WorldInstance {
         player.craftSlots = craftBackup;
       } else {
         writeInvseeSlots(target.inventory, chest.slots);
-        for (const dropped of result.dropped) this.gameplay.dropFromPlayer(player, dropped);
+        for (const dropped of result.dropped) this.gp(player).dropFromPlayer(player, dropped);
         serverLog(`invseeop ${player.name} ${action.action} ${target.name}`);
       }
     } catch (error) {
@@ -4985,7 +5073,7 @@ export class WorldInstance {
 
   attack(player: ServerPlayer): void {
     if (this.duels.blocksCombatIntent(player.id, 'melee')) return;
-    this.gameplay.attack(player, [...this.players.values()]);
+    this.gp(player).attack(player, [...this.players.values()]);
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
   }
@@ -5098,9 +5186,9 @@ export class WorldInstance {
         },
       };
     }
-    const mob = this.gameplay.mobs.get(action.targetId);
+    const mob = this.gp(player).mobs.get(action.targetId);
     const mobPose = mob?.alive
-      ? this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, pending.receivedServerTick)
+      ? this.gp(player).mobs.rewindPose(mob.id, action.targetRenderTick, pending.receivedServerTick)
       : undefined;
     if (!mob || !mob.alive || !mobPose) {
       return {
@@ -5159,7 +5247,7 @@ export class WorldInstance {
           combat: this.combatStatus(pending, 'stale'),
         };
       }
-      const combat = this.gameplay.attack(player, [...this.players.values()], {
+      const combat = this.gp(player).attack(player, [...this.players.values()], {
         attackerPose,
         clickLook: clickLookFromAction(action, attackerPose),
         itemSlot: slot.value,
@@ -5180,7 +5268,7 @@ export class WorldInstance {
       };
     }
     if (pending.target?.kind === 'mob') {
-      const mob = this.gameplay.mobs.get(pending.target.mobId);
+      const mob = this.gp(player).mobs.get(pending.target.mobId);
       if (!mob || !mob.alive) {
         return {
           ok: true,
@@ -5189,7 +5277,7 @@ export class WorldInstance {
           combat: this.combatStatus(pending, 'stale'),
         };
       }
-      const combat = this.gameplay.attack(player, [...this.players.values()], {
+      const combat = this.gp(player).attack(player, [...this.players.values()], {
         attackerPose,
         clickLook: clickLookFromAction(action, attackerPose),
         itemSlot: slot.value,
@@ -5209,7 +5297,7 @@ export class WorldInstance {
         combat: { ...combat, ...this.combatTiming(pending) },
       };
     }
-    const combat = this.gameplay.attack(player, [...this.players.values()], {
+    const combat = this.gp(player).attack(player, [...this.players.values()], {
       attackerPose,
       clickLook: clickLookFromAction(action, attackerPose),
       itemSlot: slot.value,
@@ -5305,7 +5393,10 @@ export class WorldInstance {
     action: EntityUseAction,
   ): { ok: true; pending: PendingEntityUse } | { ok: false; reason: string } {
     const receivedServerTick = this.tickNumber;
-    const mob = this.gameplay.mobs.get(action.targetId);
+    const mobs = this.gameplay.mobs.get(action.targetId)
+      ? this.gameplay.mobs
+      : this.netherGameplay.mobs;
+    const mob = mobs.get(action.targetId);
     if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
       return { ok: false, reason: 'invalid' };
     }
@@ -5321,7 +5412,7 @@ export class WorldInstance {
         resolvedTick: receivedServerTick,
         rewindTicks: 0,
       }
-      : this.gameplay.mobs.rewindPose(mob.id, action.targetRenderTick, receivedServerTick);
+      : mobs.rewindPose(mob.id, action.targetRenderTick, receivedServerTick);
     if (!pose) return { ok: false, reason: 'stale' };
     return {
       ok: true,
@@ -5347,14 +5438,14 @@ export class WorldInstance {
     if (action.selectedSlot !== pose.selectedSlot) return { ok: false, reason: 'slot' };
     const slot = this.resolveActionSlot(player, action.commandSeq, action.selectedSlot);
     if (!slot.ok) return { ok: false, reason: slot.reason === 'stale' ? 'stale' : 'slot' };
-    const mob = this.gameplay.mobs.get(pending.target.mobId);
+    const mob = this.gp(player).mobs.get(pending.target.mobId);
     if (!mob || !mob.alive || (mob.kind !== 'wolf' && mob.kind !== 'cat')) {
       return { ok: false, reason: 'invalid' };
     }
     this.commitActionSelectedSlot(player, slot.value, action.commandSeq);
     const petLimit = resolvePetLimit(this.permissions, player.id, player.name);
     const look = clickLookFromAction(action, pose);
-    const result = this.gameplay.useEntity(player, action, slot.value, petLimit, {
+    const result = this.gp(player).useEntity(player, action, slot.value, petLimit, {
       eyeX: pose.eyeX,
       eyeY: pose.eyeY,
       eyeZ: pose.eyeZ,
@@ -5502,20 +5593,23 @@ export class WorldInstance {
     const slot = this.resolveActionSlot(player, commandSeq, selectedSlot);
     if (!slot.ok) return slot;
     this.commitActionSelectedSlot(player, slot.value, commandSeq);
-    const result = this.gameplay.useHeld(
+    const result = this.gp(player).useHeld(
       player,
       intent,
       commandSeq,
       slot.value,
       slot.boundaryCommandConfirmsUse,
     );
+    if (!result.ok && result.reason === 'nether-bed') {
+      this.sendPlayerNotice(player, NETHER_BED_MESSAGE, 'error');
+    }
     this.dirty = true;
     this.flushBlockChanges();
     this.flushPlayerInventory(player);
     if (player.pendingSignEdit) {
       const { x, y, z } = player.pendingSignEdit;
       player.pendingSignEdit = undefined;
-      if (this.world.getBlock(x, y, z, false) === BlockId.OakSign) {
+      if (this.worldFor(player).getBlock(x, y, z, false) === BlockId.OakSign) {
         this.sendTo(player, { type: 'sign_editor', x, y, z, lines: this.world.signText(x, y, z) ?? EMPTY_SIGN_LINES });
       }
     }
@@ -5535,7 +5629,7 @@ export class WorldInstance {
       this.sendTo(player, { type: 'error', code: 'book_invalid', message: 'Не удалось сохранить книгу' });
       return;
     }
-    if (overflow) this.gameplay.dropFromPlayer(player, overflow);
+    if (overflow) this.gp(player).dropFromPlayer(player, overflow);
     player.inventoryDirty = true;
     this.dirty = true;
     this.flushPlayerInventory(player);
@@ -5548,30 +5642,31 @@ export class WorldInstance {
     const reach = Math.hypot(eye.x - x - 0.5, eye.y - y - 0.5, eye.z - z - 0.5) <= PLAYER_NET_REACH;
     if (!player.connected || player.survival.dead || !reach || !isValidWorldY(y)
       || !gameplayMayMutateBlock(x, z)
-      || this.world.getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
+      || this.worldFor(player).getBlock(x, y, z, false) !== BlockId.OakSign || !lines) {
       this.sendTo(player, { type: 'error', code: 'sign_invalid', message: 'Не удалось сохранить табличку' });
       return;
     }
     const use = this.events.createPlayerInteract(player.id, x, y, z, BlockId.OakSign);
     this.events.emit('playerInteract', use);
-    if (use.cancelled || !this.world.setSignText(x, y, z, lines)) return;
+    if (use.cancelled || !this.worldFor(player).setSignText(x, y, z, lines)) return;
     this.dirty = true;
     const key = chunkKey(floorDiv(x, 16), floorDiv(z, 16));
     for (const viewer of this.connectedPlayers()) if (viewer.knownChunks.has(key)) {
+      if (viewer.dimension !== player.dimension) continue;
       this.sendTo(viewer, { type: 'sign_data', x, y, z, lines });
     }
   }
 
   pickup(player: ServerPlayer): void {
-    this.gameplay.collectFor(player);
+    this.gp(player).collectFor(player);
     this.flushPlayerInventory(player);
   }
 
   vehicleInput(player: ServerPlayer, message: ClientVehicleInputMessage): void {
-    if (message.action === 'exit') this.gameplay.exitVehicle(player);
+    if (message.action === 'exit') this.gp(player).exitVehicle(player);
     else if (message.action === 'enter' && message.entityId) {
-      if (this.gameplay.enterVehicle(player, message.entityId)) return;
-      const reason = this.gameplay.consumeVehicleEnterReject();
+      if (this.gp(player).enterVehicle(player, message.entityId)) return;
+      const reason = this.gp(player).consumeVehicleEnterReject();
       const text = reason === 'already_riding'
         ? 'Сначала выйдите из текущей вагонетки.'
         : reason === 'vehicle_occupied'
@@ -5865,7 +5960,7 @@ export class WorldInstance {
     if (channel === 'global') return this.connectedPlayers();
     if (channel === 'nearby') {
       const origin = sender.controller.position;
-      return this.connectedPlayers().filter((other) => isWithinNearbyChatRange(
+      return this.connectedPlayers().filter((other) => other.dimension === sender.dimension && isWithinNearbyChatRange(
         origin.x,
         origin.y,
         origin.z,
@@ -6040,6 +6135,92 @@ export class WorldInstance {
     this.snapshotsSent = 0;
   }
 
+  private gp(player: { dimension?: DimensionId }): ServerGameplay {
+    return player.dimension === 'nether' ? this.netherGameplay : this.gameplay;
+  }
+
+  private worldFor(player: { dimension?: DimensionId }): VoxelWorld {
+    return player.dimension === 'nether' ? this.netherWorld : this.world;
+  }
+
+  private chunkMemory(dimension: DimensionId): Set<string> {
+    return dimension === 'nether' ? this.netherGeneratedChunks : this.generatedChunks;
+  }
+
+  private watchPortals(world: VoxelWorld): void {
+    world.observeCommittedBlocks((changes) => {
+      if (this.portalSweeping) return;
+      const interesting = changes.some((change) => (
+        change.previous === BlockId.Obsidian
+        || change.previous === BlockId.NetherPortal
+        || change.block === BlockId.Air
+      ));
+      if (!interesting) return;
+      this.portalSweeping = true;
+      try {
+        for (const change of changes) {
+          if (change.previous === BlockId.Obsidian || change.previous === BlockId.NetherPortal) {
+            sweepInvalidPortals(world, change.x, change.y, change.z);
+          }
+        }
+      } finally {
+        this.portalSweeping = false;
+      }
+    });
+  }
+
+  private netherDirectory(): string {
+    return join(this.worldStore.directoryFor(this.worldId), 'nether');
+  }
+
+  private async loadNether(): Promise<void> {
+    const records = await new WorldPersistence(this.netherDirectory()).loadRecords();
+    if (!records) return;
+    const snapshot = parseWorldSnapshot(fsRecordsToSnapshot(records));
+    this.netherWorld.restore({
+      timeOfDay: snapshot.timeOfDay,
+      modifications: snapshot.modifications,
+      chests: (snapshot.chests ?? {}) as never,
+      furnaces: (snapshot.furnaces ?? {}) as never,
+      signs: snapshot.signs,
+      blockStates: snapshot.blockStates,
+    });
+    this.netherGameplay.restoreEntities(snapshot);
+  }
+
+  private async saveNether(): Promise<void> {
+    const entities = this.netherGameplay.persistEntities();
+    const snapshot = parseWorldSnapshot({
+      schemaVersion: 1,
+      worldgenVersion: 1,
+      summary: {
+        id: `${this.worldId}:nether`,
+        name: 'Ад',
+        seed: this.seed,
+        mode: 'survival',
+        kind: 'server',
+        createdAt: this.createdAt,
+        updatedAt: Date.now(),
+        playTimeSeconds: 0,
+      },
+      timeOfDay: this.netherWorld.timeOfDay,
+      weather: 'clear',
+      player: placeholderPlayer(this.spawn),
+      players: {},
+      modifications: this.netherWorld.serializeModifications(),
+      blockStates: this.netherWorld.serializeBlockStates(),
+      ...entities,
+      serverWorld: {
+        id: `${this.worldId}:nether`,
+        initialized: true,
+        spawnImported: true,
+        importVersion: 0,
+        spawn: this.spawn,
+      },
+    });
+    await new WorldPersistence(this.netherDirectory()).saveRecords(snapshotToFsRecords(snapshot));
+  }
+
   private simulateGameplayTick(): void {
     const started = performance.now();
     this.tickNumber += 1;
@@ -6051,16 +6232,23 @@ export class WorldInstance {
       player.bowReleaseBoundaryThisTick = undefined;
     }
     if (this.debugTickOrder) this.kernelTrace.length = 0;
-    const metrics = this.gameplay.tick([...this.players.values()], dt, {
-      tickPlayers: () => this.tickConnectedPlayers(dt),
+    const overworldPlayers = [...this.players.values()].filter((player) => player.dimension !== 'nether');
+    const netherPlayers = [...this.players.values()].filter((player) => player.dimension === 'nether');
+    const metrics = this.gameplay.tick(overworldPlayers, dt, {
+      tickPlayers: () => this.tickConnectedPlayers(dt, overworldPlayers),
       trace: this.debugTickOrder ? this.kernelTrace : undefined,
+    });
+    this.netherGameplay.tick(netherPlayers, dt, {
+      tickPlayers: () => this.tickConnectedPlayers(dt, netherPlayers),
     });
     for (const player of this.players.values()) {
       if (!player.connected) continue;
-      this.gameplay.updateRiding(player, player.lastInput.sneak);
+      this.gp(player).updateRiding(player, player.lastInput.sneak);
     }
     this.recordCombatPoses();
     this.gameplay.mobs.recordPoseHistory(this.tickNumber);
+    this.netherGameplay.mobs.recordPoseHistory(this.tickNumber);
+    this.tickPortalChannels();
     this.enforceCosmeticPetRights();
     this.cosmeticEnsureTicks += 1;
     if (this.cosmeticEnsureTicks >= 20) {
@@ -6107,7 +6295,10 @@ export class WorldInstance {
     for (const result of this.rtpSessions.tick()) {
       const player = this.players.get(result.playerId);
       if (result.dest) {
-        const teleported = this.teleports.schedule(result.playerId, result.dest, result.request.reason, {
+        const teleported = this.teleports.schedule(result.playerId, {
+          ...result.dest,
+          dimension: result.request.state.dimension,
+        }, result.request.reason, {
           warmupMs: result.request.warmupMs,
           cooldownMs: result.request.cooldownMs,
           cancelOnMove: result.request.cancelOnMove,
@@ -6137,17 +6328,9 @@ export class WorldInstance {
   }
 
   private flushTickNetwork(): void {
-    const passengers = collectMinecartPassengers(this.connectedPlayers());
     for (const player of this.connectedPlayers()) this.syncChunksFor(player);
     this.flushFurnaceLit();
-    const snapshots = this.connectedPlayers().map((player) => player.snapshot());
-    for (const player of this.connectedPlayers()) player.commandQueue.clearNotifiedSkips();
-    if (snapshots.length > 0) {
-      this.broadcast({
-        type: 'player_state',
-        tick: this.tickNumber,
-        physicsTicks: Math.max(1, this.lastPhysicsTicksThisLoop),
-        tickClock: {
+    const tickClock = {
           physicsTps: this.lastMeasuredTps,
           snapGen: this.lastMeasuredSnapGen,
           snapSent: this.lastMeasuredSnapSent,
@@ -6168,68 +6351,89 @@ export class WorldInstance {
           chunkGens: this.lastChunkGens,
           inputGapMs: this.maxInputGapMs(),
           inputPackets: this.maxInputPacketsThisLoop(),
-        },
-        players: snapshots,
-      });
-      this.snapshotsSent += 1;
+        };
+    for (const dimension of ['overworld', 'nether'] as const) {
+      const group = this.connectedPlayers().filter((player) => player.dimension === dimension);
+      if (group.length === 0) continue;
+      const snapshots = group.map((player) => player.snapshot());
+      for (const player of group) player.commandQueue.clearNotifiedSkips();
+      for (const player of group) {
+        this.sendTo(player, {
+          type: 'player_state',
+          tick: this.tickNumber,
+          physicsTicks: Math.max(1, this.lastPhysicsTicksThisLoop),
+          tickClock,
+          players: snapshots,
+        });
+      }
+      this.snapshotsSent += group.length;
     }
     this.resetInputPacketCounters();
     for (const player of this.players.values()) {
+      const gameplay = this.gp(player);
       if (player.totemActivated) {
-        this.gameplay.whMarks.clearTarget(player.id);
+        gameplay.whMarks.clearTarget(player.id);
         const position = player.controller.position;
         const x = position.x;
         const y = position.y + 1;
         const z = position.z;
-        this.gameplay.emitWorldSound('totem.activate', x, y, z);
+        gameplay.emitWorldSound('totem.activate', x, y, z);
         const packet = { type: 'totem_activate' as const, playerId: player.id, x, y, z };
         for (const listener of this.connectedPlayers()) {
+          if (listener.dimension !== player.dimension) continue;
           if (listenerHearsWorldSound(listener.controller.position, packet, TOTEM_PRESENTATION_DISTANCE)) {
             this.sendTo(listener, packet);
           }
         }
         player.totemActivated = false;
       }
-      if (!player.connected || player.survival.dead) this.gameplay.whMarks.clearPlayer(player.id);
+      if (!player.connected || player.survival.dead) gameplay.whMarks.clearPlayer(player.id);
     }
     for (const player of this.connectedPlayers()) {
+      const gameplay = this.gp(player);
+      const passengers = collectMinecartPassengers(
+        this.connectedPlayers().filter((other) => other.dimension === player.dimension),
+      );
       this.sendTo(player, {
         type: 'wh_marks',
-        targetIds: this.gameplay.whMarks.forViewer(player.id, this.world.tickNumber)
+        targetIds: gameplay.whMarks.forViewer(player.id, this.worldFor(player).tickNumber)
           .filter((id) => {
             const target = this.players.get(id);
-            return target?.connected && !target.survival.dead;
+            return target?.connected && target.dimension === player.dimension && !target.survival.dead;
           }),
       });
       this.sendTo(player, {
         type: 'entity_snapshot',
         tick: this.tickNumber,
-        entities: this.gameplay.snapshotsNear(player.controller.position, passengers),
+        entities: gameplay.snapshotsNear(player.controller.position, passengers),
       });
       this.flushPlayerInventory(player, false);
       this.flushHealth(player);
     }
     this.flushOpenFurnaceViews();
-    const entityEvents = this.gameplay.consumeEntityEvents();
-    if (entityEvents.length > 0) {
-      this.broadcast({ type: 'entity_event', tick: this.tickNumber, events: entityEvents });
-    }
-    const worldSounds = this.gameplay.consumeWorldSounds();
-    if (worldSounds.length > 0) {
-      for (const player of this.connectedPlayers()) {
-        const listener = player.controller.position;
+    for (const dimension of ['overworld', 'nether'] as const) {
+      const gameplay = dimension === 'nether' ? this.netherGameplay : this.gameplay;
+      const listeners = this.connectedPlayers().filter((player) => player.dimension === dimension);
+      const entityEvents = gameplay.consumeEntityEvents();
+      if (entityEvents.length > 0) {
+        for (const player of listeners) {
+          this.sendTo(player, { type: 'entity_event', tick: this.tickNumber, events: entityEvents });
+        }
+      }
+      const worldSounds = gameplay.consumeWorldSounds();
+      for (const player of listeners) {
         const hearable = worldSounds.filter((sound) => listenerHearsWorldSound(
-          listener,
+          player.controller.position,
           sound,
           worldSoundMaxDistance(sound.event),
         ));
-        if (hearable.length > 0) {
-          this.sendTo(player, { type: 'world_sound', sounds: hearable });
-        }
+        if (hearable.length > 0) this.sendTo(player, { type: 'world_sound', sounds: hearable });
       }
     }
     if (this.tickNumber % 20 === 0) {
-      this.broadcast({ type: 'time', timeOfDay: this.world.timeOfDay });
+      for (const player of this.connectedPlayers()) {
+        this.sendTo(player, { type: 'time', timeOfDay: this.worldFor(player).timeOfDay });
+      }
     }
     if (this.tickNumber % 200 === 0) {
       const kernel = this.debugTickOrder && this.kernelTrace.length > 0
@@ -6363,8 +6567,8 @@ export class WorldInstance {
   }
 
   /** Player physics + survival + mining/use hold. Invoked from GameplayKernel `players` step. */
-  private tickConnectedPlayers(dt: number): void {
-    for (const player of this.players.values()) {
+  private tickConnectedPlayers(dt: number, only?: readonly ServerPlayer[]): void {
+    for (const player of only ?? this.players.values()) {
       if (!player.connected) continue;
       const queuedCommand = player.commandQueue.peek();
       const command = player.commandQueue.takeForTick();
@@ -6415,9 +6619,9 @@ export class WorldInstance {
       let exitedRest = false;
       if (player.restingBed) {
         const rest = player.restingBed;
-        if (!isBedRestValid(this.world, rest) || command?.jump === true) {
+        if (!isBedRestValid(this.worldFor(player), rest) || command?.jump === true) {
           player.restingBed = undefined;
-          player.controller.teleport(bedExitPosition(this.world, rest));
+          player.controller.teleport(bedExitPosition(this.worldFor(player), rest));
           exitedRest = true;
           player.lastInput = { ...player.lastInput, jump: false, manualJump: false };
         } else {
@@ -6441,7 +6645,8 @@ export class WorldInstance {
       const before = player.controller.position.clone();
       player.controller.creativeFlightAllowed = player.gamemode === 'creative';
       const riding = Boolean(player.ridingCartId);
-      if (!player.restingBed) player.controller.tick(this.world, {
+      const playerWorld = this.worldFor(player);
+      if (!player.restingBed) player.controller.tick(playerWorld, {
         yaw: input.yaw,
         pitch: input.pitch,
         locomotion: !riding,
@@ -6478,7 +6683,7 @@ export class WorldInstance {
       if (player.gamemode === 'survival') {
         player.survival.tick(dt, {
           player: player.controller,
-          world: this.world,
+          world: playerWorld,
           armor: player.inventory,
           inFire: player.controller.inFire,
           sprinting: player.controller.sprinting,
@@ -6494,7 +6699,7 @@ export class WorldInstance {
       })) {
         const before = player.miningProgress;
         const target = player.miningTarget;
-        this.gameplay.advanceMining(player);
+        this.gp(player).advanceMining(player);
         if (process.env.FC_DEBUG_MINING === '1' && target) {
           serverLog(
             `mine progress ${player.name} target=${target.x},${target.y},${target.z}`
@@ -6505,7 +6710,7 @@ export class WorldInstance {
         }
       }
       else clearMiningLock(player);
-      this.gameplay.advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
+      this.gp(player).advanceUseHold(player, using, player.appliedCommandSeq, player.selectedSlot);
       player.recordAppliedInput(this.tickNumber, {
         seq: player.appliedCommandSeq >= 0 ? player.appliedCommandSeq : player.lastInputSeq,
         forward: riding || player.restingBed ? 0 : input.forward,
@@ -6694,7 +6899,6 @@ export class WorldInstance {
   private flushFurnaceLit(): void {
     if (this.pendingFurnaceLit.length === 0) return;
     const pending = this.pendingFurnaceLit.splice(0);
-    const players = this.connectedPlayers();
     for (const change of pending) {
       const message = {
         type: 'furnace_lit' as const,
@@ -6703,19 +6907,24 @@ export class WorldInstance {
         z: change.z,
         burning: change.burning,
       };
-      for (const player of players) this.sendTo(player, message);
+      for (const player of this.connectedPlayers()) {
+        if (player.dimension === change.dimension) this.sendTo(player, message);
+      }
     }
   }
 
   private flushBlockChanges(): void {
-    const changes = this.gameplay.consumeBlockChanges();
-    if (changes.length === 0) return;
-    this.dirty = true;
-    if (changes.length === 1) {
-      this.broadcast({ type: 'block_update', ...changes[0] });
-      return;
+    for (const dimension of ['overworld', 'nether'] as const) {
+      const changes = (dimension === 'nether' ? this.netherGameplay : this.gameplay).consumeBlockChanges();
+      if (changes.length === 0) continue;
+      this.dirty = true;
+      const message = changes.length === 1
+        ? { type: 'block_update' as const, ...changes[0] }
+        : { type: 'block_batch' as const, changes };
+      for (const player of this.connectedPlayers()) {
+        if (player.dimension === dimension) this.sendTo(player, message);
+      }
     }
-    this.broadcast({ type: 'block_batch', changes });
   }
 
   private flushPlayerInventory(player: ServerPlayer, force = true, notifyViewers = true): void {
@@ -6818,15 +7027,139 @@ export class WorldInstance {
   }
 
   private flushHealthIfDeadThenRespawn(player: ServerPlayer): void {
-    this.gameplay.respawnIfDead(player);
+    this.gp(player).respawnIfDead(player);
+  }
+
+  private movePetsWith(player: ServerPlayer, destination: DimensionId, x: number, y: number, z: number): void {
+    const source = player.dimension === 'nether' ? this.netherGameplay : this.gameplay;
+    const target = destination === 'nether' ? this.netherGameplay : this.gameplay;
+    if (source === target) return;
+    const pets = source.mobs.entities.filter((mob) => mob.alive && mob.ownerId === player.id && isPetKind(mob.kind));
+    pets.forEach((mob, index) => {
+      const angle = index * 1.2;
+      source.mobs.remove(mob.id);
+      target.mobs.spawn(mob.kind, new Vec3(x + Math.cos(angle), y, z + Math.sin(angle)), {
+        id: mob.id,
+        health: mob.health,
+        ownerId: player.id,
+        sitting: mob.sitting,
+        angry: mob.angry,
+        force: true,
+        economyInstanceId: mob.economyInstanceId,
+        catVariant: mob.catVariant,
+      });
+    });
+  }
+
+  enterDimension(
+    player: ServerPlayer,
+    dimension: DimensionId,
+    x: number,
+    y: number,
+    z: number,
+    look?: { readonly yaw?: number; readonly pitch?: number },
+  ): boolean {
+    const from = player.dimension;
+    if (from !== dimension) {
+      this.movePetsWith(player, dimension, x, y, z);
+      this.removeCosmeticPetRuntime(player.id);
+      this.broadcastDimension(from, { type: 'player_left', playerId: player.id }, player.id);
+      player.dimension = dimension;
+      player.knownChunks.clear();
+      player.portalChannelStartedAt = undefined;
+      player.portalCountdown = null;
+      player.restingBed = undefined;
+      this.broadcastDimension(dimension, { type: 'player_joined', player: player.remoteInfo() }, player.id);
+    }
+    const moved = this.hardRelocatePlayer(player, x, y, z, look);
+    this.sendDimensionState(player);
+    this.snapCosmeticPet(player);
+    return moved;
+  }
+
+  private broadcastDimension(dimension: DimensionId, message: Parameters<WorldInstance['sendTo']>[1], exceptId?: string): void {
+    for (const player of this.connectedPlayers()) {
+      if (player.dimension !== dimension || player.id === exceptId) continue;
+      this.sendTo(player, message);
+    }
+  }
+
+  private sendDimensionState(player: ServerPlayer): void {
+    const world = this.worldFor(player);
+    this.sendTo(player, {
+      type: 'dimension',
+      dimension: player.dimension,
+      seed: this.seed,
+      timeOfDay: world.timeOfDay,
+      x: player.controller.position.x,
+      y: player.controller.position.y,
+      z: player.controller.position.z,
+      yaw: player.controller.yaw,
+      pitch: player.controller.pitch,
+      movementEpoch: player.movementEpoch,
+      modifications: player.dimension === 'nether'
+        ? world.serializeModifications()
+        : this.networkModifications(),
+      blockStates: world.serializeBlockStates(),
+      furnacesLit: world.networkFurnaceLit(),
+    });
+  }
+
+  private playerInsidePortal(player: ServerPlayer): boolean {
+    if (player.dimension !== 'overworld') return false;
+    const box = player.controller.aabb;
+    for (let y = Math.floor(box.minY); y <= Math.floor(box.maxY); y += 1) {
+      for (let z = Math.floor(box.minZ); z <= Math.floor(box.maxZ); z += 1) {
+        for (let x = Math.floor(box.minX); x <= Math.floor(box.maxX); x += 1) {
+          if (this.world.getBlock(x, y, z, false) === BlockId.NetherPortal) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private tickPortalChannels(): void {
+    const now = Date.now();
+    for (const player of this.connectedPlayers()) {
+      if (player.survival.dead || player.dimension !== 'overworld' || this.teleports.isPending(player.id)) {
+        player.portalChannelStartedAt = undefined;
+        player.portalCountdown = null;
+        continue;
+      }
+      if (!this.playerInsidePortal(player)) {
+        player.portalChannelStartedAt = undefined;
+        player.portalCountdown = null;
+        continue;
+      }
+      if (player.portalChannelStartedAt === undefined) player.portalChannelStartedAt = now;
+      const left = NETHER_PORTAL_CHANNEL_MS - (now - player.portalChannelStartedAt);
+      player.portalCountdown = Math.max(1, Math.ceil(left / 1000));
+      if (left > 0) continue;
+      player.portalChannelStartedAt = undefined;
+      player.portalCountdown = null;
+      const position = player.controller.position;
+      const safe = findSafeTeleport(this.netherWorld, position.x, position.y, position.z, 10);
+      if (!safe) {
+        this.sendPlayerNotice(player, NETHER_UNSAFE_MESSAGE, 'error');
+        continue;
+      }
+      this.enterDimension(player, 'nether', safe.x, safe.y, safe.z, {
+        yaw: player.controller.yaw,
+        pitch: player.controller.pitch,
+      });
+    }
   }
 
   respawn(player: ServerPlayer): boolean {
-    const respawned = this.gameplay.respawnPlayer(player);
-    if (!respawned) return false;
+    if (!player.survival.dead) return false;
+    this.gp(player).respawnIfDead(player);
     player.restingBed = undefined;
     this.clearPlayerEmote(player);
-    this.rebaseAfterHardRelocation(player);
+    const [x, y, z] = this.spawn;
+    this.enterDimension(player, 'overworld', x, y, z);
+    player.survival.respawn(player.controller, this.spawn);
+    player.deathLootDropped = false;
+    this.flushHealth(player);
     this.snapCosmeticPet(player);
     return true;
   }
@@ -7050,7 +7383,7 @@ export class WorldInstance {
     this.menuReturn.delete(player.id);
     if (player.connected) this.sendTo(player, closedMenuMessage());
     if (player.window.kind !== 'inventory') player.window = { kind: 'inventory' };
-    this.gameplay.forceReleaseVehicle(player);
+    this.gp(player).forceReleaseVehicle(player);
     player.restingBed = undefined;
     clearMiningLock(player);
     player.bowUseTicks = 0;
@@ -7325,8 +7658,8 @@ export class WorldInstance {
     }
   }
 
-  private relocatePose(x: number, y: number, z: number): [number, number, number] {
-    const pose = relocateStandingPoseInsidePlayableWorld(this.world, x, y, z);
+  private relocatePose(x: number, y: number, z: number, world: VoxelWorld = this.world): [number, number, number] {
+    const pose = relocateStandingPoseInsidePlayableWorld(world, x, y, z);
     return [pose.x, pose.y, pose.z];
   }
 
@@ -7344,14 +7677,16 @@ export class WorldInstance {
     serverLog(`chunk loaded: ${count} around spawn`);
   }
 
-  private ensureChunk(cx: number, cz: number, announce = true): void {
+  private ensureChunk(cx: number, cz: number, announce = true, dimension: DimensionId = 'overworld'): void {
     const key = chunkKey(cx, cz);
-    const already = this.generatedChunks.has(key);
-    const chunk = this.world.getChunk(cx, cz, true);
-    if (chunk && !chunk.lightingReady) this.world.ensureChunkLighting(chunk);
+    const memory = this.chunkMemory(dimension);
+    const world = dimension === 'nether' ? this.netherWorld : this.world;
+    const already = memory.has(key);
+    const chunk = world.getChunk(cx, cz, true);
+    if (chunk && !chunk.lightingReady) world.ensureChunkLighting(chunk);
     if (already) return;
-    this.generatedChunks.add(key);
-    if (announce) serverLog(`chunk loaded ${key}`);
+    memory.add(key);
+    if (announce) serverLog(`chunk loaded ${dimension} ${key}`);
   }
 
   private syncChunksFor(
@@ -7360,32 +7695,36 @@ export class WorldInstance {
   ): void {
     const radius = player.viewRadius;
     const maxNew = options?.maxNewGenerates ?? MAX_NEW_CHUNK_GENERATES_PER_SYNC;
+    const memory = this.chunkMemory(player.dimension);
+    const world = this.worldFor(player);
     const wanted = new Set<string>();
     let generated = 0;
     for (let z = player.viewCz - radius; z <= player.viewCz + radius; z += 1) {
       for (let x = player.viewCx - radius; x <= player.viewCx + radius; x += 1) {
         const key = chunkKey(x, z);
         wanted.add(key);
-        const alreadyGenerated = this.generatedChunks.has(key);
+        const alreadyGenerated = memory.has(key);
         if (!alreadyGenerated) {
           if (generated >= maxNew) continue;
-          this.ensureChunk(x, z);
+          this.ensureChunk(x, z, true, player.dimension);
           generated += 1;
           this.lastChunkGens += 1;
         } else if (!player.knownChunks.has(key)) {
-          this.ensureChunk(x, z, false);
+          this.ensureChunk(x, z, false, player.dimension);
         }
-        if (!this.generatedChunks.has(key)) continue;
+        if (!memory.has(key)) continue;
         if (!player.knownChunks.has(key)) {
           player.knownChunks.add(key);
-          const mods = this.networkChunkModifications(x, z);
+          const mods = player.dimension === 'nether'
+            ? world.serializeChunkModifications(x, z)
+            : this.networkChunkModifications(x, z);
           this.sendTo(player, {
             type: 'chunk_data',
             cx: x,
             cz: z,
             modifications: mods,
-            signs: this.world.signsForChunk(x, z),
-            furnacesLit: this.world.networkFurnaceLit(x, z),
+            signs: world.signsForChunk(x, z),
+            furnacesLit: world.networkFurnaceLit(x, z),
           });
           this.lastChunkSends += 1;
         }
@@ -7461,6 +7800,7 @@ export class WorldInstance {
         yaw: player.controller.yaw,
         pitch: player.controller.pitch,
       }),
+      dimension: () => player.dimension,
       snapshot: () => player.snapshot(),
       teleport: (x: number, y: number, z: number) => this.hardRelocatePlayer(player, x, y, z),
       sendMessage: (text: string) => {
@@ -7569,8 +7909,14 @@ export class WorldInstance {
     name?: string,
     commitOnline = true,
   ): ServerPlayer {
+    const dimension = parseDimension(stored.dimension);
     const controller = new PlayerController({
-      position: this.relocatePose(stored.x, stored.y, stored.z),
+      position: this.relocatePose(
+        stored.x,
+        stored.y,
+        stored.z,
+        dimension === 'nether' ? this.netherWorld : this.world,
+      ),
       yaw: stored.yaw,
       pitch: stored.pitch,
     });
@@ -7621,6 +7967,7 @@ export class WorldInstance {
     this.absorbHeldReturns(player, parseHeldReturns(stored.heldReturns));
     this.assignMissingItemIdentities(player);
     player.cosmeticPet = parseCosmeticPetSelection(stored.cosmeticPet);
+    player.dimension = dimension;
     player.controller.creativeFlightAllowed = player.gamemode === 'creative';
     player.sink = sink;
     player.viewCx = floorDiv(Math.floor(player.controller.position.x), 16);
@@ -7664,6 +8011,7 @@ export class WorldInstance {
       portalChest: player.portalChest.slots,
       appearance: toNetworkAppearance(player.appearance),
       ...(player.cosmeticPet ? { cosmeticPet: player.cosmeticPet } : {}),
+      ...(player.dimension === 'nether' ? { dimension: 'nether' as const } : {}),
       ...(player.settlementReceipts.size > 0 ? { settlementReceipts: [...player.settlementReceipts] } : {}),
       ...(player.referralKitReceipts.size > 0 ? { referralKitReceipts: [...player.referralKitReceipts] } : {}),
       ...(player.referralKitGrants.length > 0 ? { referralKitGrants: player.referralKitGrants.map((grant) => ({
@@ -7977,14 +8325,14 @@ export class WorldInstance {
     if (!minted) {
       leftover = player.inventory.addItem(itemId, count, stackOptions);
       given = count - leftover;
-      if (leftover > 0) this.gameplay.dropFromPlayer(player, createItemStack(itemId, leftover, stackOptions));
+      if (leftover > 0) this.gp(player).dropFromPlayer(player, createItemStack(itemId, leftover, stackOptions));
     } else {
       for (const stack of minted) {
         const next = options?.durability !== undefined ? { ...stack, durability: options.durability } : stack;
         const rest = player.inventory.add(next);
         if (!rest) continue;
         leftover += rest.count;
-        this.gameplay.dropFromPlayer(player, rest);
+        this.gp(player).dropFromPlayer(player, rest);
       }
       given = count - leftover;
     }
@@ -8282,13 +8630,21 @@ export class WorldInstance {
   }
 
   private ownedCosmeticPets(playerId: string) {
-    return this.gameplay.mobs.entities.filter((mob) => mob.ownerId === playerId && isCosmeticPetKind(mob.kind));
+    const found = [];
+    for (const mobs of [this.gameplay.mobs, this.netherGameplay.mobs]) {
+      for (const mob of mobs.entities) {
+        if (mob.ownerId === playerId && isCosmeticPetKind(mob.kind)) found.push(mob);
+      }
+    }
+    return found;
   }
 
   private removeCosmeticPetRuntime(playerId: string, keepId?: string): void {
-    for (const mob of this.ownedCosmeticPets(playerId)) {
-      if (mob.id === keepId) continue;
-      this.gameplay.mobs.remove(mob.id);
+    for (const mobs of [this.gameplay.mobs, this.netherGameplay.mobs]) {
+      for (const mob of [...mobs.entities]) {
+        if (mob.ownerId !== playerId || !isCosmeticPetKind(mob.kind) || mob.id === keepId) continue;
+        mobs.remove(mob.id);
+      }
     }
   }
 
@@ -8334,9 +8690,9 @@ export class WorldInstance {
     const keep = matches[0];
     this.removeCosmeticPetRuntime(player.id, keep?.id);
     if (keep) return;
-    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    const spot = findCosmeticSpawnSpot(this.worldFor(player), player.controller.position, kind);
     if (!spot) return;
-    this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+    this.gp(player).mobs.spawn(kind, spot, { ownerId: player.id });
   }
 
   private snapCosmeticPet(player: ServerPlayer): void {
@@ -8349,10 +8705,10 @@ export class WorldInstance {
     const owned = this.ownedCosmeticPets(player.id);
     const keep = owned.find((mob) => mob.alive && mob.kind === kind);
     this.removeCosmeticPetRuntime(player.id, keep?.id);
-    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    const spot = findCosmeticSpawnSpot(this.worldFor(player), player.controller.position, kind);
     if (!spot) return;
     if (!keep) {
-      this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+      this.gp(player).mobs.spawn(kind, spot, { ownerId: player.id });
       return;
     }
     keep.position.set(spot.x, spot.y, spot.z);
@@ -8369,9 +8725,11 @@ export class WorldInstance {
       connected.add(player.id);
       if (!player.survival.dead) this.ensureCosmeticPet(player);
     }
-    for (const mob of [...this.gameplay.mobs.entities]) {
-      if (!isCosmeticPetKind(mob.kind) || !mob.ownerId) continue;
-      if (!connected.has(mob.ownerId)) this.gameplay.mobs.remove(mob.id);
+    for (const mobs of [this.gameplay.mobs, this.netherGameplay.mobs]) {
+      for (const mob of [...mobs.entities]) {
+        if (!isCosmeticPetKind(mob.kind) || !mob.ownerId) continue;
+        if (!connected.has(mob.ownerId)) mobs.remove(mob.id);
+      }
     }
   }
 
@@ -8391,11 +8749,11 @@ export class WorldInstance {
       this.removeCosmeticPetRuntime(player.id, current[0]!.id);
       return ok(selection === 'bee' ? 'Пчела уже рядом.' : 'Мини-крипер уже рядом.');
     }
-    const spot = findCosmeticSpawnSpot(this.world, player.controller.position, kind);
+    const spot = findCosmeticSpawnSpot(this.worldFor(player), player.controller.position, kind);
     if (!spot) return fail('Не удалось найти безопасное место для питомца.');
-    const spawned = this.gameplay.mobs.spawn(kind, spot, { ownerId: player.id });
+    const spawned = this.gp(player).mobs.spawn(kind, spot, { ownerId: player.id });
     if (!spawned) {
-      const atCap = this.gameplay.mobs.entities.filter((mob) => mob.alive && isCosmeticPetKind(mob.kind)).length >= COSMETIC_PET_WORLD_CAP;
+      const atCap = this.gp(player).mobs.entities.filter((mob) => mob.alive && isCosmeticPetKind(mob.kind)).length >= COSMETIC_PET_WORLD_CAP;
       return fail(atCap ? playerText.petWorldCap : 'Не удалось создать питомца.');
     }
     player.cosmeticPet = selection;

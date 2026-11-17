@@ -66,6 +66,21 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
  * Visual sky only. `daylightFactor` and the sunlight intensities stay on their
  * existing curve; this palette does not feed the light engine.
  */
+/** Static burgundy-to-red sky. Independent of daylightFactor. */
+export function netherSkySample(): SkySample {
+  return {
+    zenith: { r: 0.16, g: 0.02, b: 0.04 },
+    horizon: { r: 0.62, g: 0.08, b: 0.06 },
+    band: { r: 0.45, g: 0.05, b: 0.05 },
+    bandStrength: 0.35,
+    starOpacity: 0,
+    visualNight: 0.55,
+    fog: { r: 0.42, g: 0.07, b: 0.06 },
+    sunHeight: -0.4,
+    rising: false,
+  };
+}
+
 export function skySample(timeOfDay: number): SkySample {
   const time = Number.isFinite(timeOfDay) ? timeOfDay : 0;
   const phase = (time / DAY_TICKS) * Math.PI * 2;

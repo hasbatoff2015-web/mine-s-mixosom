@@ -41,6 +41,7 @@ import {
 import { WORLD_HEIGHT, isValidWorldY } from '../core/constants';
 import { gameplayMayMutateBlock, isPlayerCenterInsidePlayableWorld } from '../world/worldBorder';
 import { SAPLING_GROUND_BLOCKS, isSaplingBlock } from '../world/saplings';
+import { findNetherPortalFrame, lightNetherPortal } from '../world/netherPortal';
 import {
   MinecartManager,
   resolveFlintAndSteelUse,
@@ -406,6 +407,23 @@ function tryFarmingUse(
     ctx.effects?.swing?.();
     if (ctx.gamemode === 'survival') wearHeld(ctx);
     ctx.effects?.onPlaced?.(hit.x, hit.y, hit.z, BlockId.Farmland);
+    return true;
+  }
+
+  if (itemId === ItemId.EnchantmentFlower && hit.block === BlockId.SoulSand) {
+    const x = hit.x;
+    const y = hit.y + 1;
+    const z = hit.z;
+    const target = ctx.world.getBlock(x, y, z, false);
+    if (!isValidWorldY(y) || (target !== BlockId.Air && getBlockDefinition(target).replaceable !== true)) return false;
+    if (!gameplayMayMutateBlock(x, z)) return false;
+    if (ctx.allowPlace && !ctx.allowPlace(x, y, z, BlockId.EnchantmentFlower)) return true;
+    if (!ctx.world.setBlock(x, y, z, BlockId.EnchantmentFlower)) return true;
+    ctx.world.setBlockState(x, y, z, { age: 0, plantedAtMs: Date.now() });
+    ctx.effects?.playBlock?.('place', BlockId.EnchantmentFlower, x, y, z);
+    ctx.effects?.swing?.();
+    if (ctx.gamemode === 'survival') consumeHeld(ctx, 1);
+    ctx.effects?.onPlaced?.(x, y, z, BlockId.EnchantmentFlower);
     return true;
   }
 
@@ -1031,6 +1049,13 @@ function igniteCell(ctx: UseSimulationContext, x: number, y: number, z: number):
   if (isTntBlock(block)) {
     ctx.redstone.primeTnt(x, y, z);
     return true;
+  }
+  const frame = findNetherPortalFrame(ctx.world, x, y, z);
+  if (frame) {
+    if (ctx.allowPlace && frame.cells.some((cell) => !ctx.allowPlace!(cell.x, cell.y, cell.z, BlockId.NetherPortal))) {
+      return false;
+    }
+    return lightNetherPortal(ctx.world, x, y, z) !== undefined;
   }
   const definition = getBlockDefinition(block);
   if (block !== BlockId.Air && definition.replaceable !== true) return false;

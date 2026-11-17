@@ -14,6 +14,7 @@ import {
 import { CHUNK_SIZE, WORLD_HEIGHT } from '../core/constants';
 import type { Chunk } from '../world/Chunk';
 import { biomeCode } from '../world/Generator';
+import { portalAxisFromState } from '../world/netherPortal';
 import type { VoxelWorld } from '../world/World';
 import type { TextureAtlas } from './TextureAtlas';
 import {
@@ -126,6 +127,7 @@ interface LayerBuffers {
   translucent: GeometryBuffers;
   water: GeometryBuffers;
   fire: GeometryBuffers;
+  portal: GeometryBuffers;
 }
 
 const createBuffers = (): GeometryBuffers => ({
@@ -255,6 +257,7 @@ export interface MeshedChunk {
   translucent: THREE.BufferGeometry;
   water: THREE.BufferGeometry;
   fire: THREE.BufferGeometry;
+  portal: THREE.BufferGeometry;
   faces: number;
   chests: Array<{ x: number; y: number; z: number }>;
 }
@@ -266,6 +269,7 @@ export function disposeMeshedChunk(meshed: MeshedChunk): void {
   meshed.translucent.dispose();
   meshed.water.dispose();
   meshed.fire.dispose();
+  meshed.portal.dispose();
 }
 
 export interface ChunkMeshProfile {
@@ -285,6 +289,7 @@ export class ChunkMesher {
     translucent: createBuffers(),
     water: createBuffers(),
     fire: createBuffers(),
+    portal: createBuffers(),
   };
   private columnOriginX = 0;
   private columnOriginZ = 0;
@@ -322,6 +327,7 @@ export class ChunkMesher {
     resetBuffers(this.layers.translucent);
     resetBuffers(this.layers.water);
     resetBuffers(this.layers.fire);
+    resetBuffers(this.layers.portal);
     const layers = this.layers;
     this.cacheColumns(chunk, world);
     this.lightSelf = chunk;
@@ -428,6 +434,7 @@ export class ChunkMesher {
       translucent: this.toGeometry(layers.translucent),
       water: this.toGeometry(layers.water),
       fire: this.toGeometry(layers.fire),
+      portal: this.toGeometry(layers.portal),
       faces,
       chests,
     };
@@ -453,6 +460,7 @@ export class ChunkMesher {
 
   private buffersFor(layers: LayerBuffers, definition: BlockDefinition): GeometryBuffers {
     if (definition.renderShape === 'fire') return layers.fire;
+    if (definition.renderShape === 'portal') return layers.portal;
     if (blockLightingMode(definition) === 'vegetation') return layers.vegetation;
     if (definition.renderLayer === 'cutout') return layers.cutout;
     if (definition.renderLayer === 'translucent') {
@@ -520,6 +528,7 @@ export class ChunkMesher {
       case 'button': return this.addButton(buffers, definition, state, world, x, y, z);
       case 'pressure_plate': return this.addPressurePlate(buffers, definition, state, world, x, y, z);
       case 'cross': return this.addCrossPlant(buffers, definition, state, world, x, y, z);
+      case 'portal': return this.addPortal(buffers, definition, state, world, x, y, z);
       case 'fire': return this.addFire(buffers, definition, world, x, y, z);
       case 'door': return this.addDoor(buffers, definition, state, world, x, y, z);
       case 'ladder': return this.addLadder(buffers, definition, state, world, x, y, z);
@@ -547,7 +556,10 @@ export class ChunkMesher {
     y: number,
     z: number,
   ): number {
-    const stage = cropTextureStage(definition.id, state);
+    const flowerMature = definition.id === BlockId.EnchantmentFlower
+      ? (state?.age === undefined || state.age >= 1)
+      : undefined;
+    const stage = flowerMature === undefined ? cropTextureStage(definition.id, state) : (flowerMature ? 1 : 0);
     const stagedTexture = definition.textures[`stage${stage}` as keyof typeof definition.textures];
     const attached = isStemBlock(definition.id)
       ? attachedStemDirection(world, x, y, z, definition.id)
@@ -558,7 +570,11 @@ export class ChunkMesher {
     const lighting = this.lightingFor(world, definition, texture, x, y, z, VEGETATION_LIGHTING_NORMAL, 1);
     if (attached) return this.addAttachedStem(buffers, texture, lighting, x, y, z, attached);
     const inset = 0.08;
-    const height = isStemBlock(definition.id) ? Math.max(2 / 16, (cropAge(state) + 1) * 1.75 / 16) : 0.9;
+    const height = isStemBlock(definition.id)
+      ? Math.max(2 / 16, (cropAge(state) + 1) * 1.75 / 16)
+      : definition.id === BlockId.EnchantmentFlower && flowerMature === false
+        ? 0.55
+        : 0.9;
     const planes: readonly (readonly (readonly [number, number, number])[])[] = [
       [
         [x + inset, y, z + inset], [x + 1 - inset, y, z + 1 - inset],
@@ -636,6 +652,26 @@ export class ChunkMesher {
       faces += 1;
     }
     return faces;
+  }
+
+  private addPortal(
+    buffers: GeometryBuffers,
+    definition: BlockDefinition,
+    state: BlockRenderState | undefined,
+    world: VoxelWorld,
+    x: number,
+    y: number,
+    z: number,
+  ): number {
+    const texture = definition.textures.all ?? 'block/nether_portal';
+    const lighting = this.lightingFor(world, definition, texture, x, y, z, [0, 1, 0], 1);
+    const axis = portalAxisFromState(state);
+    const corners = axis === 'z'
+      ? [[x + 0.08, y, z + 0.5], [x + 0.92, y, z + 0.5], [x + 0.92, y + 1, z + 0.5], [x + 0.08, y + 1, z + 0.5]] as const
+      : [[x + 0.5, y, z + 0.08], [x + 0.5, y, z + 0.92], [x + 0.5, y + 1, z + 0.92], [x + 0.5, y + 1, z + 0.08]] as const;
+    this.addQuad(buffers, texture, corners, [0, 1, 0], { ...lighting, emission: 0.85 });
+    this.addQuad(buffers, texture, [corners[0], corners[3], corners[2], corners[1]], [0, 1, 0], { ...lighting, emission: 0.85 });
+    return 2;
   }
 
   private addFire(

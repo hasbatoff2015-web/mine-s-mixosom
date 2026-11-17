@@ -1,4 +1,5 @@
 import { BlockId, getBlockDefinition } from '../blocks';
+import { isLiveFire } from '../blocks/fireBlocks';
 import { CHUNK_SIZE, FLUID_JOB_BUDGET_MS, WORLD_HEIGHT, floorDiv } from '../core/constants';
 import type { Chunk } from './Chunk';
 import type { VoxelWorld } from './World';
@@ -68,7 +69,7 @@ export function chunkLoaded(world: VoxelWorld, x: number, z: number): boolean {
 }
 
 export function canReplaceWithFluid(block: BlockId): boolean {
-  if (block === BlockId.Air || block === BlockId.Fire) return true;
+  if (block === BlockId.Air || isLiveFire(block)) return true;
   const definition = getBlockDefinition(block);
   return definition.fluidDisplaceable === true
     || (definition.replaceable === true && definition.liquid !== true && definition.solid !== true);

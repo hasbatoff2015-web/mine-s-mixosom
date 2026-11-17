@@ -133,7 +133,8 @@ import {
   orientCelestialBillboard,
   sunlightPosition,
 } from '../rendering/SkyDome';
-import { skySample, sunDirection } from '../rendering/skyPalette';
+import { netherSkySample, skySample, sunDirection } from '../rendering/skyPalette';
+import { NETHER_DAYLIGHT } from '../world/dimension';
 import { shouldSuppressContextMenu } from '../input/contextMenu';
 import { viewportMetrics } from '../ui/visualViewport';
 import { formatPlayInfo } from '../ui/playInfoHud';
@@ -155,6 +156,7 @@ import {
   type PortalChestInventory,
 } from '../inventory';
 import { FarmingSystem, farmingDropsForBlock } from '../farming';
+import { enchantmentFlowerDrops } from '../world/enchantmentFlower';
 import { ItemId, getItemDefinition, losesDurabilityWhenBreakingBlocks, shouldOpenBookOnUse, tryGetItemDefinition, writeBookInSlot } from '../items';
 import { megaZombieHealthBarVisible } from '../entities/megaZombie';
 import { restoreBucketInventory } from '../items/bucketInteraction';
@@ -440,7 +442,7 @@ import {
   bufferPendingAppearance,
   takePendingAppearance,
 } from '../net/remoteAppearance';
-import type { ClientInventoryActionMessage, ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
+import type { ClientInventoryActionMessage, ContainerKind, NetworkBuyerNpc, NetworkHologram, RemotePlayerInfo, ServerDimensionMessage, ServerMessage, ServerPlayerStateMessage, ServerWelcomeMessage } from '../../shared/protocol';
 import { CHAT_NO_CLAN_HINT, CHAT_TOO_LONG_ERROR, retainedChatDraft, type ChatChannel, type ChatMessageStyle } from '../../shared/chat';
 import { CHAT_COOLDOWN_MESSAGE, clientPvpDeadline } from '../../shared/playerRules';
 import { sanitizePlayerNameStyle, type PlayerNameStyle } from '../../shared/donationRanks';
@@ -463,6 +465,7 @@ import { captureReferralLaunch } from '../yandex/referralIntent';
 
 export interface GameSession {
   summary: WorldSummary;
+  dimension: 'overworld' | 'nether';
   world: VoxelWorld;
   worldRenderer: WorldRenderer;
   player: PlayerController;
@@ -1384,7 +1387,7 @@ export class Game {
 
   private async startOnlineAnarchy(client: AnarchyClient, welcome: ServerWelcomeMessage): Promise<void> {
     const restoreStart = performance.now();
-    const world = new VoxelWorld(welcome.seed);
+    const world = new VoxelWorld(welcome.seed, welcome.dimension === 'nether' ? 'nether' : 'overworld');
     world.deferredLighting = true;
     world.restore({
       timeOfDay: welcome.timeOfDay,
@@ -1553,6 +1556,9 @@ export class Game {
     motionProbe.noteRecv(message.type);
     switch (message.type) {
       case 'welcome':
+        return;
+      case 'dimension':
+        this.applyDimensionSwitch(session, message);
         return;
       case 'auth_result':
         if (!yandexLinkResultApplies({
@@ -1923,6 +1929,43 @@ export class Game {
     }, detached);
   }
 
+  private applyDimensionSwitch(session: GameSession, message: ServerDimensionMessage): void {
+    const atlas = this.atlas;
+    const online = session.online;
+    if (!atlas || !online) return;
+    session.dimension = message.dimension;
+    this.scene.remove(session.worldRenderer.group);
+    session.worldRenderer.dispose();
+    const world = new VoxelWorld(message.seed, message.dimension);
+    world.deferredLighting = true;
+    world.restore({
+      timeOfDay: message.timeOfDay,
+      modifications: message.modifications,
+      chests: {},
+      furnaces: furnaceRecordsFromLit(message.furnacesLit),
+      blockStates: message.blockStates,
+    });
+    const worldRenderer = new WorldRenderer(world, atlas, (x, y, z) => world.getBlockState(x, y, z));
+    this.scene.add(worldRenderer.group);
+    session.world = world;
+    session.worldRenderer = worldRenderer;
+    session.cameraCollision = worldCameraCollisionSource(world);
+    session.mobs.clear();
+    for (const id of [...online.remotes.keys()]) this.removeRemotePlayer(session, id);
+    online.interpolator = new EntityInterpolationBuffer();
+    online.lastViewKey = '';
+    session.player.teleport([message.x, message.y, message.z]);
+    session.player.yaw = message.yaw;
+    session.player.pitch = message.pitch;
+    this.input.yaw = message.yaw;
+    this.input.pitch = message.pitch;
+    this.syncLocalRenderFromPlayer();
+    online.movementEpoch = message.movementEpoch;
+    resetPredictionBuffer(online.prediction);
+    seedPredictionCheckpoint(online.prediction, session.player.captureMovementState(), -1);
+    this.ui.setPortalCountdown(null);
+  }
+
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
     const online = session.online;
     if (!online) return;
@@ -1937,6 +1980,7 @@ export class Game {
     online.lastStateTick = message.tick;
     const { local, remotes } = splitPlayerSnapshots(online.playerId, message.players);
     if (local?.session) motionProbe.session = local.session;
+    this.ui.setPortalCountdown(local?.portalCountdown ?? null);
     const seen = new Set<string>();
     if (local) {
       motionProbe.notePlayerState(local.inputSeq);
@@ -3808,6 +3852,7 @@ export class Game {
     this.emitterCensus.reset();
     this.session = {
       summary,
+      dimension: world.kind,
       world,
       worldRenderer,
       player,
@@ -5890,7 +5935,8 @@ export class Game {
           new THREE.Vector3(hit.x + 0.5, hit.y + 0.3, hit.z + 0.5),
         );
       } else {
-        const farmingDrops = farmingDropsForBlock(hit.block, blockState, this.simRandom);
+        const farmingDrops = enchantmentFlowerDrops(hit.block, blockState, this.simRandom)
+          ?? farmingDropsForBlock(hit.block, blockState, this.simRandom);
         if (farmingDrops !== undefined && harvestable) {
           for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
             createItemStack(drop.item, drop.count),
@@ -6213,7 +6259,8 @@ export class Game {
         );
         continue;
       }
-      const farmingDrops = farmingDropsForBlock(event.block, event.state, this.simRandom);
+      const farmingDrops = enchantmentFlowerDrops(event.block, event.state, this.simRandom)
+        ?? farmingDropsForBlock(event.block, event.state, this.simRandom);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) this.spawnDroppedStack(
           createItemStack(drop.item, drop.count),
@@ -7073,7 +7120,31 @@ export class Game {
     viewmodel.update(deltaSeconds, state);
   }
 
+  private applyNetherSky(): void {
+    const session = this.session;
+    if (!session) return;
+    const skyVisual = netherSkySample();
+    const sky = this.currentSkyColor.setRGB(skyVisual.fog.r, skyVisual.fog.g, skyVisual.fog.b);
+    this.sky.update(skyVisual, 0, { x: 0, y: -1, z: 0 });
+    this.clouds.object.visible = false;
+    if (this.scene.fog instanceof THREE.Fog) this.scene.fog.color.copy(sky);
+    this.ambient.intensity = 0.22;
+    this.sunlight.intensity = 0.35;
+    this.sunlight.color.set(0xffb199);
+    this.sun.visible = false;
+    this.moon.visible = false;
+    session.worldRenderer.setDaylight(NETHER_DAYLIGHT);
+    session.worldRenderer.pulsePortal(performance.now() / 1000);
+  }
+
   private updateEnvironment(time: number): void {
+    const session = this.session;
+    if (!session) return;
+    if (session.dimension === 'nether') {
+      this.applyNetherSky();
+      return;
+    }
+    this.clouds.object.visible = true;
     const phase = (time / 24_000) * Math.PI * 2;
     const sunHeight = Math.sin(phase);
     const daylight = daylightFactor(time);
@@ -7092,7 +7163,6 @@ export class Game {
     this.ambient.intensity = 0.14 + daylight * 0.32;
     this.sunlight.intensity = 0.18 + daylight * 1.55;
     this.sunlight.color.set(daylight > 0.45 ? 0xffe2b3 : 0x8ea7d4);
-    const session = this.session!;
     const places = celestialPositions(this.camera.position, dir);
     this.sun.position.set(places.sun.x, places.sun.y, places.sun.z);
     this.moon.position.set(places.moon.x, places.moon.y, places.moon.z);
@@ -7103,6 +7173,7 @@ export class Game {
     this.sunlight.target.position.set(0, 0, 0);
     this.sunlight.target.updateMatrixWorld();
     session.worldRenderer.setDaylight(daylight);
+    session.worldRenderer.pulsePortal(performance.now() / 1000);
     this.sun.visible = sunHeight > -0.25;
     this.moon.visible = sunHeight < 0.25;
   }

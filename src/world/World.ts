@@ -14,8 +14,13 @@ import { getItemDefinition } from '../items';
 import type { SerializedWorldState } from '../save/types';
 import { Chunk } from './Chunk';
 import { TerrainGenerator, type Biome, type TerrainGenJob } from './Generator';
+import { NetherGenerator } from './NetherGenerator';
 import { gameplayMayMutateBlock } from './worldBorder';
 import { syncSaplingClock, tickSaplings } from './saplings';
+import { syncEnchantmentClock, tickEnchantmentFlowers } from './enchantmentFlower';
+import { isLiveFire } from '../blocks/fireBlocks';
+import type { DimensionId } from './dimension';
+import { NETHER_TIME_OF_DAY } from './dimension';
 import {
   bindMeshLightSample,
   chunkNeedsCommittedMeshLight,
@@ -277,6 +282,8 @@ export class VoxelWorld {
   /** Planted-sapling timestamps. Restored with block states; not a second save file. */
   readonly saplingPlantedAt = new Map<string, number>();
   readonly generator: TerrainGenerator;
+  /** Planted enchantment flowers waiting on a wall-clock timestamp. */
+  readonly enchantmentPlantedAt = new Map<string, number>();
   timeOfDay = 1_000;
   tickNumber = 0;
   generationSamples = 0;
@@ -368,8 +375,11 @@ export class VoxelWorld {
   private readonly fluidMeshDirtyKeys = new Set<string>();
   private readonly fluidLightDirtyKeys = new Set<string>();
 
-  constructor(readonly seed: string) {
-    this.generator = new TerrainGenerator(seed);
+  constructor(readonly seed: string, readonly kind: DimensionId = 'overworld') {
+    this.generator = (kind === 'nether'
+      ? new NetherGenerator(seed)
+      : new TerrainGenerator(seed)) as TerrainGenerator;
+    if (kind === 'nether') this.timeOfDay = NETHER_TIME_OF_DAY;
   }
 
   /** Additional shared-simulation observers; the server callback remains single-owner. */
@@ -406,8 +416,10 @@ export class VoxelWorld {
       }
     }
     this.saplingPlantedAt.clear();
+    this.enchantmentPlantedAt.clear();
     for (const [key, blockState] of this.blockStates) {
       syncSaplingClock(this.saplingPlantedAt, key, blockState);
+      syncEnchantmentClock(this.enchantmentPlantedAt, key, blockState);
     }
     this.signs.clear();
     for (const [key, raw] of Object.entries(state.signs ?? {})) {
@@ -641,6 +653,7 @@ export class VoxelWorld {
     const key = blockKey(x, y, z);
     this.blockStates.set(key, clean);
     syncSaplingClock(this.saplingPlantedAt, key, clean);
+    syncEnchantmentClock(this.enchantmentPlantedAt, key, clean);
     if (clean.fluidLevel === undefined) this.queueSupportAround(x, y, z);
     const chunkX = floorDiv(x, CHUNK_SIZE);
     const chunkZ = floorDiv(z, CHUNK_SIZE);
@@ -1001,6 +1014,7 @@ export class VoxelWorld {
     const clearedKey = blockKey(x, y, z);
     this.blockStates.delete(clearedKey);
     syncSaplingClock(this.saplingPlantedAt, clearedKey, undefined);
+    syncEnchantmentClock(this.enchantmentPlantedAt, clearedKey, undefined);
     if (previous === BlockId.OakSign && block !== BlockId.OakSign
       && this.signs.delete(blockKey(x, y, z))) this.signVersion += 1;
     if (previous === BlockId.CollectiblePainting || block === BlockId.CollectiblePainting) {
@@ -1008,7 +1022,7 @@ export class VoxelWorld {
     }
     if (!skipSupport) this.queueSupportAround(x, y, z);
     if ((block === BlockId.Water || block === BlockId.Lava)
-      && previous !== BlockId.Air && previous !== BlockId.Fire && !previousDefinition.liquid
+      && previous !== BlockId.Air && !isLiveFire(previous) && !previousDefinition.liquid
       && (previousDefinition.fluidDisplaceable || previousDefinition.replaceable)) {
       this.detachedBlocks.push({
         x,
@@ -1484,9 +1498,10 @@ export class VoxelWorld {
     const chunk = this.getChunk(floorDiv(x, CHUNK_SIZE), floorDiv(z, CHUNK_SIZE));
     const localX = positiveMod(x, CHUNK_SIZE);
     const localZ = positiveMod(z, CHUNK_SIZE);
+    const columnTop = this.generator.columnAt(x, z).height;
     const start = chunk
-      ? Math.max(chunk.scanMaxY(), chunk.surfaceHeights[localZ * CHUNK_SIZE + localX] ?? 0)
-      : MAX_GENERATED_SURFACE;
+      ? Math.max(chunk.scanMaxY(), columnTop, chunk.surfaceHeights[localZ * CHUNK_SIZE + localX] ?? 0)
+      : Math.max(columnTop, MAX_GENERATED_SURFACE);
     for (let y = start; y >= 0; y -= 1) {
       const block = this.getBlock(x, y, z);
       if (getBlockDefinition(block).solid && block !== BlockId.OakLeaves) return y;
@@ -1584,12 +1599,15 @@ export class VoxelWorld {
 
   tick(): void {
     this.tickNumber += 1;
-    this.timeOfDay = (this.timeOfDay + 1) % 24_000;
+    this.timeOfDay = this.kind === 'nether'
+      ? NETHER_TIME_OF_DAY
+      : (this.timeOfDay + 1) % 24_000;
     this.processScheduledTicks();
     processFluidQueue(this);
     this.processSupportIntegrity();
     this.tickFurnaces();
     tickSaplings(this);
+    tickEnchantmentFlowers(this);
   }
 
   beginFluidTick(): void {
@@ -1973,7 +1991,7 @@ export class VoxelWorld {
           this.setBlock(scheduled.x, scheduled.y, scheduled.z, BlockId.Air);
         }
       }
-      if (block === BlockId.Fire) {
+      if (isLiveFire(block)) {
         this.tickFire(scheduled.x, scheduled.y, scheduled.z);
       }
     }
@@ -1981,7 +1999,7 @@ export class VoxelWorld {
 
   private tickFire(x: number, y: number, z: number): void {
     if (!gameplayMayMutateBlock(x, z)) return;
-    if (this.getBlock(x, y, z, false) !== BlockId.Fire) return;
+    if (!isLiveFire(this.getBlock(x, y, z, false))) return;
     const below = this.getBlock(x, y - 1, z, false);
     const support = getBlockDefinition(below);
     if (below === BlockId.Air || support.liquid || support.replaceable) {

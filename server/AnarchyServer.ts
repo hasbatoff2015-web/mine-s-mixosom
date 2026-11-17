@@ -451,7 +451,7 @@ export class AnarchyServer {
     this.supersedeOtherSockets(player.id, socket);
     this.refreshActiveSocketCount(player.id);
     const others = this.world.connectedPlayers()
-      .filter((other) => other.id !== player.id)
+      .filter((other) => other.id !== player.id && other.dimension === player.dimension)
       .map((other) => other.remoteInfo());
     const welcomeStarted = performance.now();
     const welcome: ServerWelcomeMessage = {
@@ -462,19 +462,22 @@ export class AnarchyServer {
       name: player.name,
       seed: this.world.seed,
       worldId: this.world.worldId,
-      timeOfDay: this.world.world.timeOfDay,
+      timeOfDay: (player.dimension === 'nether' ? this.world.netherWorld : this.world.world).timeOfDay,
+      dimension: player.dimension,
       spawn: this.world.spawn,
       you: { ...player.snapshot(), appearance: player.appearance },
       inventory: player.inventory.serialize(),
       players: others,
-      modifications: this.world.networkModifications(),
-      blockStates: this.world.blockStates(),
-      furnacesLit: this.world.networkFurnaceLit(),
+      modifications: player.dimension === 'nether'
+        ? this.world.netherWorld.serializeModifications()
+        : this.world.networkModifications(),
+      blockStates: (player.dimension === 'nether' ? this.world.netherWorld : this.world.world).serializeBlockStates(),
+      furnacesLit: (player.dimension === 'nether' ? this.world.netherWorld : this.world.world).networkFurnaceLit(),
       online: this.world.onlineCount(),
       maxPlayers: this.config.maxPlayers,
       serverName: this.config.serverName,
-      holograms: [...this.world.holograms.list()],
-      buyers: this.world.buyer.networkBuyers(),
+      holograms: player.dimension === 'nether' ? [] : [...this.world.holograms.list()],
+      buyers: player.dimension === 'nether' ? [] : this.world.buyer.networkBuyers(),
       serverNow: Date.now(),
       inClan: Boolean(this.world.clan.playerClan(player.id)),
       pvpUntil: this.world.playerRules.pvpUntil(player.id, Date.now()),
@@ -496,7 +499,11 @@ export class AnarchyServer {
     // Resume after disconnect still needs a full remoteInfo (appearance, fire,
     // pose). `player_appearance` alone no-ops on clients that already ran
     // player_left and would then spawn from player_state with the default skin.
-    this.world.broadcast({ type: 'player_joined', player: player.remoteInfo() }, player.id);
+    for (const other of this.world.connectedPlayers()) {
+      if (other.id !== player.id && other.dimension === player.dimension) {
+        this.world.sendTo(other, { type: 'player_joined', player: player.remoteInfo() });
+      }
+    }
     this.world.broadcast({
       type: 'status',
       online: this.world.onlineCount(),

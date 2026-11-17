@@ -1,4 +1,5 @@
 import { BlockId } from '../../src/blocks';
+import { dimensionWorldId } from '../../src/world/dimension';
 import type { Plugin } from '../PluginManager';
 import { fail, isConsoleSender, ok } from '../commands';
 import {
@@ -73,13 +74,18 @@ export function createClaimsPlugin(ctx: BuiltinPluginContext): Plugin {
       const load = (): ClaimStore => migrateClaimStore(api.loadData<unknown>('claims', { claims: [] }));
       const save = (store: ClaimStore) => api.saveData('claims', store);
       const ownerId = (playerId: string) => canonicalPlayerId(playerId);
-      const worldId = () => api.getWorld().worldId;
-      const overlapping = (x: number, y: number, z: number) => claimsAt(load().claims, worldId(), x, y, z);
+      const worldIdFor = (playerId?: string) => dimensionWorldId(
+        api.getWorld().worldId,
+        playerId ? (api.getPlayer(playerId)?.dimension() ?? 'overworld') : 'overworld',
+      );
+      const overlapping = (x: number, y: number, z: number, playerId?: string) => (
+        claimsAt(load().claims, worldIdFor(playerId), x, y, z)
+      );
       const standingAll = (playerId: string) => {
         const player = api.getPlayer(playerId);
         if (!player) return [];
         const pos = player.position();
-        return overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        return overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), playerId);
       };
       const topAt = (playerId: string) => sortClaimsByPriority(standingAll(playerId))[0];
       const bypass = (playerId: string, name: string) => (
@@ -140,7 +146,7 @@ player.sendMessage(flag === 'block-break'
       };
 
       api.registerEvent('blockBreak', (event) => {
-        const claims = overlapping(event.x, event.y, event.z);
+        const claims = overlapping(event.x, event.y, event.z, event.playerId);
         if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) {
@@ -152,7 +158,7 @@ player.sendMessage(flag === 'block-break'
       api.registerEvent('blockPlace', (event) => {
         const player = api.getPlayer(event.playerId);
         if (!player) return;
-        const claims = overlapping(event.x, event.y, event.z);
+        const claims = overlapping(event.x, event.y, event.z, player.id);
         if (claims.length > 0 && denyBuild(event, claims, 'block-place', player)) return;
         const key = claimAnchorKey(event.blockId);
         if (!key) return;
@@ -169,7 +175,7 @@ player.sendMessage(flag === 'block-break'
           ctx.claimBoundaries.show(player.id, eventClaim);
           return;
         }
-        const overlappingAnchors = overlappingAnchorClaims(load().claims, worldId(), volume);
+        const overlappingAnchors = overlappingAnchorClaims(load().claims, worldIdFor(player.id), volume);
         if (overlappingAnchors.length === 0) return;
         event.cancel();
         player.sendMessage(BLOCK_CLAIM_OVERLAP_MESSAGE);
@@ -196,7 +202,7 @@ player.sendMessage(flag === 'block-break'
           ctx.claimBoundaries.show(player.id, eventClaim);
           return;
         }
-        const overlappingAnchors = overlappingAnchorClaims(store.claims, worldId(), volume);
+        const overlappingAnchors = overlappingAnchorClaims(store.claims, worldIdFor(player.id), volume);
         if (overlappingAnchors.length > 0) {
           api.getWorld().setBlock(event.x, event.y, event.z, BlockId.Air);
           if (player.gamemode !== 'creative') player.give(key, 1);
@@ -218,7 +224,7 @@ const ownerKey = ownerId(player.id);
           id: `${ownerKey}:${name}:${Date.now()}`,
           name,
           owner: ownerKey,
-          worldId: worldId(),
+          worldId: worldIdFor(player.id),
           volume,
           members: [],
           priority: CLAIM_PRIORITY_DEFAULT,
@@ -232,7 +238,7 @@ const ownerKey = ownerId(player.id);
       });
       api.registerEvent('blockBroken', (event) => {
         const store = load();
-        const claim = findClaimByAnchor(store.claims, worldId(), event.x, event.y, event.z);
+        const claim = findClaimByAnchor(store.claims, worldIdFor(event.playerId), event.x, event.y, event.z);
         if (!claim) return;
         if (event.playerId) {
           const allowed = isTrusted(claim, event.playerId)
@@ -249,7 +255,7 @@ const ownerKey = ownerId(player.id);
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const pos = player.position();
-        const victimClaims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        const victimClaims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), player.id);
         if (victimClaims.length > 0 && !effectiveFlag(victimClaims, 'player-damage')) {
           event.cancel();
           return;
@@ -263,6 +269,7 @@ const ownerKey = ownerId(player.id);
           const attackerPos = attacker.position();
           const attackerClaims = overlapping(
             Math.floor(attackerPos.x), Math.floor(attackerPos.y), Math.floor(attackerPos.z),
+            attacker.id,
           );
           if (attackerClaims.length > 0 && !effectiveFlag(attackerClaims, 'pvp')) event.cancel();
           return;
@@ -276,7 +283,7 @@ const ownerKey = ownerId(player.id);
       });
       api.registerEvent('itemDrop', (event) => {
         if (!event.playerId) return;
-        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z));
+        const claims = overlapping(Math.floor(event.x), Math.floor(event.y), Math.floor(event.z), event.playerId);
         if (claims.length === 0) return;
         const player = api.getPlayer(event.playerId);
         if (!player) return;
@@ -287,7 +294,7 @@ const ownerKey = ownerId(player.id);
         const player = api.getPlayer(event.playerId);
         if (!player) return;
         const pos = player.position();
-        const claims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+        const claims = overlapping(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), player.id);
         if (claims.length === 0) return;
         if (allowFlag(claims, 'item-pickup', player.id, player.name)) return;
         event.cancel();
@@ -370,7 +377,7 @@ if (!api.hasPermission(sender.playerId, 'claim.create') && !api.isOperator(sende
               id: `${ownerKey}:${name}:${Date.now()}`,
               name,
               owner: ownerKey,
-              worldId: worldId(),
+              worldId: worldIdFor(sender.playerId),
               volume,
               members: [],
               priority: CLAIM_PRIORITY_DEFAULT,

@@ -783,7 +783,8 @@ export function selectionLocalBoxes(
     case 'bed': return [{ minX: 0, minY: 0, minZ: 0, maxX: 1, maxY: 9 / 16, maxZ: 1 }];
     case 'sign': return signLocalBoxes(state);
     case 'painting': return [paintingSelectionLocalBox(state?.facing ?? 'south')];
-    case 'fire': return [FIRE_BOX];
+    case 'fire':
+    case 'portal': return [FIRE_BOX];
     case 'stairs':
       return stairLocalBoxes(
         defaultStairFacing(state),

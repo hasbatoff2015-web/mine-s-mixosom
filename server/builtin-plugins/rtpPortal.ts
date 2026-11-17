@@ -50,7 +50,7 @@ export function createRtpPortalPlugin(ctx: BuiltinPluginContext): Plugin {
 
       api.registerEvent('playerMove', (event) => {
         const player = api.getPlayer(event.playerId);
-        if (!player) return;
+        if (!player || player.dimension() === 'nether') return;
         const feet = feetBlock(event.x, event.y, event.z);
         const water = api.getWorld().getBlock(feet.x, feet.y, feet.z) === BlockId.Water
           || api.getWorld().getBlock(feet.x, feet.y + 1, feet.z) === BlockId.Water;

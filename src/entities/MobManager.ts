@@ -132,7 +132,7 @@ export function mobDeathVisualSeconds(
   return Math.max(0, deathSeconds - FIXED_DT * (1 - t));
 }
 
-const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
+export const HOSTILE_KINDS: readonly MobKind[] = ['zombie', 'skeleton', 'creeper', 'spider'];
 const UP = new Vec3(0, 1, 0);
 /** Soft horizontal steering budget. Pets do not raise this even if the tamed ceiling grows. */
 export const MAX_SEPARATION_PAIR_CHECKS = 1_024;
@@ -253,6 +253,8 @@ export interface MobManagerOptions {
   readonly maxTamedPets?: number;
   readonly maxProjectiles?: number;
   readonly automaticSpawning?: boolean;
+  /** Nether worlds spawn only surface nether skeletons and do not sunburn them. */
+  readonly spawnProfile?: 'overworld' | 'nether';
   readonly spawnIntervalSeconds?: number;
   readonly minimumSpawnDistance?: number;
   readonly maximumSpawnDistance?: number;
@@ -1940,7 +1942,8 @@ export class MobManager {
       mob.definition.width, mob.definition.height,
     );
     const inWater = aabbOverlapsBlockType(this.world, box, BlockId.Water);
-    mob.contactBurning = aabbOverlapsBlockType(this.world, box, BlockId.Fire);
+    mob.contactBurning = aabbOverlapsBlockType(this.world, box, BlockId.Fire)
+      || aabbOverlapsBlockType(this.world, box, BlockId.SoulFire);
     if (inWater) {
       mob.fireTicks = 0;
       mob.sunlightBurning = false;
@@ -1948,7 +1951,9 @@ export class MobManager {
       const skyX = Math.floor(mob.position.x);
       const skyY = Math.floor(mob.position.y + mob.definition.height * 0.9);
       const skyZ = Math.floor(mob.position.z);
-      mob.sunlightBurning = mob.kind !== 'mega_zombie'
+      mob.sunlightBurning = this.options.spawnProfile !== 'nether'
+        && mob.kind !== 'mega_zombie'
+        && mob.kind !== 'nether_skeleton'
         && isHostileMob(mob.kind)
         && isSunHighEnough(daylight)
         && hasDirectSkyLight(this.world, skyX, skyY, skyZ);
@@ -2093,6 +2098,10 @@ export class MobManager {
     daylight: number,
     customLight: MobUpdateContext['lightLevelAt'],
   ): void {
+    if (this.options.spawnProfile === 'nether') {
+      this.tryNetherSkeletonSpawn(playerPosition);
+      return;
+    }
     const hostileRoom = this.hasPopulationRoom('hostile');
     const passiveRoom = this.hasPopulationRoom('passive');
     if (!hostileRoom && !passiveRoom) return;
@@ -2212,6 +2221,29 @@ export class MobManager {
     if (!this.spawn(kind, position)) return false;
     caveChunksThisEvent.add(sample.chunkKey);
     return true;
+  }
+
+  /** About 2–4 living nether skeletons per 500×500 region, surface only. */
+  private tryNetherSkeletonSpawn(playerPosition: Readonly<Vec3>): void {
+    const region = 500;
+    const rx = Math.floor(playerPosition.x / region);
+    const rz = Math.floor(playerPosition.z / region);
+    let living = 0;
+    for (const mob of this.mobsById.values()) {
+      if (!mob.alive || mob.kind !== 'nether_skeleton') continue;
+      if (Math.floor(mob.position.x / region) === rx && Math.floor(mob.position.z / region) === rz) living += 1;
+    }
+    if (living >= 3) return;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const sample = this.randomSpawnColumn(playerPosition);
+      if (!sample) continue;
+      const ground = this.world.getBlock(sample.x, sample.surfaceY, sample.z, false);
+      if (ground === BlockId.Lava || ground === BlockId.SoulFire || ground === BlockId.Fire) continue;
+      const position = new Vec3(sample.x + 0.5, sample.surfaceY + 1, sample.z + 0.5);
+      const definition = getMobDefinition('nether_skeleton');
+      if (!this.spawnPositionIsValid(position, definition, 'hostile', 'nether_skeleton')) continue;
+      if (this.spawn('nether_skeleton', position)) return;
+    }
   }
 
   private trySurfaceHostileSpawn(

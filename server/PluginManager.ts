@@ -38,6 +38,7 @@ export interface PlayerView {
   readonly gamemode: GameMode;
   health(): number;
   position(): { readonly x: number; readonly y: number; readonly z: number; readonly yaw?: number; readonly pitch?: number };
+  dimension(): 'overworld' | 'nether';
   snapshot(): PlayerSnapshot;
   teleport(x: number, y: number, z: number): boolean;
   sendMessage(text: string): void;
@@ -469,7 +470,7 @@ export class PluginManager {
       teleport: (playerId: string, x: number, y: number, z: number, reason: TeleportReason = 'command', options?: TeleportScheduleOptions) => {
         const teleports = host.teleports?.();
         if (!teleports) return { ok: false, error: 'Teleport service unavailable.' };
-        return teleports.schedule(playerId, { x, y, z }, reason, options);
+        return teleports.schedule(playerId, { x, y, z, dimension: options?.dimension }, reason, options);
       },
       lastTeleport: (playerId: string) => host.history?.().peek(playerId),
       consumeLastTeleport: (playerId: string) => host.history?.().consume(playerId),

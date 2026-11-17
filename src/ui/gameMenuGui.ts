@@ -181,7 +181,7 @@ export function menuHomesHtml(state: ServerMenuMessage, escape: (value: string) 
   const homes = (state.homes ?? []).map((home) => `
     <div class="mc-player-row">
       <div class="mc-player-main">
-        <strong class="mc-player-name">${escape(home.name)}</strong>
+        <strong class="mc-player-name">${escape(home.name)}${home.nether ? ' <span class="mc-home-nether">Ад</span>' : ''}</strong>
         <span class="mc-player-meta">X: ${Math.round(home.x)}&nbsp;&nbsp;Y: ${Math.round(home.y)}&nbsp;&nbsp;Z: ${Math.round(home.z)}</span>
       </div>
       <span class="mc-menu-row-actions">

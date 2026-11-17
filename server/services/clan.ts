@@ -211,6 +211,7 @@ export interface ClanRuntime {
   cancelFriendRequest?(fromId: string, targetId: string): { ok: boolean; error?: string };
   notifyUnread?(playerId: string, category: 'clans'): void;
   playerPosition?(playerId: string): { x: number; y: number; z: number } | undefined;
+  playerDimension?(playerId: string): 'overworld' | 'nether';
   worldId?(): string;
   getBlock?(x: number, y: number, z: number): number;
   setBlock?(x: number, y: number, z: number, blockId: number): boolean;
@@ -1133,6 +1134,10 @@ export class ClanService {
       const remaining = Math.max(0, (clan.baseCooldownUntil ?? 0) - this.now());
       if (remaining > 0) {
         session.message = clanBaseCooldownLabel(remaining);
+        return { ok: false, error: session.message, clan };
+      }
+      if (this.runtime.playerDimension?.(playerId) === 'nether') {
+        session.message = 'Базу клана нельзя установить в Аду.';
         return { ok: false, error: session.message, clan };
       }
       const pos = this.runtime.playerPosition?.(playerId);

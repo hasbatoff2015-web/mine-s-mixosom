@@ -181,6 +181,7 @@ export function itemHeldMeshKind(itemOrId: string | ItemDefinition): ItemHeldMes
     case 'door':
     case 'cross':
     case 'fire':
+    case 'portal':
     case 'wire':
     case 'sign':
     case 'painting':

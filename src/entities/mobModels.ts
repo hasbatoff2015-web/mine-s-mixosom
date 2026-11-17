@@ -40,6 +40,7 @@ export const MOB_MODEL_DESCRIPTORS: Readonly<Record<MobKind, MobModelDescriptor>
   }),
   zombie: Object.freeze({ kind: 'zombie', texturePath: 'entity/zombie', logicalTextureSize: [64, 64] as const }),
   skeleton: Object.freeze({ kind: 'skeleton', texturePath: 'entity/skeleton', logicalTextureSize: [64, 32] as const }),
+  nether_skeleton: Object.freeze({ kind: 'nether_skeleton', texturePath: 'entity/nether_skeleton', logicalTextureSize: [64, 32] as const }),
   creeper: Object.freeze({ kind: 'creeper', texturePath: 'entity/creeper', logicalTextureSize: [64, 32] as const }),
   spider: Object.freeze({ kind: 'spider', texturePath: 'entity/spider', logicalTextureSize: [64, 32] as const, overlayTexturePaths: Object.freeze(['entity/spider_eyes']) }),
   mega_zombie: Object.freeze({
@@ -161,16 +162,23 @@ export const ZOMBIE_MODEL: LegacyModelDefinition = {
   ],
 };
 
+const SKELETON_MODEL_PARTS: LegacyModelDefinition['parts'] = [
+  modelPart('head', [0, 0, 0], [box([-4, -8, -4], [8, 8, 8], [0, 0])]),
+  modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16], { doubleSided: true })]),
+  modelPart('rightArm', [-5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16])]),
+  modelPart('leftArm', [5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16], { mirror: true })]),
+  modelPart('rightLeg', [-2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16])]),
+  modelPart('leftLeg', [2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16], { mirror: true })]),
+];
+
 export const SKELETON_MODEL: LegacyModelDefinition = {
   texturePath: 'entity/skeleton', logicalTextureSize: [64, 32],
-  parts: [
-    modelPart('head', [0, 0, 0], [box([-4, -8, -4], [8, 8, 8], [0, 0])]),
-    modelPart('body', [0, 0, 0], [box([-4, 0, -2], [8, 12, 4], [16, 16], { doubleSided: true })]),
-    modelPart('rightArm', [-5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16])]),
-    modelPart('leftArm', [5, 2, 0], [box([-1, -2, -1], [2, 12, 2], [40, 16], { mirror: true })]),
-    modelPart('rightLeg', [-2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16])]),
-    modelPart('leftLeg', [2, 12, 0], [box([-1, 0, -1], [2, 12, 2], [0, 16], { mirror: true })]),
-  ],
+  parts: SKELETON_MODEL_PARTS,
+};
+
+export const NETHER_SKELETON_MODEL: LegacyModelDefinition = {
+  texturePath: 'entity/nether_skeleton', logicalTextureSize: [64, 32],
+  parts: SKELETON_MODEL_PARTS,
 };
 
 export const WOLF_MODEL: LegacyModelDefinition = {
@@ -274,7 +282,7 @@ export const SPIDER_MODEL: LegacyModelDefinition = {
 export const MOB_LEGACY_MODELS: Readonly<Record<MobKind, readonly LegacyModelDefinition[]>> = {
   cow: [COW_MODEL], pig: [PIG_MODEL], sheep: [SHEEP_BASE_MODEL, SHEEP_WOOL_MODEL],
   chicken: [CHICKEN_MODEL], wolf: [WOLF_MODEL, WOLF_COLLAR_MODEL], cat: [CAT_MODEL],
-  zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL],
+  zombie: [ZOMBIE_MODEL], skeleton: [SKELETON_MODEL], nether_skeleton: [NETHER_SKELETON_MODEL],
   creeper: [CREEPER_MODEL], spider: [SPIDER_MODEL],
   mega_zombie: [MUTANT_ZOMBIE_MODEL],
   pet_bee: [BEE_MODEL as unknown as LegacyModelDefinition],
@@ -311,6 +319,7 @@ const PART_NAMES: Readonly<Record<MobKind, {
   },
   zombie: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
+  nether_skeleton: { head: 'head', legs: ['rightLeg', 'leftLeg'], legSwingSigns: [1, -1], arms: ['rightArm', 'leftArm'] },
   creeper: { head: 'head', legs: ['leg1', 'leg2', 'leg3', 'leg4'], legSwingSigns: [1, -1, -1, 1] },
   pet_bee: {
     head: 'body',

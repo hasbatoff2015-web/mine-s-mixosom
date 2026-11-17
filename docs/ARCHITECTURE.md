@@ -1,5 +1,13 @@
 # Архитектура
 
+## Измерение «Ад» — 2026-11-18
+
+Один `AnarchyServer` и один `WorldInstance`. Обычный мир остаётся `this.world` и `this.gameplay`. Ад — второй `VoxelWorld` (`kind: 'nether'`, `NetherGenerator`) и второй `ServerGameplay` со `spawnProfile: 'nether'`. Игрок выбирается через `gp(player)` и `worldFor(player)`.
+
+Сохранение Ада — `dataDir/<worldId>/nether/{meta,world}.json` тем же `WorldSnapshot`, без игроков. Игроки остаются в `players.json` обычного мира, поле `dimension` необязательное.
+
+Клиент после пакета `dimension` выбрасывает меши и собирает новый `VoxelWorld` с тем же seed и генератором Ада. Дельты этого измерения приходят в пакете целиком, как при welcome.
+
 ## Реферальная программа — 2026-11-08
 
 Рефералы не заводят второй аккаунт. Ключ — серверный UUID. Scope — `deploymentId`, `serverMode`, `worldId`, как у привязки Яндекса.

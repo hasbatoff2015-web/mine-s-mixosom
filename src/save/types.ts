@@ -86,6 +86,10 @@ export interface SerializedPersistedPlayer {
    * means none. The runtime entity is not stored in the mob list.
    */
   readonly cosmeticPet?: 'bee' | 'creeper';
+  /**
+   * Dimension the saved coordinates belong to. Missing on old saves means the overworld.
+   */
+  readonly dimension?: 'overworld' | 'nether';
 }
 
 export interface SerializedServerWorld {

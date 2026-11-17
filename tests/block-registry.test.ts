@@ -120,7 +120,7 @@ describe('block registry', () => {
   it('contains the intended ores with 1.9-style iron/gold and gated Titanium drops', () => {
     const ores = BLOCKS.filter((block) => block.category === 'ore');
     expect(ores.map((block) => block.key).sort()).toEqual([
-      'coal_ore', 'diamond_ore', 'gold_ore', 'iron_ore', 'redstone_ore', 'titanium_ore',
+      'coal_ore', 'diamond_ore', 'gold_ore', 'iron_ore', 'mythril_ore', 'redstone_ore', 'titanium_ore',
     ]);
     expect(getBlockDefinition(BlockId.IronOre).drop?.item).toBe('iron_ore');
     expect(getBlockDefinition(BlockId.GoldOre).drop?.item).toBe('gold_ore');

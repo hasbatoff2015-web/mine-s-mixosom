@@ -41,6 +41,7 @@ export interface TeleportScheduleOptions {
   readonly cancelOnMove?: boolean;
   readonly cancelOnDamage?: boolean;
   readonly cooldownMs?: number;
+  readonly dimension?: 'overworld' | 'nether';
   readonly onComplete?: (ok: boolean, message: string) => void;
 }
 
@@ -50,6 +51,7 @@ export interface TeleportTarget {
   readonly z: number;
   readonly yaw?: number;
   readonly pitch?: number;
+  readonly dimension?: 'overworld' | 'nether';
 }
 
 interface PendingTeleport {
@@ -66,7 +68,12 @@ interface PendingTeleport {
 export interface TeleportActor {
   readonly id: string;
   position(): TeleportTarget;
-  teleport(x: number, y: number, z: number, look?: { readonly yaw?: number; readonly pitch?: number }): boolean;
+  teleport(
+    x: number,
+    y: number,
+    z: number,
+    look?: { readonly yaw?: number; readonly pitch?: number; readonly dimension?: 'overworld' | 'nether' },
+  ): boolean;
   sendMessage(text: string): void;
 }
 
@@ -144,6 +151,16 @@ export class TeleportService {
   private readonly pending = new Map<string, PendingTeleport>();
   private readonly cooldownUntil = new Map<string, number>();
   private externalDeny?: (playerId: string, reason: TeleportReason) => string | undefined;
+  private locationWorldId?: (playerId: string) => string;
+
+  /** Persisted teleport/death rows use the player's dimension, not only the server id. */
+  setLocationWorldId(resolve: (playerId: string) => string): void {
+    this.locationWorldId = resolve;
+  }
+
+  isPending(playerId: string): boolean {
+    return this.pending.has(playerId);
+  }
 
   /** Central deny for player-facing teleports. Reason `duel` is the trusted internal bypass. */
   setExternalDeny(deny: (playerId: string, reason: TeleportReason) => string | undefined): void {
@@ -183,7 +200,10 @@ export class TeleportService {
       const actor = this.getActor(event.playerId);
       if (!actor) return;
       const pos = actor.position();
-      this.history.recordDeath(event.playerId, { worldId: this.worldId, ...pos });
+      this.history.recordDeath(event.playerId, {
+        worldId: this.locationWorldId?.(event.playerId) ?? this.worldId,
+        ...pos,
+      });
     });
   }
 
@@ -221,10 +241,17 @@ export class TeleportService {
     }
     try {
       const from = actor.position();
-      if (!actor.teleport(dest.x, dest.y, dest.z, { yaw: dest.yaw, pitch: dest.pitch })) {
+      if (!actor.teleport(dest.x, dest.y, dest.z, {
+        yaw: dest.yaw,
+        pitch: dest.pitch,
+        dimension: dest.dimension,
+      })) {
         return { ok: false, error: 'Teleport failed.' };
       }
-      this.history.record(playerId, { worldId: this.worldId, ...from }, reason);
+      this.history.record(playerId, {
+        worldId: this.locationWorldId?.(playerId) ?? this.worldId,
+        ...from,
+      }, reason);
       this.pending.delete(playerId);
       if (governed) this.rules!.commit(playerId, reason, Date.now());
       if (!options.silent) {

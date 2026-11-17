@@ -1,4 +1,5 @@
 import type { Plugin } from '../PluginManager';
+import { dimensionFromStoredWorldId, sameServerWorld } from '../../src/world/dimension';
 import { fail, ok } from '../commands';
 import { RANK_LIMITS, formatDurationMs } from '../../shared/donationRanks';
 import { formatPluginHelp, isHelpRequest } from '../services/pluginHelp';
@@ -34,16 +35,23 @@ export function createBackPlugin(ctx: BuiltinPluginContext): Plugin {
           const last = ctx.history.peek(sender.playerId);
           const deathIsLatest = Boolean(
             death
-            && death.worldId === ctx.worldId()
+            && sameServerWorld(death.worldId, ctx.worldId())
             && (!last || last.reason === 'death' || last.at <= death.at),
           );
           const target = deathIsLatest && death ? death : last;
           if (!target) return fail('Точка смерти не сохранена.');
-          if (death && death.worldId !== ctx.worldId() && !last) {
+          if (death && !sameServerWorld(death.worldId, ctx.worldId()) && !last) {
             return fail('Точка смерти сохранена в другом мире.');
           }
           const cap = operator ? null : RANK_LIMITS[ctx.donation.effectiveRank(sender.playerId)].deathBackPerDay;
-          const go = (): { ok: boolean; error?: string } => api.teleport(sender.playerId, target.x, target.y, target.z, 'back', { warmupMs: 0 });
+          const go = (): { ok: boolean; error?: string } => api.teleport(
+            sender.playerId,
+            target.x,
+            target.y,
+            target.z,
+            'back',
+            { warmupMs: 0, dimension: dimensionFromStoredWorldId(target.worldId) },
+          );
           if (target.reason === 'death' && cap !== null) {
             let failure = 'Teleport failed.';
             const used = ctx.donation.consumeIf(sender.playerId, 'deathBack', cap, () => {

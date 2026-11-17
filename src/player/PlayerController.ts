@@ -1,5 +1,6 @@
 import { Vec3, type Vec3Like } from '../math/vec3';
 import { BlockId } from '../blocks';
+import { isLiveFire } from '../blocks/fireBlocks';
 import { applyKnockback, applyMeleeDrag } from '../combat';
 import { blockCollisionBoxes, collisionCandidateCellRange, movementMultiplier, type CollisionBox } from '../world/collision';
 import {
@@ -152,6 +153,8 @@ export class PlayerController {
   inLava = false;
   inFire = false;
   inCobweb = false;
+  /** Feet are on soul sand. Halves horizontal travel only. */
+  onSoulSand = false;
   private webMultiplier = 1;
   headSubmerged = false;
   onLadder = false;
@@ -631,15 +634,17 @@ export class PlayerController {
       wishX /= wishLength;
       wishZ /= wishLength;
     }
+    const soul = this.onSoulSand && !this.isFlying ? 0.5 : 1;
     const speed = (this.inLava
       ? WATER_SPEED * 0.55
       : this.inWater
         ? WATER_MOVE_SPEED
         : this.sneaking ? SNEAK_SPEED : PLAYER_MOVE_SPEED)
-      * this.webMultiplier;
+      * this.webMultiplier
+      * soul;
     if (this.meleeKnockback) {
       // Keep the external impulse; input adds acceleration instead of replacing it.
-      const acceleration = (wasOnGround ? 2 : 0.4) * (this.sprinting ? 1.3 : 1) * dt / 0.05;
+      const acceleration = (wasOnGround ? 2 : 0.4) * (this.sprinting ? 1.3 : 1) * dt / 0.05 * soul;
       this.velocity.x += wishX * acceleration * this.webMultiplier;
       this.velocity.z += wishZ * acceleration * this.webMultiplier;
       return;
@@ -675,13 +680,33 @@ export class PlayerController {
   private updateFluidState(world: VoxelWorld): void {
     this.inWater = this.overlapsBlock(world, BlockId.Water);
     this.inLava = this.overlapsBlock(world, BlockId.Lava);
-    this.inFire = this.overlapsBlock(world, BlockId.Fire);
+    this.inFire = this.overlapsLiveFire(world);
+    this.onSoulSand = this.standingOn(world, BlockId.SoulSand);
     const box = this.aabb;
     this.webMultiplier = movementMultiplier(world, box.minX, box.minY, box.minZ, box.maxX, box.maxY, box.maxZ);
     this.inCobweb = this.webMultiplier < 1;
     const eye = this.eyePosition();
     const eyeBlock = world.getBlock(Math.floor(eye.x), Math.floor(eye.y), Math.floor(eye.z));
     this.headSubmerged = eyeBlock === BlockId.Water || eyeBlock === BlockId.Lava;
+  }
+
+  private overlapsLiveFire(world: VoxelWorld): boolean {
+    const box = this.aabb;
+    for (let y = Math.floor(box.minY + COLLISION_EPSILON); y <= Math.floor(box.maxY - COLLISION_EPSILON); y += 1) {
+      for (let z = Math.floor(box.minZ + COLLISION_EPSILON); z <= Math.floor(box.maxZ - COLLISION_EPSILON); z += 1) {
+        for (let x = Math.floor(box.minX + COLLISION_EPSILON); x <= Math.floor(box.maxX - COLLISION_EPSILON); x += 1) {
+          if (isLiveFire(world.getBlock(x, y, z, false))) return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  private standingOn(world: VoxelWorld, block: BlockId): boolean {
+    const x = Math.floor(this.position.x);
+    const y = Math.floor(this.position.y - 0.05);
+    const z = Math.floor(this.position.z);
+    return world.getBlock(x, y, z, false) === block;
   }
 
   private overlapsBlock(world: VoxelWorld, block: BlockId): boolean {

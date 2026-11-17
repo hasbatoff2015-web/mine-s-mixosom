@@ -28,6 +28,7 @@ export interface RtpSearchState {
   found?: RtpDestination;
   exhausted: boolean;
   tried?: Set<string>;
+  dimension?: 'overworld' | 'nether';
 }
 
 function clampInt(value: number, min: number, max: number): number {
@@ -104,7 +105,11 @@ export function isSafeRtpStand(world: VoxelWorld, x: number, y: number, z: numbe
 }
 
 export class RtpService {
-  constructor(private readonly world: VoxelWorld) {}
+  constructor(private readonly world: VoxelWorld, private readonly netherWorld?: VoxelWorld) {}
+
+  private worldFor(dimension: 'overworld' | 'nether' | undefined): VoxelWorld {
+    return dimension === 'nether' && this.netherWorld ? this.netherWorld : this.world;
+  }
 
   createSearch(options: RtpSearchOptions): RtpSearchState {
     return { attempts: 0, generates: 0, exhausted: false };
@@ -143,16 +148,17 @@ export class RtpService {
       }
       const cx = floorDiv(column.x, CHUNK_SIZE);
       const cz = floorDiv(column.z, CHUNK_SIZE);
-      const existing = this.world.getChunk(cx, cz, false);
+      const world = this.worldFor(state.dimension);
+      const existing = world.getChunk(cx, cz, false);
       if (!existing) {
         if (generates >= generateBudget) continue;
-        this.world.getChunk(cx, cz, true);
+        world.getChunk(cx, cz, true);
         generates += 1;
       }
       tried.add(key);
       state.attempts += 1;
-      const y = this.world.surfaceY(column.x, column.z);
-      if (isSafeRtpStand(this.world, column.x, y, column.z)) {
+      const y = world.surfaceY(column.x, column.z);
+      if (isSafeRtpStand(world, column.x, y, column.z)) {
         state.found = { x: column.x + 0.5, y: y + 1, z: column.z + 0.5 };
         state.generates += generates;
         return state;
@@ -187,7 +193,10 @@ export class RtpSessionManager {
   private readonly requests = new Map<string, RtpRequest>();
   private externalDeny?: (playerId: string) => string | undefined;
 
-  constructor(private readonly rtp: RtpService) {}
+  constructor(
+    private readonly rtp: RtpService,
+    private readonly dimensionOf: (playerId: string) => 'overworld' | 'nether' = () => 'overworld',
+  ) {}
 
   setExternalDeny(deny: (playerId: string) => string | undefined): void {
     this.externalDeny = deny;
@@ -204,7 +213,7 @@ export class RtpSessionManager {
     this.requests.set(playerId, {
       playerId,
       options,
-      state: this.rtp.createSearch(options),
+      state: { ...this.rtp.createSearch(options), dimension: this.dimensionOf(playerId) },
       reason: extra.reason ?? 'rtp',
       warmupMs: extra.warmupMs ?? 0,
       cooldownMs: extra.cooldownMs ?? 0,

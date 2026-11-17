@@ -49,4 +49,13 @@ export const EN_DISPLAY_NAMES: Readonly<Record<string, string>> = Object.freeze(
   painting_18_lynx_rabbit: 'Collectible Painting #18',
   painting_19_burning_mask: 'Collectible Painting #19',
   painting_20_tiger_musya: 'Collectible Painting #20',
+  netherrack: 'Netherrack',
+  soul_sand: 'Soul Sand',
+  soul_fire: 'Soul Fire',
+  mythril_ore: 'Mythril Ore',
+  nether_mushroom_cap: 'Nether Mushroom Cap',
+  nether_mushroom_stem: 'Nether Mushroom Stem',
+  enchantment_flower: 'Enchantment Flower',
+  enchantment_shard: 'Enchantment Shard',
+  nether_portal: 'Nether Portal',
 });

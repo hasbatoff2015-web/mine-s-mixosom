@@ -16,6 +16,7 @@ import {
   WORLD_BORDER_HOME_TELEPORT_ERROR,
   isPlayerCenterInsidePlayableWorld,
 } from '../../src/world/worldBorder';
+import { dimensionFromStoredWorldId, dimensionWorldId } from '../../src/world/dimension';
 
 const HELP = {
   name: 'home',
@@ -116,6 +117,7 @@ if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sende
             z: dest.z,
             yaw: dest.yaw,
             pitch: dest.pitch,
+            dimension: dimensionFromStoredWorldId(dest.worldId),
           }, 'home', {
             warmupMs: Number(api.getConfig('warmupSeconds', config.warmupSeconds)) * 1000,
             cooldownMs: Number(api.getConfig('cooldownSeconds', config.cooldownSeconds)) * 1000,
@@ -141,7 +143,7 @@ if (!api.hasPermission(sender.playerId, 'server.admin') && !api.isOperator(sende
             return fail(WORLD_BORDER_HOME_SET_ERROR);
           }
           const result = ctx.homes.set(sender.playerId, parsed.name, {
-            worldId: api.getWorld().worldId,
+            worldId: dimensionWorldId(api.getWorld().worldId, player.dimension?.() ?? 'overworld'),
             x: pos.x,
             y: pos.y,
             z: pos.z,

@@ -59,6 +59,7 @@ export class WorldRenderer {
   private readonly cutoutMaterial: THREE.MeshBasicMaterial;
   private readonly vegetationMaterial: THREE.MeshBasicMaterial;
   private readonly glassMaterial: THREE.MeshBasicMaterial;
+  private readonly portalMaterial: THREE.MeshBasicMaterial;
   private readonly waterMaterial: THREE.MeshBasicMaterial;
   private readonly selectionGeometries = new Map<string, THREE.BufferGeometry>();
   private selectionKey = '';
@@ -96,6 +97,13 @@ export class WorldRenderer {
       depthWrite: true,
       depthTest: true,
       side: THREE.FrontSide,
+    });
+    this.portalMaterial = createWorldChunkMaterial(atlas, {
+      transparent: true,
+      opacity: 0.62,
+      alphaTest: 0.02,
+      depthWrite: false,
+      side: THREE.DoubleSide,
     });
     this.glassMaterial = createWorldChunkMaterial(atlas, {
       transparent: true,
@@ -487,6 +495,12 @@ export class WorldRenderer {
     this.chests.sync(cells, dtSeconds);
   }
 
+  /** Light flicker on the portal sheet. Glass and water materials stay still. */
+  pulsePortal(timeSeconds: number): void {
+    const wave = 0.5 + 0.5 * Math.sin(timeSeconds * 3.2);
+    this.portalMaterial.opacity = 0.48 + wave * 0.22;
+  }
+
   get faceCount(): number {
     let faces = 0;
     for (const chunk of this.chunks.values()) faces += chunk.faces;
@@ -519,6 +533,7 @@ export class WorldRenderer {
     this.cutoutMaterial.dispose();
     this.vegetationMaterial.dispose();
     this.glassMaterial.dispose();
+    this.portalMaterial.dispose();
     this.waterMaterial.dispose();
     this.chests.dispose();
     this.signs.dispose();
@@ -549,6 +564,7 @@ export class WorldRenderer {
     this.attachLayer(group, meshed.translucent, this.glassMaterial, 2);
     this.attachLayer(group, meshed.water, this.waterMaterial, 3);
     this.attachLayer(group, meshed.fire, SharedFireTexture.instance().material, 4);
+    this.attachLayer(group, meshed.portal, this.portalMaterial, 4);
     group.userData.faces = meshed.faces;
     group.userData.chests = meshed.chests;
     const existing = visual.sections.get(section);

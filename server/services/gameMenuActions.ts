@@ -21,6 +21,7 @@ import { parseKitName } from './kit';
 import { isCosmeticPetSelection, type CosmeticPetSelection } from '../../src/entities/cosmeticPets';
 import { playerText } from '../../shared/playerText';
 import type { GameMenuScreen } from '../../shared/gameMenu';
+import { dimensionWorldId, type DimensionId } from '../../src/world/dimension';
 
 export interface MenuPlayer {
   readonly id: string;
@@ -30,6 +31,7 @@ export interface MenuPlayer {
   readonly z: number;
   readonly yaw: number;
   readonly pitch: number;
+  readonly dimension?: DimensionId;
 }
 
 export type MenuActionOutcome =
@@ -63,6 +65,7 @@ export interface MenuActionHost {
   deathPoint(player: MenuPlayer): { x: number; y: number; z: number } | undefined;
   /** Live decorative pet. The menu toggle reads this instead of the last click. */
   liveCosmeticPet(player: MenuPlayer): CosmeticPetSelection | null;
+  dimensionOf?(playerId: string): DimensionId;
 }
 
 export function applyGameMenuAction(
@@ -114,6 +117,14 @@ export function applyGameMenuAction(
     || action === 'duel_decline'
   ) {
     session.screen = 'duels';
+    const otherId = message.playerId;
+    const actorDimension = player.dimension ?? 'overworld';
+    const otherDimension = otherId ? (host.dimensionOf?.(otherId) ?? 'overworld') : 'overworld';
+    if (action !== 'duel_refresh' && action !== 'duel_decline'
+      && (actorDimension !== 'overworld' || otherDimension !== 'overworld')) {
+      session.message = 'Дуэли доступны только в обычном мире.';
+      return { kind: 'flush' };
+    }
     const result = action === 'duel_refresh'
       ? { ok: true as const, message: undefined }
       : action === 'duel_challenge'
@@ -146,7 +157,7 @@ export function applyGameMenuAction(
       return { kind: 'flush' };
     }
     const result = host.homes.set(player.id, parsed.name, {
-      worldId: host.worldId,
+      worldId: dimensionWorldId(host.worldId, player.dimension ?? 'overworld'),
       x: player.x,
       y: player.y,
       z: player.z,

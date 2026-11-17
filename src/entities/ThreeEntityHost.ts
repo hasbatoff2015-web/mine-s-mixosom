@@ -316,6 +316,14 @@ export class ThreeEntityHost implements EntityHost {
         arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
         arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
       });
+    } else if (state.kind === 'nether_skeleton') {
+      const poseArms = state.state === 'attack' ? 1.55 : 1.2;
+      arms.forEach((arm, index) => {
+        arm.rotation.x = Number(arm.userData.baseRotationX ?? 0)
+          + poseArms + (index % 2 === 0 ? swing : -swing) * 0.25;
+        arm.rotation.y = Number(arm.userData.baseRotationY ?? 0);
+        arm.rotation.z = Number(arm.userData.baseRotationZ ?? 0);
+      });
     } else if (state.kind === 'skeleton') {
       arms.forEach((arm, index) => {
         const ranged = index === 0 ? SKELETON_RANGED_ARM_POSE.bow : SKELETON_RANGED_ARM_POSE.draw;

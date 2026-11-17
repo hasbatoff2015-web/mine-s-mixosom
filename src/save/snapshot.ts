@@ -124,6 +124,7 @@ function parsePersistedPlayer(id: string, value: unknown): SerializedPersistedPl
     ...(parseCosmeticPetSelection(value.cosmeticPet)
       ? { cosmeticPet: parseCosmeticPetSelection(value.cosmeticPet)! }
       : {}),
+    ...(value.dimension === 'nether' ? { dimension: 'nether' as const } : {}),
   };
 }
 

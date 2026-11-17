@@ -23,6 +23,7 @@ import {
   canHarvestBlock,
   type BlockRenderState,
 } from '../src/blocks';
+import type { DimensionId } from '../src/world/dimension';
 import {
   completeMeleeAttack,
   CombatSystem,
@@ -82,6 +83,7 @@ import { WhMarks } from '../src/combat/WhMarks';
 import { FireworkManager, fireworkFlight } from '../src/entities/FireworkManager';
 import type { ArrowKind } from '../src/combat/PlayerArrowManager';
 import { FarmingSystem, farmingDropsForBlock } from '../src/farming';
+import { enchantmentFlowerDrops } from '../src/world/enchantmentFlower';
 import { PlayerController } from '../src/player';
 import { RedstoneSystem } from '../src/redstone';
 import {
@@ -143,6 +145,7 @@ export { daylightFactor, rollBlockDropCount } from '../src/gameplay';
 export interface GameplayPlayer {
   restingBed?: BedRestState;
   readonly id: string;
+  readonly dimension?: DimensionId;
   readonly name?: string;
   connected: boolean;
   readonly controller: PlayerController;
@@ -294,7 +297,7 @@ export class ServerGameplay {
     private readonly flushPlayerLife?: (player: GameplayPlayer) => void,
     private readonly worldSpawn?: () => readonly [number, number, number],
     private readonly onBlockReplaced?: (x: number, y: number, z: number) => void,
-    options?: { readonly maxTamedPets?: number },
+    options?: { readonly maxTamedPets?: number; readonly spawnProfile?: 'overworld' | 'nether' },
   ) {
     this.fireworks = new FireworkManager(world);
     world.deferredLighting = false;
@@ -318,6 +321,7 @@ export class ServerGameplay {
     this.falling = new FallingBlockManager(host, world);
     this.mobs = new MobManager(host, world, {
       random: this.random,
+      ...(options?.spawnProfile ? { spawnProfile: options.spawnProfile } : {}),
       ...(options?.maxTamedPets !== undefined ? { maxTamedPets: options.maxTamedPets } : {}),
       onHurt: (mob) => this.pushEntityEvent(mob.id, 'hurt'),
       onDeath: (mob) => {
@@ -961,7 +965,8 @@ export class ServerGameplay {
         const paintingDrop = collectiblePaintingDroppedStack(block, blockState);
         if (paintingDrop) this.spawnDroppedStack(paintingDrop, new Vec3(x + 0.5, y + 0.3, z + 0.5), player.id);
       } else {
-        const farmingDrops = farmingDropsForBlock(block, blockState, this.random);
+        const farmingDrops = enchantmentFlowerDrops(block, blockState, this.random)
+          ?? farmingDropsForBlock(block, blockState, this.random);
         if (farmingDrops !== undefined) {
           for (const drop of farmingDrops) spawnHarvest(drop.item, drop.count);
         } else if (definition.drop) {
@@ -1258,6 +1263,10 @@ export class ServerGameplay {
       effects: {
         swing: () => player.presentSwing?.(),
         onBedUsed: (x, y, z) => {
+          if (player.dimension === 'nether') {
+            gameplay.pendingUseReject = 'nether-bed';
+            return;
+          }
           const rest = resolveBedRest(gameplay.world, x, y, z);
           if (!rest || player.survival.dead || player.ridingCartId) return;
           if (findBedOccupant(gameplay.listPlayers?.() ?? [], rest, player.id)) {
@@ -1855,7 +1864,8 @@ export class ServerGameplay {
         if (paintingDrop) this.spawnDroppedStack(paintingDrop, new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5));
         continue;
       }
-      const farmingDrops = farmingDropsForBlock(event.block, event.state, this.random);
+      const farmingDrops = enchantmentFlowerDrops(event.block, event.state, this.random)
+        ?? farmingDropsForBlock(event.block, event.state, this.random);
       if (farmingDrops !== undefined) {
         for (const drop of farmingDrops) if (drop.count > 0) {
           if (this.spawnDroppedStack(createItemStack(drop.item, drop.count), new Vec3(event.x + 0.5, event.y + 0.3, event.z + 0.5))) {
