@@ -211,6 +211,32 @@ export function takeReadyMeshJobs<T>(
   return { taken, skippedBlocked, attempted };
 }
 
+/**
+ * A freshly attached renderer has no meshes. Chunks that were already meshed
+ * for the previous renderer stay clean, so the loader waits forever in the
+ * geometry phase. Queue those columns once; an in-progress dirty chunk is left alone.
+ */
+export function queueChunksMissingMesh(
+  world: VoxelWorld,
+  hasMesh: (key: string) => boolean,
+  originX: number,
+  originZ: number,
+  meshRadius: number,
+): number {
+  const originCx = floorDiv(originX, CHUNK_SIZE);
+  const originCz = floorDiv(originZ, CHUNK_SIZE);
+  const radius = Math.max(0, Math.floor(meshRadius));
+  let queued = 0;
+  for (const chunk of world.chunks.values()) {
+    if (chebyshevChunkDistance(chunk.x, chunk.z, originCx, originCz) > radius) continue;
+    const key = chunkKey(chunk.x, chunk.z);
+    if (hasMesh(key) || chunk.dirty) continue;
+    world.markMeshDirty(chunk);
+    queued += 1;
+  }
+  return queued;
+}
+
 /** CPU/test stand-in for WorldRenderer.rebuild: keeps generated data, clears mesh work. */
 export function completeCpuMesh(world: VoxelWorld, chunk: Chunk): void {
   chunk.dirty = false;

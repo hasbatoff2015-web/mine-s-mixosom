@@ -1977,6 +1977,7 @@ export const SERVER_MESSAGE_TYPES = [
   'entity_event',
   'world_sound',
   'command_result',
+  'dimension',
   'time',
   'holograms',
   'hologram_editor',
@@ -3387,6 +3388,32 @@ export function parseServerMessage(raw: unknown): ServerMessage | { readonly err
         return { error: 'trade invalid' };
       }
       return raw as unknown as ServerTradeMessage;
+    }
+    case 'dimension': {
+      if (raw.dimension !== 'overworld' && raw.dimension !== 'nether') return { error: 'dimension invalid' };
+      if (typeof raw.seed !== 'string' || raw.seed.length === 0 || raw.seed.length > 200) {
+        return { error: 'dimension seed invalid' };
+      }
+      if (!finite(raw.timeOfDay) || !finite(raw.x) || !finite(raw.y) || !finite(raw.z)
+        || !finite(raw.yaw) || !finite(raw.pitch) || !finite(raw.movementEpoch)) {
+        return { error: 'dimension pose invalid' };
+      }
+      if (!isRecord(raw.modifications) || !isRecord(raw.blockStates)) return { error: 'dimension world invalid' };
+      return {
+        type: 'dimension',
+        dimension: raw.dimension,
+        seed: raw.seed,
+        timeOfDay: raw.timeOfDay,
+        x: raw.x,
+        y: raw.y,
+        z: raw.z,
+        yaw: raw.yaw,
+        pitch: raw.pitch,
+        movementEpoch: raw.movementEpoch,
+        modifications: raw.modifications as ServerDimensionMessage['modifications'],
+        blockStates: raw.blockStates as ServerDimensionMessage['blockStates'],
+        ...(raw.furnacesLit !== undefined ? { furnacesLit: parseFurnaceLitSnapshot(raw.furnacesLit) } : {}),
+      };
     }
     case 'furnace_lit': {
       const cell = parseFurnaceLitCell(raw);

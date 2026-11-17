@@ -461,6 +461,7 @@ import {
   lightingUnlockNeighborKeys,
   pendingMeshInRadius,
   planMeshFrame,
+  queueChunksMissingMesh,
 } from '../world/streamingScheduler';
 import { blockCollisionBoxes, rayAabbDistance } from '../world/collision';
 import {
@@ -805,6 +806,7 @@ export class Game {
   private lastSavePromise: Promise<void> = Promise.resolve();
   private deathShown = false;
   private localPortalStartedAt?: number;
+  private meshStallFrames = 0;
   private onlineRespawnPending = false;
   private readonly chat = new ChatLog();
   private holograms?: HologramRenderer;
@@ -1979,7 +1981,8 @@ export class Game {
     session.world = world;
     session.worldRenderer = worldRenderer;
     session.cameraCollision = worldCameraCollisionSource(world);
-    session.mobs.clear();
+    this.bindSessionWorld(session, world);
+    this.clearDimensionEntities(session);
     for (const id of [...online.remotes.keys()]) this.removeRemotePlayer(session, id);
     online.interpolator = new EntityInterpolationBuffer();
     online.lastViewKey = '';
@@ -1993,6 +1996,38 @@ export class Game {
     resetPredictionBuffer(online.prediction);
     seedPredictionCheckpoint(online.prediction, session.player.captureMovementState(), -1);
     this.ui.setPortalCountdown(null);
+    console.info(
+      `[dimension] online ${message.dimension} kind=${world.kind} mods=${Object.keys(message.modifications).length}`
+      + ` at ${message.x.toFixed(1)},${message.y.toFixed(1)},${message.z.toFixed(1)} epoch=${message.movementEpoch}`,
+    );
+  }
+
+  /** Every world-bound manager follows the active VoxelWorld in one step. */
+  private bindSessionWorld(session: GameSession, world: VoxelWorld): void {
+    session.mobs.bindWorld(world);
+    session.mobs.setSpawnProfile(world.kind === 'nether' ? 'nether' : undefined);
+    session.drops.bindWorld(world);
+    session.falling.bindWorld(world);
+    session.minecarts.bindWorld(world);
+    session.arrows.bindWorld(world);
+    session.fireworks.bindWorld(world);
+    session.farming.bindWorld(world);
+    session.redstone.bindWorld(world);
+  }
+
+  private clearDimensionEntities(session: GameSession): void {
+    session.ridingCartId = undefined;
+    session.restingBed = undefined;
+    session.miningProgress = 0;
+    session.miningTarget = undefined;
+    session.mobs.clear();
+    session.drops.clear();
+    session.falling.clear();
+    session.minecarts.clear();
+    session.arrows.clear();
+    session.fireworks.clear();
+    session.redstone.clear();
+    session.activePressurePlates.clear();
   }
 
   private applyOnlinePlayerState(session: GameSession, message: ServerPlayerStateMessage): void {
@@ -4108,6 +4143,7 @@ export class Game {
       } else if (load.generated >= load.generateTotal) {
         load.phase = 'mesh';
       } else load.phase = 'generate';
+      this.noteMeshStall(session, load.phase, progress);
 
       const snapshot: WorldLoadSnapshot = {
         phase: load.phase,
@@ -4139,6 +4175,35 @@ export class Game {
       this.lifecycle.setState('MENU');
       this.ui.showWorldLoadError(message, () => void this.showWorldList());
     }
+  }
+
+  private noteMeshStall(
+    session: GameSession,
+    phase: string,
+    progress: { generated: number; lit: number; meshed: number; meshTotal: number },
+  ): void {
+    const stalled = phase === 'mesh' && progress.meshed < progress.meshTotal;
+    if (!stalled) {
+      this.meshStallFrames = 0;
+      return;
+    }
+    this.meshStallFrames += 1;
+    if (this.meshStallFrames !== 1 && this.meshStallFrames % 120 !== 0) return;
+    let cleanUnmeshed = 0;
+    const originCx = Math.floor(session.player.position.x / 16);
+    const originCz = Math.floor(session.player.position.z / 16);
+    for (const chunk of session.world.chunks.values()) {
+      const key = `${chunk.x},${chunk.z}`;
+      if (Math.max(Math.abs(chunk.x - originCx), Math.abs(chunk.z - originCz)) > 8) continue;
+      if (!chunk.dirty && !session.worldRenderer.hasChunk(key)) cleanUnmeshed += 1;
+    }
+    console.warn(
+      `[world-load] geometry stalled phase=${phase} dimension=${session.dimension} kind=${session.world.kind}`
+      + ` chunks=${session.world.chunks.size} generated=${progress.generated} lit=${progress.lit}`
+      + ` meshed=${progress.meshed}/${progress.meshTotal} pendingMesh=${session.world.pendingMeshJobs}`
+      + ` unlit=${session.world.unlitChunkCount} cleanUnmeshed=${cleanUnmeshed}`
+      + ` frames=${this.meshStallFrames}`,
+    );
   }
 
   private warmupRenderer(): void {
@@ -4254,6 +4319,13 @@ export class Game {
     this.lastStreamChunkX = playerCx;
     this.lastStreamChunkZ = playerCz;
     discardObsoletePendingMesh(session.world, originX, originZ, meshRadius);
+    queueChunksMissingMesh(
+      session.world,
+      (key) => session.worldRenderer.hasChunk(key),
+      originX,
+      originZ,
+      meshRadius,
+    );
 
     const velocity = session.player.velocity;
     const readyJobs = collectReadyMeshJobs(
@@ -5142,17 +5214,9 @@ export class Game {
     session.parked = leaving;
     session.world = arriving.world;
     session.dimension = destination;
-    session.mobs.bindWorld(arriving.world);
-    session.mobs.setSpawnProfile(destination === 'nether' ? 'nether' : undefined);
-    session.drops.bindWorld(arriving.world);
-    session.falling.bindWorld(arriving.world);
-    session.minecarts.bindWorld(arriving.world);
-    session.arrows.bindWorld(arriving.world);
+    this.bindSessionWorld(session, arriving.world);
     session.arrows.clear();
-    session.fireworks.bindWorld(arriving.world);
     session.fireworks.clear();
-    session.farming.bindWorld(arriving.world);
-    session.redstone.bindWorld(arriving.world);
     session.mobs.restore(arrivingMobs);
     session.drops.restore(arriving.drops);
     session.falling.restore(arriving.falling);
@@ -5177,6 +5241,10 @@ export class Game {
     this.localPortalStartedAt = undefined;
     this.ui.setPortalCountdown(null);
     this.syncLocalRenderFromPlayer();
+    console.info(
+      `[dimension] local ${leaving.dimension} -> ${destination} kind=${arriving.world.kind}`
+      + ` parkedChunks=${arriving.world.chunks.size} at ${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`,
+    );
     this.beginWorldLoading(false);
   }
 

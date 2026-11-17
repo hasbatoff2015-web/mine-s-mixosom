@@ -10,6 +10,7 @@ import { lightNetherPortal } from '../../src/world/netherPortal';
 import { volumeContains } from '../../server/services/selection';
 import { loadServerConfig } from '../../server/config';
 import { WorldInstance, type ConnectedSink } from '../../server/WorldInstance';
+import { parseServerMessage } from '../../shared/protocol';
 import { bindNamedOperatorFixture } from './helpers/operatorFixture';
 
 async function tempDir(): Promise<string> {
@@ -197,5 +198,40 @@ describe('nether integration', () => {
     world.tick();
     expect(ada.player.dimension).toBe('nether');
     expect(ada.player.controller.position.y).toBeGreaterThan(1);
+    const dimension = [...ada.sink.payloads].reverse().find((payload) => (
+      (payload as { type?: string }).type === 'dimension'
+    ));
+    expect(parseServerMessage(dimension)).toMatchObject({ type: 'dimension', dimension: 'nether' });
+  });
+
+  it('switches one player without sending the other player a dimension packet or nether mobs', async () => {
+    const world = await boot();
+    const ada = join(world, 'Ada');
+    const bob = join(world, 'Bob');
+    const surface = world.netherWorld.surfaceY(6, 6);
+    world.netherGameplay.mobs.spawn('nether_skeleton', new Vec3(6.5, surface + 2, 6.5), { force: true });
+    ada.sink.payloads.length = 0;
+    bob.sink.payloads.length = 0;
+    expect(world.enterDimension(ada.player, 'nether', 6.5, surface + 2, 6.5)).toBe(true);
+    const adaDimension = ada.sink.payloads.find((payload) => (payload as { type?: string }).type === 'dimension');
+    expect(parseServerMessage(adaDimension)).toMatchObject({ type: 'dimension', dimension: 'nether' });
+    expect(bob.sink.payloads.some((payload) => (payload as { type?: string }).type === 'dimension')).toBe(false);
+    expect(bob.player.dimension).toBe('overworld');
+    ada.sink.payloads.length = 0;
+    bob.sink.payloads.length = 0;
+    expect(world.enterDimension(ada.player, 'overworld', 8.5, 80, 8.5)).toBe(true);
+    expect(parseServerMessage(ada.sink.payloads.find((payload) => (
+      (payload as { type?: string }).type === 'dimension'
+    )))).toMatchObject({ type: 'dimension', dimension: 'overworld' });
+    world.tick();
+    const kinds = (sink: { payloads: unknown[] }) => sink.payloads.flatMap((payload) => {
+      const message = payload as { type?: string; entities?: Array<{ mobKind?: string }> };
+      if (message.type !== 'entity_snapshot') return [];
+      return message.entities?.map((entity) => entity.mobKind) ?? [];
+    });
+    expect(kinds(ada.sink)).not.toContain('nether_skeleton');
+    expect(kinds(bob.sink)).not.toContain('nether_skeleton');
+    expect(world.gameplay.mobs.entities.some((mob) => mob.kind === 'nether_skeleton')).toBe(false);
+    expect(world.netherGameplay.mobs.entities.some((mob) => mob.kind === 'nether_skeleton')).toBe(true);
   });
 });
